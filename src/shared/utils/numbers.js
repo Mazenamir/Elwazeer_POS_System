@@ -18,7 +18,19 @@ function parseNonNegativeInt(value, fieldName = 'Value') {
   return parsed;
 }
 
+/**
+ * Parse an integer from `value`, fall back to `fallback` if invalid,
+ * and clamp the result to [min, max].
+ */
+function clampInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  const normalized = Number.isInteger(parsed) ? parsed : fallback;
+  return Math.min(Math.max(normalized, min), max);
+}
+
 module.exports = {
   parsePositiveInt,
   parseNonNegativeInt,
+  clampInt,
 };
+
