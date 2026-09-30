@@ -1,0 +1,42 @@
+{
+  "name": "bebyoon-system",
+  "version": "1.0.4",
+  "description": "Bebyoon / El-Wazeer POS & Management System",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "server": "node src/server/server.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.bebyoon.system",
+    "productName": "Bebyoon System",
+    "directories": {
+      "output": "dist"
+    },
+    "nsis": {
+      "perMachine": false,
+      "oneClick": true
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "electronVersion": "30.0.0"
+  }
+}
