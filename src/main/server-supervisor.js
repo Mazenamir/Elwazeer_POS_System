@@ -39,11 +39,24 @@ class ServerSupervisor {
       ELECTRON_RUN_AS_NODE: '1',
     };
 
-    this.process = fork(this.serverScript, [], {
+    const forkOptions = {
       env,
       cwd: this.appRoot,
       stdio: ['inherit', 'pipe', 'pipe', 'ipc'],
-    });
+    };
+
+    try {
+      const { execSync } = require('child_process');
+      const nodePath = execSync('where.exe node', { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
+      if (nodePath && fs.existsSync(nodePath)) {
+        forkOptions.execPath = nodePath;
+        this.log(`[Supervisor] Using system Node: ${nodePath}`);
+      }
+    } catch (e) {
+      this.log(`[Supervisor] Could not detect system node path: ${e.message}`);
+    }
+
+    this.process = fork(this.serverScript, [], forkOptions);
 
     this.process.stdout.on('data', (data) => {
       this.log(`[Server STDOUT]: ${data}`);
