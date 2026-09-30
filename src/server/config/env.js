@@ -51,6 +51,8 @@ const OFFLINE_DB_PATH = process.env.OFFLINE_DB_PATH || path.join(appRoot, 'data'
 const BRANCH_SQLITE_PATH = process.env.BRANCH_SQLITE_PATH || path.join(appRoot, 'data', 'branch.sqlite');
 
 const SUPPLIER_STATEMENT_LIMIT = boundedEnvInt('SUPPLIER_STATEMENT_LIMIT', 500, 50, 2000);
+const EMPLOYEE_SALES_REPORT_DAYS = boundedEnvInt('EMPLOYEE_SALES_REPORT_DAYS', 180, 30, 730);
+const EMPLOYEE_SALES_REPORT_LIMIT = boundedEnvInt('EMPLOYEE_SALES_REPORT_LIMIT', 1000, 100, 5000);
 
 module.exports = {
   appRoot,
@@ -75,6 +77,9 @@ module.exports = {
   OFFLINE_DB_PATH,
   BRANCH_SQLITE_PATH,
   SUPPLIER_STATEMENT_LIMIT,
+  EMPLOYEE_SALES_REPORT_DAYS,
+  EMPLOYEE_SALES_REPORT_LIMIT,
   boundedEnvInt,
 };
+
 

@@ -19,6 +19,8 @@ const suppliersRoutes = require('./modules/suppliers/suppliers.routes');
 const salesRoutes = require('./modules/sales/sales.routes');
 const rentalsRoutes = require('./modules/rentals/rentals.routes');
 const tailoringRoutes = require('./modules/tailoring/tailoring.routes');
+const employeesRoutes = require('./modules/hr/employees.routes');
+const expensesRoutes = require('./modules/expenses/expenses.routes');
 
 const app = express();
 
@@ -85,6 +87,8 @@ app.use('/api', suppliersRoutes);
 app.use('/api', salesRoutes);
 app.use('/api', rentalsRoutes);
 app.use('/api', tailoringRoutes);
+app.use('/api', employeesRoutes);
+app.use('/api', expensesRoutes);
 
 // Central error handler
 app.use(errorHandler);

@@ -62,11 +62,23 @@ async function getDatabaseCairoNow(db) {
   return rows[0];
 }
 
+function getMonthRange(monthKey) {
+  const safeMonth = /^\d{4}-\d{2}$/.test(String(monthKey || '')) ? monthKey : getCairoDateTimeParts().date.substring(0, 7);
+  const endDate = new Date(`${safeMonth}-01T00:00:00.000Z`);
+  endDate.setUTCMonth(endDate.getUTCMonth() + 1);
+  return {
+    start: `${safeMonth}-01`,
+    end: endDate.toISOString().slice(0, 10),
+  };
+}
+
 module.exports = {
   CAIRO_TIME_ZONE,
   getCairoDateTimeParts,
   getMonthKey,
+  getMonthRange,
   dateOnly,
   daysBetween,
   getDatabaseCairoNow,
 };
+
