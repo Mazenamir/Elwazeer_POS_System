@@ -9,3 +9,7 @@ data/
 debug.log
 .DS_Store
 Thumbs.db
+programs/
+postgresql/
+backup/*.json
+*.log
