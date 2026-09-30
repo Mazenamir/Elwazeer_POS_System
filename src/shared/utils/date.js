@@ -72,6 +72,12 @@ function getMonthRange(monthKey) {
   };
 }
 
+function addDays(dateKey, days) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 module.exports = {
   CAIRO_TIME_ZONE,
   getCairoDateTimeParts,
@@ -80,5 +86,6 @@ module.exports = {
   dateOnly,
   daysBetween,
   getDatabaseCairoNow,
+  addDays,
 };
 

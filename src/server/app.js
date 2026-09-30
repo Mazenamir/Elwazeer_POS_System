@@ -21,6 +21,7 @@ const rentalsRoutes = require('./modules/rentals/rentals.routes');
 const tailoringRoutes = require('./modules/tailoring/tailoring.routes');
 const employeesRoutes = require('./modules/hr/employees.routes');
 const expensesRoutes = require('./modules/expenses/expenses.routes');
+const reportsRoutes = require('./modules/reports/reports.routes');
 
 const app = express();
 
@@ -89,6 +90,7 @@ app.use('/api', rentalsRoutes);
 app.use('/api', tailoringRoutes);
 app.use('/api', employeesRoutes);
 app.use('/api', expensesRoutes);
+app.use('/api', reportsRoutes);
 
 // Central error handler
 app.use(errorHandler);
