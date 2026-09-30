@@ -68,6 +68,19 @@ function hasPermission(user, permission) {
   return permissions.includes(permission);
 }
 
+function hasInventoryAdminAccess(user) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  const permissions = getUserPermissions(user);
+  return permissions.includes(INVENTORY_ADMIN_PERMISSION) ||
+    permissions.includes('admin') ||
+    permissions.includes('manage_inventory');
+}
+
+function isBranchScopedUser(user) {
+  return Boolean(user && user.role === 'branch_user' && user.branch_id);
+}
+
 module.exports = {
   ALL_PERMISSIONS,
   DEFAULT_BRANCH_PERMISSIONS,
@@ -78,4 +91,7 @@ module.exports = {
   defaultPermissionsForRole,
   getUserPermissions,
   hasPermission,
+  hasInventoryAdminAccess,
+  isBranchScopedUser,
 };
+

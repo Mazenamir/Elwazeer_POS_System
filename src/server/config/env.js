@@ -50,6 +50,8 @@ const DB_NAME = process.env.DB_NAME || 'pos_db';
 const OFFLINE_DB_PATH = process.env.OFFLINE_DB_PATH || path.join(appRoot, 'data', 'offline.sqlite');
 const BRANCH_SQLITE_PATH = process.env.BRANCH_SQLITE_PATH || path.join(appRoot, 'data', 'branch.sqlite');
 
+const SUPPLIER_STATEMENT_LIMIT = boundedEnvInt('SUPPLIER_STATEMENT_LIMIT', 500, 50, 2000);
+
 module.exports = {
   appRoot,
   IS_BRANCH_MODE,
@@ -72,5 +74,7 @@ module.exports = {
   DB_NAME,
   OFFLINE_DB_PATH,
   BRANCH_SQLITE_PATH,
+  SUPPLIER_STATEMENT_LIMIT,
   boundedEnvInt,
 };
+

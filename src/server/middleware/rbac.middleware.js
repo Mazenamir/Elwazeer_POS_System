@@ -1,9 +1,9 @@
-const { hasPermission, INVENTORY_ADMIN_PERMISSION } = require('../../shared/constants/permissions');
+const { hasPermission, hasInventoryAdminAccess } = require('../../shared/constants/permissions');
 
 function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== 'admin') {
     if (res) {
-      res.status(403).json({ error: 'غير مصرح لك بإجراء هذه العملية (مطلوب صلاحية مدير)' });
+      res.status(403).json({ error: 'Forbidden' });
       return false;
     }
     return false;
@@ -23,20 +23,21 @@ function requirePermission(permission) {
     if (hasPermission(req.user, permission)) {
       return next();
     }
-    return res.status(403).json({ error: `غير مصرح لك بالوصول إلى هذه الشاشة (${permission})` });
+    return res.status(403).json({ error: 'Forbidden' });
   };
 }
 
 function requireInventoryAdmin(req, res, next) {
   if (!req.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    if (res) res.status(401).json({ error: 'Unauthorized' });
+    return false;
   }
-  if (req.user.role === 'admin' || hasPermission(req.user, INVENTORY_ADMIN_PERMISSION)) {
+  if (hasInventoryAdminAccess(req.user)) {
     if (typeof next === 'function') return next();
     return true;
   }
   if (res) {
-    res.status(403).json({ error: 'مطلوب صلاحية إدارة المخزون' });
+    res.status(403).json({ error: 'Forbidden' });
   }
   return false;
 }
@@ -45,4 +46,6 @@ module.exports = {
   requireAdmin,
   requirePermission,
   requireInventoryAdmin,
+  hasInventoryAdminAccess,
 };
+

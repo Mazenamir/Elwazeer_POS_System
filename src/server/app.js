@@ -15,8 +15,10 @@ const branchesRoutes = require('./modules/branches/branches.routes');
 const customersRoutes = require('./modules/customers/customers.routes');
 const settingsRoutes = require('./modules/settings/settings.routes');
 const inventoryRoutes = require('./modules/inventory/inventory.routes');
+const suppliersRoutes = require('./modules/suppliers/suppliers.routes');
 
 const app = express();
+
 
 // Security headers (Tailwind runtime and Alpine need inline styles/eval)
 app.use(helmet({
@@ -76,6 +78,7 @@ app.use('/api', branchesRoutes);
 app.use('/api', customersRoutes);
 app.use('/api', settingsRoutes);
 app.use('/api', inventoryRoutes);
+app.use('/api', suppliersRoutes);
 
 // Central error handler
 app.use(errorHandler);
