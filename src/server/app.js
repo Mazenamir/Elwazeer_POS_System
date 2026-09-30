@@ -11,6 +11,9 @@ const { PUBLIC_STATIC_FILES } = require('../shared/constants/system');
 
 // Route modules
 const authRoutes = require('./modules/auth/auth.routes');
+const branchesRoutes = require('./modules/branches/branches.routes');
+const customersRoutes = require('./modules/customers/customers.routes');
+const settingsRoutes = require('./modules/settings/settings.routes');
 
 const app = express();
 
@@ -68,6 +71,9 @@ app.use(express.static(rendererPath));
 
 // Mount Domain API Modules
 app.use('/api', authRoutes);
+app.use('/api', branchesRoutes);
+app.use('/api', customersRoutes);
+app.use('/api', settingsRoutes);
 
 // Central error handler
 app.use(errorHandler);
