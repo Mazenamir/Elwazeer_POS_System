@@ -14,6 +14,7 @@ const authRoutes = require('./modules/auth/auth.routes');
 const branchesRoutes = require('./modules/branches/branches.routes');
 const customersRoutes = require('./modules/customers/customers.routes');
 const settingsRoutes = require('./modules/settings/settings.routes');
+const inventoryRoutes = require('./modules/inventory/inventory.routes');
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.use('/api', authRoutes);
 app.use('/api', branchesRoutes);
 app.use('/api', customersRoutes);
 app.use('/api', settingsRoutes);
+app.use('/api', inventoryRoutes);
 
 // Central error handler
 app.use(errorHandler);
