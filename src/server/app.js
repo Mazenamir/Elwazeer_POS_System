@@ -17,6 +17,7 @@ const settingsRoutes = require('./modules/settings/settings.routes');
 const inventoryRoutes = require('./modules/inventory/inventory.routes');
 const suppliersRoutes = require('./modules/suppliers/suppliers.routes');
 const salesRoutes = require('./modules/sales/sales.routes');
+const rentalsRoutes = require('./modules/rentals/rentals.routes');
 
 const app = express();
 
@@ -81,6 +82,7 @@ app.use('/api', settingsRoutes);
 app.use('/api', inventoryRoutes);
 app.use('/api', suppliersRoutes);
 app.use('/api', salesRoutes);
+app.use('/api', rentalsRoutes);
 
 // Central error handler
 app.use(errorHandler);
