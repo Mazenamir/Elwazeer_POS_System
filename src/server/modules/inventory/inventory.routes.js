@@ -18,6 +18,9 @@ router.get('/inventory/transfers/incoming', controller.listIncomingTransfers);
 router.post('/inventory/transfers/:id/receive', controller.receiveTransfer);
 
 // Products CRUD
+router.post('/inventory/duplicate-check', controller.checkDuplicatesBatch);
+router.get('/inventory/duplicate-check', controller.checkDuplicateSingle);
+router.get('/inventory/search', controller.searchInventory);
 router.get('/inventory', controller.listInventory);
 router.post('/inventory', controller.createProduct);
 router.put('/inventory/:id', controller.updateProduct);

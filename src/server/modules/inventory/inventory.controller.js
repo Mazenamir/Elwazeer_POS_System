@@ -126,6 +126,33 @@ async function receiveTransfer(req, res, next) {
   }
 }
 
+async function checkDuplicatesBatch(req, res, next) {
+  try {
+    const result = await inventoryService.checkDuplicatesBatch(req.body);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function checkDuplicateSingle(req, res, next) {
+  try {
+    const result = await inventoryService.checkDuplicateSingle(req.query);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function searchInventory(req, res, next) {
+  try {
+    const result = await inventoryService.searchInventory(req.query, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMetadata,
   getModels,
@@ -141,4 +168,7 @@ module.exports = {
   rejectTransfer,
   listIncomingTransfers,
   receiveTransfer,
+  checkDuplicatesBatch,
+  checkDuplicateSingle,
+  searchInventory,
 };

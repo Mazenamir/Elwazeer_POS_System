@@ -634,6 +634,180 @@ async function receiveTransfer(transferId, user) {
   return { success: true, message: 'تم تأكيد استلام المخزون بنجاح' };
 }
 
+async function checkDuplicatesBatch(body) {
+  const productType = body?.product_type === 'rental' ? 'rental' : 'sales';
+  const table = productType === 'rental' ? 'rental_inventory' : 'inventory';
+  const candidates = Array.isArray(body?.candidates) ? body.candidates : [];
+  const normalizedCandidates = candidates
+    .slice(0, 1000)
+    .map(candidate => ({
+      name: String(candidate?.name || '').trim(),
+      category: String(candidate?.category || '').trim(),
+      color: String(candidate?.color || '').trim(),
+      size: String(candidate?.size || '').trim(),
+    }))
+    .filter(candidate => candidate.name && candidate.category && candidate.color && candidate.size);
+
+  if (normalizedCandidates.length === 0) {
+    return { duplicates: [] };
+  }
+
+  const { rows } = await db.query(
+    `WITH candidates AS (
+       SELECT DISTINCT
+              LOWER(TRIM(COALESCE(name, ''))) as name_key,
+              LOWER(TRIM(COALESCE(category, ''))) as category_key,
+              LOWER(TRIM(COALESCE(color, ''))) as color_key,
+              LOWER(TRIM(COALESCE(size, ''))) as size_key,
+              TRIM(COALESCE(name, '')) as name,
+              TRIM(COALESCE(category, '')) as category,
+              TRIM(COALESCE(color, '')) as color,
+              TRIM(COALESCE(size, '')) as size
+       FROM jsonb_to_recordset($1::jsonb) AS c(name text, category text, color text, size text)
+       WHERE TRIM(COALESCE(name, '')) <> ''
+         AND TRIM(COALESCE(category, '')) <> ''
+         AND TRIM(COALESCE(color, '')) <> ''
+         AND TRIM(COALESCE(size, '')) <> ''
+     )
+     SELECT c.name_key,
+            c.category_key,
+            c.color_key,
+            c.size_key,
+            c.name,
+            c.category,
+            c.color,
+            c.size,
+            matched_item.id,
+            matched_item.name as match_name,
+            matched_item.category as match_category,
+            matched_item.color as match_color,
+            matched_item.size_cut as match_size_cut,
+            matched_item.barcode,
+            matched_item.price,
+            matched_item.image_url
+     FROM candidates c
+     JOIN LATERAL (
+       SELECT id, name, category, color, size_cut, barcode, price, image_url
+       FROM ${table}
+       WHERE is_deleted = FALSE
+         AND LOWER(TRIM(COALESCE(name, ''))) = c.name_key
+         AND LOWER(TRIM(COALESCE(category, ''))) = c.category_key
+         AND LOWER(TRIM(COALESCE(color, ''))) = c.color_key
+         AND LOWER(TRIM(COALESCE(size_cut, ''))) = c.size_key
+       ORDER BY id DESC
+       LIMIT 5
+     ) matched_item ON TRUE
+     ORDER BY c.name, c.category, c.color, c.size, matched_item.id DESC`,
+    [JSON.stringify(normalizedCandidates)]
+  );
+
+  const duplicateMap = new Map();
+  for (const row of rows) {
+    const key = [row.name_key, row.category_key, row.color_key, row.size_key].join('|');
+    if (!duplicateMap.has(key)) {
+      duplicateMap.set(key, {
+        key,
+        candidate: {
+          name: row.name,
+          category: row.category,
+          color: row.color,
+          size: row.size,
+        },
+        matches: [],
+      });
+    }
+    duplicateMap.get(key).matches.push({
+      id: row.id,
+      name: row.match_name,
+      category: row.match_category,
+      color: row.match_color,
+      size_cut: row.match_size_cut,
+      barcode: row.barcode,
+      price: row.price,
+      image_url: row.image_url,
+    });
+  }
+
+  return { duplicates: [...duplicateMap.values()] };
+}
+
+async function checkDuplicateSingle(query) {
+  const productType = query?.product_type === 'rental' ? 'rental' : 'sales';
+  const name = String(query?.name || '').trim();
+  const category = String(query?.category || '').trim();
+  const color = String(query?.color || '').trim();
+  const size = String(query?.size || '').trim();
+  const excludeId = Number.parseInt(query?.exclude_id, 10);
+
+  if (!name || !category || !color || !size) {
+    return { exists: false, matches: [] };
+  }
+
+  const table = productType === 'rental' ? 'rental_inventory' : 'inventory';
+  const params = [name, category, color, size];
+  let excludeSql = '';
+  if (Number.isInteger(excludeId) && excludeId > 0) {
+    params.push(excludeId);
+    excludeSql = ` AND id != $${params.length}`;
+  }
+
+  const { rows } = await db.query(
+    `SELECT id, name, category, color, size_cut, barcode, price, image_url
+     FROM ${table}
+     WHERE is_deleted = FALSE
+       AND LOWER(TRIM(COALESCE(name, ''))) = LOWER(TRIM($1))
+       AND LOWER(TRIM(COALESCE(category, ''))) = LOWER(TRIM($2))
+       AND LOWER(TRIM(COALESCE(color, ''))) = LOWER(TRIM($3))
+       AND LOWER(TRIM(COALESCE(size_cut, ''))) = LOWER(TRIM($4))
+       ${excludeSql}
+     ORDER BY id DESC
+     LIMIT 5`,
+    params
+  );
+  return { exists: rows.length > 0, matches: rows };
+}
+
+async function searchInventory(query = {}, user = null) {
+  const { query: searchQuery, branch_id } = query;
+  if (!searchQuery || searchQuery.trim().length < 2) {
+    return [];
+  }
+
+  const searchPattern = `%${searchQuery.trim()}%`;
+  const branchIdToUse = branch_id || (user && user.branch_id) || 1;
+
+  const { rows } = await db.query(`
+    SELECT 
+      i.id, 
+      i.name, 
+      i.category, 
+      i.size_cut, 
+      i.color, 
+      i.barcode, 
+      i.price,
+      i.wholesale_price,
+      i.semi_wholesale_price,
+      COALESCE(ib.stock_level, 0) as stock_level
+    FROM inventory i
+    LEFT JOIN inventory_branches ib ON i.id = ib.inventory_id AND ib.branch_id = $2
+    WHERE i.is_deleted = FALSE
+      AND (
+        i.name ILIKE $1 
+        OR i.barcode ILIKE $1 
+        OR i.category ILIKE $1
+        OR i.color ILIKE $1
+        OR i.size_cut ILIKE $1
+      )
+    ORDER BY 
+      CASE WHEN i.name ILIKE $1 THEN 1 ELSE 2 END,
+      COALESCE(ib.stock_level, 0) DESC,
+      i.name
+    LIMIT 20
+  `, [searchPattern, branchIdToUse]);
+
+  return rows;
+}
+
 module.exports = {
   getMetadata,
   getModels,
@@ -649,4 +823,7 @@ module.exports = {
   rejectTransfer,
   listIncomingTransfers,
   receiveTransfer,
+  checkDuplicatesBatch,
+  checkDuplicateSingle,
+  searchInventory,
 };
