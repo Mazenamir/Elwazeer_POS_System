@@ -1,0 +1,1623 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - الإعدادات</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link href="assets/material-symbols.css" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: {
+                        'DEFAULT': '0.75rem',
+                        'lg': '1rem',
+                        'xl': '1.5rem',
+                        '2xl': '2rem',
+                        '3xl': '2.5rem',
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    },
+                    boxShadow: {
+                        'premium': '0 10px 40px -10px rgba(0,0,0,0.05)',
+                        'premium-hover': '0 20px 50px -12px rgba(0,0,0,0.08)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        [x-cloak] { display: none !important; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+        body { font-family: 'Cairo', sans-serif; background-color: #F8FAFC; }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <script src="auth.js"></script>
+</head>
+
+<body class="text-on-surface antialiased overflow-x-hidden" x-data="settingsApp()">
+    
+    <div class="flex min-h-screen">
+        <!-- Mobile Sidebar Backdrop -->
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <!-- القائمة الجانبية (Sidebar) -->
+        <aside 
+            @mouseenter="sidebarExpanded = true" 
+            @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'" class="w-full h-full object-contain transition-transform duration-300" :class="(window.getLogoPath(user?.branch_id, branches) || '').includes('women') ? 'scale-[1.35]' : ''" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)" 
+                        class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm" :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">point_of_sale</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">styler</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">architecture</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">group</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'" x-text="(user && user.role === 'admin') ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">auto_delete</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">badge</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">bar_chart</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">barcode_scanner</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">settings</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()" class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">logout</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+</aside>
+
+        <!-- منطقة المحتوى الرئيسية -->
+        <div class="flex-1 flex flex-col min-w-0">
+            <!-- الهيدر (Header) -->
+            <header class="h-20 bg-white/70 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 flex-1">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <h2 class="text-lg md:text-xl font-extrabold text-primary">إعدادات النظام</h2>
+                </div>
+                
+                <div class="flex items-center gap-2 md:gap-4">
+                    <button @click="saveSettings()" class="px-6 py-2.5 bg-primary text-white rounded-xl text-xs font-extrabold hover:bg-slate-800 transition-all shadow-lg shadow-primary/20 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-lg">save</span> حفظ التغييرات
+                    </button>
+                    
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline hidden md:flex"></div>
+                </div>
+            </header>
+
+            <!-- المحتوى الرئيسي -->
+            <main class="p-8">
+                <div class="max-w-4xl mx-auto">
+                    <!-- أقسام الإعدادات -->
+                    <div class="space-y-8">
+                        <!-- معلومات المتجر -->
+                        <div x-show="user && user.role === 'admin'" class="bg-white p-10 rounded-[3rem] border-2 border-slate-300 shadow-premium">
+                            <h3 class="text-lg font-extrabold text-primary mb-8 flex items-center gap-3">
+                                <span class="material-symbols-outlined text-accent">store</span> معلومات المتجر
+                            </h3>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">اسم المتجر</label>
+                                    <input type="text" x-model="settings.store_name" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all">
+                                </div>
+                                <div>
+                                    <div class="flex items-center justify-between mb-2 pr-2">
+                                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">البريد الإلكتروني (اختياري)</label>
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" :checked="settings.show_email === 'true'" @change="settings.show_email = $event.target.checked.toString()" class="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary">
+                                            <span class="text-[10px] font-bold text-slate-400">إظهار</span>
+                                        </label>
+                                    </div>
+                                    <input type="email" x-model="settings.store_email" dir="ltr" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all text-right">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">نسبة ضريبة القيمة المضافة (%)</label>
+                                    <input type="number" x-model="settings.tax_rate" min="0" max="100" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all text-right">
+                                </div>
+
+
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">الرقم السري للرواتب وإدارة الموظفين</label>
+                                    <input type="text" x-model="settings.salary_password" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all text-right" placeholder="123">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">كلمة مرور تعديل الفواتير</label>
+                                    <input type="text" x-model="settings.invoice_edit_password" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all text-right" placeholder="123456">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- إعدادات الفواتير -->
+                        <div x-show="user && user.role === 'admin'" class="bg-white p-10 rounded-[3rem] border-2 border-slate-300 shadow-premium">
+                            <h3 class="text-lg font-extrabold text-primary mb-8 flex items-center gap-3">
+                                <span class="material-symbols-outlined text-accent">receipt</span> إعدادات الفواتير
+                            </h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <!-- الكاشير -->
+                                <div class="p-6 bg-slate-50 rounded-3xl border-2 border-slate-200 flex flex-col h-full">
+                                    <div class="flex items-center justify-between mb-3 pr-2">
+                                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                            <span class="material-symbols-outlined text-sm">point_of_sale</span>كعب فاتورة البيع
+                                        </label>
+                                        <span class="text-[9px] font-bold" :class="(settings.cashier_footer || '').length > 250 ? 'text-red-500' : 'text-slate-400'" x-text="(settings.cashier_footer || '').length + ' / 300'"></span>
+                                    </div>
+                                    <textarea x-model="settings.cashier_footer" maxlength="300" rows="4" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-2xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all mb-4" placeholder="النص الذي يظهر في كعب فاتورة البيع المباشر..."></textarea>
+                                    
+                                    <div class="mt-auto">
+                                        <p class="text-[9px] font-bold text-slate-400 mb-2 pr-1 uppercase tracking-tighter">معاينة شكل الفاتورة (تقريبي):</p>
+                                        <div class="bg-white border-t border-black p-4 text-center shadow-sm rounded-xl overflow-hidden max-h-32">
+                                            <p class="text-[10px] font-black text-black whitespace-pre-line leading-relaxed" x-text="settings.cashier_footer || 'شكراً لزيارتكم'"></p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- التأجير -->
+                                <div class="p-6 bg-slate-50 rounded-3xl border-2 border-slate-200 flex flex-col h-full">
+                                    <div class="flex items-center justify-between mb-3 pr-2">
+                                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                            <span class="material-symbols-outlined text-sm">styler</span> كعب فاتورة التأجير
+                                        </label>
+                                        <span class="text-[9px] font-bold" :class="(settings.rental_footer || '').length > 250 ? 'text-red-500' : 'text-slate-400'" x-text="(settings.rental_footer || '').length + ' / 300'"></span>
+                                    </div>
+                                    <textarea x-model="settings.rental_footer" maxlength="300" rows="4" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-2xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all mb-4" placeholder="النص الذي يظهر في كعب فاتورة الإيجار..."></textarea>
+                                    
+                                    <div class="mt-auto">
+                                        <p class="text-[9px] font-bold text-slate-400 mb-2 pr-1 uppercase tracking-tighter">معاينة شكل الفاتورة (تقريبي):</p>
+                                        <div class="bg-white border-t border-black p-4 text-center shadow-sm rounded-xl overflow-hidden max-h-32">
+                                            <p class="text-[10px] font-black text-black whitespace-pre-line leading-relaxed" x-text="settings.rental_footer || 'شكراً لزيارتكم'"></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- إعدادات الفروع -->
+                        <div x-show="user && user.role === 'admin'" class="bg-white p-10 rounded-[3rem] border-2 border-slate-300 shadow-premium">
+                            <div class="flex items-center justify-between mb-8">
+                                <h3 class="text-lg font-extrabold text-primary flex items-center gap-3">
+                                    <span class="material-symbols-outlined text-accent">location_on</span> إعدادات الفروع والاتصال
+                                </h3>
+                                <button @click="showAddBranchModal = true" class="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all shadow-lg flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-sm">add_business</span> إضافة فرع
+                                </button>
+                            </div>
+                            <div class="space-y-6">
+                                <template x-for="branch in branches" :key="branch.id">
+                                     <div class="p-6 bg-slate-50 rounded-2xl border-2 border-slate-200" dir="rtl">
+                                         <div class="grid grid-cols-1 2xl:grid-cols-[360px_minmax(0,1fr)] gap-6 items-start">
+                                             <div class="flex items-start gap-4 min-w-0">
+                                                 <!-- لوجو الفرع -->
+                                                 <div class="w-16 h-16 rounded-2xl border-2 border-slate-200 flex items-center justify-center overflow-hidden bg-white relative group shrink-0 shadow-sm">
+                                                     <template x-if="branch.logo_url">
+                                                         <img :src="branch.logo_url" class="w-full h-full object-cover">
+                                                     </template>
+                                                     <template x-if="!branch.logo_url">
+                                                         <span class="material-symbols-outlined text-slate-300 text-3xl">business</span>
+                                                     </template>
+                                                     <!-- تراكب لتغيير اللوجو -->
+                                                     <label :for="'branch-logo-input-' + branch.id" class="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity">
+                                                         <span class="material-symbols-outlined text-lg">edit</span>
+                                                     </label>
+                                                     <input type="file" accept="image/*" :id="'branch-logo-input-' + branch.id" @change="uploadBranchLogo($event, branch)" class="hidden">
+                                                 </div>
+
+                                                 <div class="min-w-0 flex-1">
+                                                     <div class="flex items-center gap-2 mb-1">
+                                                         <div class="relative group flex-1 min-w-0">
+                                                             <input type="text" x-model="branch.name" class="bg-white border-2 border-slate-200 hover:border-primary/50 focus:border-primary rounded-xl px-3 py-1.5 text-sm font-extrabold text-primary transition-all w-full shadow-sm pl-8" placeholder="اسم الفرع" title="تعديل اسم الفرع">
+                                                             <span class="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-[16px] pointer-events-none group-hover:text-primary transition-colors">edit</span>
+                                                         </div>
+                                                         <button x-show="!branch.is_main_warehouse" @click="deleteBranch(branch.id)" class="text-red-500 bg-red-50 hover:bg-red-100 w-9 h-9 flex items-center justify-center rounded-full transition-all border border-red-100 shrink-0" title="حذف الفرع">
+                                                             <span class="material-symbols-outlined text-sm">delete</span>
+                                                         </button>
+                                                     </div>
+                                                     <div class="mt-2">
+                                                         <span class="text-[8px] font-extrabold text-slate-400 uppercase tracking-widest pr-1 mb-1 block">تخصص الفرع:</span>
+                                                         <select x-model="branch.allowed_gender" class="w-full bg-white border-2 border-slate-200 hover:border-primary/50 focus:border-primary rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 transition-all shadow-sm">
+                                                             <option value="both">مشترك (رجالي وحريمي)</option>
+                                                             <option value="men">رجالي فقط</option>
+                                                             <option value="women">حريمي فقط</option>
+                                                         </select>
+                                                     </div>
+
+                                                     <!-- تبديل سريع للشعارات الجاهزة -->
+                                                     <div class="flex flex-col gap-1 mt-2.5">
+                                                         <span class="text-[8px] font-extrabold text-slate-400 uppercase tracking-widest pr-1">تبديل الشعار:</span>
+                                                         <div class="flex flex-wrap gap-1.5">
+                                                            <button type="button" @click="setBranchLogo(branch, '/logos/men.png')" 
+                                                                     class="px-2 py-1 rounded-lg text-[9px] font-bold border transition-all flex items-center gap-1 shadow-sm"
+                                                                     :class="branch.logo_url === '/logos/men.png' ? 'border-primary bg-primary text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'">
+                                                                 <span class="material-symbols-outlined text-[10px]">man</span> رجالي
+                                                             </button>
+                                                            <button type="button" @click="setBranchLogo(branch, '/logos/women.png')" 
+                                                                     class="px-2 py-1 rounded-lg text-[9px] font-bold border transition-all flex items-center gap-1 shadow-sm"
+                                                                     :class="branch.logo_url === '/logos/women.png' ? 'border-primary bg-primary text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'">
+                                                                 <span class="material-symbols-outlined text-[10px]">woman</span> حريمي
+                                                             </button>
+                                                            <button type="button" @click="setBranchLogo(branch, '/logos/Antalya logo.png')" 
+                                                                     class="px-2 py-1 rounded-lg text-[9px] font-bold border transition-all flex items-center gap-1 shadow-sm"
+                                                                     :class="branch.logo_url === '/logos/Antalya logo.png' ? 'border-primary bg-primary text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'">
+                                                                 <span class="material-symbols-outlined text-[10px]">apparel</span> أنتاليا
+                                                             </button>
+                                                             <button type="button" x-show="branch.logo_url" @click="branch.logo_url = ''" class="px-2 py-1 rounded-lg text-[9px] font-bold border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-all flex items-center gap-1">
+                                                                 <span class="material-symbols-outlined text-[10px]">close</span> حذف
+                                                             </button>
+                                                         </div>
+                                                     </div>
+                                                 </div>
+                                             </div>
+                                            <div class="space-y-4 min-w-0">
+                                                <div>
+                                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1 pr-2">أرقام هاتف الفرع</label>
+                                                    <div class="space-y-2">
+                                                        <template x-for="(phone, index) in getPhoneList(branch)" :key="index">
+                                                            <div class="flex gap-2">
+                                                                <input type="text" 
+                                                                    :value="phone" 
+                                                                    @input="updatePhone(branch, index, $event.target.value)"
+                                                                    placeholder="أدخل رقم الهاتف..." 
+                                                                    maxlength="15"
+                                                                    inputmode="numeric"
+                                                                    class="w-full bg-white border-2 border-slate-300 rounded-xl py-2 px-4 text-xs focus:ring-2 focus:ring-primary/10 transition-all">
+                                                                <button @click="removePhone(branch, index)" 
+                                                                        class="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                                                        x-show="getPhoneList(branch).length > 1">
+                                                                    <span class="material-symbols-outlined text-lg">delete</span>
+                                                                </button>
+                                                            </div>
+                                                        </template>
+                                                        <button @click="addPhone(branch)" class="flex items-center gap-1 text-[10px] font-bold text-primary hover:text-slate-700 transition-all">
+                                                            <span class="material-symbols-outlined text-sm">add_circle</span> إضافة رقم آخر
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1 pr-2">عنوان الفرع (اختياري)</label>
+                                                    <textarea x-model="branch.location" rows="2" class="w-full bg-white border-2 border-slate-300 rounded-xl py-2 px-4 text-xs focus:ring-2 focus:ring-primary/10 transition-all" placeholder="أدخل عنوان هذا الفرع بالتفصيل..."></textarea>
+                                                </div>
+                                            </div>
+
+                                                <div class="2xl:col-span-2 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 bg-white border-2 border-slate-200 rounded-2xl p-5 overflow-hidden">
+                                                    <div class="space-y-4 min-w-0">
+                                                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                            <p class="text-sm font-black text-primary leading-6 break-words">
+                                                                شكل اللوجو في الفاتورة
+                                                            </p>
+                                                            <button type="button" @click="resetInvoiceLogoSettings(branch)" class="self-start sm:self-auto text-[10px] font-black text-slate-500 hover:text-primary bg-slate-100 hover:bg-slate-200 rounded-lg px-3 py-1.5 transition-all whitespace-nowrap">إعادة ضبط</button>
+                                                        </div>
+
+                                                        <div class="space-y-4">
+                                                            <label class="block space-y-2 min-w-0">
+                                                                <span class="flex items-center justify-between gap-3 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+                                                                    <span>حجم اللوجو</span>
+                                                                    <span class="text-primary shrink-0" x-text="getInvoiceLogoHeight(branch) + 'px'"></span>
+                                                                </span>
+                                                                <input type="range" min="60" max="260" step="5" x-model.number="branch.invoice_logo_height" class="w-full accent-primary">
+                                                            </label>
+
+                                                            <label class="block space-y-2 min-w-0">
+                                                                <span class="flex items-center justify-between gap-3 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+                                                                    <span>المسافة قبل النص</span>
+                                                                    <span class="text-primary shrink-0" x-text="getInvoiceLogoSpacing(branch) + 'px'"></span>
+                                                                </span>
+                                                                <input type="range" min="-60" max="60" step="2" x-model.number="branch.invoice_logo_spacing" class="w-full accent-primary">
+                                                            </label>
+
+                                                            <label class="block min-w-0">
+                                                                <span class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1 pr-1">درجة لون اللوجو</span>
+                                                                <select x-model="branch.invoice_logo_filter" :disabled="!branch.invoice_logo_bg_enabled" class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2 px-3 text-xs font-bold focus:ring-2 focus:ring-primary/10 disabled:opacity-50 disabled:bg-slate-100">
+                                                                    <template x-for="option in logoFilterOptions" :key="option.value">
+                                                                        <option :value="option.value" x-text="option.label"></option>
+                                                                    </template>
+                                                                </select>
+                                                            </label>
+
+                                                            <label class="flex items-start gap-3 bg-slate-50 border-2 border-slate-200 rounded-xl px-3 py-3 cursor-pointer min-w-0">
+                                                                <input type="checkbox" x-model="branch.invoice_logo_bg_enabled" class="w-4 h-4 mt-0.5 rounded border-slate-300 text-primary focus:ring-primary shrink-0">
+                                                                <span class="text-xs font-black text-slate-700 leading-6 whitespace-normal break-words min-w-0">تعديل لون اللوجو تلقائيا أبيض وأسود</span>
+                                                            </label>
+                                                        </div>
+                                                    </div>
+
+                                                    <div class="bg-white border-2 border-slate-900 p-4 text-center shadow-sm min-w-0 overflow-hidden">
+                                                        <div x-show="branch.logo_url" :style="invoiceLogoFrameStyle(branch)" class="mx-auto flex items-center justify-center overflow-hidden transition-all">
+                                                            <img :src="branch.logo_url" :style="invoiceLogoStyle(branch)" class="mx-auto w-auto max-w-full object-contain block transition-all">
+                                                        </div>
+                                                        <div x-show="!branch.logo_url" class="h-24 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-slate-300 mb-3">
+                                                            <span class="material-symbols-outlined">image</span>
+                                                        </div>
+                                                        <p class="text-xs text-black font-black uppercase">فاتورة بيع</p>
+                                                        <div class="mt-3 text-[10px] text-black font-bold space-y-1">
+                                                            <p x-text="branch.location || settings.store_address || 'عنوان الفرع'"></p>
+                                                            <p x-text="'للتواصل: ' + (branch.phone || settings.store_phone || '01000000000')"></p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+
+
+                        <!-- إعدادات الحساب (اسم المستخدم وكلمة المرور) -->
+                        <div x-show="user && user.role === 'admin'" class="bg-white p-10 rounded-[3rem] border-2 border-slate-300 shadow-premium">
+                            <h3 class="text-lg font-extrabold text-primary mb-8 flex items-center gap-3">
+                                <span class="material-symbols-outlined text-accent">manage_accounts</span> إعدادات الحساب (المدير)
+                            </h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">اسم المستخدم الحالي</label>
+                                    <input type="text" x-model="account.username" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">كلمة مرور جديدة (اتركها فارغة للمحافظة عليها)</label>
+                                    <input type="password" x-model="account.password" placeholder="********" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all text-right">
+                                </div>
+                                <div class="md:col-span-2 flex justify-end">
+                                    <button @click="saveAccountSettings()" class="px-6 py-2.5 bg-accent text-white rounded-xl text-xs font-extrabold hover:bg-red-600 transition-all shadow-lg shadow-accent/20 flex items-center gap-2">
+                                        <span class="material-symbols-outlined text-lg">lock_reset</span> تحديث بيانات الدخول
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- إنشاء حساب للفرع -->
+                        <div x-show="user && user.role === 'admin'" class="bg-white p-10 rounded-[3rem] border-2 border-slate-300 shadow-premium">
+                            <h3 class="text-lg font-extrabold text-primary mb-8 flex items-center gap-3">
+                                <span class="material-symbols-outlined text-accent">group_add</span> إنشاء حساب للفرع
+                            </h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">اسم المستخدم</label>
+                                    <input type="text" x-model="branchAccount.username" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">كلمة المرور</label>
+                                    <input type="password" x-model="branchAccount.password" placeholder="********" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all text-right">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الفرع المرتبط</label>
+                                    <select x-model="branchAccount.branch_id" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                        <option value="">اختر الفرع...</option>
+                                        <template x-for="b in branches" :key="b.id">
+                                            <option :value="b.id" x-text="b.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="flex items-start gap-3 cursor-pointer bg-emerald-50 p-4 rounded-2xl border-2 border-emerald-100 hover:border-emerald-300 transition-all">
+                                        <input type="checkbox" :checked="hasFullInventoryAccess()" @change="toggleFullInventoryAccess($event.target.checked)" class="mt-1 w-5 h-5 rounded border-2 border-emerald-700 text-success focus:ring-success">
+                                        <span>
+                                            <span class="block text-sm font-extrabold text-primary">صلاحيات المخزون كاملة مثل المدير</span>
+                                            <span class="block text-[11px] font-bold text-slate-500 mt-1">تفعيلها يفتح إدارة المخزون والموردين ومخزون التأجير والهالك بكل إمكانيات المدير لهذا الحساب.</span>
+                                        </span>
+                                    </label>
+                                </div>
+                                <div class="md:col-span-2" x-show="hasFullInventoryAccess()" x-transition>
+                                    <label class="flex items-start gap-3 cursor-pointer bg-blue-50 p-4 rounded-2xl border-2 border-blue-100 hover:border-blue-300 transition-all">
+                                        <input type="checkbox" :checked="canViewAllInventoryBranches()" @change="toggleInventoryAllBranchesAccess($event.target.checked)" class="mt-1 w-5 h-5 rounded border-2 border-blue-700 text-blue-600 focus:ring-blue-600">
+                                        <span>
+                                            <span class="block text-sm font-extrabold text-primary">مشاهدة مخزون كل الفروع</span>
+                                            <span class="block text-[11px] font-bold text-slate-500 mt-1">لو غير مفعلة، الحساب هيدير المخزون بصلاحيات كاملة لكن هيشوف مخزون فرعه فقط.</span>
+                                        </span>
+                                    </label>
+                                </div>
+                            </div>
+                            <!-- اختيار الصفحات المسموحة -->
+                            <div class="mt-6 border-t border-outline pt-4">
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-3">الصفحات المسموح بظهورها لهذا الحساب</label>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <template x-for="page in availablePages" :key="page.id">
+                                        <label class="flex items-center gap-2 cursor-pointer bg-slate-50 p-3 rounded-xl border-2 border-slate-200 hover:border-primary/30 transition-all">
+                                            <input type="checkbox" :value="page.id" x-model="branchAccount.permissions" class="w-4 h-4 rounded border-2 border-black text-primary focus:ring-primary">
+                                            <span class="text-xs font-bold text-slate-700" x-text="page.name"></span>
+                                        </label>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="mt-8 flex justify-end gap-3">
+                                <template x-if="editingUserId">
+                                    <button @click="cancelEditBranchAccount()" class="px-6 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-extrabold hover:bg-slate-200 transition-all flex items-center gap-2">
+                                        إلغاء التعديل
+                                    </button>
+                                </template>
+                                <button @click="saveBranchAccount()" class="px-6 py-2.5 bg-success text-white rounded-xl text-xs font-extrabold hover:bg-green-600 transition-all shadow-lg shadow-success/20 flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-lg" x-text="editingUserId ? 'save' : 'person_add'"></span> 
+                                    <span x-text="editingUserId ? 'حفظ التعديلات' : 'إنشاء الحساب'"></span>
+                                </button>
+                            </div>
+
+                            <!-- سجل حسابات الفروع -->
+                            <div class="mt-12 border-t-2 border-dashed border-slate-200 pt-8" x-show="branchUsers.length > 0">
+                                <h4 class="text-sm font-extrabold text-slate-600 mb-4 flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-lg">list_alt</span> سجل حسابات الفروع
+                                </h4>
+                                <div class="overflow-x-auto bg-slate-50 rounded-2xl border-2 border-slate-200">
+                                    <table class="w-full text-right whitespace-nowrap">
+                                        <thead>
+                                            <tr class="bg-slate-200/50 text-slate-500 text-[10px] font-black uppercase tracking-widest">
+                                                <th class="py-3 px-4">اسم المستخدم</th>
+                                                <th class="py-3 px-4">الفرع</th>
+                                                <th class="py-3 px-4 text-center">إجراءات</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-200">
+                                            <template x-for="bUser in branchUsers" :key="bUser.id">
+                                                <tr class="hover:bg-white transition-colors">
+                                                    <td class="py-3 px-4 text-sm font-bold text-primary" x-text="bUser.username"></td>
+                                                    <td class="py-3 px-4 text-xs font-bold text-slate-600" x-text="getBranchName(bUser.branch_id)"></td>
+                                                    <td class="py-3 px-4 text-center">
+                                                        <div class="flex items-center justify-center gap-2">
+                                                            <button @click="editBranchAccount(bUser)" class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-colors" title="تعديل">
+                                                                <span class="material-symbols-outlined text-sm">edit</span>
+                                                            </button>
+                                                            <button @click="deleteBranchAccount(bUser.id)" class="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center hover:bg-red-100 transition-colors" title="حذف">
+                                                                <span class="material-symbols-outlined text-sm">delete</span>
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- النسخ الاحتياطي والاسترجاع -->
+                        <div x-show="user && user.role === 'admin'" class="bg-white p-10 rounded-[3rem] border-2 border-slate-300 shadow-premium">
+                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6 mb-8">
+                                <div>
+                                    <h3 class="text-lg font-extrabold text-primary flex items-center gap-3">
+                                        <span class="material-symbols-outlined text-success">backup</span> النسخ الاحتياطي والاسترجاع
+                                    </h3>
+                                    <p class="text-xs font-bold text-slate-400 mt-2">اختر البيانات المطلوبة أو احفظ نسخة كاملة من النظام.</p>
+                                </div>
+                                <button type="button" @click="backupAll = !backupAll; syncBackupSelection()" class="px-4 py-2 rounded-xl text-xs font-black border-2 transition-all"
+                                        :class="backupAll ? 'bg-primary text-white border-primary' : 'bg-white text-slate-500 border-slate-200 hover:border-primary'">
+                                    <span x-text="backupAll ? 'كل البيانات محددة' : 'تحديد كل البيانات'"></span>
+                                </button>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
+                                <template x-for="group in backupGroups" :key="group.id">
+                                    <label class="flex items-start gap-3 cursor-pointer bg-slate-50 border-2 rounded-2xl p-4 transition-all"
+                                           :class="selectedBackupGroups.includes(group.id) ? 'border-primary bg-primary/5' : 'border-slate-200 hover:border-slate-300'">
+                                        <input type="checkbox" :value="group.id" x-model="selectedBackupGroups" @change="updateBackupAll()" class="mt-1 w-5 h-5 rounded border-2 border-slate-300 text-primary focus:ring-primary">
+                                        <span>
+                                            <span class="block text-sm font-black text-primary" x-text="group.label"></span>
+                                            <span class="block text-[10px] font-bold text-slate-400 mt-1" x-text="group.tables.join(', ')"></span>
+                                        </span>
+                                    </label>
+                                </template>
+                            </div>
+
+                            <div class="bg-slate-50 border border-slate-200 rounded-3xl p-6 space-y-6">
+                                <div>
+                                    <div class="flex items-center gap-3 mb-4">
+                                        <span class="material-symbols-outlined text-success">download</span>
+                                        <div>
+                                            <p class="text-sm font-black text-primary">إنشاء نسخة احتياطية</p>
+                                            <p class="text-[10px] font-bold text-slate-400">سيتم تنزيل ملف JSON يحتوي على البيانات المحددة.</p>
+                                        </div>
+                                    </div>
+                                    <button type="button" @click="downloadBackup()" :disabled="isBackupBusy || selectedBackupGroups.length === 0" class="w-full py-4 bg-success text-white rounded-2xl text-sm font-extrabold hover:bg-green-600 transition-all shadow-xl shadow-success/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                                        <span class="material-symbols-outlined text-lg" :class="isBackupBusy ? 'animate-spin' : ''" x-text="isBackupBusy ? 'progress_activity' : 'download'"></span>
+                                        <span x-text="isBackupBusy ? 'جاري إنشاء النسخة...' : 'تنزيل النسخة الاحتياطية'"></span>
+                                    </button>
+                                </div>
+
+                                <div class="border-t border-slate-200 pt-6">
+                                    <div class="flex items-center gap-3 mb-4">
+                                        <span class="material-symbols-outlined text-warning">restore</span>
+                                        <div>
+                                            <p class="text-sm font-black text-primary">استرجاع نسخة احتياطية</p>
+                                            <p class="text-[10px] font-bold text-slate-500">اختر ملف النسخة ثم اضغط استرجاع. الاسترجاع متاح للأدمن فقط.</p>
+                                        </div>
+                                    </div>
+                                    <input type="file" x-ref="backupRestoreInput" accept="application/json,.json" @change="handleRestoreFile($event)" class="hidden">
+                                    <button type="button" @click="$refs.backupRestoreInput.click()" class="w-full py-3 bg-white text-slate-700 rounded-2xl text-xs font-black border-2 border-amber-200 hover:border-amber-300 transition-all flex items-center justify-center gap-2 mb-3">
+                                        <span class="material-symbols-outlined text-lg">upload_file</span>
+                                        <span x-text="restoreFileName || 'اختيار ملف النسخة'"></span>
+                                    </button>
+                                    <label class="flex items-start gap-3 bg-white/70 border border-amber-200 rounded-2xl p-3 mb-3" :class="backupAll ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'">
+                                        <input type="checkbox" x-model="restoreReplaceAll" :disabled="!backupAll" class="mt-1 w-5 h-5 rounded border-2 border-amber-300 text-warning focus:ring-warning disabled:cursor-not-allowed">
+                                        <span>
+                                            <span class="block text-xs font-black text-amber-700">استبدال كامل للجداول المختارة</span>
+                                            <span class="block text-[10px] font-bold text-slate-500 mt-1">متاح عند اختيار كل البيانات فقط. غير مفعلة = تحديث وإضافة فقط.</span>
+                                        </span>
+                                    </label>
+                                    <button type="button" @click="restoreBackup()" :disabled="isRestoreBusy || !backupRestoreData || selectedBackupGroups.length === 0" class="w-full py-4 bg-warning text-white rounded-2xl text-sm font-extrabold hover:bg-amber-600 transition-all shadow-xl shadow-warning/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                                        <span class="material-symbols-outlined text-lg" :class="isRestoreBusy ? 'animate-spin' : ''" x-text="isRestoreBusy ? 'progress_activity' : 'restore'"></span>
+                                        <span x-text="isRestoreBusy ? 'جاري الاسترجاع...' : 'استرجاع البيانات المحددة'"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- منطقة الخطر -->
+                        <div x-show="user && user.role === 'admin'" class="bg-red-50 p-10 rounded-[3rem] border-2 border-red-200 shadow-premium">
+                            <h3 class="text-lg font-extrabold text-red-600 mb-8 flex items-center gap-3">
+                                <span class="material-symbols-outlined text-red-600">warning</span> منطقة الخطر (إجراءات حساسة)
+                            </h3>
+                            <div class="p-6 bg-white rounded-2xl border border-red-100">
+                                <div class="flex items-center justify-between gap-6">
+                                    <div>
+                                        <p class="text-sm font-extrabold text-red-600">مسح كافة بيانات النظام</p>
+                                        <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">هذا الإجراء سيقوم بحذف كل (المبيعات، المخزون، الموردين، الموظفين، والمصاريف) نهائياً. لا يمكن التراجع!</p>
+                                    </div>
+                                    <button @click="openWipeModal()" class="px-6 py-3 bg-red-600 text-white rounded-xl text-xs font-black hover:bg-red-700 transition-all shadow-lg shadow-red-200 flex items-center gap-2">
+                                        <span class="material-symbols-outlined text-lg">delete_forever</span> مسح كل البيانات
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Modal إضافة فرع -->
+            <div x-show="showAddBranchModal" x-cloak class="fixed inset-0 z-[100] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+                <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div x-show="showAddBranchModal" @click="showAddBranchModal = false" x-transition:enter="ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" aria-hidden="true"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                    <div x-show="showAddBranchModal" x-transition:enter="ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100" x-transition:leave="ease-in duration-200" x-transition:leave-start="opacity-100 translate-y-0 sm:scale-100" x-transition:leave-end="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full p-10">
+                        <div class="mb-8">
+                            <h3 class="text-2xl font-extrabold text-primary" id="modal-title">إضافة فرع جديد</h3>
+                        </div>
+                        <div class="grid grid-cols-1 gap-6">
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">اسم الفرع</label>
+                                <input x-model="newBranch.name" type="text" placeholder="مثال: فرع محطة الرمل" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all">
+                            </div>
+
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">تخصص الفرع</label>
+                                <select x-model="newBranch.allowed_gender" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-bold text-slate-700">
+                                    <option value="both">مشترك (رجالي وحريمي)</option>
+                                    <option value="men">رجالي فقط</option>
+                                    <option value="women">حريمي فقط</option>
+                                </select>
+                            </div>
+
+
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 pr-2">لوجو الفرع</label>
+                                <div class="flex flex-col gap-3">
+                                    <div class="flex items-center gap-4">
+                                        <!-- مساحة المعاينة -->
+                                        <div class="w-16 h-16 rounded-2xl border-2 border-dashed border-slate-300 flex items-center justify-center overflow-hidden bg-slate-50 shrink-0 shadow-sm">
+                                            <template x-if="newBranch.logo_url">
+                                                <img :src="newBranch.logo_url" class="w-full h-full object-cover">
+                                            </template>
+                                            <template x-if="!newBranch.logo_url">
+                                                <span class="material-symbols-outlined text-slate-300 text-2xl">image</span>
+                                            </template>
+                                        </div>
+                                        <!-- أزرار الرفع -->
+                                        <div class="flex-1">
+                                            <input type="file" accept="image/*" @change="uploadNewBranchLogo($event)" class="hidden" id="new-branch-logo-input">
+                                            <label for="new-branch-logo-input" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-2">
+                                                <span class="material-symbols-outlined text-sm">cloud_upload</span> رفع صورة مخصصة
+                                            </label>
+                                            <button type="button" x-show="newBranch.logo_url" @click="newBranch.logo_url = ''" class="px-3 py-2 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl text-xs font-bold transition-all mr-2">إلغاء</button>
+                                        </div>
+                                    </div>
+                                    <!-- اللوجوهات الجاهزة في النظام -->
+                                    <div class="bg-slate-50 p-3 rounded-2xl border border-slate-200 flex flex-col gap-2">
+                                        <span class="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest pr-1">شعار جاهز من النظام:</span>
+                                        <div class="flex flex-wrap md:flex-nowrap gap-2">
+                                            <button type="button" @click="setNewBranchLogo('/logos/men.png')" 
+                                                    class="flex-1 px-4 py-2.5 rounded-xl text-xs font-bold border-2 transition-all flex items-center justify-center gap-2 shadow-sm whitespace-nowrap"
+                                                    :class="newBranch.logo_url === '/logos/men.png' ? 'border-primary bg-primary text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'">
+                                                <span class="material-symbols-outlined text-sm">man</span> الشعار الرجالي
+                                            </button>
+                                            <button type="button" @click="setNewBranchLogo('/logos/women.png')" 
+                                                    class="flex-1 px-4 py-2.5 rounded-xl text-xs font-bold border-2 transition-all flex items-center justify-center gap-2 shadow-sm whitespace-nowrap"
+                                                    :class="newBranch.logo_url === '/logos/women.png' ? 'border-primary bg-primary text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'">
+                                                <span class="material-symbols-outlined text-sm">woman</span> الشعار الحريمي
+                                            </button>
+                                            <button type="button" @click="setNewBranchLogo('/logos/Antalya logo.png')" 
+                                                    class="flex-1 px-4 py-2.5 rounded-xl text-xs font-bold border-2 transition-all flex items-center justify-center gap-2 shadow-sm whitespace-nowrap"
+                                                    :class="newBranch.logo_url === '/logos/Antalya logo.png' ? 'border-primary bg-primary text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'">
+                                                <span class="material-symbols-outlined text-sm">apparel</span> شعار أنتاليا
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_180px] gap-4 bg-white border-2 border-slate-200 rounded-2xl p-4">
+                                        <div class="space-y-3">
+                                            <p class="text-xs font-black text-primary flex items-center gap-2">
+                                                <span class="material-symbols-outlined text-sm text-accent">receipt_long</span>
+                                                معاينة اللوجو على الفاتورة
+                                            </p>
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <label class="space-y-1">
+                                                    <span class="flex items-center justify-between text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+                                                        <span>الحجم</span>
+                                                        <span class="text-primary" x-text="getInvoiceLogoHeight(newBranch) + 'px'"></span>
+                                                    </span>
+                                                    <input type="range" min="60" max="260" step="5" x-model.number="newBranch.invoice_logo_height" class="w-full accent-primary">
+                                                </label>
+                                                <label class="space-y-1">
+                                                    <span class="flex items-center justify-between text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+                                                        <span>المسافة</span>
+                                                        <span class="text-primary" x-text="getInvoiceLogoSpacing(newBranch) + 'px'"></span>
+                                                    </span>
+                                                    <input type="range" min="-60" max="60" step="2" x-model.number="newBranch.invoice_logo_spacing" class="w-full accent-primary">
+                                                </label>
+                                            </div>
+                                            <select x-model="newBranch.invoice_logo_filter" :disabled="!newBranch.invoice_logo_bg_enabled" class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2 px-3 text-xs font-bold focus:ring-2 focus:ring-primary/10 disabled:opacity-50 disabled:bg-slate-100">
+                                                <template x-for="option in logoFilterOptions" :key="option.value">
+                                                    <option :value="option.value" x-text="option.label"></option>
+                                                </template>
+                                            </select>
+                                            <label class="flex items-center gap-3 bg-slate-50 border-2 border-slate-200 rounded-xl px-3 py-2 cursor-pointer">
+                                                <input type="checkbox" x-model="newBranch.invoice_logo_bg_enabled" class="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary">
+                                                <span class="text-xs font-black text-slate-700">تعديل لون اللوجو تلقائيا أبيض وأسود</span>
+                                            </label>
+                                        </div>
+                                        <div class="bg-white border-2 border-slate-900 p-3 text-center shadow-sm">
+                                            <div x-show="newBranch.logo_url" :style="invoiceLogoFrameStyle(newBranch)" class="mx-auto flex items-center justify-center overflow-hidden transition-all">
+                                                <img :src="newBranch.logo_url" :style="invoiceLogoStyle(newBranch)" class="mx-auto w-auto max-w-full object-contain block transition-all">
+                                            </div>
+                                            <div x-show="!newBranch.logo_url" class="h-20 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-slate-300 mb-3">
+                                                <span class="material-symbols-outlined">image</span>
+                                            </div>
+                                            <p class="text-[11px] text-black font-black uppercase">فاتورة بيع</p>
+                                            <p class="mt-2 text-[9px] text-black font-bold" x-text="newBranch.location || 'عنوان الفرع'"></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                        <div class="mt-10 flex gap-3">
+                            <button @click="addBranch()" class="flex-1 py-4 bg-primary text-white rounded-2xl text-sm font-extrabold hover:bg-slate-800 transition-all shadow-xl shadow-primary/20">حفظ الفرع</button>
+                            <button @click="showAddBranchModal = false" class="px-8 py-4 bg-slate-100 text-slate-400 rounded-2xl text-sm font-extrabold hover:bg-slate-200 transition-all">إلغاء</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Modal مسح البيانات (منطقة الخطر) -->
+            <div x-show="showWipeModal" x-cloak class="fixed inset-0 z-[150] overflow-y-auto" role="dialog" aria-modal="true">
+                <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div @click="showWipeModal = false" x-transition:enter="ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="fixed inset-0 bg-red-900/40 backdrop-blur-md transition-opacity"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div x-transition:enter="ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100" class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-xl sm:w-full p-10 border-4 border-red-500/20">
+                        <div class="mb-6 text-center">
+                            <div class="w-20 h-20 bg-red-100 text-red-600 rounded-3xl flex items-center justify-center mx-auto mb-6 animate-pulse">
+                                <span class="material-symbols-outlined text-5xl">warning</span>
+                            </div>
+                            <h3 class="text-2xl font-black text-red-600 mb-2">تأكيد الحذف النهائي</h3>
+                            <p class="text-sm font-bold text-slate-400">أنت على وشك مسح كافة بيانات النظام نهائياً. هذا الإجراء لا يمكن الرجوع عنه أبداً.</p>
+                        </div>
+                        
+                        <div class="space-y-6">
+                            <div class="bg-red-50 p-6 rounded-2xl border border-red-100">
+                                <label class="block text-[11px] font-black text-red-600 uppercase tracking-widest mb-3 pr-2">أكتب كلمة "مسح" للتأكيد</label>
+                                <input x-model="wipeData.confirmWord" type="text" placeholder='كلمة "مسح"...' class="w-full bg-white border-2 border-red-200 rounded-xl py-3 px-4 text-sm font-bold focus:ring-4 focus:ring-red-500/10 focus:border-red-500 transition-all text-center">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3 pr-2">كلمة مرور المدير</label>
+                                <input x-model="wipeData.password" type="password" placeholder="********" class="w-full bg-white border-2 border-slate-200 rounded-xl py-3 px-4 text-sm font-bold focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all text-center">
+                            </div>
+
+                            <label class="flex items-start gap-3 cursor-pointer bg-slate-50 p-4 rounded-2xl border-2 border-slate-200 hover:border-red-300 transition-all">
+                                <input type="checkbox" x-model="wipeData.fullWipe" class="mt-1 w-5 h-5 rounded border-2 border-red-300 text-red-600 focus:ring-red-500">
+                                <span>
+                                    <span class="block text-sm font-black text-red-600">مسح شامل لكل النظام</span>
+                                    <span class="block text-[11px] font-bold text-slate-500 mt-1">لو غير مفعلة، سيتم الحفاظ على إعدادات الفواتير والفروع والاتصال وحسابات الفروع. لو مفعلة، سيتم مسح كل شيء ما عدا حساب الأدمن الرئيسي.</span>
+                                </span>
+                            </label>
+                        </div>
+                        
+                        <div class="mt-10 flex gap-3">
+                            <button @click="executeWipe()" :disabled="wipeData.confirmWord !== 'مسح' || !wipeData.password" class="flex-[2] py-4 bg-red-600 text-white rounded-2xl text-sm font-black hover:bg-red-700 transition-all shadow-xl shadow-red-600/30 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed">تأكيد المسح النهائي</button>
+                            <button @click="showWipeModal = false" class="flex-1 py-4 bg-slate-100 text-slate-400 rounded-2xl text-sm font-extrabold hover:bg-slate-200 transition-all">إلغاء</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alpine.js -->
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('settingsApp', () => ({
+                sidebarExpanded: false,
+                sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                mobileMenuOpen: false,
+                darkMode: false,
+                user: window.currentUser || null,
+                settings: {
+                    tax_rate: 0,
+                    store_name: 'Bebyoon Center',
+                    store_email: '',
+                    store_phone: '',
+                    store_address: '',
+                    show_email: 'true',
+                    show_phone: 'true',
+                    show_address: 'true',
+                    cashier_footer: 'شكراً لزيارتكم',
+                    rental_footer: 'شكراً لزيارتكم',
+                    salary_password: '123',
+                    invoice_edit_password: '123456'
+                },
+                branches: [],
+                showAddBranchModal: false,
+                newBranch: {
+                    name: '',
+                    type: 'men',
+                    phone: '',
+                    location: '',
+                    is_main_warehouse: false,
+                    logo_url: '',
+                    invoice_logo_height: 160,
+                    invoice_logo_spacing: 8,
+                    invoice_logo_filter: 'black',
+                    invoice_logo_bg_enabled: false,
+                    invoice_logo_bg_start: '#ffffff',
+                    invoice_logo_bg_end: '#ffffff',
+                    allowed_gender: 'both'
+                },
+                logoFilterOptions: [
+                    { value: 'black', label: 'أبيض وأسود' },
+                    { value: 'slate', label: 'رمادي داكن' },
+                    { value: 'gold', label: 'ذهبي' },
+                    { value: 'rose', label: 'وردي' },
+                    { value: 'teal', label: 'أخضر مزرق' },
+                    { value: 'blue', label: 'أزرق' },
+                    { value: 'white', label: 'أبيض' },
+                    { value: 'original', label: 'الأصل' }
+                ],
+                account: {
+                    username: '',
+                    password: ''
+                },
+                branchAccount: {
+                    username: '',
+                    password: '',
+                    branch_id: '',
+                    role: 'branch_user',
+                    permissions: ['index.html', 'Rentals.html', 'Barcodes.html', 'Customers.html', 'Suppliers.html', 'Alterations.html']
+                },
+                inventoryAdminPermission: 'inventory_admin',
+                inventoryAllBranchesPermission: 'inventory_view_all_branches',
+                inventoryAdminPages: ['Suppliers.html', 'RentalInventory.html', 'WornProducts.html', 'Barcodes.html'],
+                branchUsers: [],
+                editingUserId: null,
+                showWipeModal: false,
+                wipeData: { confirmWord: '', password: '', fullWipe: false },
+                backupGroups: [],
+                selectedBackupGroups: [],
+                backupAll: true,
+                isBackupBusy: false,
+                isRestoreBusy: false,
+                backupRestoreData: null,
+                restoreFileName: '',
+                restoreReplaceAll: false,
+                availablePages: [
+                    { id: 'index.html', name: 'الكاشير' },
+                    { id: 'Rentals.html', name: 'التأجير' },
+                    { id: 'Barcodes.html', name: 'طباعة الباركود' },
+                    { id: 'Customers.html', name: 'العملاء' },
+                    { id: 'Suppliers.html', name: 'إدارة المخزون' },
+                    { id: 'RentalInventory.html', name: 'مخزون التأجير' },
+                    { id: 'WornProducts.html', name: 'المنتجات المهترئة' },
+                    { id: 'Employees.html', name: 'الموظفين' },
+                    { id: 'Expenses.html', name: 'المصاريف' },
+                    { id: 'Reports.html', name: 'التقارير' },
+                    { id: 'Alterations.html', name: 'التعديلات والتفصيل' }
+                ],
+
+                async init() {
+                    try {
+                        const res = await fetch('/api/settings');
+                        const data = await res.json();
+                        Object.assign(this.settings, data);
+                        
+                        if (!window.currentUser) {
+                            const meRes = await fetch('/api/me');
+                            if (meRes.ok) {
+                                const data = await meRes.json();
+                                window.currentUser = data.user;
+                            }
+                        }
+                        this.user = window.currentUser;
+                        
+                        // Initialize account username
+                        if (this.user) {
+                            this.account.username = this.user.username;
+                        }
+
+                        // Fetch branches
+                        const branchRes = await fetch('/api/branches');
+                        if (branchRes.ok) {
+                            const branches = await branchRes.json();
+                            this.branches = branches.map(branch => this.normalizeBranchInvoiceLogoSettings(branch));
+                        }
+
+                        // Fetch branch users if admin
+                        if (this.user && this.user.role === 'admin') {
+                            this.fetchBranchUsers();
+                            this.fetchBackupGroups();
+                        }
+                    } catch (err) {
+                        console.error('Error fetching settings:', err);
+                    }
+                },
+
+                async fetchBackupGroups() {
+                    try {
+                        const res = await fetch('/api/backup/groups');
+                        if (!res.ok) return;
+                        this.backupGroups = await res.json();
+                        this.syncBackupSelection();
+                    } catch (err) {
+                        console.error('Error fetching backup groups:', err);
+                    }
+                },
+
+                syncBackupSelection() {
+                    if (this.backupAll) {
+                        this.selectedBackupGroups = this.backupGroups.map(group => group.id);
+                    } else if (this.selectedBackupGroups.length === this.backupGroups.length) {
+                        this.selectedBackupGroups = [];
+                    }
+                },
+
+                updateBackupAll() {
+                    this.backupAll = this.backupGroups.length > 0 && this.selectedBackupGroups.length === this.backupGroups.length;
+                    if (!this.backupAll) this.restoreReplaceAll = false;
+                },
+
+                backupGroupQuery() {
+                    return this.backupAll ? 'all' : this.selectedBackupGroups.join(',');
+                },
+
+                async downloadBackup() {
+                    if (this.user?.role !== 'admin') return alert('هذه الميزة متاحة للمدير فقط');
+                    if (this.selectedBackupGroups.length === 0) return alert('اختر مجموعة بيانات واحدة على الأقل');
+                    this.isBackupBusy = true;
+                    try {
+                        const res = await fetch(`/api/backup/export?groups=${encodeURIComponent(this.backupGroupQuery())}`);
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            throw new Error(err.error || 'فشل إنشاء النسخة الاحتياطية');
+                        }
+                        const blob = await res.blob();
+                        const disposition = res.headers.get('Content-Disposition') || '';
+                        const match = disposition.match(/filename="([^"]+)"/);
+                        const filename = match ? match[1] : `bebyoon-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = filename;
+                        link.dataset.routerIgnore = 'true';
+                        document.body.appendChild(link);
+                        link.click();
+                        setTimeout(() => {
+                            link.remove();
+                            URL.revokeObjectURL(url);
+                        }, 1000);
+                    } catch (err) {
+                        console.error('Backup failed:', err);
+                        alert(err.message || 'فشل إنشاء النسخة الاحتياطية');
+                    } finally {
+                        this.isBackupBusy = false;
+                    }
+                },
+
+                handleRestoreFile(event) {
+                    const file = event.target.files && event.target.files[0];
+                    this.backupRestoreData = null;
+                    this.restoreFileName = '';
+                    if (!file) return;
+                    this.restoreFileName = file.name;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        try {
+                            const parsed = JSON.parse(reader.result);
+                            if (!parsed.tables || typeof parsed.tables !== 'object') throw new Error('invalid');
+                            this.backupRestoreData = parsed;
+                            // reset input so same file can be re-selected after a successful restore
+                            event.target.value = '';
+                            if (Array.isArray(parsed.groups) && parsed.groups.length) {
+                                this.selectedBackupGroups = parsed.groups.filter(group => this.backupGroups.some(item => item.id === group));
+                                this.updateBackupAll();
+                            }
+                        } catch (err) {
+                            this.backupRestoreData = null;
+                            this.restoreFileName = '';
+                            event.target.value = '';
+                            alert('ملف النسخة الاحتياطية غير صالح');
+                        }
+                    };
+                    reader.readAsText(file, 'utf-8');
+                },
+
+                async restoreBackup() {
+                    if (this.user?.role !== 'admin') return alert('هذه الميزة متاحة للمدير فقط');
+                    if (!this.backupRestoreData) return alert('اختر ملف النسخة الاحتياطية أولاً');
+                    if (this.selectedBackupGroups.length === 0) return alert('اختر مجموعة بيانات واحدة على الأقل');
+                    const modeText = this.restoreReplaceAll ? 'استبدال كامل للجداول المختارة' : 'تحديث وإضافة البيانات فقط';
+                    if (!confirm(`سيتم استرجاع البيانات المحددة من ملف النسخة الاحتياطية (${modeText}). هل أنت متأكد؟`)) return;
+                    this.isRestoreBusy = true;
+                    try {
+                        const res = await fetch('/api/backup/restore', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                backup: this.backupRestoreData,
+                                groups: this.selectedBackupGroups,
+                                replace_all: this.restoreReplaceAll,
+                            })
+                        });
+                        const payload = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(payload.error || 'فشل استرجاع النسخة الاحتياطية');
+                        alert('تم استرجاع البيانات المحددة بنجاح');
+                        this.backupRestoreData = null;
+                        this.restoreFileName = '';
+                        if (this.$refs.backupRestoreInput) this.$refs.backupRestoreInput.value = '';
+                        await this.init();
+                    } catch (err) {
+                        console.error('Restore failed:', err);
+                        alert(err.message || 'فشل استرجاع النسخة الاحتياطية');
+                    } finally {
+                        this.isRestoreBusy = false;
+                    }
+                },
+
+                async saveSettings() {
+                    // إذا كان المستخدم فرعي، يتخطى تحققات المدير ويحفظ الفواتير فوراً
+                    if (this.user && this.user.role !== 'admin') {
+                        try {
+                            const res = await fetch('/api/settings', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(this.settings)
+                            });
+                            if (res.ok) alert('تم حفظ إعدادات الفواتير لفرعك بنجاح');
+                            else alert('فشل حفظ الإعدادات');
+                        } catch (err) { alert('حدث خطأ أثناء الاتصال بالخادم'); }
+                        return;
+                    }
+                    if (!this.settings.store_name || this.settings.store_name.trim() === '') {
+                        alert('برجاء إدخال اسم المتجر');
+                        return;
+                    }
+
+                    if (this.settings.tax_rate < 0 || this.settings.tax_rate > 100) {
+                        alert('برجاء إدخال نسبة ضريبة صحيحة بين 0 و 100');
+                        return;
+                    }
+
+                    // Validate branch phones
+                    for (const branch of this.branches) {
+                        const phones = this.getPhoneList(branch);
+                        for (const p of phones) {
+                            if (p && (p.length < 8 || p.length > 15)) {
+                                alert(`رقم الهاتف في فرع ${branch.name} غير صحيح، يجب أن يكون بين 8 و 15 رقم (${p})`);
+                                return;
+                            }
+                        }
+                    }
+
+                    this.settings.show_phone = 'true';
+
+                    try {
+                        const res = await fetch('/api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.settings)
+                        });
+                        
+                        // Save all branches (only for admin)
+                        if (this.user && this.user.role === 'admin') {
+                            for (const branch of this.branches) {
+                                this.normalizeBranchInvoiceLogoSettings(branch);
+                                const branchRes = await fetch(`/api/branches/${branch.id}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(branch)
+                                });
+                                if (!branchRes.ok) {
+                                    throw new Error(`فشل حفظ بيانات الفرع: ${branch.name || branch.id}`);
+                                }
+                            }
+                        }
+
+                        if (res.ok) {
+                            if (this.user && this.user.role === 'admin') {
+                                alert('تم حفظ كافة الإعدادات وبيانات الفروع بنجاح');
+                            } else {
+                                alert('تم حفظ إعدادات الفواتير لفرعك بنجاح');
+                            }
+                        } else {
+                            alert('فشل حفظ الإعدادات');
+                        }
+                    } catch (err) {
+                        console.error('Error saving settings:', err);
+                        alert('حدث خطأ أثناء الاتصال بالخادم');
+                    }
+                },
+
+                branchInvoiceLogoDefaults() {
+                    return {
+                        invoice_logo_height: 160,
+                        invoice_logo_spacing: 8,
+                        invoice_logo_filter: 'black',
+                        invoice_logo_bg_enabled: false,
+                        invoice_logo_bg_start: '#ffffff',
+                        invoice_logo_bg_end: '#ffffff'
+                    };
+                },
+
+                createNewBranchModel() {
+                    return {
+                        name: '',
+                        type: 'men',
+                        phone: '',
+                        location: '',
+                        is_main_warehouse: false,
+                        logo_url: '',
+                        ...this.branchInvoiceLogoDefaults()
+                    };
+                },
+
+                normalizeLogoColor(value, fallback = '#ffffff') {
+                    const color = String(value || '').trim();
+                    return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color) ? color : fallback;
+                },
+
+                normalizeBranchInvoiceLogoSettings(branch) {
+                    if (!branch) return branch;
+                    const defaults = this.branchInvoiceLogoDefaults();
+                    const height = Number.parseInt(branch.invoice_logo_height, 10);
+                    const spacing = Number.parseInt(branch.invoice_logo_spacing, 10);
+                    const validFilters = this.logoFilterOptions.map(option => option.value);
+                    branch.invoice_logo_height = Number.isFinite(height) ? Math.min(Math.max(height, 60), 260) : defaults.invoice_logo_height;
+                    branch.invoice_logo_spacing = Number.isFinite(spacing) ? Math.min(Math.max(spacing, -60), 60) : defaults.invoice_logo_spacing;
+                    branch.invoice_logo_filter = validFilters.includes(branch.invoice_logo_filter) ? branch.invoice_logo_filter : defaults.invoice_logo_filter;
+                    branch.invoice_logo_bg_enabled = branch.invoice_logo_bg_enabled === true || branch.invoice_logo_bg_enabled === 'true';
+                    branch.invoice_logo_bg_start = this.normalizeLogoColor(branch.invoice_logo_bg_start, defaults.invoice_logo_bg_start);
+                    branch.invoice_logo_bg_end = this.normalizeLogoColor(branch.invoice_logo_bg_end, defaults.invoice_logo_bg_end);
+                    if (!['both', 'men', 'women'].includes(branch.allowed_gender)) {
+                        branch.allowed_gender = 'both';
+                    }
+                    return branch;
+                },
+
+                resetInvoiceLogoSettings(branch) {
+                    Object.assign(branch, this.branchInvoiceLogoDefaults());
+                },
+
+                getInvoiceLogoHeight(branch) {
+                    const height = Number.parseInt(branch?.invoice_logo_height, 10);
+                    return Number.isFinite(height) ? Math.min(Math.max(height, 60), 260) : 160;
+                },
+
+                getInvoiceLogoSpacing(branch) {
+                    const spacing = Number.parseInt(branch?.invoice_logo_spacing, 10);
+                    return Number.isFinite(spacing) ? Math.min(Math.max(spacing, -60), 60) : 8;
+                },
+
+                invoiceLogoStyle(branch) {
+                    const shouldFilter = branch?.invoice_logo_bg_enabled === true || branch?.invoice_logo_bg_enabled === 'true';
+                    return {
+                        height: `${this.getInvoiceLogoHeight(branch)}px`,
+                        maxHeight: '260px',
+                        maxWidth: '100%',
+                        filter: shouldFilter ? (window.logoFilterValue ? window.logoFilterValue(branch?.invoice_logo_filter || 'black') : 'grayscale(1) contrast(1.2)') : 'none'
+                    };
+                },
+
+                invoiceLogoFrameStyle(branch) {
+                    return {
+                        width: '100%',
+                        maxWidth: '300px',
+                        minHeight: `${this.getInvoiceLogoHeight(branch)}px`,
+                        marginBottom: `${this.getInvoiceLogoSpacing(branch)}px`,
+                        padding: '0px',
+                        background: 'transparent',
+                        borderRadius: '0px'
+                    };
+                },
+                
+                getPhoneList(branch) {
+                    if (!branch.phone) return [''];
+                    const list = branch.phone.split(' / ').map(p => p.trim());
+                    return list.length > 0 ? list : [''];
+                },
+
+                addPhone(branch) {
+                    const list = this.getPhoneList(branch);
+                    list.push('');
+                    branch.phone = list.join(' / ');
+                },
+
+                removePhone(branch, index) {
+                    const list = this.getPhoneList(branch);
+                    list.splice(index, 1);
+                    branch.phone = list.join(' / ');
+                },
+
+                convertImageSourceToBlackLogo(source) {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onerror = () => reject(new Error('فشل تحميل الصورة'));
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = img.naturalWidth;
+                            canvas.height = img.naturalHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0);
+                            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                            const data = imageData.data;
+                            for (let i = 0; i < data.length; i += 4) {
+                                const isWhiteBackground = data[i] > 245 && data[i + 1] > 245 && data[i + 2] > 245;
+                                if (data[i + 3] < 10 || isWhiteBackground) {
+                                    data[i + 3] = 0;
+                                    continue;
+                                }
+                                data[i] = 0;
+                                data[i + 1] = 0;
+                                data[i + 2] = 0;
+                            }
+                            ctx.putImageData(imageData, 0, 0);
+                            resolve(canvas.toDataURL('image/png'));
+                        };
+                        img.src = source;
+                    });
+                },
+
+                convertImageFileToBlackLogo(file) {
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onerror = () => reject(new Error('فشل قراءة الصورة'));
+                        reader.onload = async (e) => {
+                            try {
+                                resolve(await this.convertImageSourceToBlackLogo(e.target.result));
+                            } catch (err) {
+                                reject(err);
+                            }
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                },
+
+                async setNewBranchLogo(src) {
+                    try {
+                        this.newBranch.logo_url = src;
+                    } catch (err) {
+                        alert(err.message || 'فشل تحميل الصورة');
+                    }
+                },
+
+                async setBranchLogo(branch, src) {
+                    try {
+                        branch.logo_url = src;
+                    } catch (err) {
+                        alert(err.message || 'فشل تحميل الصورة');
+                    }
+                },
+
+                async uploadNewBranchLogo(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    try {
+                        this.newBranch.logo_url = await this.readImageFile(file);
+                        event.target.value = '';
+                    } catch (err) {
+                        alert(err.message || 'فشل تحميل الصورة');
+                    }
+                },
+
+                async uploadBranchLogo(event, branch) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    try {
+                        branch.logo_url = await this.readImageFile(file);
+                        event.target.value = '';
+                    } catch (err) {
+                        alert(err.message || 'فشل تحميل الصورة');
+                    }
+                },
+
+                readImageFile(file) {
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onerror = () => reject(new Error('فشل قراءة الصورة'));
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.readAsDataURL(file);
+                    });
+                },
+
+                async addBranch() {
+                    if (!this.newBranch.name) { alert('اسم الفرع مطلوب'); return; }
+                    try {
+                        this.normalizeBranchInvoiceLogoSettings(this.newBranch);
+                        const res = await fetch('/api/branches', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newBranch)
+                        });
+                        if (res.ok) {
+                            const branch = await res.json();
+                            this.branches.push(this.normalizeBranchInvoiceLogoSettings(branch));
+                            this.showAddBranchModal = false;
+                            this.newBranch = this.createNewBranchModel();
+                            alert('تم إضافة الفرع بنجاح');
+                        } else {
+                            const data = await res.json();
+                            alert('فشل إضافة الفرع: ' + (data.error || 'خطأ غير معروف'));
+                        }
+                    } catch (err) {
+                        console.error('Error adding branch:', err);
+                        alert('حدث خطأ أثناء الاتصال بالخادم');
+                    }
+                },
+
+                async deleteBranch(id) {
+                    if (!confirm('هل أنت متأكد من حذف هذا الفرع؟ هذه العملية قد لا تنجح إذا كان الفرع مرتبطاً ببيانات أخرى.')) return;
+                    try {
+                        const res = await fetch(`/api/branches/${id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                            this.branches = this.branches.filter(b => b.id !== id);
+                            alert('تم حذف الفرع بنجاح');
+                        } else {
+                            const data = await res.json();
+                            alert('فشل الحذف: ' + (data.error || 'خطأ غير معروف'));
+                        }
+                    } catch (err) {
+                        console.error('Error deleting branch:', err);
+                        alert('حدث خطأ أثناء الاتصال بالخادم');
+                    }
+                },
+
+                updatePhone(branch, index, value) {
+                    // Only allow digits
+                    const numericValue = value.replace(/\D/g, '').substring(0, 11);
+                    const list = this.getPhoneList(branch);
+                    list[index] = numericValue;
+                    branch.phone = list.join(' / ');
+                    
+                    // Force input update if non-numeric chars were stripped
+                    if (value !== numericValue) {
+                        this.$nextTick(() => {
+                            const inputs = document.querySelectorAll(`input[value="${numericValue}"]`);
+                            inputs.forEach(input => {
+                                if (input.value !== numericValue) input.value = numericValue;
+                            });
+                        });
+                    }
+                },
+                
+                async saveAccountSettings() {
+                    if (!this.account.username || this.account.username.trim() === '') {
+                        alert('اسم المستخدم مطلوب');
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/api/users/me', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.account)
+                        });
+                        if (res.ok) {
+                            alert('تم تحديث بيانات الحساب بنجاح. سيتم تحديث الصفحة.');
+                            location.reload();
+                        } else {
+                            const data = await res.json();
+                            alert('فشل التحديث: ' + (data.error || 'خطأ غير معروف'));
+                        }
+                    } catch (err) {
+                        console.error('Error saving account settings:', err);
+                        alert('حدث خطأ أثناء الاتصال بالخادم');
+                    }
+                },
+
+                hasFullInventoryAccess() {
+                    return Array.isArray(this.branchAccount.permissions) && this.branchAccount.permissions.includes(this.inventoryAdminPermission);
+                },
+
+                canViewAllInventoryBranches() {
+                    return Array.isArray(this.branchAccount.permissions) && this.branchAccount.permissions.includes(this.inventoryAllBranchesPermission);
+                },
+
+                toggleFullInventoryAccess(enabled) {
+                    const permissions = Array.isArray(this.branchAccount.permissions) ? [...this.branchAccount.permissions] : [];
+                    if (enabled) {
+                        this.branchAccount.permissions = [...new Set([...permissions, ...this.inventoryAdminPages, this.inventoryAdminPermission])];
+                    } else {
+                        this.branchAccount.permissions = permissions.filter(permission => ![this.inventoryAdminPermission, this.inventoryAllBranchesPermission].includes(permission));
+                    }
+                },
+
+                toggleInventoryAllBranchesAccess(enabled) {
+                    const permissions = Array.isArray(this.branchAccount.permissions) ? [...this.branchAccount.permissions] : [];
+                    if (enabled) {
+                        this.branchAccount.permissions = [...new Set([...permissions, ...this.inventoryAdminPages, this.inventoryAdminPermission, this.inventoryAllBranchesPermission])];
+                    } else {
+                        this.branchAccount.permissions = permissions.filter(permission => permission !== this.inventoryAllBranchesPermission);
+                    }
+                },
+
+                getBranchAccountPermissions() {
+                    const permissions = Array.isArray(this.branchAccount.permissions) ? [...this.branchAccount.permissions] : [];
+                    if (!permissions.includes(this.inventoryAdminPermission)) {
+                        return permissions.filter(permission => ![this.inventoryAdminPermission, this.inventoryAllBranchesPermission].includes(permission));
+                    }
+                    return [...new Set([...permissions, ...this.inventoryAdminPages, this.inventoryAdminPermission])];
+                },
+
+                async saveBranchAccount() {
+                    if (!this.branchAccount.username || (!this.editingUserId && !this.branchAccount.password)) {
+                        alert(this.editingUserId ? 'اسم المستخدم مطلوب' : 'اسم المستخدم وكلمة المرور مطلوبان');
+                        return;
+                    }
+                    if (!this.branchAccount.branch_id) {
+                        alert('برجاء اختيار الفرع المرتبط');
+                        return;
+                    }
+                    try {
+                        const url = this.editingUserId ? `/api/users/branch/${this.editingUserId}` : '/api/users/branch';
+                        const method = this.editingUserId ? 'PUT' : 'POST';
+
+                        const res = await fetch(url, {
+                            method: method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                username: this.branchAccount.username,
+                                password: this.branchAccount.password,
+                                branch_id: this.branchAccount.branch_id,
+                                role: 'branch_user', // Always default to branch_user now
+                                permissions: this.getBranchAccountPermissions()
+                            })
+                        });
+                        if (res.ok) {
+                            alert(this.editingUserId ? 'تم تعديل الحساب بنجاح' : 'تم إنشاء الحساب بنجاح');
+                            this.cancelEditBranchAccount();
+                            this.fetchBranchUsers();
+                        } else {
+                            const data = await res.json();
+                            alert((this.editingUserId ? 'فشل التعديل: ' : 'فشل الإنشاء: ') + (data.error || 'خطأ غير معروف'));
+                        }
+                    } catch (err) {
+                        console.error('Error saving branch account:', err);
+                        alert('حدث خطأ أثناء الاتصال بالخادم');
+                    }
+                },
+
+                async fetchBranchUsers() {
+                    try {
+                        const res = await fetch('/api/users/branch');
+                        if (res.ok) {
+                            this.branchUsers = await res.json();
+                        }
+                    } catch (err) {
+                        console.error('Error fetching branch users:', err);
+                    }
+                },
+
+                getBranchName(id) {
+                    const b = this.branches.find(br => br.id == id);
+                    return b ? b.name : 'غير محدد';
+                },
+
+                editBranchAccount(user) {
+                    this.editingUserId = user.id;
+                    this.branchAccount = {
+                        username: user.username,
+                        password: '', // Leave empty unless changing
+                        branch_id: user.branch_id || '',
+                        role: 'branch_user',
+                        permissions: typeof user.permissions === 'string' ? JSON.parse(user.permissions) : (user.permissions || [])
+                    };
+                },
+
+                cancelEditBranchAccount() {
+                    this.editingUserId = null;
+                    this.branchAccount = {
+                        username: '',
+                        password: '',
+                        branch_id: '',
+                        role: 'branch_user',
+                        permissions: ['Dashboard.html', 'index.html', 'Rentals.html', 'Barcodes.html', 'Customers.html', 'Suppliers.html', 'Alterations.html']
+                    };
+                },
+
+                async deleteBranchAccount(id) {
+                    if (!confirm('هل أنت متأكد من حذف هذا الحساب نهائياً؟')) return;
+                    try {
+                        const res = await fetch(`/api/users/branch/${id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                            this.fetchBranchUsers();
+                        } else {
+                            const data = await res.json();
+                            alert('فشل الحذف: ' + (data.error || 'خطأ غير معروف'));
+                        }
+                    } catch (err) {
+                        console.error('Error deleting branch user:', err);
+                    }
+                },
+
+                openWipeModal() {
+                    if (this.user && this.user.role !== 'admin') {
+                        alert('عفواً، هذا الإجراء متاح للمدير فقط');
+                        return;
+                    }
+                    this.wipeData = { confirmWord: '', password: '', fullWipe: false };
+                    this.showWipeModal = true;
+                },
+
+                async executeWipe() {
+                    if (this.wipeData.confirmWord !== 'مسح') {
+                        alert('برجاء كتابة كلمة "مسح" بشكل صحيح');
+                        return;
+                    }
+                    if (!this.wipeData.password) {
+                        alert('كلمة المرور مطلوبة');
+                        return;
+                    }
+
+                    try {
+                        const res = await fetch('/api/reset', { 
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ password: this.wipeData.password, full_wipe: !!this.wipeData.fullWipe })
+                        });
+                        
+                        if (res.ok) {
+                            localStorage.clear();
+                            alert('تم مسح جميع البيانات بنجاح. سيتم إعادة تشغيل النظام.');
+                            window.location.href = 'Dashboard.html';
+                        } else {
+                            const errData = await res.json().catch(() => ({}));
+                            alert('فشل المسح (كود الخطأ: ' + res.status + '): ' + (errData.error || 'خطأ غير معروف'));
+                        }
+                    } catch (err) {
+                        console.error('Fetch error:', err);
+                        alert('حدث خطأ أثناء محاولة الاتصال بالخادم. التفاصيل: ' + err.message);
+                    } finally {
+                        this.showWipeModal = false;
+                    }
+                }
+            }));
+        });
+    </script>
+</body>
+</html>

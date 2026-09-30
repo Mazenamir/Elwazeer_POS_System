@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - إدارة المصروفات</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link href="assets/material-symbols.css" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: {
+                        'DEFAULT': '0.75rem',
+                        'lg': '1rem',
+                        'xl': '1.5rem',
+                        '2xl': '2rem',
+                        '3xl': '2.5rem',
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    },
+                    boxShadow: {
+                        'premium': '0 10px 40px -10px rgba(0,0,0,0.05)',
+                        'premium-hover': '0 20px 50px -12px rgba(0,0,0,0.08)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        [x-cloak] { display: none !important; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+        body { font-family: 'Cairo', sans-serif; background-color: #F8FAFC; }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <script src="auth.js"></script>
+</head>
+
+<body class="text-on-surface antialiased overflow-x-hidden" x-data="expenseApp()" x-init="initData()">
+    
+    <div class="flex min-h-screen">
+        <!-- Mobile Sidebar Backdrop -->
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <!-- القائمة الجانبية (Sidebar) -->
+        <aside 
+            @mouseenter="sidebarExpanded = true" 
+            @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'" class="w-full h-full object-contain transition-transform duration-300" :class="(window.getLogoPath(user?.branch_id, branches) || '').includes('women') ? 'scale-[1.35]' : ''" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)" 
+                        class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm" :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">point_of_sale</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">styler</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">architecture</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">group</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'" x-text="(user && user.role === 'admin') ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">auto_delete</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">badge</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">bar_chart</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">barcode_scanner</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">settings</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()" class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">logout</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+</aside>
+
+        <!-- منطقة المحتوى الرئيسية -->
+        <div class="flex-1 flex flex-col min-w-0">
+            <!-- الهيدر (Header) -->
+            <header class="h-20 bg-white/70 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 flex-1">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <h2 class="text-lg md:text-xl font-extrabold text-primary">إدارة المصروفات التشغيلية</h2>
+                </div>
+                
+                <div class="flex items-center gap-2 md:gap-4">
+                    <button @click="resetForm(); showAddModal = true" class="px-3 md:px-5 py-2.5 rounded-xl bg-accent text-white text-sm font-bold hover:bg-red-600 transition-all shadow-lg flex items-center gap-2">
+                        <span class="material-symbols-outlined text-lg">add_circle</span> <span class="hidden md:inline">تسجيل مصروف</span>
+                    </button>
+                    
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline hidden md:flex"></div>
+                </div>
+            </header>
+
+            <!-- المحتوى الرئيسي -->
+            <main class="p-8">
+                <div class="max-w-7xl mx-auto">
+                    <!-- إحصائيات سريعة -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-10">
+                        <!-- مصروفات اليوم -->
+                        <div class="bg-white p-6 rounded-3xl border-2 border-slate-300 shadow-premium flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-2xl bg-accent/10 text-accent flex items-center justify-center">
+                                <span class="material-symbols-outlined">calendar_today</span>
+                            </div>
+                            <div>
+                                <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest">إجمالي مصروفات اليوم</p>
+                                <p class="text-2xl font-extrabold text-primary" x-text="(totalExpensesToday || 0) + ' ج.م'"></p>
+                            </div>
+                        </div>
+
+                        <!-- مصروفات الشهر -->
+                        <div class="bg-white p-6 rounded-3xl border-2 border-slate-300 shadow-premium flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+                                <span class="material-symbols-outlined">event_note</span>
+                            </div>
+                            <div>
+                                <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest">إجمالي المصروفات (هذا الشهر)</p>
+                                <p class="text-2xl font-extrabold text-primary" x-text="(totalExpensesMonth || 0) + ' ج.م'"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- الفلاتر الذكية -->
+                    <div class="bg-white border-2 border-slate-300 rounded-3xl p-5 mb-6 shadow-sm">
+                        <div class="flex items-center justify-between gap-4 mb-4">
+                            <div class="flex items-center gap-2">
+                                <span class="material-symbols-outlined text-primary">filter_alt</span>
+                                <h3 class="text-sm font-black text-primary">فلتر ذكي للمصروفات</h3>
+                            </div>
+                            <button @click="clearFilters()"
+                                class="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 text-xs font-black flex items-center gap-1">
+                                <span class="material-symbols-outlined text-sm">filter_alt_off</span>
+                                مسح الفلاتر
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 mb-1.5">من تاريخ</label>
+                                <input x-model="filterDateFrom" type="date"
+                                    class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-primary focus:border-primary">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 mb-1.5">إلى تاريخ</label>
+                                <input x-model="filterDateTo" type="date"
+                                    class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-primary focus:border-primary">
+                            </div>
+                            <div x-show="user && user.role === 'admin'" x-cloak>
+                                <label class="block text-[10px] font-black text-slate-400 mb-1.5">الفرع</label>
+                                <select x-model="filterBranch"
+                                    class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-primary focus:border-primary">
+                                    <option value="">كل الفروع</option>
+                                    <template x-for="b in branches" :key="b.id">
+                                        <option :value="b.id" x-text="b.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 mb-1.5">الفئة</label>
+                                <select x-model="filterCategory"
+                                    class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-primary focus:border-primary">
+                                    <option value="">كل الفئات</option>
+                                    <option value="rent">إيجار</option>
+                                    <option value="electricity">كهرباء</option>
+                                    <option value="gas">غاز</option>
+                                    <option value="labor">عمالة خارجية / بوفيه</option>
+                                    <option value="maintenance">صيانة</option>
+                                    <option value="marketing">تسويق</option>
+                                    <option value="bonus">مكسرات</option>
+                                    <option value="other">أخرى</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 mb-1.5">القيمة من</label>
+                                <input x-model="filterMinAmount" type="number" min="0" step="0.01" placeholder="0"
+                                    class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-primary focus:border-primary">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 mb-1.5">القيمة إلى</label>
+                                <input x-model="filterMaxAmount" type="number" min="0" step="0.01" placeholder="بدون حد"
+                                    class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-primary focus:border-primary">
+                            </div>
+                        </div>
+                        <p x-show="filterError" x-text="filterError" class="mt-3 text-xs font-bold text-red-500"></p>
+                    </div>
+
+                    <!-- جدول المصروفات -->
+                    <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                        <div class="table-responsive">
+                            <table class="w-full text-right border-collapse responsive-table">
+                                <thead>
+                                    <tr class="bg-slate-900">
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">التاريخ</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">الفرع</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">الفئة</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">القيمة</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">البيان / الملاحظات</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-outline">
+                                    <template x-if="filteredExpenses.length === 0">
+                                        <tr>
+                                            <td colspan="5" class="px-8 py-20 text-center text-slate-400">
+                                                <span class="material-symbols-outlined text-4xl mb-2">receipt_long</span>
+                                                <p class="text-xs font-bold uppercase tracking-widest">لا توجد مصروفات مطابقة</p>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-for="exp in filteredExpenses" :key="exp.id">
+                                        <tr class="hover:bg-slate-50 transition-colors">
+                                            <td class="px-8 py-6 text-sm font-bold text-slate-600" x-text="new Date(exp.expense_date).toLocaleDateString('ar-EG-u-nu-latn')"></td>
+                                            <td class="px-8 py-6 text-sm font-extrabold text-primary" x-text="exp.branch_name || 'الفرع الرئيسي'"></td>
+                                            <td class="px-8 py-6">
+                                                <span class="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold" x-text="getCategoryName(exp.category)"></span>
+                                            </td>
+                                            <td class="px-8 py-6 text-sm font-black text-accent" x-text="exp.amount + ' ج.م'"></td>
+                                            <td class="px-8 py-6 text-sm text-slate-500" x-text="getDisplayNotes(exp.notes)"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="p-5 border-t border-outline flex flex-col sm:flex-row items-center justify-between gap-3 bg-white">
+                            <p class="text-xs font-bold text-slate-400" x-text="'صفحة ' + pagination.page + ' من ' + pagination.totalPages + ' - إجمالي ' + pagination.total"></p>
+                            <div class="flex items-center gap-2">
+                                <button @click="changePage(pagination.page - 1)" :disabled="!pagination.hasPrev" class="px-4 py-2 rounded-xl border-2 border-slate-200 text-xs font-black text-primary disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">السابق</button>
+                                <button @click="changePage(pagination.page + 1)" :disabled="!pagination.hasNext" class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800">التالي</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Modal إضافة مصروف -->
+            <div x-show="showAddModal" x-cloak class="fixed inset-0 z-[100] overflow-y-auto" aria-modal="true">
+                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" @click="showAddModal = false"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-md sm:w-full p-10">
+                        <div class="mb-8">
+                            <h3 class="text-2xl font-extrabold text-primary">تسجيل مصروف جديد</h3>
+                        </div>
+                        <div class="space-y-6">
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الفرع</label>
+                                <select x-model="newExpense.branch_id" :disabled="user && user.role === 'branch_user'" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50 disabled:bg-slate-200">
+                                    <option value="">اختر الفرع...</option>
+                                    <template x-for="b in branches" :key="b.id">
+                                        <option :value="b.id" x-text="b.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الفئة</label>
+                                <select x-model="newExpense.category" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                    <option value="rent">إيجار</option>
+                                    <option value="electricity">كهرباء</option>
+                                    <option value="gas">غاز</option>
+                                    <option value="labor">عمالة خارجية / بوفيه</option>
+                                    <option value="maintenance">صيانة</option>
+                                    <option value="marketing">تسويق</option>
+                                    <option value="bonus">مكسرات</option>
+                                    <option value="other">أخرى</option>
+                                </select>
+                            </div>
+                            <div x-show="newExpense.category === 'bonus'" x-cloak>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الموظف</label>
+                                <select x-model="newExpense.employee_id" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                    <option value="">اختر الموظف...</option>
+                                    <template x-for="employee in filteredEmployees" :key="employee.id">
+                                        <option :value="employee.id" x-text="employee.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">المبلغ (ج.م)</label>
+                                <input x-model="newExpense.amount" type="number" min="0.01" step="0.01" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">البيان / ملاحظات</label>
+                                <input x-model="newExpense.notes" type="text" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                        </div>
+                        <div class="mt-10 flex gap-3">
+                            <button @click="saveExpense()" class="flex-1 py-4 bg-accent text-white rounded-2xl text-sm font-extrabold hover:bg-red-600 transition-all shadow-xl shadow-accent/20">حفظ المصروف</button>
+                            <button @click="showAddModal = false" class="px-6 py-4 bg-slate-100 text-slate-400 rounded-2xl text-sm font-extrabold hover:bg-slate-200 transition-all">إلغاء</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Alpine.js -->
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('expenseApp', () => ({
+                sidebarExpanded: false,
+                sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                mobileMenuOpen: false,
+                showAddModal: false,
+                
+                expenses: [],
+                pagination: { page: 1, limit: 50, total: 0, totalPages: 1, hasNext: false, hasPrev: false },
+                summary: { today: 0, month: 0 },
+                branches: [],
+                employees: [],
+                user: window.currentUser || null,
+                
+                filterBranch: '',
+                filterCategory: '',
+                filterDateFrom: '',
+                filterDateTo: '',
+                filterMinAmount: '',
+                filterMaxAmount: '',
+                filterError: '',
+                filterDebounce: null,
+                
+                newExpense: { branch_id: '', category: 'other', employee_id: '', amount: '', notes: '' },
+
+                async initData() {
+                    try {
+                        // Wait for user if not yet loaded by auth.js
+                        if (!this.user) {
+                            const res = await fetch('/api/me');
+                            if (res.ok) {
+                                const data = await res.json();
+                                this.user = data.user;
+                                window.currentUser = this.user;
+                            }
+                        }
+                        this.user = window.currentUser;
+
+                        if (!this._watchersReady) {
+                            ['filterBranch', 'filterCategory', 'filterDateFrom', 'filterDateTo', 'filterMinAmount', 'filterMaxAmount'].forEach(filter => {
+                                this.$watch(filter, () => this.queueFilterReload());
+                            });
+                            this._watchersReady = true;
+                        }
+
+                        const [_, brRes, empRes] = await Promise.all([
+                            this.loadExpenses(),
+                            fetch('/api/branches'),
+                            fetch('/api/employees/options?limit=100')
+                        ]);
+                        this.branches = await brRes.json();
+                        if (empRes.ok) this.employees = await empRes.json();
+                        
+                        if (this.user?.branch_id) {
+                            this.newExpense.branch_id = this.user.branch_id;
+                            if (this.user.role !== 'admin') this.filterBranch = this.user.branch_id;
+                        } else {
+                            this.newExpense.branch_id = this.getDefaultExpenseBranchId(this.newExpense.branch_id);
+                        }
+                    } catch (err) {
+                        console.error('Error fetching data:', err);
+                    }
+                },
+                getDefaultExpenseBranchId(currentBranchId = '') {
+                    const userBranchId = this.user?.branch_id || window.currentUser?.branch_id;
+                    if (userBranchId) return userBranchId;
+                    if (currentBranchId && this.branches.some(b => String(b.id) === String(currentBranchId))) return currentBranchId;
+                    const availableBranch = this.branches.find(b => !b.is_main_warehouse);
+                    return availableBranch?.id || this.branches[0]?.id || '';
+                },
+                buildExpenseQuery() {
+                    const params = new URLSearchParams({
+                        page: this.pagination.page,
+                        limit: this.pagination.limit
+                    });
+                    if (this.filterBranch) params.set('branch_id', this.filterBranch);
+                    if (this.filterCategory) params.set('category', this.filterCategory);
+                    if (this.filterDateFrom) params.set('date_from', this.filterDateFrom);
+                    if (this.filterDateTo) params.set('date_to', this.filterDateTo);
+                    if (this.filterMinAmount !== '') params.set('min_amount', this.filterMinAmount);
+                    if (this.filterMaxAmount !== '') params.set('max_amount', this.filterMaxAmount);
+                    return params.toString();
+                },
+                validateFilters() {
+                    this.filterError = '';
+                    if (this.filterDateFrom && this.filterDateTo && this.filterDateFrom > this.filterDateTo) {
+                        this.filterError = 'تاريخ البداية يجب أن يكون قبل أو مساويًا لتاريخ النهاية';
+                    } else if (this.filterMinAmount !== '' && this.filterMaxAmount !== '' &&
+                               Number(this.filterMinAmount) > Number(this.filterMaxAmount)) {
+                        this.filterError = 'القيمة من يجب أن تكون أقل من أو مساوية للقيمة إلى';
+                    }
+                    return !this.filterError;
+                },
+                queueFilterReload() {
+                    clearTimeout(this.filterDebounce);
+                    this.filterDebounce = setTimeout(() => {
+                        if (!this.validateFilters()) return;
+                        this.pagination.page = 1;
+                        this.loadExpenses();
+                    }, 250);
+                },
+                clearFilters() {
+                    this.filterCategory = '';
+                    this.filterDateFrom = '';
+                    this.filterDateTo = '';
+                    this.filterMinAmount = '';
+                    this.filterMaxAmount = '';
+                    this.filterBranch = this.user && this.user.role !== 'admin' ? this.user.branch_id : '';
+                    this.filterError = '';
+                },
+                async loadExpenses() {
+                    const query = this.buildExpenseQuery();
+                    const [expRes, summaryRes] = await Promise.all([
+                        fetch(`/api/expenses?${query}`),
+                        fetch(`/api/expenses/summary?${query}`)
+                    ]);
+                    const payload = await expRes.json();
+                    this.expenses = payload.data || payload;
+                    if (payload.pagination) this.pagination = payload.pagination;
+                    if (summaryRes.ok) this.summary = await summaryRes.json();
+                },
+                changePage(page) {
+                    if (page < 1 || page > this.pagination.totalPages || page === this.pagination.page) return;
+                    this.pagination.page = page;
+                    this.loadExpenses();
+                },
+                resetForm() {
+                    const defaultBranch = this.getDefaultExpenseBranchId(this.newExpense.branch_id);
+                    this.newExpense = { branch_id: defaultBranch, category: 'other', employee_id: '', amount: '', notes: '' };
+                },
+                async saveExpense() {
+                    if (!this.newExpense.amount || this.newExpense.amount <= 0) {
+                        alert('برجاء إدخال مبلغ صحيح');
+                        return;
+                    }
+                    if (this.newExpense.category === 'bonus' && !this.newExpense.employee_id) {
+                        alert('برجاء اختيار الموظف');
+                        return;
+                    }
+                    if (this.newExpense.category === 'bonus' && !this.newExpense.branch_id) {
+                        alert('برجاء اختيار فرع الموظف');
+                        return;
+                    }
+                    if (!this.newExpense.branch_id && (!window.currentUser || window.currentUser.role === 'admin')) {
+                        if (!confirm('لم تقم باختيار فرع. هل تريد تسجيل المصروف كمصروف عام (بدون فرع)؟')) {
+                            return;
+                        }
+                    }
+                    try {
+                        const res = await fetch('/api/expenses', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newExpense)
+                        });
+                        if (res.ok) {
+                            const saved = await res.json();
+                            if (saved.offline) alert('تم حفظ المصروف أوفلاين وسيتم رفعه للسيرفر عند رجوع الاتصال.');
+                            await this.initData();
+                            this.showAddModal = false;
+                        } else {
+                            const data = await res.json().catch(() => ({}));
+                            alert(data.error || 'فشل حفظ المصروف');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    }
+                },
+                get filteredExpenses() {
+                    return this.expenses;
+                },
+                get filteredEmployees() {
+                    if (!this.newExpense.branch_id) return this.employees;
+                    return this.employees.filter(employee => employee.branch_id == this.newExpense.branch_id);
+                },
+                get totalExpensesToday() {
+                    return Number(this.summary.today || 0).toFixed(2);
+                },
+                get totalExpensesMonth() {
+                    return Number(this.summary.month || 0).toFixed(2);
+                },
+                getCategoryName(val) {
+                    const map = {
+                        rent: 'إيجار',
+                        electricity: 'كهرباء',
+                        gas: 'غاز',
+                        labor: 'عمالة خارجية / بوفيه',
+                        maintenance: 'صيانة',
+                        marketing: 'تسويق',
+                        bonus: 'مكسرات',
+                        other: 'أخرى'
+                    };
+                    return map[val] || val;
+                },
+                getDisplayNotes(notes) {
+                    if (!notes) return '---';
+                    return String(notes)
+                        .replace(/\s*\[EXP-[^\]]+\]\s*/g, ' ')
+                        .split('مكافأة للموظف').join('مكسرات للموظف')
+                        .trim() || '---';
+                }
+            }));
+        });
+    </script>
+</body>
+</html>
+
+
+
+
+

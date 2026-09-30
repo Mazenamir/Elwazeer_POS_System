@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - طباعة الباركود</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet" />
+    <link href="assets/icons.css" rel="stylesheet" />
+    
+    <!-- مكتبة JsBarcode المحلية - بدون defer لضمان التحميل قبل Alpine.js -->
+    <script src="assets/js/JsBarcode.all.min.js"></script>
+    
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: {
+                        'DEFAULT': '0.75rem',
+                        'lg': '1rem',
+                        'xl': '1.5rem',
+                        '2xl': '2rem',
+                        '3xl': '2.5rem',
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    },
+                    boxShadow: {
+                        'premium': '0 10px 40px -10px rgba(0,0,0,0.05)',
+                        'premium-hover': '0 20px 50px -12px rgba(0,0,0,0.08)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+        }
+
+        [x-cloak] {
+            display: none !important;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #CBD5E1;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94A3B8;
+        }
+
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #F8FAFC;
+        }
+
+        .sidebar-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 60;
+            backdrop-filter: blur(4px);
+        }
+
+        .sidebar-backdrop.active {
+            display: block;
+        }
+
+        .mobile-menu-btn {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .mobile-menu-btn {
+                display: flex;
+            }
+
+            .sidebar-main {
+                transform: translateX(100%);
+                position: fixed;
+                right: 0;
+                top: 0;
+            }
+
+            .sidebar-main.mobile-open {
+                transform: translateX(0);
+            }
+        }
+
+        /* ===== PRINT STYLES ===== */
+        @media print {
+            @page {
+                size: 1.80in 0.98in;
+                margin: 0;
+            }
+
+            .no-print {
+                display: none !important;
+            }
+
+            .print-only {
+                display: block !important;
+            }
+
+            body {
+                background: white !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                overflow: visible !important;
+            }
+
+            .barcode-page {
+                display: block !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+
+            .barcode-label {
+                width: 1.68in;
+                height: 0.98in;
+                position: relative;
+                overflow: hidden;
+                page-break-after: always;
+                background: white;
+            }
+
+            .barcode-content-wrapper {
+                position: relative;
+                width: 1.68in;
+                height: 0.98in;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+                padding: 2pt 3pt;
+                box-sizing: border-box;
+                color: black !important;
+            }
+
+            .barcode-content-wrapper .header {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                margin-bottom: 1pt;
+                height: 0.25in;
+                overflow: hidden;
+            }
+
+            .barcode-content-wrapper .branch-logo {
+                max-height: 100%;
+                max-width: 90%;
+                object-fit: contain;
+                display: block;
+            }
+
+            .barcode-content-wrapper .product-name {
+                font-size: 6pt;
+                font-weight: 900;
+                line-height: 1;
+                margin: 1pt 0;
+                text-align: center;
+                width: 100%;
+            }
+
+            .barcode-content-wrapper .product-variant {
+                font-size: 5pt;
+                font-weight: 800;
+                text-align: center;
+                margin-bottom: 1pt;
+                line-height: 1;
+            }
+
+            /*
+             * الحل الأساسي: Canvas بدل SVG
+             * - عرض 480px = 1.6in عند 300 DPI (دقة الطابعة)
+             * - ارتفاع 90px = 0.3in عند 300 DPI
+             * - بدون image-rendering: pixelated (كان سبب تداخل الخطوط)
+             * - بدون shape-rendering: crispEdges (كان بيشوه الخطوط الرفيعة)
+             */
+            .barcode-image {
+                width: 1in !important;
+                height: 0.30in !important;
+                margin: 3pt auto 2pt;
+                display: block !important;
+                /* لا نستخدم image-rendering — نسيب المتصفح يعمل anti-aliasing طبيعي */
+                image-rendering: auto;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .barcode-number {
+                font-size: 6pt;
+                font-weight: 900;
+                font-family: 'Courier New', monospace;
+                letter-spacing: 0.5pt;
+                text-align: center;
+                width: 100%;
+                margin-top: 1pt;
+                margin-bottom: 1pt;
+                line-height: 1;
+            }
+
+            .price-inline {
+                display: none;
+            }
+
+            .barcode-content-wrapper .footer {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                margin-top: 0;
+                line-height: 1;
+            }
+
+            .barcode-content-wrapper .price {
+                font-size: 7pt;
+                font-weight: 900;
+                text-align: center;
+                line-height: 1;
+            }
+
+            .barcode-content-wrapper .old-price {
+                font-size: 6pt;
+                font-weight: 700;
+                text-decoration: line-through;
+                color: #000000;
+                margin-left: 3pt;
+                line-height: 1;
+            }
+        }
+
+        .print-only {
+            display: none;
+        }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <script src="auth.js"></script>
+</head>
+
+<body class="text-on-surface antialiased overflow-hidden" x-data="barcodeApp()" x-init="init()">
+
+    <div class="flex h-screen overflow-hidden no-print">
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <aside @mouseenter="sidebarExpanded = true" @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div
+                        class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'"
+                            class="w-full h-full object-contain" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)"
+                    class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                    :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm"
+                        :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">point_of_sale</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">styler</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">architecture</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">group</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+                <a href="Suppliers.html?tab=inventory"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'"
+                        x-text="(user && user.role === 'admin') ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">auto_delete</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">badge</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">bar_chart</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html"
+                    class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">barcode_scanner</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">settings</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()"
+                    class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">logout</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+        </aside>
+
+        <div class="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+            <header
+                class="h-20 shrink-0 px-4 md:px-8 flex items-center justify-between bg-white border-b border-outline">
+                <div class="flex items-center gap-3 md:gap-6 flex-1">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen"
+                        class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <h2 class="text-xl font-extrabold text-primary">طباعة الباركود</h2>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline"></div>
+                </div>
+            </header>
+
+            <main class="flex-1 flex flex-col overflow-hidden p-8 bg-background">
+                <div class="max-w-6xl mx-auto w-full flex flex-col h-full gap-6">
+
+                    <div class="bg-white p-6 rounded-[2.5rem] border-2 border-slate-300 shadow-premium">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label
+                                    class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">اسم
+                                    المنتج</label>
+                                <div class="relative">
+                                    <span
+                                        class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
+                                    <input x-model="filters.name" type="text" placeholder="ابحث بالاسم..."
+                                        class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:border-primary transition-all">
+                                </div>
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">الباركود</label>
+                                <div class="flex flex-col gap-2">
+                                    <div class="relative flex-1">
+                                        <span
+                                            class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">barcode_scanner</span>
+                                        <input x-model="filters.barcode" type="text" placeholder="ابحث بالباركود..."
+                                            class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:border-primary transition-all">
+                                    </div>
+                                    <label class="flex items-center gap-2 cursor-pointer group">
+                                        <div class="relative flex items-center">
+                                            <input type="checkbox" x-model="filters.showVariants"
+                                                class="w-5 h-5 rounded border-2 border-black text-primary focus:ring-primary cursor-pointer">
+                                        </div>
+                                        <span
+                                            class="text-xs font-bold text-slate-600 group-hover:text-primary transition-colors">عرض
+                                            كافة تنويعات المنتج (ألوان ومقاسات)</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            class="flex flex-col md:flex-row gap-4 items-center justify-between border-t border-slate-100 pt-4">
+                            <div class="flex items-center gap-3">
+                                <span class="text-xs font-bold text-slate-500"
+                                    x-text="'تم اختيار ' + selectedItems.length + ' منتج'"></span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <button @click="printSavedDiscountBatch()" :disabled="!hasSavedDiscountBatch"
+                                    class="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-600/20 hover:scale-105 transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100">
+                                    <span class="material-symbols-outlined">history</span> طباعة آخر خصومات
+                                </button>
+                                <button @click="printAll()"
+                                    class="px-6 py-3 bg-primary text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/20 hover:scale-105 transition-all flex items-center gap-2">
+                                    <span class="material-symbols-outlined">print</span> طباعة المختار
+                                </button>
+                                <button
+                                    @click="selectedItems = []; filters = { name: '', barcode: '', showVariants: false }; pagination.page = 1; fetchInventory()"
+                                    class="px-6 py-3 border-2 border-slate-300 text-slate-500 rounded-xl text-sm font-bold hover:bg-slate-50 transition-all flex items-center gap-2">
+                                    <span class="material-symbols-outlined">filter_alt_off</span> مسح الفلاتر
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        class="flex-1 bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden flex flex-col">
+                        <div class="overflow-y-auto flex-1 p-8 pt-0">
+                            <table class="w-full text-right border-collapse">
+                                <thead class="sticky top-0 bg-white z-10">
+                                    <tr class="border-b-2 border-slate-100">
+                                        <th
+                                            class="px-4 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center w-16">
+                                            <input type="checkbox" @change="toggleAll($event)" :checked="allSelected"
+                                                class="w-5 h-5 rounded border-2 border-black text-primary focus:ring-primary cursor-pointer">
+                                        </th>
+                                        <th
+                                            class="px-4 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right">
+                                            المنتج</th>
+                                        <th
+                                            class="px-4 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center">
+                                            الباركود</th>
+                                        <th
+                                            class="px-4 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center">
+                                            اللون / المقاس</th>
+                                        <th
+                                            class="px-4 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center w-32">
+                                            عدد الملصقات</th>
+                                        <th
+                                            class="px-4 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center w-36">
+                                            السعر بعد الخصم</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    <template x-if="isLoading">
+                                        <tr>
+                                            <td colspan="6" class="px-8 py-20 text-center text-slate-400">
+                                                <div
+                                                    class="animate-spin inline-block w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-4">
+                                                </div>
+                                                <p class="text-xs font-bold uppercase tracking-widest">جاري تحميل
+                                                    المنتجات...</p>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-if="!isLoading && filteredInventory.length === 0">
+                                        <tr>
+                                            <td colspan="6" class="px-8 py-20 text-center text-slate-400">
+                                                <span class="material-symbols-outlined text-4xl mb-2">inventory_2</span>
+                                                <p class="text-xs font-bold uppercase tracking-widest">لا توجد منتجات
+                                                    مطابقة للبحث</p>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-for="product in filteredInventory" :key="product.id">
+                                        <tr class="hover:bg-slate-50 transition-colors group">
+                                            <td class="px-4 py-4 text-center">
+                                                <input type="checkbox" :value="product.id" x-model="selectedItems"
+                                                    class="w-5 h-5 rounded border-2 border-black text-primary focus:ring-primary cursor-pointer">
+                                            </td>
+                                            <td class="px-4 py-4">
+                                                <div class="flex flex-col">
+                                                    <span class="text-sm font-black text-primary"
+                                                        x-text="window.productDisplayName(product)"></span>
+                                                    <span class="text-[10px] text-slate-400 font-bold"
+                                                        x-text="product.category"></span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 text-center">
+                                                <span
+                                                    class="px-3 py-1 bg-slate-100 rounded-lg text-xs font-mono font-bold text-slate-600"
+                                                    x-text="product.barcode"></span>
+                                            </td>
+                                            <td class="px-4 py-4 text-center">
+                                                <div class="flex items-center justify-center gap-2">
+                                                    <span
+                                                        class="px-2 py-0.5 border border-slate-200 rounded text-[10px] font-bold"
+                                                        x-text="product.color"></span>
+                                                    <span
+                                                        class="px-2 py-0.5 border border-slate-200 rounded text-[10px] font-bold"
+                                                        x-text="product.size_cut"></span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 text-center">
+                                                <input type="number" x-model="printCounts[product.id]" min="1"
+                                                    class="w-20 bg-slate-50 border-2 border-slate-200 rounded-lg py-1 px-2 text-xs font-bold text-center focus:border-primary transition-all">
+                                            </td>
+                                            <td class="px-4 py-4 text-center">
+                                                <div class="flex items-center gap-1 justify-center">
+                                                    <input type="number" x-model="discountPrices[product.id]" :placeholder="product.price" step="0.01"
+                                                        class="w-24 bg-slate-50 border-2 border-slate-200 rounded-lg py-1 px-2 text-xs font-bold text-center focus:border-indigo-500 transition-all"
+                                                        :class="discountPrices[product.id] ? 'border-indigo-400 bg-indigo-50' : ''">
+                                                    <span class="text-[10px] text-slate-400 font-bold">ج.م</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="p-5 border-t border-outline flex flex-col sm:flex-row items-center justify-between gap-3 bg-white">
+                            <p class="text-xs font-bold text-slate-400" x-text="'صفحة ' + pagination.page + ' من ' + pagination.totalPages + ' - إجمالي ' + pagination.total"></p>
+                            <div class="flex items-center gap-2">
+                                <button @click="changePage(pagination.page - 1)" :disabled="!pagination.hasPrev" class="px-4 py-2 rounded-xl border-2 border-slate-200 text-xs font-black text-primary disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">السابق</button>
+                                <button @click="changePage(pagination.page + 1)" :disabled="!pagination.hasNext" class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800">التالي</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- طباعة: Canvas بدل SVG — الخطوط بتطبع بوضوح من غير تداخل -->
+    <div class="print-only">
+        <div id="barcode-grid" class="barcode-page">
+            <template x-for="item in printQueue" :key="item.key">
+                <div class="barcode-label">
+                    <div class="barcode-content-wrapper">
+                        <!-- تم إزالة اللوجو بناءً على طلبك -->
+                        <div class="product-name" x-text="window.productDisplayName(item)"></div>
+                        <div class="product-variant" x-text="'اللون: ' + item.color + ' | المقاس: ' + item.size"></div>
+                        <!--
+                            Canvas بدل SVG:
+                            - width="480" → 1.6in عند 300 DPI (دقة الطابعة)
+                            - height="90"  → 0.3in عند 300 DPI
+                            - كل خط باركود هيطبع ببكسل واضح منفصل
+                        -->
+                        <canvas :id="'barcode-' + item.key" class="barcode-image" width="480" height="90"></canvas>
+                        <div class="barcode-number" x-text="item.barcode"></div>
+                        <div class="footer">
+                            <template x-if="item.discountPrice">
+                                <div style="display:flex;align-items:center;justify-content:center;gap:3pt;">
+                                    <span class="old-price" x-text="Number(item.originalPrice).toFixed(0) + ' EGP'"></span>
+                                    <span class="price" x-text="Number(item.discountPrice).toFixed(0) + ' EGP'"></span>
+                                </div>
+                            </template>
+                            <template x-if="!item.discountPrice">
+                                <div class="price" x-text="Number(item.price).toFixed(0) + ' EGP'"></div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <script>
+        // التحقق من تحميل المكتبات عند بدء الصفحة
+        window.addEventListener('DOMContentLoaded', function() {
+            console.log('🔍 فحص المكتبات المحملة في صفحة الباركود:');
+            console.log('JsBarcode:', typeof JsBarcode !== 'undefined' ? '✅ محملة' : '❌ غير محملة');
+        });
+
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('barcodeApp', () => ({
+                sidebarExpanded: false,
+                sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                mobileMenuOpen: false,
+                user: null,
+                inventory: [],
+                pagination: { page: 1, limit: 80, total: 0, totalPages: 1, hasNext: false, hasPrev: false },
+                searchDebounce: null,
+                branches: [],
+                settings: {},
+                filters: {
+                    name: '',
+                    barcode: '',
+                    showVariants: false
+                },
+                selectedItems: [],
+                printCounts: {},
+                discountPrices: {},
+                isLoading: true,
+                printQueue: [],
+                savedDiscountBatch: null,
+
+                async init() {
+                    try {
+                        if (!window.currentUser) {
+                            const meRes = await fetch('/api/me');
+                            if (meRes.ok) {
+                                const data = await meRes.json();
+                                window.currentUser = data.user;
+                            }
+                        }
+                        this.user = window.currentUser;
+                        this.loadSavedDiscountBatch();
+                        Object.keys(this.filters).forEach(key => {
+                            this.$watch(`filters.${key}`, () => {
+                                clearTimeout(this.searchDebounce);
+                                this.searchDebounce = setTimeout(() => {
+                                    this.pagination.page = 1;
+                                    this.fetchInventory();
+                                }, 250);
+                            });
+                        });
+                        await this.fetchData();
+                    } catch (err) {
+                        console.error('Initialization error:', err);
+                    } finally {
+                        this.isLoading = false;
+                    }
+                },
+
+                async fetchData() {
+                    try {
+                        const [_, branchRes, settingsRes] = await Promise.all([
+                            this.fetchInventory(),
+                            fetch('/api/branches'),
+                            fetch('/api/public/settings')
+                        ]);
+
+                        if (branchRes.ok) this.branches = await branchRes.json();
+                        if (settingsRes.ok) this.settings = await settingsRes.json();
+
+                        if (this.inventory.length > 0) {
+                            this.inventory.forEach(p => {
+                                this.printCounts[p.id] = 1;
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Fetch error:', err);
+                    }
+                },
+                buildInventoryQuery() {
+                    const params = new URLSearchParams({
+                        page: this.pagination.page,
+                        limit: this.pagination.limit
+                    });
+                    if (this.filters.showVariants && this.filters.barcode) {
+                        params.set('variants_barcode', this.filters.barcode);
+                    } else {
+                        if (this.filters.name) params.set('name', this.filters.name);
+                        if (this.filters.barcode) params.set('barcode', this.filters.barcode);
+                    }
+                    return params.toString();
+                },
+                async fetchInventory() {
+                    const res = await fetch(`/api/inventory?${this.buildInventoryQuery()}`);
+                    if (!res.ok) return;
+                    const payload = await res.json();
+                    this.inventory = payload.data || payload;
+                    if (payload.pagination) this.pagination = payload.pagination;
+                    this.inventory.forEach(p => {
+                        if (!this.printCounts[p.id]) this.printCounts[p.id] = 1;
+                        if (!this.discountPrices[p.id]) this.discountPrices[p.id] = '';
+                    });
+                },
+                changePage(page) {
+                    if (page < 1 || page > this.pagination.totalPages || page === this.pagination.page) return;
+                    this.pagination.page = page;
+                    this.fetchInventory();
+                },
+
+                get filteredInventory() {
+                    return this.inventory;
+                },
+
+                get allSelected() {
+                    return this.filteredInventory.length > 0 && this.selectedItems.length === this.filteredInventory.length;
+                },
+
+                toggleAll(e) {
+                    if (e.target.checked) {
+                        this.selectedItems = this.filteredInventory.map(p => p.id);
+                    } else {
+                        this.selectedItems = [];
+                    }
+                },
+
+                get hasSavedDiscountBatch() {
+                    return Array.isArray(this.savedDiscountBatch?.items) && this.savedDiscountBatch.items.length > 0;
+                },
+
+                loadSavedDiscountBatch() {
+                    try {
+                        const saved = JSON.parse(localStorage.getItem('barcode:lastDiscountBatch') || 'null');
+                        this.savedDiscountBatch = Array.isArray(saved?.items) ? saved : null;
+                    } catch (err) {
+                        console.warn('Failed to load saved discount batch', err);
+                        this.savedDiscountBatch = null;
+                    }
+                },
+
+                saveDiscountBatch(items) {
+                    const validItems = (items || []).filter(item => Number(item.discountPrice) > 0 && Number(item.originalPrice) > Number(item.discountPrice));
+                    if (validItems.length === 0) return;
+                    this.savedDiscountBatch = {
+                        savedAt: new Date().toISOString(),
+                        items: validItems
+                    };
+                    localStorage.setItem('barcode:lastDiscountBatch', JSON.stringify(this.savedDiscountBatch));
+                },
+
+                async printSavedDiscountBatch() {
+                    if (!this.hasSavedDiscountBatch) {
+                        alert('لا توجد خصومات محفوظة حتى الآن');
+                        return;
+                    }
+                    const userBranchId = this.user?.branch_id || 1;
+                    const branchLogo = window.getLogoPath(userBranchId, this.branches);
+                    this.printQueue = [];
+                    this.savedDiscountBatch.items.forEach((saved, savedIndex) => {
+                        const count = Number(saved.count) || 1;
+                        for (let i = 0; i < count; i++) {
+                            this.printQueue.push({
+                                ...saved,
+                                key: `saved-${saved.id || saved.barcode}-${Date.now()}-${savedIndex}-${i}`,
+                                size: saved.size_cut || saved.size,
+                                branchLogo,
+                                price: saved.discountPrice
+                            });
+                        }
+                    });
+                    await this.renderPrintQueue();
+                },
+
+                async renderPrintQueue() {
+                    if (this.printQueue.length === 0) return;
+                    if (typeof JsBarcode === 'undefined') {
+                        let attempts = 0;
+                        while (typeof JsBarcode === 'undefined' && attempts < 50) {
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            attempts++;
+                        }
+                        if (typeof JsBarcode === 'undefined') {
+                            alert('فشل تحميل مكتبة الباركود. أعد المحاولة.');
+                            return;
+                        }
+                    }
+
+                    this.$nextTick(() => {
+                        setTimeout(() => {
+                            this.printQueue.forEach(item => {
+                                try {
+                                    const canvas = document.getElementById(`barcode-${item.key}`);
+                                    if (!canvas) return;
+
+                                    JsBarcode(canvas, String(item.barcode), {
+                                        format: "CODE128",
+                                        width: 1,
+                                        height: 70,
+                                        displayValue: false,
+                                        margin: 4,
+                                        lineColor: "#000000",
+                                        background: "#FFFFFF",
+                                        flat: true
+                                    });
+                                } catch (e) {
+                                    console.error('JsBarcode Error', e);
+                                }
+                            });
+
+                            setTimeout(() => { window.print(); }, 800);
+                        }, 300);
+                    });
+                },
+
+                async printAll() {
+                    if (this.selectedItems.length === 0) { alert('برجاء اختيار منتجات للطباعة'); return; }
+
+                    // الانتظار حتى يتم تحميل JsBarcode
+                    if (typeof JsBarcode === 'undefined') {
+                        console.log('⏳ انتظار تحميل مكتبة JsBarcode...');
+                        let attempts = 0;
+                        while (typeof JsBarcode === 'undefined' && attempts < 50) {
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            attempts++;
+                        }
+                        if (typeof JsBarcode === 'undefined') {
+                            alert('❌ فشل تحميل مكتبة الباركود. تحقق من اتصال الإنترنت وأعد المحاولة.');
+                            return;
+                        }
+                    }
+
+                    this.printQueue = [];
+                    const savedDiscountItems = [];
+                    this.selectedItems.forEach(id => {
+                        const product = this.inventory.find(p => p.id == id);
+                        if (!product) return;
+                        const count = parseInt(this.printCounts[id]) || 1;
+                        const userBranchId = this.user?.branch_id || 1;
+                        const branchLogo = window.getLogoPath(userBranchId, this.branches);
+                        const dp = this.discountPrices[id] ? parseFloat(this.discountPrices[id]) : null;
+                        const hasDiscount = dp && dp < Number(product.price);
+                        if (hasDiscount) {
+                            savedDiscountItems.push({
+                                id: product.id,
+                                name: product.name,
+                                category: product.category,
+                                color: product.color,
+                                size_cut: product.size_cut,
+                                barcode: product.barcode,
+                                count,
+                                originalPrice: Number(product.price),
+                                discountPrice: dp,
+                                price: dp
+                            });
+                        }
+                        for (let i = 0; i < count; i++) {
+                            this.printQueue.push({
+                                ...product,
+                                key: `${product.id}-${Date.now()}-${i}`,
+                                size: product.size_cut,
+                                branchLogo: branchLogo,
+                                originalPrice: product.price,
+                                discountPrice: hasDiscount ? dp : null,
+                                price: hasDiscount ? dp : product.price
+                            });
+                        }
+                    });
+                    this.saveDiscountBatch(savedDiscountItems);
+
+                    await this.renderPrintQueue();
+                    return;
+
+                    this.$nextTick(() => {
+                        setTimeout(() => {
+                            this.printQueue.forEach(item => {
+                                try {
+                                    const canvas = document.getElementById(`barcode-${item.key}`);
+                                    if (!canvas) return;
+
+                                    /*
+                                     * إعدادات JsBarcode للطباعة على ملصقات صغيرة:
+                                     * - width: 1 → أقل عرض ممكن، وJsBarcode هيمدد الخطوط لتملأ الـ canvas
+                                     * - height: 70 → ارتفاع الخطوط داخل الـ canvas (90px)
+                                     * - margin: 4 → حشوة خفيفة جوانب الـ canvas
+                                     * - flat: true → بدون خطوط حارسة طويلة (بتشوه الشكل في المساحة الصغيرة)
+                                     * - font: "0px" → منع عرض النص لأننا عارضينه في div منفصل
+                                     */
+                                    JsBarcode(canvas, String(item.barcode), {
+                                        format: "CODE128",
+                                        width: 1,
+                                        height: 70,
+                                        displayValue: false,
+                                        margin: 4,
+                                        lineColor: "#000000",
+                                        background: "#FFFFFF",
+                                        flat: true
+                                    });
+                                } catch (e) {
+                                    console.error('JsBarcode Error', e);
+                                }
+                            });
+
+                            setTimeout(() => { window.print(); }, 800);
+                        }, 300);
+                    });
+                }
+            }));
+        });
+    </script>
+</body>
+
+</html>
+

@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - إدارة الموظفين</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link href="assets/material-symbols.css" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: {
+                        'DEFAULT': '0.75rem',
+                        'lg': '1rem',
+                        'xl': '1.5rem',
+                        '2xl': '2rem',
+                        '3xl': '2.5rem',
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    },
+                    boxShadow: {
+                        'premium': '0 10px 40px -10px rgba(0,0,0,0.05)',
+                        'premium-hover': '0 20px 50px -12px rgba(0,0,0,0.08)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        [x-cloak] { display: none !important; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+        body { font-family: 'Cairo', sans-serif; background-color: #F8FAFC; }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <script src="auth.js"></script>
+</head>
+
+<body class="text-on-surface antialiased overflow-x-hidden" x-data="employeeApp()" x-init="initData()">
+    
+    <div class="flex min-h-screen">
+        <!-- Mobile Sidebar Backdrop -->
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <!-- القائمة الجانبية (Sidebar) -->
+        <aside 
+            @mouseenter="sidebarExpanded = true" 
+            @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'" class="w-full h-full object-contain transition-transform duration-300" :class="(window.getLogoPath(user?.branch_id, branches) || '').includes('women') ? 'scale-[1.35]' : ''" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)" 
+                        class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm" :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">point_of_sale</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">styler</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">architecture</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">group</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'" x-text="(user && user.role === 'admin') ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">auto_delete</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">badge</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">bar_chart</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">barcode_scanner</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">settings</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()" class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">logout</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+</aside>
+
+        <!-- منطقة المحتوى الرئيسية -->
+        <div class="flex-1 flex flex-col min-w-0">
+            <!-- الهيدر (Header) -->
+            <header class="h-20 bg-white/70 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 flex-1">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <h2 class="text-lg md:text-xl font-extrabold text-primary">إدارة الموظفين والرواتب</h2>
+                </div>
+                
+                <div class="flex items-center gap-2 md:gap-4">
+                    <button @click="resetForm(); showAddModal = true" class="px-3 md:px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-slate-800 transition-all shadow-lg flex items-center gap-2">
+                        <span class="material-symbols-outlined text-lg">person_add</span> <span class="hidden md:inline">إضافة موظف</span>
+                    </button>
+                    
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline hidden md:flex"></div>
+                </div>
+            </header>
+
+            <!-- المحتوى الرئيسي -->
+            <main class="p-8">
+                <div class="max-w-7xl mx-auto">
+                    <!-- إحصائيات سريعة -->
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-8 mb-10">
+                        <div class="bg-white p-6 rounded-3xl border-2 border-slate-300 shadow-premium flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                                <span class="material-symbols-outlined">badge</span>
+                            </div>
+                            <div>
+                                <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest">عدد الموظفين</p>
+                                <p class="text-2xl font-extrabold text-primary" x-text="employees.length"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- جدول الموظفين -->
+                    <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                        <div class="p-8 border-b border-outline">
+                            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-6">
+                                <div>
+                                    <h3 class="text-xl font-extrabold text-primary">سجل الموظفين</h3>
+                                    <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest">عرض وإدارة كافة بيانات الفريق</p>
+                                </div>
+                            </div>
+                            
+                            <!-- فلاتر البحث الذكي -->
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">person</span>
+                                    <input x-model="filters.name" type="text" placeholder="اسم الموظف..." class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all">
+                                </div>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">work</span>
+                                    <input x-model="filters.position" type="text" placeholder="الوظيفة..." class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all">
+                                </div>
+                                <div class="relative" x-show="user && user.role === 'admin'">
+                                    <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">store</span>
+                                    <select x-model="filters.branch_id" class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all appearance-none">
+                                        <option value="">كل الفروع</option>
+                                        <template x-for="b in branches" :key="b.id">
+                                            <option :value="b.id" x-text="b.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">call</span>
+                                    <input x-model="filters.phone" type="text" placeholder="رقم الهاتف..." class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="w-full text-right border-collapse responsive-table">
+                                <thead>
+                                    <tr class="bg-slate-900">
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">الموظف</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">رقم الهاتف</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">الوظيفة</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">المواعيد</th>
+                                        <th x-show="user && user.role === 'admin'" class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">الفرع</th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest">
+                                            <div class="flex items-center gap-2">
+                                                <span>الراتب الأساسي</span>
+                                                <button @click="salaryVisible ? hideSalary() : unlockSalaryVisibility()" 
+                                                        :title="salaryVisible ? 'إخفاء الراتب' : 'إظهار الراتب'"
+                                                        class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition-all">
+                                                    <span class="material-symbols-outlined text-sm" 
+                                                          :style="salaryVisible ? 'font-variation-settings: \'FILL\' 1' : ''"
+                                                          x-text="salaryVisible ? 'visibility' : 'visibility_off'"></span>
+                                                </button>
+                                            </div>
+                                        </th>
+                                        <th class="px-8 py-5 text-xs font-extrabold text-slate-200 uppercase tracking-widest text-left">إجراءات</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-outline">
+                                    <template x-if="filteredEmployees.length === 0">
+                                        <tr>
+                                            <td colspan="6" class="px-8 py-20 text-center text-slate-400">
+                                                <span class="material-symbols-outlined text-4xl mb-2">group_off</span>
+                                                <p class="text-xs font-bold uppercase tracking-widest">لا يوجد موظفون مطابقون للبحث</p>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-for="emp in filteredEmployees" :key="emp.id">
+                                        <tr class="hover:bg-slate-50 transition-colors">
+                                            <td class="px-8 py-6">
+                                                <div class="flex items-center gap-3">
+                                                    <div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-bold text-xs text-primary" x-text="emp.name.charAt(0)"></div>
+                                                    <div>
+                                                        <p class="text-sm font-extrabold text-primary" x-text="emp.name"></p>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-8 py-6 text-sm font-bold text-slate-600" x-text="emp.phone || 'لا يوجد'"></td>
+                                            <td class="px-8 py-6">
+                                                <span class="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold" x-text="emp.position || 'غير محدد'"></span>
+                                            </td>
+                                            <td class="px-8 py-6 text-sm font-bold text-slate-600 whitespace-nowrap">
+                                                <div class="flex flex-col gap-1.5 text-[11px]">
+                                                    <span class="flex items-center gap-1.5 text-emerald-600 bg-emerald-50 w-fit px-2 py-0.5 rounded-lg border border-emerald-100">
+                                                        <span class="material-symbols-outlined text-[12px]">login</span>
+                                                        <span x-text="formatClockTime(emp.shift_start)"></span>
+                                                    </span>
+                                                    <span class="flex items-center gap-1.5 text-rose-600 bg-rose-50 w-fit px-2 py-0.5 rounded-lg border border-rose-100">
+                                                        <span class="material-symbols-outlined text-[12px]">logout</span>
+                                                        <span x-text="formatClockTime(emp.shift_end)"></span>
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td x-show="user && user.role === 'admin'" class="px-8 py-6 text-sm font-bold text-primary" x-text="emp.branch_name || 'رئيسي'"></td>
+                                            <td class="px-8 py-6 text-sm font-extrabold text-accent">
+                                                <span x-show="salaryVisible" x-text="Number(emp.basic_salary).toLocaleString() + ' ج.م'"></span>
+                                                <span x-show="!salaryVisible" class="tracking-widest text-slate-400">••••••</span>
+                                            </td>
+                                            <td class="px-8 py-6 text-left flex gap-2 justify-end">
+                                                <button @click="openAttendanceReport(emp)" title="سجل الحضور اليومي" class="p-2 text-cyan-600 hover:text-cyan-800 hover:scale-110 transition-all">
+                                                    <span class="material-symbols-outlined !text-[18px]">event_note</span>
+                                                </button>
+                                                <button @click="openSalesReport(emp.id)" title="سجل المبيعات" class="p-2 text-indigo-600 hover:text-indigo-800 hover:scale-110 transition-all">
+                                                    <span class="material-symbols-outlined !text-[18px]">trending_up</span>
+                                                </button>
+                                                <button @click="openSummary(emp)" title="تفاصيل الراتب والخصومات" class="p-2 text-emerald-600 hover:text-emerald-800 hover:scale-110 transition-all">
+                                                    <span class="material-symbols-outlined !text-[18px]">payments</span>
+                                                </button>
+                                                <button @click="openPayslip(emp)" title="كشف الراتب (Payslip)" class="p-2 text-indigo-600 hover:text-indigo-800 hover:scale-110 transition-all">
+                                                    <span class="material-symbols-outlined !text-[18px]">receipt_long</span>
+                                                </button>
+                                                <template x-if="user && user.role === 'admin'">
+                                                    <button @click="openTransferModal(emp)" title="نقل إلى فرع آخر" class="p-2 text-amber-500 hover:text-amber-700 hover:scale-110 transition-all">
+                                                        <span class="material-symbols-outlined !text-[18px]">swap_horiz</span>
+                                                    </button>
+                                                </template>
+                                                <button @click="editEmployee(emp)" title="تعديل البيانات" class="p-2 text-slate-400 hover:text-primary hover:scale-110 transition-all">
+                                                    <span class="material-symbols-outlined !text-[18px]">edit</span>
+                                                </button>
+                                                <button @click="deleteEmployee(emp.id)" title="حذف الموظف" class="p-2 text-slate-400 hover:text-accent hover:scale-110 transition-all">
+                                                    <span class="material-symbols-outlined !text-[18px]">delete</span>
+                                                </button>
+
+
+
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="p-5 border-t border-outline flex flex-col sm:flex-row items-center justify-between gap-3 bg-white">
+                            <p class="text-xs font-bold text-slate-400" x-text="'صفحة ' + pagination.page + ' من ' + pagination.totalPages + ' - إجمالي ' + pagination.total"></p>
+                            <div class="flex items-center gap-2">
+                                <button @click="changePage(pagination.page - 1)" :disabled="!pagination.hasPrev" class="px-4 py-2 rounded-xl border-2 border-slate-200 text-xs font-black text-primary disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">السابق</button>
+                                <button @click="changePage(pagination.page + 1)" :disabled="!pagination.hasNext" class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800">التالي</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Modal إضافة موظف -->
+            <div x-show="showAddModal" x-cloak class="fixed inset-0 z-[100] overflow-y-auto" aria-modal="true">
+                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" @click="showAddModal = false"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full p-10">
+                        <div class="mb-8">
+                            <h3 class="text-2xl font-extrabold text-primary" x-text="isEditing ? 'تعديل بيانات الموظف' : 'إضافة موظف جديد'"></h3>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">اسم الموظف</label>
+                                <input x-model="newEmp.name" type="text" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الوظيفة</label>
+                                <input x-model="newEmp.position" type="text" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الراتب الأساسي</label>
+                                <template x-if="isEditing && !editSalaryUnlocked">
+                                    <div class="flex items-center gap-3">
+                                        <div class="flex-1 bg-slate-50 border-2 border-slate-200 rounded-xl py-3 px-4 text-sm font-black text-slate-400 tracking-widest">
+                                            ••••••
+                                        </div>
+                                        <button @click="unlockEditSalary()" type="button" class="px-4 py-3 rounded-xl bg-primary text-white text-xs font-black hover:bg-slate-800 transition-all flex items-center gap-2">
+                                            <span class="material-symbols-outlined text-base">lock_open</span>
+                                            <span>إظهار / تعديل</span>
+                                        </button>
+                                    </div>
+                                </template>
+                                <template x-if="!isEditing || editSalaryUnlocked">
+                                    <input x-model="newEmp.basic_salary" type="number" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                </template>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">رقم الهاتف</label>
+                                <input x-model="newEmp.phone" type="text" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                            <div x-show="user && user.role === 'admin'">
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الفرع</label>
+                                <select 
+                                    x-model="newEmp.branch_id" 
+                                    class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                    <option value="">اختر الفرع...</option>
+                                    <template x-for="b in branches" :key="b.id">
+                                        <option :value="b.id" x-text="b.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">ميعاد الحضور (الوردية)</label>
+                                <input x-model="newEmp.shift_start" type="time" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">ميعاد الانصراف (الوردية)</label>
+                                <input x-model="newEmp.shift_end" type="time" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                        </div>
+                        <div class="mt-10 flex justify-end gap-3 border-t border-slate-100 pt-8">
+                            <button @click="showAddModal = false" class="px-6 py-3 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition-all">إلغاء</button>
+                            <button @click="saveEmployee" class="px-6 py-3 rounded-xl bg-primary text-white font-bold hover:bg-slate-800 transition-all" x-text="isEditing ? 'حفظ التعديلات' : 'حفظ وإضافة'"></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal تفاصيل راتب موظف -->
+            <div x-show="showSummaryModal" x-cloak class="fixed inset-0 z-[100] overflow-y-auto" aria-modal="true">
+                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" @click="showSummaryModal = false; salaryAuthVerified = false; salaryVisible = false;"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full p-10">
+                        <div class="mb-8 flex justify-between items-center border-b pb-6">
+                            <div>
+                                <h3 class="text-2xl font-extrabold text-primary">تفاصيل الراتب والخصومات</h3>
+                                <p class="text-slate-400 font-bold" x-text="selectedSummaryEmployee?.name"></p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <button @click="salaryVisible ? hideSalary() : unlockSalaryVisibility()"
+                                        :title="salaryVisible ? 'إخفاء البيانات المالية' : 'إظهار البيانات المالية'"
+                                        class="flex items-center gap-2 px-4 py-2 rounded-xl border-2 transition-all"
+                                        :class="salaryVisible ? 'border-success/30 bg-success/5 text-success' : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-primary hover:text-primary'">
+                                    <span class="material-symbols-outlined text-base"
+                                          :style="salaryVisible ? 'font-variation-settings:\'FILL\' 1' : ''"
+                                          x-text="salaryVisible ? 'visibility' : 'visibility_off'"></span>
+                                    <span class="text-xs font-extrabold" x-text="salaryVisible ? 'إخفاء' : 'إظهار البيانات'"></span>
+                                </button>
+                                <button @click="showSummaryModal = false; salaryAuthVerified = false; salaryVisible = false;" class="text-slate-400 hover:text-accent transition-all"><span class="material-symbols-outlined text-3xl">close</span></button>
+                            </div>
+                        </div>
+
+                        <div class="space-y-8">
+                            <!-- أولاً: تسجيل حركة مالية (في الأعلى) -->
+                            <div class="bg-slate-50 rounded-2xl p-6 border-2 border-slate-100">
+                                <h4 class="text-lg font-extrabold text-primary mb-5 flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-accent">account_balance_wallet</span> تسجيل حركة مالية للموظف
+                                </h4>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                                    <div>
+                                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">نوع الحركة</label>
+                                        <select x-model="transaction.type" class="w-full bg-white border-2 border-slate-200 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                            <option value="advance">سلفة</option>
+                                            <option value="deduction">خصم</option>
+                                            <option value="bonus">مكافأة</option>
+                                            <option value="salary_payment">تسديد راتب</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">المبلغ</label>
+                                        <input x-model="transaction.amount" type="number" class="w-full bg-white border-2 border-slate-200 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">ملاحظات</label>
+                                        <input x-model="transaction.notes" type="text" class="w-full bg-white border-2 border-slate-200 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                    </div>
+                                </div>
+                                <div class="mt-4 flex justify-end">
+                                    <button @click="saveTransaction()" class="w-full md:w-auto px-8 py-3 bg-accent text-white rounded-xl text-sm font-extrabold hover:bg-red-600 transition-all shadow-xl shadow-accent/10">تأكيد الحركة المالية</button>
+                                </div>
+                            </div>
+
+                            <!-- ثانياً: الجدول اليومي والشهري (في الأسفل) -->
+                            <div class="border-t border-slate-100 pt-6">
+                                <template x-if="salaryAuthVerified">
+                                    <div class="w-full">
+                                        <div class="mb-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                    <div>
+                                        <h4 class="text-lg font-extrabold text-primary">سجل الرواتب والخصومات</h4>
+                                        <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest mt-1">كشف تفصيلي بحركات الموظف اليومية والشهرية</p>
+                                    </div>
+                                    <div class="bg-slate-100 p-1.5 rounded-2xl flex gap-2 w-full md:w-auto">
+                                        <button @click="activeSalarySummaryTab = 'daily'" class="flex-1 md:flex-none px-6 py-2.5 rounded-xl text-xs font-extrabold transition-all" :class="activeSalarySummaryTab === 'daily' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-primary'">كشف يومي</button>
+                                        <button @click="activeSalarySummaryTab = 'monthly'" class="flex-1 md:flex-none px-6 py-2.5 rounded-xl text-xs font-extrabold transition-all" :class="activeSalarySummaryTab === 'monthly' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-primary'">كشف شهري</button>
+                                    </div>
+                                </div>
+
+                                <div x-show="activeSalarySummaryTab === 'daily'" x-transition class="overflow-x-auto rounded-2xl border-2 border-slate-100 max-h-[380px] overflow-y-auto">
+                                    <table class="w-full text-right border-collapse text-xs">
+                                        <thead class="sticky top-0 bg-slate-50 border-b-2 border-slate-100">
+                                            <tr>
+                                                <th class="px-4 py-3 text-slate-400">اليوم</th>
+                                                <th class="px-4 py-3 text-slate-400">راتب مدفوع</th>
+                                                <th class="px-4 py-3 text-slate-400">مكافآت</th>
+                                                <th class="px-4 py-3 text-slate-400">سلف</th>
+                                                <th class="px-4 py-3 text-slate-400">خصومات</th>
+                                                <th class="px-4 py-3 text-slate-400 text-left">المتبقي</th>
+                                                <th class="px-4 py-3 text-slate-400 text-left">الراتب الأساسي</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-100">
+                                            <template x-for="row in summaryData.daily_summary" :key="row.day">
+                                                <tr class="hover:bg-slate-50">
+                                                    <td class="px-4 py-3 font-black text-primary" x-text="formatShortDay(row.day)"></td>
+                                                    <td class="px-4 py-3 font-bold">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.salary_payments)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-bold text-success">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.bonuses)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-bold text-warning">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.advances)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-bold text-accent">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.deductions)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-black text-primary text-left">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.remaining_salary)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-black text-primary text-left">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.basic_salary)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div x-show="activeSalarySummaryTab === 'monthly'" x-transition class="overflow-x-auto rounded-2xl border-2 border-slate-100 max-h-[380px] overflow-y-auto">
+                                    <table class="w-full text-right border-collapse text-xs">
+                                        <thead class="sticky top-0 bg-slate-50 border-b-2 border-slate-100">
+                                            <tr>
+                                                <th class="px-4 py-3 text-slate-400">الشهر</th>
+                                                <th class="px-4 py-3 text-slate-400">راتب مدفوع</th>
+                                                <th class="px-4 py-3 text-slate-400">مكافآت</th>
+                                                <th class="px-4 py-3 text-slate-400">سلف</th>
+                                                <th class="px-4 py-3 text-slate-400">خصومات</th>
+                                                <th class="px-4 py-3 text-slate-400 text-left">المتبقي</th>
+                                                <th class="px-4 py-3 text-slate-400 text-left">الراتب الأساسي</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-100">
+                                            <template x-for="row in summaryData.monthly_summary" :key="row.month">
+                                                <tr class="hover:bg-slate-50">
+                                                    <td class="px-4 py-3 font-black text-primary" x-text="formatMonth(row.month)"></td>
+                                                    <td class="px-4 py-3 font-bold">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.salary_payments)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-bold text-success">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.bonuses)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-bold text-warning">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.advances)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-bold text-accent">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.deductions)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-black text-primary text-left">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.remaining_salary)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-black text-primary text-left">
+                                                        <span x-show="salaryVisible" x-text="formatCurrency(row.basic_salary)"></span>
+                                                        <span x-show="!salaryVisible" class="text-slate-300 tracking-widest">••••</span>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                    </div>
+                                </template>
+                                <template x-if="!salaryAuthVerified">
+                                    <div class="flex flex-col items-center justify-center py-10 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                                        <span class="material-symbols-outlined text-5xl text-slate-300 mb-3">lock</span>
+                                        <h4 class="text-lg font-extrabold text-primary mb-2">سجل الرواتب والخصومات مخفي</h4>
+                                        <p class="text-sm text-slate-500 mb-6">يرجى إدخال كلمة المرور لعرض السجل</p>
+                                        <button @click="openSalaryAuth()" class="px-6 py-3 rounded-xl bg-primary text-white text-sm font-bold hover:bg-slate-800 transition-all flex items-center gap-2 shadow-lg">
+                                            <span class="material-symbols-outlined text-base">key</span> إدخال كلمة المرور
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div class="mt-10">
+                            <button @click="showSummaryModal = false; salaryAuthVerified = false; salaryVisible = false;" class="w-full py-4 bg-primary text-white rounded-2xl text-sm font-extrabold hover:bg-slate-800 transition-all">إغلاق</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal سجل حضور الموظف -->
+            <div x-show="showAttendanceReportModal" x-cloak class="fixed inset-0 z-[100] overflow-y-auto" aria-modal="true">
+                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" @click="showAttendanceReportModal = false"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full p-10">
+                        <div class="mb-8 flex justify-between items-center border-b pb-6">
+                            <div>
+                                <h3 class="text-2xl font-extrabold text-primary">سجل حضور الموظف</h3>
+                                <p class="text-slate-400 font-bold" x-text="attendanceReport.employee_name"></p>
+
+                            </div>
+                            <button @click="showAttendanceReportModal = false" class="text-slate-400 hover:text-accent transition-all"><span class="material-symbols-outlined text-3xl">close</span></button>
+                        </div>
+
+                        <div class="flex gap-3 mb-6">
+                            <div class="w-full" x-data="{ showTimeInput: false, timeValue: '' }">
+                                <button x-show="!showTimeInput" @click="if(!selectedAttendanceEmployee?.today_check_out) { showTimeInput = true; timeValue = getDefaultAttendanceTime(selectedAttendanceEmployee); }" class="w-full py-4 rounded-2xl text-sm font-extrabold transition-all shadow-lg flex items-center justify-center gap-2" :class="selectedAttendanceEmployee?.today_check_in && !selectedAttendanceEmployee?.today_check_out ? 'bg-amber-500 text-white hover:bg-amber-600' : selectedAttendanceEmployee?.today_check_out ? 'bg-slate-100 text-slate-400 hover:bg-slate-200 cursor-not-allowed' : 'bg-success text-white hover:bg-green-600'">
+                                    <span class="material-symbols-outlined" x-text="selectedAttendanceEmployee?.today_check_in && !selectedAttendanceEmployee?.today_check_out ? 'logout' : 'how_to_reg'"></span>
+                                    <span x-text="attendanceActionTitle(selectedAttendanceEmployee || {})"></span>
+                                </button>
+                                <div x-show="showTimeInput" class="flex gap-2 items-center bg-slate-50 p-2 rounded-2xl border-2 border-slate-200">
+                                    <input type="time" x-model="timeValue" class="flex-1 bg-white border border-slate-300 rounded-xl py-2 px-3 text-sm focus:border-primary focus:outline-none">
+                                    <button @click="if(timeValue) { toggleAttendance(selectedAttendanceEmployee, true, timeValue); showTimeInput = false; }" class="px-6 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-slate-800 transition-all">حفظ الوقت</button>
+                                    <button @click="showTimeInput = false" class="px-4 py-2 bg-slate-200 text-slate-600 text-sm font-bold rounded-xl hover:bg-slate-300 transition-all">إلغاء</button>
+                                </div>
+                            </div>
+                            <button x-show="user && (user.role === 'admin' || user.role === 'branch_user')" @click="showManualAttendanceModal = true; manualAttendance.date = window.getEgyptDateString ? window.getEgyptDateString() : new Date().toISOString().split('T')[0]" class="w-1/3 py-4 rounded-2xl text-sm font-extrabold transition-all shadow-lg flex items-center justify-center gap-2 bg-slate-800 text-white hover:bg-slate-900">
+                                <span class="material-symbols-outlined">event_note</span>
+                                <span>إضافة حالة</span>
+                            </button>
+                        </div>
+
+                        <div class="space-y-3 max-h-[480px] overflow-y-auto pr-2 custom-scrollbar text-xs">
+                            <template x-for="day in attendanceReport.daily_attendance" :key="day.day">
+                                <div class="rounded-2xl border-2 border-slate-100 overflow-hidden">
+                                    <button @click="toggleAttendanceDay(day.day)" class="w-full bg-slate-50 hover:bg-slate-100 transition-colors px-4 py-3 flex items-center justify-between text-right">
+                                        <div>
+                                            <p class="text-sm font-black text-primary" x-text="formatDay(day.day)"></p>
+                                            <div class="flex items-center gap-2 mt-1">
+                                                <p class="text-[10px] font-bold" :class="formatAttendanceStatus(day).color" x-text="formatAttendanceStatus(day).text"></p>
+                                                <span x-show="day.total_hours" class="px-2 py-0.5 bg-accent/10 text-accent rounded text-[10px] font-bold" x-text="day.total_hours + ' ساعة'"></span>
+                                                <span x-show="day.late_minutes > 0" class="px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[10px] font-bold" x-text="'تأخير: ' + formatSmartTime(day.late_minutes)"></span>
+                                                <span x-show="day.early_departure_minutes > 0" class="px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[10px] font-bold" x-text="'مبكر: ' + formatSmartTime(day.early_departure_minutes)"></span>
+                                                <span x-show="day.overtime_minutes > 0" class="px-2 py-0.5 bg-green-50 text-green-600 rounded text-[10px] font-bold" x-text="'إضافي: ' + formatSmartTime(day.overtime_minutes)"></span>
+                                            </div>
+                                        </div>
+                                        <span class="material-symbols-outlined text-slate-400 transition-transform" :class="isAttendanceDayExpanded(day.day) ? 'rotate-180' : ''">expand_more</span>
+                                    </button>
+                                    <div x-show="isAttendanceDayExpanded(day.day)" x-transition class="bg-white px-4 pb-4">
+                                        <table class="w-full text-center border-collapse">
+                                            <thead class="border-b-2 border-slate-100">
+                                                <tr>
+                                                    <th class="py-2 text-slate-400">وقت الحضور</th>
+                                                    <th class="py-2 text-slate-400">وقت الانصراف</th>
+                                                    <th class="py-2 text-slate-400">المدة</th>
+                                                    <th class="py-2 text-slate-400">التأخير</th>
+                                                    <th class="py-2 text-slate-400">مبكر</th>
+                                                    <th class="py-2 text-slate-400">إضافي</th>
+                                                    <th class="py-2 text-slate-400">الحالة</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td class="py-3 font-black text-success" x-text="formatClockTime(day.check_in)"></td>
+                                                    <td class="py-3 font-black text-amber-600" x-text="formatClockTime(day.check_out)"></td>
+                                                    <td class="py-3 font-bold text-accent" x-text="day.total_hours ? day.total_hours + ' ساعة' : '-'"></td>
+                                                    <td class="py-3 font-bold text-amber-600" x-text="day.late_minutes ? formatSmartTime(day.late_minutes) : '-'"></td>
+                                                    <td class="py-3 font-bold text-rose-600" x-text="day.early_departure_minutes ? formatSmartTime(day.early_departure_minutes) : '-'"></td>
+                                                    <td class="py-3 font-bold text-success" x-text="day.overtime_minutes ? formatSmartTime(day.overtime_minutes) : '-'"></td>
+                                                    <td class="py-3 font-bold" :class="formatAttendanceStatus(day).color" x-text="formatAttendanceStatus(day).shortText"></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </template>
+                            <template x-if="!attendanceReport.daily_attendance?.length">
+                                <p class="text-center text-slate-400 py-10">لا يوجد سجل حضور لهذا الموظف</p>
+                            </template>
+                        </div>
+
+                        <div class="mt-10 pt-8 border-t border-slate-100">
+                            <button @click="showAttendanceReportModal = false" class="w-full py-4 bg-primary text-white rounded-2xl text-sm font-extrabold hover:bg-slate-800 transition-all shadow-xl">إغلاق السجل</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Modal إضافة حالة يدوية -->
+            <div x-show="showManualAttendanceModal" x-cloak class="fixed inset-0 z-[110] overflow-y-auto" aria-modal="true">
+                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" @click="showManualAttendanceModal = false"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-md sm:w-full p-10">
+                        <div class="mb-8 flex justify-between items-center border-b pb-6">
+                            <h3 class="text-2xl font-extrabold text-primary">إضافة حالة حضور/غياب</h3>
+                            <button @click="showManualAttendanceModal = false" class="text-slate-400 hover:text-accent transition-all"><span class="material-symbols-outlined text-3xl">close</span></button>
+                        </div>
+                        <div class="space-y-5 text-right">
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">التاريخ</label>
+                                <input x-model="manualAttendance.date" type="date" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">الحالة</label>
+                                <select x-model="manualAttendance.status" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                    <option value="absent">غائب</option>
+                                    <option value="annual_leave">إجازة</option>
+                                    <option value="sick_leave">إجازة مرضي</option>
+                                    <option value="unpaid_leave">إجازة بدون مرتب</option>
+                                    <option value="present">حاضر (يوميات عادية)</option>
+                                </select>
+                            </div>
+                            <div x-show="manualAttendance.status === 'present'" class="flex gap-4">
+                                <div class="flex-1">
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">وقت الحضور</label>
+                                    <input x-model="manualAttendance.check_in" type="time" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                </div>
+                                <div class="flex-1">
+                                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">وقت الانصراف (اختياري)</label>
+                                    <input x-model="manualAttendance.check_out" type="time" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase mb-2">ملاحظات (اختياري)</label>
+                                <textarea x-model="manualAttendance.notes" rows="2" class="w-full bg-white border-2 border-slate-300 shadow-sm focus:border-primary rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"></textarea>
+                            </div>
+                        </div>
+                        <div class="mt-8 flex justify-end gap-3">
+                            <button @click="showManualAttendanceModal = false" class="px-6 py-3 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition-all">إلغاء</button>
+                            <button @click="saveManualAttendance" class="px-6 py-3 rounded-xl bg-primary text-white font-bold hover:bg-slate-800 transition-all">حفظ الحالة</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Modal كشف الراتب (Payslip) -->
+            <div x-show="showPayslipModal" x-cloak class="fixed inset-0 z-[120] overflow-y-auto" aria-modal="true">
+                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity print:hidden" @click="showPayslipModal = false"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div class="inline-block align-bottom bg-white text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full p-10 print:p-0 print:shadow-none print:w-full print:max-w-full print:my-0">
+                        <div class="mb-6 p-4 rounded-2xl bg-slate-50 border-2 border-slate-200 print:hidden">
+                            <div class="flex flex-col sm:flex-row items-end gap-3">
+                                <div class="flex-1">
+                                    <label class="block text-[10px] font-black text-slate-500 mb-1.5">شهر كشف الراتب</label>
+                                    <input x-model="payslipMonth" @change="loadPayslipMonth()" type="month"
+                                        class="w-full bg-white border-2 border-slate-300 rounded-xl py-2.5 px-3 text-sm font-bold">
+                                </div>
+                                <div x-show="payslipLoading" class="px-4 py-3 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-black">
+                                    جاري التحميل...
+                                </div>
+                                <div class="flex-1 text-xs font-bold text-slate-500">
+                                    عدّل قيم الإضافي والمكافآت والخصومات فقط، ثم افتح المعاينة النهائية للطباعة.
+                                </div>
+                            </div>
+                        </div>
+                        <div x-show="payslipStep === 'edit'" class="print:hidden">
+                            <div class="border-2 border-slate-200 rounded-xl p-4">
+                                <h4 class="text-sm font-black text-primary mb-4">القيم القابلة للتعديل</h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-500 mb-1.5">بدل إضافي</label>
+                                        <input type="number" min="0" step="0.01" x-model.number="payslipData.attendance.overtime_bonus" @input="recalculatePayslip()" class="w-full bg-white border-2 border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-500 mb-1.5">مكافآت وإضافات أخرى</label>
+                                        <input type="number" min="0" step="0.01" x-model.number="payslipData.financials.bonuses_manual" @input="recalculatePayslip()" class="w-full bg-white border-2 border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-500 mb-1.5">غياب</label>
+                                        <input type="number" min="0" step="0.01" x-model.number="payslipData.attendance.absence_deduction" @input="recalculatePayslip()" class="w-full bg-white border-2 border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-500 mb-1.5">تأخير / مبكر</label>
+                                        <input type="number" min="0" step="0.01" x-model.number="payslipData.attendance.delay_deduction" @input="recalculatePayslip()" class="w-full bg-white border-2 border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-500 mb-1.5">خصومات أخرى</label>
+                                        <input type="number" min="0" step="0.01" x-model.number="payslipData.financials.deductions_manual" @input="recalculatePayslip()" class="w-full bg-white border-2 border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="payslip-print-area" x-show="payslipStep === 'preview'">
+                        
+                        <!-- Header -->
+                        <div class="text-center mb-8 border-b-2 border-black pb-4">
+                            <h2 class="text-2xl font-black mb-1 text-black">كشف راتب موظف (Payslip)</h2>
+                            <p class="text-sm font-bold text-black">عن شهر: <span x-text="formatMonth(payslipData?.month)"></span></p>
+                        </div>
+
+                        <!-- Employee Info Table -->
+                        <table class="w-full mb-8 border border-black text-sm text-black">
+                            <tbody>
+                                <tr>
+                                    <td class="bg-gray-100 font-bold p-2 border-l border-black whitespace-nowrap" style="width: 12%;">اسم الموظف</td>
+                                    <td class="p-2 font-bold border-l border-black" style="width: 21%;" x-text="payslipData.employee.name || '-'"></td>
+                                    <td class="bg-gray-100 font-bold p-2 border-l border-black whitespace-nowrap" style="width: 12%;">الوظيفة</td>
+                                    <td class="p-2 border-l border-black" style="width: 21%;" x-text="payslipData.employee.position || '-'"></td>
+                                    <td class="bg-gray-100 font-bold p-2 border-l border-black whitespace-nowrap" style="width: 12%;">الفرع</td>
+                                    <td class="p-2" style="width: 22%;" x-text="payslipData.employee.branch_name || '-'"></td>
+                                </tr>
+                                <tr class="border-t border-black">
+                                    <td class="bg-gray-100 font-bold p-2 border-l border-black whitespace-nowrap">أيام الحضور</td>
+                                    <td class="p-2 font-bold border-l border-black"><span x-text="payslipData.attendance.present_days || 0"></span> يوم</td>
+                                    <td class="bg-gray-100 font-bold p-2 border-l border-black whitespace-nowrap">أيام الغياب</td>
+                                    <td class="p-2 font-bold border-l border-black text-red-600"><span x-text="payslipData.attendance.absent_days || 0"></span> يوم</td>
+                                    <td class="bg-gray-100 font-bold p-2 border-l border-black whitespace-nowrap">إجمالي التأخير</td>
+                                    <td class="p-2 font-bold"><span x-text="payslipData.attendance.total_delay_minutes || 0"></span> دقيقة</td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Financials Grid -->
+                        <div class="grid grid-cols-2 gap-8 mb-8 text-sm border-b-2 border-black pb-8 text-black">
+                            
+                            <!-- Earnings -->
+                            <div>
+                                <h3 class="font-bold text-lg mb-2 border-b border-black pb-1">المستحقات (Earnings)</h3>
+                                <table class="w-full border border-black">
+                                    <tbody>
+                                        <tr class="border-b border-black">
+                                            <td class="p-2 border-l border-black w-2/3">الراتب الأساسي</td>
+                                            <td class="p-2 text-left font-bold" x-text="formatCurrency(payslipData.basic_salary)"></td>
+                                        </tr>
+                                        <tr class="border-b border-black">
+                                            <td class="p-2 border-l border-black w-2/3">بدل إضافي (<span x-text="payslipData.attendance.overtime_minutes || 0"></span> دقيقة)</td>
+                                            <td class="p-2 text-left font-bold" x-text="formatCurrency(payslipData.attendance.overtime_bonus)"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="p-2 border-l border-black w-2/3">
+                                                <div>مكافآت وإضافات أخرى</div>
+                                                <template x-if="payslipData?.financials?.bonus_details?.length">
+                                                    <div class="mt-1 text-[10px] font-normal">
+                                                        <template x-if="payslipData.financials.bonus_details.filter(d => (d.notes || '').includes('مكسرات')).length">
+                                                            <div class="border-t border-gray-300 pt-1">
+                                                                <span>مكسرات - </span>
+                                                                <span class="font-bold" x-text="formatCurrency(payslipData.financials.bonus_details.filter(d => (d.notes || '').includes('مكسرات')).reduce((sum, d) => sum + Number(d.amount || 0), 0))"></span>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </td>
+                                            <td class="p-2 text-left font-bold" x-text="formatCurrency(payslipData.financials.bonuses_manual)"></td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr class="border-t-2 border-black bg-gray-100 font-bold">
+                                            <td class="p-2 border-l border-black">إجمالي المستحقات</td>
+                                            <td class="p-2 text-left" x-text="formatCurrency((payslipData?.totals?.total_bonuses || 0) + (payslipData?.basic_salary || 0))"></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+
+                            <!-- Deductions -->
+                            <div>
+                                <h3 class="font-bold text-lg mb-2 border-b border-black pb-1">الاستقطاعات (Deductions)</h3>
+                                <table class="w-full border border-black">
+                                    <tbody>
+                                        <tr class="border-b border-black">
+                                            <td class="p-2 border-l border-black w-2/3">غياب (<span x-text="payslipData?.attendance?.absent_days"></span> يوم)</td>
+                                            <td class="p-2 text-left font-bold" x-text="formatCurrency(payslipData.attendance.absence_deduction)"></td>
+                                        </tr>
+                                        <tr class="border-b border-black">
+                                            <td class="p-2 border-l border-black w-2/3">تأخير / مبكر (<span x-text="payslipData?.attendance?.total_delay_minutes || 0"></span> دقيقة)</td>
+                                            <td class="p-2 text-left font-bold" x-text="formatCurrency(payslipData.attendance.delay_deduction)"></td>
+                                        </tr>
+                                        <tr class="border-b border-black">
+                                            <td class="p-2 border-l border-black w-2/3">سلف مدفوعة</td>
+                                            <td class="p-2 text-left font-bold" x-text="formatCurrency(payslipData.financials.advances)"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="p-2 border-l border-black w-2/3">خصومات أخرى</td>
+                                            <td class="p-2 text-left font-bold" x-text="formatCurrency(payslipData.financials.deductions_manual)"></td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr class="border-t-2 border-black bg-gray-100 font-bold">
+                                            <td class="p-2 border-l border-black">إجمالي الاستقطاعات</td>
+                                            <td class="p-2 text-left" x-text="formatCurrency(payslipData?.totals?.total_deductions)"></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Summary -->
+                        <table class="w-full border-2 border-black text-lg mb-10 text-black">
+                            <tbody>
+                                <tr class="border-b border-black">
+                                    <td class="w-2/3 bg-gray-100 font-bold p-3 border-l border-black">صافي الراتب المستحق (Net Salary)</td>
+                                    <td class="w-1/3 p-3 text-left font-black" x-text="formatCurrency(payslipData?.totals?.net_salary)"></td>
+                                </tr>
+                                <tr class="border-b border-black text-sm">
+                                    <td class="w-2/3 font-bold p-2 border-l border-black">تم صرفه مسبقاً خلال الشهر (رواتب مصروفة)</td>
+                                    <td class="w-1/3 p-2 text-left font-bold" x-text="formatCurrency(payslipData.financials.salary_payments)"></td>
+                                </tr>
+                                <tr>
+                                    <td class="w-2/3 bg-gray-200 font-black p-3 border-l border-black">الرصيد المتبقي للصرف الآن</td>
+                                    <td class="w-1/3 p-3 text-left font-black" x-text="formatCurrency(payslipData?.totals?.remaining_balance)"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        
+                        <!-- Signatures -->
+                        <div class="flex justify-between items-center text-sm font-bold pt-8 px-10 print:px-0 mt-8 mb-4 text-black">
+                            <div class="text-center">
+                                <p class="mb-8">توقيع الموظف</p>
+                                <p>........................</p>
+                            </div>
+                            <div class="text-center">
+                                <p class="mb-8">إعتماد الإدارة</p>
+                                <p>........................</p>
+                            </div>
+                        </div>
+
+                        </div>
+
+                        <div class="mt-8 flex justify-end gap-3 print:hidden border-t pt-6">
+                            <button @click="showPayslipModal = false" class="px-6 py-3 border border-gray-300 bg-white text-gray-700 font-bold hover:bg-gray-50 transition-all">إغلاق</button>
+                            <button x-show="payslipStep === 'preview'" @click="payslipStep = 'edit'" class="px-6 py-3 border border-indigo-200 bg-indigo-50 text-indigo-700 font-bold hover:bg-indigo-100 transition-all">
+                                تعديل القيم
+                            </button>
+                            <button x-show="payslipStep === 'edit'" @click="previewPayslip()" class="px-6 py-3 bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all flex items-center gap-2">
+                                <span class="material-symbols-outlined">visibility</span>
+                                <span>عرض المعاينة</span>
+                            </button>
+                            <button x-show="payslipStep === 'preview'" @click="printPayslip()" class="px-6 py-3 bg-black text-white font-bold hover:bg-gray-800 transition-all flex items-center gap-2">
+                                <span class="material-symbols-outlined">print</span>
+                                <span>طباعة الكشف</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
+
+            <!-- Modal سجل مبيعات الموظف -->
+            <div x-show="showSalesReportModal" x-cloak class="fixed inset-0 z-[100] overflow-y-auto" aria-modal="true">
+                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" @click="showSalesReportModal = false"></div>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                    <div class="inline-block align-bottom bg-white rounded-[2.5rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full p-10">
+                        <div class="mb-8 flex justify-between items-center border-b pb-6">
+                            <div>
+                                <h3 class="text-2xl font-extrabold text-primary">تقرير مبيعات الموظف</h3>
+                                <p class="text-slate-400 font-bold" x-text="salesReport.employee_name"></p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <button @click="showSalesReportModal = false" class="text-slate-400 hover:text-accent transition-all"><span class="material-symbols-outlined text-3xl">close</span></button>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-8 bg-slate-100 p-1.5 rounded-2xl flex gap-2">
+                            <button @click="activeSalesReportTab = 'details'" class="flex-1 py-3 rounded-xl text-sm font-extrabold transition-all" :class="activeSalesReportTab === 'details' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-primary'">تفاصيل المبيعات</button>
+                            <button @click="activeSalesReportTab = 'monthly'" class="flex-1 py-3 rounded-xl text-sm font-extrabold transition-all" :class="activeSalesReportTab === 'monthly' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-primary'">ملخص شهري</button>
+                        </div>
+
+                        <div x-show="activeSalesReportTab === 'details'" x-transition>
+                            <button @click="salesOrdersExpanded = !salesOrdersExpanded" class="w-full mb-6 flex items-center justify-between text-right">
+                                <span class="text-lg font-extrabold text-primary flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-success">calendar_month</span> المبيعات اليومية
+                                </span>
+                                <span class="material-symbols-outlined text-slate-400 transition-transform" :class="salesOrdersExpanded ? 'rotate-180' : ''">expand_more</span>
+                            </button>
+                            <div x-show="salesOrdersExpanded" x-transition class="space-y-3 max-h-[460px] overflow-y-auto pr-2 custom-scrollbar text-xs">
+                                <template x-for="day in salesReport.daily_sales_details" :key="day.day">
+                                    <div class="rounded-2xl border-2 border-slate-100 overflow-hidden">
+                                        <button @click="toggleSalesDay(day.day)" class="w-full bg-slate-50 hover:bg-slate-100 transition-colors px-4 py-3 flex items-center justify-between text-right">
+                                            <div>
+                                                <p class="text-sm font-black text-primary" x-text="formatDay(day.day)"></p>
+                                                <p class="text-[10px] font-bold text-slate-400" x-text="day.order_count + ' عملية بيع'"></p>
+                                            </div>
+                                            <div class="flex items-center gap-3">
+                                                <span class="font-black text-success">
+                                                    <span x-text="formatCurrency(day.total_sales)"></span>
+                                                </span>
+                                                <span class="material-symbols-outlined text-slate-400 transition-transform" :class="isSalesDayExpanded(day.day) ? 'rotate-180' : ''">expand_more</span>
+                                            </div>
+                                        </button>
+                                        <div x-show="isSalesDayExpanded(day.day)" x-transition class="bg-white px-4 pb-3 overflow-x-auto">
+                                            <table class="w-full text-right border-collapse">
+                                                <thead class="border-b-2 border-slate-100">
+                                                    <tr>
+                                                        <th class="py-2 text-slate-400">الوقت</th>
+                                                        <th class="py-2 text-slate-400">رقم الفاتورة</th>
+                                                        <th class="py-2 text-slate-400">العميل</th>
+                                                        <th class="py-2 text-slate-400 text-left">المبلغ</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-slate-50">
+                                                    <template x-for="order in day.orders" :key="order.id">
+                                                        <tr>
+                                                            <td class="py-3 font-bold" x-text="formatTime(order.order_date)"></td>
+                                                            <td class="py-3 font-black text-indigo-600" x-text="'#' + order.invoice_number"></td>
+                                                            <td class="py-3 font-bold text-slate-600" x-text="order.customer_name"></td>
+                                                            <td class="py-3 font-black text-primary text-left">
+                                                                <span x-text="formatCurrency(order.total_amount)"></span>
+                                                            </td>
+                                                        </tr>
+                                                    </template>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </template>
+                                <template x-if="!salesReport.daily_sales_details?.length">
+                                    <p class="text-center text-slate-400 py-10">لا يوجد عمليات بيع مسجلة</p>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div x-show="activeSalesReportTab === 'monthly'" x-transition>
+                            <div class="overflow-x-auto rounded-2xl border-2 border-slate-100">
+                                <table class="w-full text-right border-collapse text-sm">
+                                    <thead class="bg-slate-50 border-b-2 border-slate-100">
+                                        <tr>
+                                            <th class="px-5 py-4 text-slate-400 font-extrabold">الشهر</th>
+                                            <th class="px-5 py-4 text-slate-400 font-extrabold">عدد الأوردرات</th>
+                                            <th class="px-5 py-4 text-slate-400 font-extrabold">العملاء</th>
+                                            <th class="px-5 py-4 text-slate-400 font-extrabold">متوسط الأوردر</th>
+                                            <th class="px-5 py-4 text-slate-400 font-extrabold text-left">إجمالي المبيعات</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <template x-for="month in salesReport.monthly_summary" :key="month.month">
+                                            <tr class="hover:bg-slate-50 transition-colors">
+                                                <td class="px-5 py-4 font-black text-primary" x-text="formatMonth(month.month)"></td>
+                                                <td class="px-5 py-4 font-bold text-slate-600" x-text="month.order_count"></td>
+                                                <td class="px-5 py-4 font-bold text-slate-600" x-text="month.customer_count"></td>
+                                                <td class="px-5 py-4 font-bold text-indigo-600">
+                                                    <span x-text="formatCurrency(month.avg_order)"></span>
+                                                </td>
+                                                <td class="px-5 py-4 font-black text-primary text-left">
+                                                    <span x-text="formatCurrency(month.total_sales)"></span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <template x-if="!salesReport.monthly_summary?.length">
+                                <p class="text-center text-slate-400 py-10">لا يوجد ملخص شهري لهذا الموظف</p>
+                            </template>
+                        </div>
+
+                        <div class="mt-10 pt-8 border-t border-slate-100">
+                            <button @click="showSalesReportModal = false" class="w-full py-4 bg-primary text-white rounded-2xl text-sm font-extrabold hover:bg-slate-800 transition-all shadow-xl">إغلاق التقرير</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal نقل موظف بين الفروع -->
+            <div x-show="showTransferModal" x-cloak class="fixed inset-0 z-[110] overflow-y-auto" aria-modal="true">
+                <div class="flex items-center justify-center min-h-screen px-4">
+                    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" @click="showTransferModal = false"></div>
+                    <div class="relative bg-white rounded-[2rem] shadow-2xl p-8 w-full max-w-md z-10">
+                        <div class="flex items-center gap-3 mb-6">
+                            <div class="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-amber-500" style="font-variation-settings:'FILL' 1">swap_horiz</span>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-extrabold text-primary">نقل موظف لفرع آخر</h3>
+                                <p class="text-xs text-slate-400 font-bold" x-text="transferEmployee?.name"></p>
+                            </div>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">الفرع الحالي</label>
+                                <div class="bg-slate-50 border-2 border-slate-100 rounded-xl py-3 px-4 text-sm font-bold text-slate-500" x-text="transferEmployee?.branch_name || 'غير محدد'"></div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">الفرع الجديد</label>
+                                <select x-model="transferBranchId"
+                                        class="w-full bg-white border-2 border-slate-200 rounded-xl py-3 px-4 text-sm font-bold text-primary focus:border-primary focus:outline-none transition-all">
+                                    <option value="">اختر الفرع...</option>
+                                    <template x-for="b in branches" :key="b.id">
+                                        <option :value="b.id" x-text="b.name" :disabled="String(b.id) === String(transferEmployee?.branch_id)"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <p x-show="transferError" x-text="transferError" class="text-xs font-bold text-accent pr-1"></p>
+                            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
+                                <span class="material-symbols-outlined text-amber-500 text-sm mt-0.5">info</span>
+                                <p class="text-xs font-bold text-amber-700">كل بيانات الموظف (الرواتب، الحضور، المبيعات) هتنتقل معه للفرع الجديد تلقائياً.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-3 mt-6">
+                            <button @click="showTransferModal = false"
+                                    class="flex-1 py-3 rounded-xl border-2 border-slate-200 text-sm font-bold text-slate-500 hover:bg-slate-50 transition-all">
+                                إلغاء
+                            </button>
+                            <button @click="confirmTransfer()"
+                                    :disabled="!transferBranchId || transferLoading"
+                                    class="flex-1 py-3 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                                <span x-show="transferLoading" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                                <span class="material-symbols-outlined text-base" x-show="!transferLoading">swap_horiz</span>
+                                <span x-text="transferLoading ? 'جاري النقل...' : 'تأكيد النقل'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal التحقق من كلمة المرور لإظهار الراتب -->
+            <div x-show="showSalaryAuthModal" x-cloak class="fixed inset-0 z-[110] overflow-y-auto" aria-modal="true">
+                <div class="flex items-center justify-center min-h-screen px-4">
+                    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" @click="closeSalaryAuth()"></div>
+                    <div class="relative bg-white rounded-[2rem] shadow-2xl p-8 w-full max-w-sm z-10">
+                        <div class="flex items-center gap-3 mb-6">
+                            <div class="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-amber-500" style="font-variation-settings:'FILL' 1">lock</span>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-extrabold text-primary">تأكيد الهوية</h3>
+                                <p class="text-xs text-slate-400 font-bold">أدخل كلمة المرور لإظهار الرواتب</p>
+                            </div>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div class="relative">
+                                <input 
+                                    x-model="salaryAuthPassword"
+                                    :type="salaryAuthShowPw ? 'text' : 'password'"
+                                    @keydown.enter="confirmSalaryAuth()"
+                                    placeholder="كلمة المرور..."
+                                    x-ref="salaryAuthInput"
+                                    class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-3 pr-4 pl-12 text-sm font-bold focus:border-primary focus:outline-none transition-all"
+                                    :class="salaryAuthError ? 'border-accent' : ''">
+                                <button @click="salaryAuthShowPw = !salaryAuthShowPw" type="button"
+                                        class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-all">
+                                    <span class="material-symbols-outlined text-sm" x-text="salaryAuthShowPw ? 'visibility_off' : 'visibility'"></span>
+                                </button>
+                            </div>
+                            <p x-show="salaryAuthError" x-text="salaryAuthError" class="text-xs font-bold text-accent pr-1"></p>
+                        </div>
+
+                        <div class="flex gap-3 mt-6">
+                            <button @click="closeSalaryAuth()" 
+                                    class="flex-1 py-3 rounded-xl border-2 border-slate-200 text-sm font-bold text-slate-500 hover:bg-slate-50 transition-all">
+                                إلغاء
+                            </button>
+                            <button @click="confirmSalaryAuth()" 
+                                    :disabled="salaryAuthLoading"
+                                    class="flex-1 py-3 rounded-xl bg-primary text-white text-sm font-bold hover:bg-slate-800 transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+                                <span x-show="salaryAuthLoading" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                                <span x-text="salaryAuthLoading ? 'جاري التحقق...' : 'تأكيد'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Alpine.js -->
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('employeeApp', () => ({
+                sidebarExpanded: false,
+                sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                mobileMenuOpen: false,
+                showAddModal: false,
+                showSummaryModal: false,
+                showSalesReportModal: false,
+                showAttendanceReportModal: false,
+                activeSalesReportTab: 'details',
+                activeSalarySummaryTab: 'daily',
+                salesOrdersExpanded: true,
+                expandedSalesDays: {},
+                expandedAttendanceDays: {},
+
+                // salary visibility
+                salaryVisible: false,
+                salaryAuthVerified: false,
+                showSalaryAuthModal: false,
+                salaryAuthPassword: '',
+                salaryAuthError: '',
+                salaryAuthLoading: false,
+                salaryAuthShowPw: false,
+
+                // branch transfer
+                showTransferModal: false,
+                transferEmployee: null,
+                transferBranchId: '',
+                transferLoading: false,
+                transferError: '',
+                
+                employees: [],
+                pagination: { page: 1, limit: 50, total: 0, totalPages: 1, hasNext: false, hasPrev: false },
+                searchDebounce: null,
+                branches: [],
+                user: window.currentUser || null,
+                filters: { name: '', position: '', branch_id: '', phone: '' },
+                isEditing: false,
+                editSalaryUnlocked: false,
+                newEmp: { name: '', position: '', branch_id: '', basic_salary: 0, phone: '' },
+                availablePages: [
+                    { id: 'Dashboard.html', name: 'لوحة التحكم' },
+                    { id: 'index.html', name: 'الكاشير' },
+                    { id: 'Rentals.html', name: 'التأجير' },
+                    { id: 'Barcodes.html', name: 'طباعة الباركود' },
+                    { id: 'Customers.html', name: 'العملاء' },
+
+                    { id: 'Suppliers.html', name: 'إدارة المخزون' },
+                    { id: 'Employees.html', name: 'الموظفين' },
+                    { id: 'Expenses.html', name: 'المصاريف' },
+                    { id: 'Reports.html', name: 'التقارير' },
+                    { id: 'Settings.html', name: 'الإعدادات' },
+                    { id: 'Alterations.html', name: 'التعديلات والتفصيل' }
+                ],
+                transaction: { employee_id: '', type: 'advance', amount: '', notes: '' },
+                summaryData: {},
+                salesReport: {},
+                attendanceReport: {},
+                selectedAttendanceEmployee: null,
+                selectedSummaryEmployee: null,
+                showManualAttendanceModal: false,
+                manualAttendance: { date: '', status: 'present', notes: '', check_in: '', check_out: '' },
+                payslipData: {
+                    employee: { name: '', position: '', branch_name: '' },
+                    month: '',
+                    basic_salary: 0,
+                    financials: { advances: 0, deductions_manual: 0, bonuses_manual: 0, salary_payments: 0, bonus_details: [], deduction_details: [] },
+                    attendance: { present_days: 0, absent_days: 0, late_minutes: 0, early_minutes: 0, total_delay_minutes: 0, overtime_minutes: 0, absence_deduction: 0, late_deduction: 0, early_deduction: 0, delay_deduction: 0, overtime_bonus: 0 },
+                    totals: { total_deductions: 0, total_bonuses: 0, net_salary: 0, remaining_balance: 0 }
+                },
+                showPayslipModal: false,
+                payslipEmployeeId: null,
+                payslipMonth: '',
+                payslipLoading: false,
+                payslipStep: 'edit',
+
+                get filteredEmployees() {
+                    return this.employees;
+                },
+                async initData() {
+                    try {
+                        window.openEmployeeAttendanceFromReminder = (empId, attendanceDate = '') => {
+                            this.openAttendanceFromReminder(empId, attendanceDate);
+                        };
+                        if (!window.currentUser) {
+                            const res = await fetch('/api/me');
+                            if (res.ok) {
+                                const data = await res.json();
+                                window.currentUser = data.user;
+                            }
+                        }
+                        this.user = window.currentUser;
+                        if (!this._watchersReady) {
+                            Object.keys(this.filters).forEach(key => {
+                                this.$watch(`filters.${key}`, () => {
+                                    clearTimeout(this.searchDebounce);
+                                    this.searchDebounce = setTimeout(() => {
+                                        this.pagination.page = 1;
+                                        this.loadEmployees();
+                                    }, 250);
+                                });
+                            });
+                            this._watchersReady = true;
+                        }
+                        const [_, brRes] = await Promise.all([
+                            this.loadEmployees(),
+                            fetch('/api/branches')
+                        ]);
+                        this.branches = await brRes.json();
+                        
+                        // Pre-set the branch for any user account tied to a branch.
+                        if (this.user?.branch_id) {
+                            this.newEmp.branch_id = this.user.branch_id;
+                        }
+                        await this.openAttendanceFromUrl();
+                    } catch (err) {
+                        console.error('Error fetching data:', err);
+                    }
+                },
+                openTransferModal(emp) {
+                    this.transferEmployee = emp;
+                    this.transferBranchId = '';
+                    this.transferError = '';
+                    this.transferLoading = false;
+                    this.showTransferModal = true;
+                },
+                async confirmTransfer() {
+                    if (!this.transferBranchId) return;
+                    this.transferLoading = true;
+                    this.transferError = '';
+                    try {
+                        const res = await fetch(`/api/employees/${this.transferEmployee.id}/transfer`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ branch_id: this.transferBranchId })
+                        });
+                        if (res.ok) {
+                            this.showTransferModal = false;
+                            await this.loadEmployees();
+                        } else {
+                            const data = await res.json();
+                            this.transferError = data.error || 'حدث خطأ أثناء النقل';
+                        }
+                    } catch (err) {
+                        this.transferError = 'حدث خطأ، حاول مرة أخرى';
+                    } finally {
+                        this.transferLoading = false;
+                    }
+                },
+
+                openSalaryAuth() {                    this.salaryAuthPassword = '';
+                    this.salaryAuthError = '';
+                    this.salaryAuthLoading = false;
+                    this.salaryAuthShowPw = false;
+                    this.showSalaryAuthModal = true;
+                    this.$nextTick(() => { this.$refs.salaryAuthInput && this.$refs.salaryAuthInput.focus(); });
+                },
+                closeSalaryAuth() {
+                    this.showSalaryAuthModal = false;
+                    this.salaryAuthPassword = '';
+                    this.salaryAuthError = '';
+                    this.pendingAuthAction = null;
+                },
+                hideSalary() {
+                    this.salaryVisible = false;
+                    this.salaryAuthVerified = false;
+                },
+                showSalary() {
+                    this.salaryVisible = true;
+                },
+                unlockSalaryVisibility() {
+                    if (this.salaryAuthVerified) {
+                        this.showSalary();
+                        return;
+                    }
+                    this.pendingAuthAction = () => this.showSalary();
+                    this.openSalaryAuth();
+                },
+                unlockEditSalary() {
+                    if (this.salaryAuthVerified) {
+                        this.editSalaryUnlocked = true;
+                        this.salaryVisible = true;
+                        return;
+                    }
+                    this.pendingAuthAction = () => {
+                        this.editSalaryUnlocked = true;
+                    };
+                    this.openSalaryAuth();
+                },
+                async confirmSalaryAuth() {
+                    if (!this.salaryAuthPassword) {
+                        this.salaryAuthError = 'أدخل كلمة المرور';
+                        return;
+                    }
+                    this.salaryAuthLoading = true;
+                    this.salaryAuthError = '';
+                    try {
+                        const res = await fetch('/api/verify-password', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ password: this.salaryAuthPassword })
+                        });
+                        if (res.ok) {
+                            const nextAction = this.pendingAuthAction;
+                            this.salaryAuthVerified = true;
+                            this.salaryVisible = true;
+                            this.closeSalaryAuth();
+                            if (typeof nextAction === 'function') {
+                                nextAction();
+                            }
+                        } else {
+                            const data = await res.json();
+                            this.salaryAuthError = data.error || 'كلمة المرور غير صحيحة';
+                        }
+                    } catch (err) {
+                        this.salaryAuthError = 'حدث خطأ، حاول مرة أخرى';
+                    } finally {
+                        this.salaryAuthLoading = false;
+                    }
+                },
+
+                resetForm() {                    this.isEditing = false;
+                    this.editSalaryUnlocked = false;
+                    this.newEmp = { 
+                        name: '', 
+                        position: '', 
+                        branch_id: this.user?.branch_id || '', 
+                        basic_salary: 0, 
+                        phone: '',
+                        shift_start: '',
+                        shift_end: ''
+                    };
+                },
+                async saveEmployee() {
+                    if (!this.newEmp.name || !this.newEmp.position || !this.newEmp.basic_salary || !this.newEmp.phone || !this.newEmp.shift_start || !this.newEmp.shift_end) {
+                        return alert('يرجى ملء جميع بيانات الموظف الأساسية (الاسم، الوظيفة، الراتب، التليفون، ومواعيد الوردية)');
+                    }
+                    if (this.user && this.user.role === 'admin' && !this.newEmp.branch_id) {
+                        return alert('يرجى تحديد الفرع الخاص بالموظف');
+                    }
+                    
+                    try {
+                        const url = this.isEditing ? `/api/employees/${this.newEmp.id}` : '/api/employees';
+                        const method = this.isEditing ? 'PUT' : 'POST';
+
+                        const payload = { ...this.newEmp };
+
+                        const res = await fetch(url, {
+                            method: method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (res.ok) {
+                            await this.initData();
+                            this.showAddModal = false;
+                        } else {
+                            const data = await res.json();
+                            alert(data.error || 'حدث خطأ أثناء الحفظ');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    }
+                },
+                editEmployee(emp) {
+                    this.editSalaryUnlocked = false;
+                    this.isEditing = true;
+                    this.newEmp = { 
+                        ...emp
+                    };
+                    this.showAddModal = true;
+                },
+                async deleteEmployee(id) {
+                    if(!confirm('هل أنت متأكد من حذف هذا الموظف؟ سيتم حذف جميع بيانات الحضور والسلف المرتبطة به.')) return;
+                    try {
+                        const res = await fetch(`/api/employees/${id}`, { method: 'DELETE' });
+                        if(res.ok) await this.initData();
+                    } catch (err) {
+                        console.error(err);
+                    }
+                },
+                attendanceActionTitle(emp) {
+                    if (emp.today_check_in && !emp.today_check_out) return 'تسجيل الانصراف';
+                    if (emp.today_check_out) return 'تم تسجيل اليوم';
+                    return 'تسجيل الحضور';
+                },
+                normalizeClockInput(time) {
+                    if (!time) return '';
+                    const parts = String(time).split(':');
+                    if (parts.length < 2) return '';
+                    return `${String(parts[0]).padStart(2, '0')}:${String(parts[1]).padStart(2, '0')}`;
+                },
+                getDefaultAttendanceTime(emp) {
+                    if (emp?.today_check_in && !emp?.today_check_out) {
+                        return this.normalizeClockInput(emp.shift_end) || this.getCurrentAttendanceTime();
+                    }
+                    return this.normalizeClockInput(emp?.shift_start) || this.getCurrentAttendanceTime();
+                },
+                getCurrentAttendanceTime() {
+                    const now = window.getEgyptNow ? window.getEgyptNow() : new Date();
+                    const parts = new Intl.DateTimeFormat('en-GB', {
+                        timeZone: 'Africa/Cairo',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hourCycle: 'h23'
+                    }).formatToParts(now).reduce((acc, part) => {
+                        acc[part.type] = part.value;
+                        return acc;
+                    }, {});
+                    return `${parts.hour || '00'}:${parts.minute || '00'}`;
+                },
+                async toggleAttendance(emp, refreshReport = false, manualTime = null) {
+                    if (!emp?.id) return;
+                    try {
+                        const payload = manualTime ? { manual_time: manualTime } : {};
+                        const res = await fetch(`/api/employees/${emp.id}/attendance-toggle`, { 
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.action === 'check_in') {
+                                alert('تم تسجيل الحضور');
+                            } else if (data.action === 'check_out') {
+                                alert('تم تسجيل الانصراف');
+                            } else {
+                                alert('تم تسجيل الحضور والانصراف لهذا اليوم بالفعل');
+                            }
+                            await this.initData();
+                            const updatedEmp = this.employees.find(e => Number(e.id) === Number(emp.id));
+                            if (updatedEmp) this.selectedAttendanceEmployee = updatedEmp;
+                            if (refreshReport) await this.loadAttendanceReport(emp.id);
+                        } else {
+                            const data = await res.json();
+                            alert(data.error || 'فشل تسجيل الحضور');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    }
+                },
+                async saveManualAttendance() {
+                    if (!this.selectedAttendanceEmployee?.id) return;
+                    if (!this.manualAttendance.date || !this.manualAttendance.status) return alert('الرجاء اختيار التاريخ والحالة');
+
+                    try {
+                        const payload = { ...this.manualAttendance };
+                        const res = await fetch(`/api/employees/${this.selectedAttendanceEmployee.id}/attendance-manual`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (res.ok) {
+                            alert('تم حفظ الحالة بنجاح');
+                            this.showManualAttendanceModal = false;
+                            this.manualAttendance = { date: '', status: 'present', notes: '', check_in: '', check_out: '' };
+                            await this.initData();
+                            await this.loadAttendanceReport(this.selectedAttendanceEmployee.id);
+                        } else {
+                            const data = await res.json();
+                            alert(data.error || 'فشل حفظ الحالة');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        alert('حدث خطأ');
+                    }
+                },
+                buildEmployeeQuery() {
+                    const params = new URLSearchParams({
+                        page: this.pagination.page,
+                        limit: this.pagination.limit
+                    });
+                    Object.entries(this.filters).forEach(([key, value]) => {
+                        if (value !== '' && value !== null && value !== undefined) params.set(key, value);
+                    });
+                    return params.toString();
+                },
+                async loadEmployees() {
+                    const res = await fetch(`/api/employees?${this.buildEmployeeQuery()}`);
+                    const payload = await res.json();
+                    this.employees = payload.data || payload;
+                    if (payload.pagination) this.pagination = payload.pagination;
+                },
+                changePage(page) {
+                    if (page < 1 || page > this.pagination.totalPages || page === this.pagination.page) return;
+                    this.pagination.page = page;
+                    this.loadEmployees();
+                },
+                async loadAttendanceReport(empId) {
+                    const res = await fetch(`/api/employees/${empId}/attendance-report`);
+                    if (!res.ok) {
+                        const data = await res.json();
+                        alert(data.error || 'فشل تحميل سجل الحضور');
+                        return;
+                    }
+                    this.attendanceReport = await res.json();
+                    this.expandedAttendanceDays = {};
+                    const firstDay = this.attendanceReport.daily_attendance?.[0]?.day;
+                    if (firstDay) this.expandedAttendanceDays = { [firstDay]: true };
+                },
+                async openAttendanceReport(emp) {
+                    try {
+                        this.selectedAttendanceEmployee = emp;
+                        await this.loadAttendanceReport(emp.id);
+                        this.showAttendanceReportModal = true;
+                    } catch (err) {
+                        console.error(err);
+                    }
+                },
+                async openAttendanceFromUrl() {
+                    const params = new URLSearchParams(window.location.search);
+                    const empId = params.get('attendance_employee_id');
+                    if (!empId || params.get('from_checkout_reminder') !== '1') return;
+                    await this.openAttendanceFromReminder(empId);
+                    params.delete('attendance_employee_id');
+                    params.delete('attendance_date');
+                    params.delete('from_checkout_reminder');
+                    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+                    window.history.replaceState({}, '', nextUrl);
+                },
+                async openAttendanceFromReminder(empId) {
+                    const employee = this.employees.find(e => Number(e.id) === Number(empId)) || { id: empId };
+                    await this.openAttendanceReport({ ...employee, skipSalaryAuth: true });
+                },
+                async saveTransaction() {
+                    try {
+                        if (!this.transaction.employee_id || !this.transaction.amount) return alert('اختار الموظف واكتب المبلغ');
+                        const transactionAmount = Number(this.transaction.amount || 0);
+                        const remainingSalary = Number(this.summaryData?.remaining_salary ?? this.selectedSummaryEmployee?.basic_salary ?? 0);
+                        if (this.transaction.type === 'salary_payment' && transactionAmount > remainingSalary) {
+                            const extraAmount = transactionAmount - remainingSalary;
+                            const proceed = confirm(`تحذير: المبلغ أكبر من المتبقي للموظف في هذا الشهر.\nالمتبقي: ${this.formatCurrency(remainingSalary)}\nالزيادة: ${this.formatCurrency(extraAmount)}\nهل تريد تسجيل المبلغ رغم أنه زيادة؟`);
+                            if (!proceed) return;
+                        }
+                        const res = await fetch('/api/employee_transactions', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.transaction)
+                        });
+                        if (res.ok) {
+                            alert('تم تسجيل الحركة بنجاح');
+                            const employeeId = this.transaction.employee_id;
+                            this.transaction = { employee_id: employeeId, type: 'advance', amount: '', notes: '' };
+                            await this.openSummary(this.selectedSummaryEmployee || { id: employeeId });
+                        } else {
+                            const data = await res.json();
+                            alert(data.error || 'فشل تسجيل الحركة');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    }
+                },
+                async openSummary(emp) {
+                    const empId = emp?.id || emp;
+                    try {
+                        const res = await fetch(`/api/employees/${empId}/summary`);
+                        if(res.ok) {
+                            this.selectedSummaryEmployee = this.employees.find(e => Number(e.id) === Number(empId)) || emp;
+                            this.activeSalarySummaryTab = 'daily';
+                            this.transaction = { employee_id: empId, type: 'advance', amount: '', notes: '' };
+                            this.summaryData = await res.json();
+                            this.showSummaryModal = true;
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    }
+                },
+                async openPayslip(emp) {
+                    if (!this.salaryAuthVerified) {
+                        this.pendingAuthAction = () => this.openPayslip(emp);
+                        this.openSalaryAuth();
+                        return;
+                    }
+                    const empId = emp?.id || emp;
+                    this.payslipEmployeeId = empId;
+                    this.payslipMonth = (window.getEgyptDateString ? window.getEgyptDateString() : new Date().toISOString().slice(0, 10)).slice(0, 7);
+                    this.payslipStep = 'edit';
+                    await this.loadPayslipMonth();
+                },
+                async loadPayslipMonth() {
+                    if (!this.payslipEmployeeId || !this.payslipMonth || this.payslipLoading) return;
+                    this.payslipLoading = true;
+                    try {
+                        const res = await fetch(`/api/employees/${this.payslipEmployeeId}/payslip?month=${encodeURIComponent(this.payslipMonth)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            data.employee = data.employee || { name: '', position: '', branch_name: '' };
+                            data.financials = {
+                                advances: 0, deductions_manual: 0, bonuses_manual: 0, salary_payments: 0,
+                                bonus_details: [], deduction_details: [], ...(data.financials || {})
+                            };
+                            data.attendance = {
+                                present_days: 0, absent_days: 0, late_minutes: 0, early_minutes: 0,
+                                overtime_minutes: 0, absence_deduction: 0, late_deduction: 0,
+                                early_deduction: 0, overtime_bonus: 0, ...(data.attendance || {})
+                            };
+                            data.attendance.total_delay_minutes = Number(data.attendance.late_minutes || 0) + Number(data.attendance.early_minutes || 0);
+                            data.attendance.delay_deduction = Number(data.attendance.late_deduction || 0) + Number(data.attendance.early_deduction || 0);
+                            data.financials.bonus_details = (data.financials.bonus_details || []).map(detail => ({ ...detail, date: String(detail.date || '').slice(0, 10) }));
+                            data.financials.deduction_details = (data.financials.deduction_details || []).map(detail => ({ ...detail, date: String(detail.date || '').slice(0, 10) }));
+                            data.totals = data.totals || {};
+                            this.payslipData = data;
+                            this.recalculatePayslip();
+                            this.payslipStep = 'edit';
+                            this.showPayslipModal = true;
+                        } else {
+                            const data = await res.json();
+                            alert(data.error || 'فشل تحميل كشف الراتب');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        alert('حدث خطأ أثناء تحميل كشف الراتب');
+                    } finally {
+                        this.payslipLoading = false;
+                    }
+                },
+                recalculatePayslip() {
+                    if (!this.payslipData) return;
+                    const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+                    const totalBonuses = number(this.payslipData.financials.bonuses_manual) + number(this.payslipData.attendance.overtime_bonus);
+                    const totalDeductions = number(this.payslipData.financials.advances)
+                        + number(this.payslipData.financials.deductions_manual)
+                        + number(this.payslipData.attendance.absence_deduction)
+                        + number(this.payslipData.attendance.delay_deduction);
+                    const netSalary = number(this.payslipData.basic_salary) + totalBonuses - totalDeductions;
+                    this.payslipData.totals.total_bonuses = totalBonuses;
+                    this.payslipData.totals.total_deductions = totalDeductions;
+                    this.payslipData.totals.net_salary = netSalary;
+                    this.payslipData.totals.remaining_balance = netSalary - number(this.payslipData.financials.salary_payments);
+                },
+                syncPayslipDetailTotals(type) {
+                    const key = type === 'bonus' ? 'bonus_details' : 'deduction_details';
+                    const target = type === 'bonus' ? 'bonuses_manual' : 'deductions_manual';
+                    this.payslipData.financials[target] = (this.payslipData.financials[key] || [])
+                        .reduce((sum, detail) => sum + Number(detail.amount || 0), 0);
+                    this.recalculatePayslip();
+                },
+                previewPayslip() {
+                    this.recalculatePayslip();
+                    this.payslipStep = 'preview';
+                },
+                printPayslip() {
+                    const source = document.getElementById('payslip-print-area');
+                    const printable = source.cloneNode(true);
+                    const printArea = printable.innerHTML;
+                    const iframe = document.createElement('iframe');
+                    iframe.style.display = 'none';
+                    document.body.appendChild(iframe);
+                    
+                    iframe.contentDocument.write(`
+                        <html dir="rtl">
+                        <head>
+                            <title>طباعة كشف الراتب</title>
+                            <link href="assets/cairo.css" rel="stylesheet"/>
+                            <style>
+                                body { font-family: 'Cairo', sans-serif; background: white; color: black; padding: 20px; }
+                                table { border-collapse: collapse; width: 100%; margin-bottom: 20px; font-size: 14px; }
+                                th, td { border: 1px solid black; padding: 8px; text-align: right; }
+                                .text-center { text-align: center; }
+                                .mb-1 { margin-bottom: 0.25rem; }
+                                .mb-2 { margin-bottom: 0.5rem; }
+                                .mb-4 { margin-bottom: 1rem; }
+                                .mb-8 { margin-bottom: 2rem; }
+                                .mb-10 { margin-bottom: 2.5rem; }
+                                .mt-8 { margin-top: 2rem; }
+                                .pt-8 { padding-top: 2rem; }
+                                .pb-1 { padding-bottom: 0.25rem; }
+                                .pb-4 { padding-bottom: 1rem; }
+                                .pb-8 { padding-bottom: 2rem; }
+                                .px-10 { padding-left: 2.5rem; padding-right: 2.5rem; }
+                                .w-full { width: 100%; }
+                                .w-1\\/4 { width: 25%; }
+                                .w-3\\/4 { width: 75%; }
+                                .w-1\\/3 { width: 33.333333%; }
+                                .w-2\\/3 { width: 66.666667%; }
+                                .border-b-2 { border-bottom-width: 2px; }
+                                .border-t-2 { border-top-width: 2px; }
+                                .border-2 { border-width: 2px; }
+                                .border { border-width: 1px; }
+                                .border-black { border-color: black; }
+                                .border-b { border-bottom-width: 1px; }
+                                .border-l { border-left-width: 1px; }
+                                .font-bold { font-weight: 700; }
+                                .font-black { font-weight: 900; }
+                                .text-sm { font-size: 0.875rem; }
+                                .text-lg { font-size: 1.125rem; }
+                                .text-2xl { font-size: 1.5rem; }
+                                .bg-gray-100 { background-color: #f3f4f6; }
+                                .bg-gray-200 { background-color: #e5e7eb; }
+                                .bg-gray-50 { background-color: #f9fafb; }
+                                .grid { display: grid; }
+                                .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                                .gap-8 { gap: 2rem; }
+                                .flex { display: flex; }
+                                .justify-between { justify-content: space-between; }
+                                .items-center { align-items: center; }
+                            </style>
+                        </head>
+                        <body onload="setTimeout(() => { window.print(); }, 500)">
+                            ${printArea}
+                        </body>
+                        </html>
+                    `);
+                    iframe.contentDocument.close();
+                    
+                    setTimeout(() => {
+                        document.body.removeChild(iframe);
+                    }, 5000);
+                },
+                formatCurrency(value) {
+                    return Number(value || 0).toLocaleString('ar-EG-u-nu-latn', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ج.م';
+                },
+                formatMonth(month) {
+                    if (!month) return '-';
+                    const [year, monthIndex] = month.split('-').map(Number);
+                    return new Date(year, monthIndex - 1, 1).toLocaleDateString('ar-EG-u-nu-latn', { year: 'numeric', month: 'long' });
+                },
+                formatPayslipDetailDate(date) {
+                    if (!date) return '-';
+                    const key = String(date).slice(0, 10);
+                    return new Date(`${key}T00:00:00`).toLocaleDateString('ar-EG-u-nu-latn', { month: 'short', day: 'numeric' });
+                },
+                formatDay(day) {
+                    if (!day) return '-';
+                    return new Date(`${day}T00:00:00`).toLocaleDateString('ar-EG-u-nu-latn', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                },
+                formatShortDay(day) {
+                    if (!day) return '-';
+                    return new Date(`${day}T00:00:00`).toLocaleDateString('ar-EG-u-nu-latn', { month: 'short', day: 'numeric' });
+                },
+                formatTime(date) {
+                    if (!date) return '-';
+                    return new Date(date).toLocaleTimeString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit' });
+                },
+                formatClockTime(time) {
+                    if (!time) return '-';
+                    const parts = String(time).split(':');
+                    if (parts.length >= 2) {
+                        let hour = parseInt(parts[0], 10);
+                        const minute = parts[1];
+                        const ampm = hour >= 12 ? 'م' : 'ص';
+                        hour = hour % 12;
+                        hour = hour ? hour : 12; // 0 becomes 12
+                        const formattedHour = String(hour).padStart(2, '0');
+                        return `${formattedHour}:${minute} ${ampm}`;
+                    }
+                    return time;
+                },
+                formatSmartTime(minutes) {
+                    if (!minutes) return '-';
+                    const num = Number(minutes);
+                    if (num === 0) return '-';
+                    if (num < 60) {
+                        return num + ' دقيقة';
+                    } else {
+                        return (num / 60).toFixed(2) + ' ساعة';
+                    }
+                },
+                formatAttendanceStatus(day) {
+                    const s = day.status;
+                    if (s === 'absent') return { text: 'غائب', shortText: 'غائب', color: 'text-rose-600', bg: 'bg-rose-50' };
+                    if (s === 'sick_leave') return { text: 'إجازة مرضي', shortText: 'إجازة مرضي', color: 'text-blue-600', bg: 'bg-blue-50' };
+                    if (s === 'annual_leave' || s === 'leave') return { text: 'إجازة', shortText: 'إجازة', color: 'text-purple-600', bg: 'bg-purple-50' };
+                    if (s === 'casual_leave') return { text: 'إجازة عارضة', shortText: 'إجازة عارضة', color: 'text-indigo-600', bg: 'bg-indigo-50' };
+                    if (s === 'unpaid_leave') return { text: 'إجازة بدون مرتب', shortText: 'بدون مرتب', color: 'text-slate-600', bg: 'bg-slate-100' };
+                    if (s === 'completed' || day.check_out) return { text: 'تم تسجيل الحضور والانصراف', shortText: 'مكتمل', color: 'text-success', bg: 'bg-green-50' };
+                    if (s === 'present' || day.check_in) return { text: 'حضور بدون انصراف', shortText: 'داخل الدوام', color: 'text-amber-600', bg: 'bg-amber-50' };
+                    return { text: 'غير معروف', shortText: '-', color: 'text-slate-400', bg: 'bg-slate-50' };
+                },
+
+                isSalesDayExpanded(day) {
+                    return !!this.expandedSalesDays[day];
+                },
+                toggleSalesDay(day) {
+                    this.expandedSalesDays = {
+                        ...this.expandedSalesDays,
+                        [day]: !this.expandedSalesDays[day]
+                    };
+                },
+                isAttendanceDayExpanded(day) {
+                    return !!this.expandedAttendanceDays[day];
+                },
+                toggleAttendanceDay(day) {
+                    this.expandedAttendanceDays = {
+                        ...this.expandedAttendanceDays,
+                        [day]: !this.expandedAttendanceDays[day]
+                    };
+                },
+                async openSalesReport(empId) {
+                    try {
+                        const res = await fetch(`/api/employees/${empId}/sales-report`);
+                        if (res.ok) {
+                            this.salesReport = await res.json();
+                            this.activeSalesReportTab = 'details';
+                            this.salesOrdersExpanded = true;
+                            this.expandedSalesDays = {};
+                            const firstDay = this.salesReport.daily_sales_details?.[0]?.day;
+                            if (firstDay) this.expandedSalesDays = { [firstDay]: true };
+                            this.showSalesReportModal = true;
+                        } else {
+                            const err = await res.json();
+                            alert(err.error || 'فشل تحميل التقرير');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    }
+                }
+            }));
+        });
+    </script>
+</body>
+
+
+

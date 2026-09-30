@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>إدارة التعديلات  | Bebyoon Center</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link rel="stylesheet" href="assets/icons.css" />
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: {
+                        'DEFAULT': '0.75rem',
+                        'lg': '1rem',
+                        'xl': '1.5rem',
+                        '2xl': '2rem',
+                        '3xl': '2.5rem',
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    },
+                    boxShadow: {
+                        'premium': '0 10px 40px -10px rgba(0,0,0,0.05)',
+                        'premium-hover': '0 20px 50px -12px rgba(0,0,0,0.08)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        [x-cloak] { display: none !important; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+        body { font-family: 'Cairo', sans-serif; background-color: #F8FAFC; }
+
+        @media print {
+            @page {
+                size: 80mm auto;
+                margin: 0mm;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                width: 80mm !important;
+                height: auto !important;
+                overflow: visible !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                font-size: 12px !important;
+                background: white !important;
+            }
+            .no-print, .sidebar-main, header, main, .sidebar-backdrop, .fixed.inset-0.bg-black\/60 {
+                display: none !important;
+                height: 0 !important;
+                opacity: 0 !important;
+                visibility: hidden !important;
+                overflow: hidden !important;
+                position: absolute !important;
+                z-index: -9999 !important;
+            }
+            .print\:block {
+                display: block !important;
+                width: 70mm !important;
+                max-width: 70mm !important;
+                margin-right: -0.1mm !important;
+                padding: 4mm !important;
+                padding-bottom: 15mm !important;
+                border: 3px solid black !important;
+                border-radius: 12px !important;
+                box-sizing: border-box !important;
+            }
+            .border-4, .border-2, .border-b-2, .border-t-2, .border-dashed {
+                border-color: black !important;
+            }
+            .border-b-2, .border-t-2 { border-width: 2px !important; }
+            .border-dashed { border-style: dashed !important; border-width: 1px !important; }
+        }
+
+        .tabs-container {
+            display: flex;
+            background-color: rgba(241, 245, 249, 0.8);
+            padding: 0.375rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(226, 232, 240, 0.6);
+            width: 100%;
+            max-width: 32rem;
+            position: relative;
+            backdrop-filter: blur(24px);
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+        }
+        .tab-btn { 
+            flex: 1;
+            padding: 0.75rem 0;
+            font-size: 0.8rem;
+            font-weight: 900;
+            border-radius: 0.75rem;
+            transition: all 500ms;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            position: relative;
+            z-index: 10;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .tab-btn.active { color: var(--primary); }
+        .tab-btn.inactive { color: #94a3b8; }
+        .tab-btn.inactive:hover { color: #475569; }
+
+        .tab-active-bg {
+            position: absolute;
+            background-color: #ffffff;
+            border-radius: 0.75rem;
+            box-shadow: 0 8px 20px -6px rgba(0,0,0,0.12);
+            border: 1px solid rgba(226, 232, 240, 0.5);
+            transition: all 500ms cubic-bezier(0.23, 1, 0.32, 1);
+            top: 0.375rem;
+            bottom: 0.375rem;
+        }
+        .tab-indicator-dot {
+            position: absolute;
+            bottom: 0.25rem;
+            left: 50%;
+            transform: translateX(-50%) scale(0);
+            width: 0.25rem;
+            height: 0.25rem;
+            background-color: var(--primary);
+            border-radius: 9999px;
+            transition: all 500ms;
+            opacity: 0;
+        }
+        .tab-btn.active .tab-indicator-dot {
+            opacity: 1;
+            transform: translateX(-50%) scale(1);
+        }
+        .tab-btn .material-symbols-outlined { transition: all 500ms; }
+        .tab-btn.active .material-symbols-outlined {
+            transform: scale(1.1);
+            color: var(--primary);
+            font-variation-settings: 'FILL' 1;
+        }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <script src="auth.js"></script>
+</head>
+<body class="text-on-surface antialiased overflow-hidden" x-data="alterationsApp()" x-init="initData()">
+    
+    <div class="flex h-screen overflow-hidden print:hidden">
+        <!-- Sidebar Backdrop -->
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <!-- القائمة الجانبية (Sidebar) -->
+        <aside 
+            @mouseenter="sidebarExpanded = true" 
+            @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'" class="w-full h-full object-contain transition-transform duration-300" :class="(window.getLogoPath(user?.branch_id, branches) || '').includes('women') ? 'scale-[1.35]' : ''" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)" 
+                        class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm" :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">point_of_sale</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">styler</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">architecture</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">group</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'" x-text="(user && user.role === 'admin') ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">auto_delete</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">badge</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">bar_chart</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">barcode_scanner</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">settings</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()" class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">logout</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+</aside>
+
+        <!-- منطقة المحتوى الرئيسية -->
+        <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto bg-background">
+            <!-- الهيدر (Header) -->
+            <header class="h-20 bg-white/70 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 flex-1">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <div class="hidden sm:block">
+                        <h2 class="text-xl font-extrabold text-primary">إدارة التعديلات</h2>
+                        <p class="text-[10px] text-secondary font-bold uppercase tracking-widest">متابعة طلبات العملاء وحالة التنفيذ</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 md:gap-4">
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline hidden md:flex"></div>
+                </div>
+            </header>
+
+            <div class="bg-white/80 backdrop-blur-md border-b border-outline px-8 py-6 sticky top-20 z-30 flex justify-center sm:justify-start">
+                <div class="tabs-container">
+                    <!-- Sliding Highlight -->
+                    <div 
+                        class="tab-active-bg" 
+                        :style="currentTab === 'pending' ? 'right: 6px; width: calc(33.33% - 6px);' : 
+                               (currentTab === 'completed' ? 'right: 33.33%; width: calc(33.33% - 6px);' : 
+                               'right: 66.66%; width: calc(33.33% - 6px);')"
+                    ></div>
+
+                    <button @click="currentTab = 'pending'" 
+                        :class="currentTab === 'pending' ? 'active' : 'inactive'" 
+                        class="tab-btn">
+                        <span class="material-symbols-outlined">timer</span>
+                        <span>تحت التنفيذ</span>
+                        <div class="tab-indicator-dot"></div>
+                    </button>
+                    <button @click="currentTab = 'completed'" 
+                        :class="currentTab === 'completed' ? 'active' : 'inactive'" 
+                        class="tab-btn">
+                        <span class="material-symbols-outlined">check_circle</span>
+                        <span>جاهزة للاستلام</span>
+                        <div class="tab-indicator-dot"></div>
+                    </button>
+                    <button @click="currentTab = 'delivered'" 
+                        :class="currentTab === 'delivered' ? 'active' : 'inactive'" 
+                        class="tab-btn">
+                        <span class="material-symbols-outlined">handshake</span>
+                        <span>تم التسليم</span>
+                        <div class="tab-indicator-dot"></div>
+                    </button>
+                </div>
+            </div>
+
+            <main class="p-4 md:p-8">
+                <div class="w-full">
+                    <!-- Alterations Table -->
+                    <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                        <div class="p-4 border-b border-outline bg-slate-50/50">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">tag</span>
+                                    <input x-model="searchFilters.order_id" type="text" placeholder="رقم الفاتورة..."
+                                        class="w-full bg-white border-2 border-slate-200 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all font-bold">
+                                </div>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">person</span>
+                                    <input x-model="searchFilters.customer_name" type="text" placeholder="اسم العميل..."
+                                        class="w-full bg-white border-2 border-slate-200 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all font-bold">
+                                </div>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">checkroom</span>
+                                    <input x-model="searchFilters.product_name" type="text" placeholder="اسم المنتج..."
+                                        class="w-full bg-white border-2 border-slate-200 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all font-bold">
+                                </div>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">barcode_scanner</span>
+                                    <input x-model="searchFilters.product_barcode" type="text" placeholder="الباركود..."
+                                        class="w-full bg-white border-2 border-slate-200 rounded-xl py-2 pr-10 pl-4 text-xs focus:border-primary transition-all font-bold">
+                                </div>
+                            </div>
+                            <div class="flex justify-end">
+                                <button @click="clearFilters()" class="text-[10px] font-black text-red-400 hover:text-red-600 flex items-center gap-1.5 transition-all group px-2 py-1 hover:bg-red-50 rounded-lg">
+                                    <span class="material-symbols-outlined text-sm group-hover:rotate-180 transition-transform duration-500">filter_alt_off</span>
+                                    مسح كل الفلاتر
+                                </button>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="w-full text-right border-collapse responsive-table">
+                                <thead>
+                                    <tr class="bg-slate-900 border-b border-slate-800">
+                                        <th class="px-8 py-5 text-xs font-black text-slate-200 uppercase tracking-[0.2em]">المنتج</th>
+                                        <th class="px-8 py-5 text-xs font-black text-slate-200 uppercase tracking-[0.2em]">وصف التعديلات المطلوبة</th>
+                                        <th class="px-8 py-5 text-xs font-black text-slate-200 uppercase tracking-[0.2em]">تاريخ الاستلام</th>
+                                        <th class="px-8 py-5 text-xs font-black text-slate-200 uppercase tracking-[0.2em]">الحالة</th>
+                                        <th class="px-8 py-5 text-xs font-black text-slate-200 uppercase tracking-[0.2em] text-center">التحكم</th>
+                                    </tr>
+                                </thead>
+                                <template x-for="group in groupedAlterations" :key="group.order_id">
+                                    <tbody class="divide-y divide-slate-100 border-b-[8px] border-white">
+                                        <tr class="bg-indigo-50/50">
+                                            <td colspan="5" class="px-8 py-4">
+                                                <div class="flex items-center justify-between">
+                                                    <div class="flex items-center gap-4">
+                                                        <span class="text-sm font-black text-indigo-700" x-text="group.customer_name"></span>
+                                                        <span class="w-1.5 h-1.5 rounded-full bg-indigo-300"></span>
+                                                        <span class="px-2 py-1 bg-white rounded-lg text-[10px] font-bold text-slate-500 border border-slate-200 shadow-sm" x-text="'فاتورة #' + group.order_id"></span>
+                                                        <span class="w-1.5 h-1.5 rounded-full bg-indigo-300"></span>
+                                                        <span class="text-xs text-slate-500 font-bold flex items-center gap-1">
+                                                            <span class="material-symbols-outlined text-[14px]">schedule</span>
+                                                            <span x-text="formatFullDate(group.created_at)"></span>
+                                                        </span>
+                                                    </div>
+                                                    <template x-if="currentTab === 'completed' && group.items.some(alt => alt.status === 'completed')">
+                                                        <button @click="deliverGroup(group)" class="px-4 py-2 bg-primary text-white rounded-xl text-[10px] font-black hover:bg-slate-800 transition-all shadow-md shadow-primary/10 flex items-center gap-2">
+                                                            <span class="material-symbols-outlined text-sm">handshake</span> تسليم الفاتورة بالكامل
+                                                        </button>
+                                                    </template>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <template x-for="alt in group.items" :key="alt.id">
+                                            <tr class="group hover:bg-slate-50/50 transition-all duration-300">
+                                                <td class="px-8 py-6">
+                                                    <div class="flex items-center gap-4 min-w-[260px]">
+                                                        <div class="w-16 h-16 rounded-2xl bg-slate-100 border-2 border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                                                            <template x-if="alt.product_image_url">
+                                                                <img :src="alt.product_image_url" class="w-full h-full object-cover">
+                                                            </template>
+                                                            <template x-if="!alt.product_image_url">
+                                                                <span class="material-symbols-outlined text-slate-300 text-3xl">image</span>
+                                                            </template>
+                                                        </div>
+                                                        <div class="min-w-0">
+                                                            <p class="text-sm font-black text-primary truncate" x-text="alt.product_name ? window.productDisplayName(alt) : 'صنف غير محدد'"></p>
+                                                            <div class="mt-2 flex flex-wrap gap-1.5">
+                                                                <span class="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black text-slate-600" x-text="'باركود: ' + (alt.product_barcode || '-')"></span>
+                                                                <span class="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black text-slate-600" x-text="'لون: ' + (alt.product_color || '-')"></span>
+                                                                <span class="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black text-slate-600" x-text="'مقاس: ' + (alt.product_size || '-')"></span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td class="px-8 py-6">
+                                                    <div class="flex items-start gap-3 max-w-xs">
+                                                        <span class="material-symbols-outlined text-slate-400 text-sm mt-0.5">content_cut</span>
+                                                        <p class="text-sm font-bold text-primary leading-relaxed line-clamp-2" x-text="alt.description"></p>
+                                                    </div>
+                                                </td>
+                                                <td class="px-8 py-6">
+                                                    <div class="flex flex-col">
+                                                        <span class="text-sm font-black" :class="isLate(alt.due_date) && alt.status === 'pending' ? 'text-accent' : 'text-primary'" x-text="formatDate(alt.due_date)"></span>
+                                                        <span class="text-[10px] text-slate-400 font-bold" x-text="isLate(alt.due_date) && alt.status === 'pending' ? 'متأخر!' : 'موعد التسليم'"></span>
+                                                    </div>
+                                                </td>
+                                                <td class="px-8 py-6">
+                                                    <span :class="{
+                                                        'bg-amber-100 text-amber-700': alt.status === 'pending',
+                                                        'bg-blue-100 text-blue-700': alt.status === 'in_progress',
+                                                        'bg-success/10 text-success': alt.status === 'completed',
+                                                        'bg-slate-100 text-slate-600': alt.status === 'delivered'
+                                                    }" class="px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-tight shadow-sm inline-block" x-text="statusLabel(alt.status)"></span>
+                                                </td>
+                                                <td class="px-8 py-6 text-center">
+                                                    <div class="flex justify-center gap-2">
+                                                        <template x-if="alt.status === 'pending'">
+                                                            <button @click="updateStatus(alt.id, 'completed')" class="px-4 py-2 bg-success text-white rounded-xl text-[10px] font-black hover:bg-green-600 transition-all shadow-md shadow-success/10 flex items-center gap-2">
+                                                                <span class="material-symbols-outlined text-sm">verified</span> تم الانتهاء
+                                                            </button>
+                                                        </template>
+                                                        <button @click="printTicket(alt, group)" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-[10px] font-black hover:bg-slate-200 transition-all shadow-sm flex items-center gap-2">
+                                                            <span class="material-symbols-outlined text-sm">print</span> طباعة التيكت
+                                                        </button>
+                                                        <template x-if="currentTab === 'pending' && (alt.status === 'pending' || alt.status === 'in_progress')">
+                                                            <button @click="deleteAlteration(alt)" :disabled="deletingId === alt.id" class="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-[10px] font-black hover:bg-red-600 hover:text-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
+                                                                <span class="material-symbols-outlined text-sm">delete</span>
+                                                                <span x-text="deletingId === alt.id ? 'جاري الحذف...' : 'حذف الطلب'"></span>
+                                                            </button>
+                                                        </template>
+                                                        <template x-if="alt.status === 'completed'">
+                                                            <button @click="updateStatus(alt.id, 'delivered')" class="px-4 py-2 bg-primary text-white rounded-xl text-[10px] font-black hover:bg-slate-800 transition-all shadow-md shadow-primary/10 flex items-center gap-2">
+                                                                <span class="material-symbols-outlined text-sm">handshake</span> تسليم العميل
+                                                            </button>
+                                                        </template>
+                                                        <template x-if="alt.status === 'delivered'">
+                                                            <span class="text-[10px] font-black text-slate-400 italic flex items-center gap-1 justify-center">
+                                                                <span class="material-symbols-outlined text-sm text-success">check_circle</span> تمت بنجاح
+                                                            </span>
+                                                        </template>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </template>
+                            </table>
+                        </div>
+
+                        <!-- Empty State -->
+                        <template x-if="filteredAlterations.length === 0">
+                            <div class="py-10 flex flex-col items-center justify-center bg-white">
+                                <div class="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                                    <span class="material-symbols-outlined text-3xl text-slate-300">inventory_2</span>
+                                </div>
+                                <h3 class="text-base font-black text-primary">لا توجد طلبات في هذا القسم</h3>
+                            </div>
+                        </template>
+                        <div class="p-5 border-t border-outline flex flex-col sm:flex-row items-center justify-between gap-3 bg-white">
+                            <p class="text-xs font-bold text-slate-400" x-text="'صفحة ' + pagination.page + ' من ' + pagination.totalPages + ' - إجمالي ' + pagination.total"></p>
+                            <div class="flex items-center gap-2">
+                                <button @click="changePage(pagination.page - 1)" :disabled="!pagination.hasPrev" class="px-4 py-2 rounded-xl border-2 border-slate-200 text-xs font-black text-primary disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">السابق</button>
+                                <button @click="changePage(pagination.page + 1)" :disabled="!pagination.hasNext" class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800">التالي</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('alterationsApp', () => ({
+                printAlt: null,
+                printGroup: null,
+                alterations: [],
+                pagination: { page: 1, limit: 50, total: 0, totalPages: 1, hasNext: false, hasPrev: false },
+                searchDebounce: null,
+                searchFilters: { order_id: '', customer_name: '', product_name: '', product_barcode: '' },
+                user: window.currentUser || null,
+                branches: [],
+                currentTab: 'pending',
+                deletingId: null,
+                searchQuery: '',
+                sidebarExpanded: false,
+                sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                mobileMenuOpen: false,
+
+                async initData() {
+                    try {
+                        if (!window.currentUser) {
+                            const meRes = await fetch('/api/me');
+                            if (meRes.ok) {
+                                const data = await meRes.json();
+                                window.currentUser = data.user;
+                            }
+                        }
+                        this.user = window.currentUser;
+
+                        if (!this._watchersReady) {
+                            this.$watch('currentTab', () => {
+                                this.pagination.page = 1;
+                                this.loadAlterations();
+                            });
+                            this.$watch('searchQuery', () => {
+                                clearTimeout(this.searchDebounce);
+                                this.searchDebounce = setTimeout(() => {
+                                    this.pagination.page = 1;
+                                    this.loadAlterations();
+                                }, 250);
+                            });
+                            this.$watch('searchFilters', () => {
+                                clearTimeout(this.searchDebounce);
+                                this.searchDebounce = setTimeout(() => {
+                                    this.pagination.page = 1;
+                                    this.loadAlterations();
+                                }, 300);
+                            }, { deep: true });
+                            this._watchersReady = true;
+                        }
+                        const [_, brRes] = await Promise.all([
+                            this.loadAlterations(),
+                            fetch('/api/branches')
+                        ]);
+                        this.branches = await brRes.json();
+                    } catch (err) {
+                        console.error('Error fetching data:', err);
+                    }
+                },
+                async loadAlterations() {
+                    const params = new URLSearchParams({
+                        page: this.pagination.page,
+                        limit: this.pagination.limit,
+                        status: this.currentTab
+                    });
+                    if (this.searchQuery) params.set('search', this.searchQuery);
+                    if (this.searchFilters.order_id) params.set('order_id', this.searchFilters.order_id);
+                    if (this.searchFilters.customer_name) params.set('customer_name', this.searchFilters.customer_name);
+                    if (this.searchFilters.product_name) params.set('product_name', this.searchFilters.product_name);
+                    if (this.searchFilters.product_barcode) params.set('product_barcode', this.searchFilters.product_barcode);
+                    
+                    const res = await fetch(`/api/alterations?${params.toString()}`);
+                    const payload = await res.json();
+                    this.alterations = payload.data || payload;
+                    if (payload.pagination) this.pagination = payload.pagination;
+                },
+                changePage(page) {
+                    if (page < 1 || page > this.pagination.totalPages || page === this.pagination.page) return;
+                    this.pagination.page = page;
+                    this.loadAlterations();
+                },
+
+                get filteredAlterations() {
+                    let result = this.alterations;
+                    if (this.searchFilters.order_id) {
+                        result = result.filter(alt => String(alt.order_id).includes(this.searchFilters.order_id));
+                    }
+                    if (this.searchFilters.customer_name) {
+                        result = result.filter(alt => alt.customer_name?.toLowerCase().includes(this.searchFilters.customer_name.toLowerCase()));
+                    }
+                    if (this.searchFilters.product_name) {
+                        result = result.filter(alt => {
+                            const pName = alt.product_name ? window.productDisplayName(alt) : '';
+                            return pName.toLowerCase().includes(this.searchFilters.product_name.toLowerCase());
+                        });
+                    }
+                    if (this.searchFilters.product_barcode) {
+                        result = result.filter(alt => alt.product_barcode?.includes(this.searchFilters.product_barcode));
+                    }
+                    return result;
+                },
+                get groupedAlterations() {
+                    const result = this.filteredAlterations;
+                    const groupsMap = new Map();
+                    for (const alt of result) {
+                        if (!groupsMap.has(alt.order_id)) {
+                            groupsMap.set(alt.order_id, {
+                                order_id: alt.order_id,
+                                customer_name: alt.customer_name,
+                                customer_phone: alt.customer_phone,
+                                invoice_number: alt.order_id,
+                                created_at: alt.created_at,
+                                items: []
+                            });
+                        }
+                        groupsMap.get(alt.order_id).items.push(alt);
+                    }
+                    return Array.from(groupsMap.values());
+                },
+                
+                clearFilters() {
+                    this.searchFilters = { order_id: '', customer_name: '', product_name: '', product_barcode: '' };
+                    this.pagination.page = 1;
+                    this.loadAlterations();
+                },
+
+                statusLabel(status) {
+                    const labels = {
+                        'pending': 'تحت التنفيذ',
+                        'in_progress': 'جاري العمل',
+                        'completed': 'جاهز للاستلام',
+                        'delivered': 'تم التسليم'
+                    };
+                    return labels[status] || status;
+                },
+
+                formatDate(dateStr) {
+                    if (!dateStr) return '-';
+                    return new Date(dateStr).toLocaleDateString('ar-EG-u-nu-latn', { day: 'numeric', month: 'long', year: 'numeric' });
+                },
+
+                formatFullDate(dateStr) {
+                    if (!dateStr) return '-';
+                    return new Date(dateStr).toLocaleDateString('ar-EG-u-nu-latn', { 
+                        day: 'numeric', 
+                        month: 'short', 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                    });
+                },
+
+                isLate(dueDate) {
+                    if (!dueDate) return false;
+                    const d = new Date(dueDate);
+                    const today = new Date();
+                    today.setHours(0,0,0,0);
+                    return d < today;
+                },
+
+                async deliverGroup(group) {
+                    const completedItems = group.items.filter(alt => alt.status === 'completed');
+                    if (completedItems.length === 0) return;
+                    
+                    const confirmed = window.confirm(`هل أنت متأكد من تسليم جميع الأصناف الجاهزة في فاتورة #${group.order_id} للعميل؟`);
+                    if (!confirmed) return;
+                    
+                    try {
+                        await Promise.all(completedItems.map(alt => 
+                            fetch(`/api/alterations/${alt.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ status: 'delivered' })
+                            })
+                        ));
+                        await this.initData();
+                    } catch (err) {
+                        console.error('Error delivering group:', err);
+                        alert('حدث خطأ أثناء التسليم');
+                    }
+                },
+                async updateStatus(id, newStatus) {
+                    try {
+                        const res = await fetch(`/api/alterations/${id}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status: newStatus })
+                        });
+                        if (res.ok) {
+                            await this.initData();
+                        }
+                    } catch (err) {
+                        console.error('Error updating status:', err);
+                    }
+                },
+
+                async deleteAlteration(alt) {
+                    if (this.currentTab !== 'pending' || !['pending', 'in_progress'].includes(alt.status) || this.deletingId !== null) return;
+                    const confirmed = window.confirm(`هل أنت متأكد من حذف طلب التعديل للفاتورة #${alt.order_id}؟`);
+                    if (!confirmed) return;
+
+                    this.deletingId = alt.id;
+                    try {
+                        const res = await fetch(`/api/alterations/${alt.id}`, { method: 'DELETE' });
+                        const payload = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(payload.error || 'تعذر حذف الطلب');
+
+                        if (this.alterations.length === 1 && this.pagination.page > 1) {
+                            this.pagination.page -= 1;
+                        }
+                        await this.loadAlterations();
+                    } catch (err) {
+                        console.error('Error deleting alteration:', err);
+                        window.alert(err.message || 'تعذر حذف الطلب');
+                    } finally {
+                        this.deletingId = null;
+                    }
+                },
+                printTicket(alt, group) {
+                    this.printAlt = alt;
+                    this.printGroup = group;
+                    this.$nextTick(() => {
+                        window.print();
+                    });
+                }
+            }));
+        });
+    </script>
+    <!-- Print Ticket Template -->
+    <div class="hidden print:block font-cairo bg-white text-black p-4 mx-auto text-center border-4 border-black rounded-xl" x-show="printAlt && printGroup" style="direction: rtl; width: 80mm;">
+        <div class="border-b-2 border-black pb-2 mb-2">
+            <h1 class="text-xl font-black mb-1">تيكت طلب تعديل</h1>
+        </div>
+        <div class="text-right text-sm font-bold mb-2 space-y-1">
+            <p><span class="font-black">رقم الفاتورة:</span> <span x-text="printGroup ? printGroup.invoice_number : ''"></span></p>
+            <p><span class="font-black">اسم العميل:</span> <span x-text="printGroup ? printGroup.customer_name : ''"></span></p>
+            <p><span class="font-black">هاتف العميل:</span> <span x-text="printGroup ? printGroup.customer_phone : ''"></span></p>
+            <p><span class="font-black">الصنف:</span> <span x-text="printAlt && printAlt.product_name ? window.productDisplayName(printAlt) : 'صنف غير محدد'"></span></p>
+        </div>
+        <div class="border-t-2 border-black pt-2 text-right">
+            <p class="text-lg font-black mb-1 underline">المطلوب:</p>
+            <p class="text-base font-bold whitespace-pre-wrap leading-relaxed" x-text="printAlt ? printAlt.description : ''"></p>
+        </div>
+        <div class="mt-4 pt-2 border-t border-dashed border-black">
+            <p class="text-[10px] font-bold">تاريخ الاستلام (المتوقع):</p>
+            <p class="text-sm font-black" x-text="printAlt ? formatDate(printAlt.due_date) : ''"></p>
+        </div>
+    </div>
+</body>
+</html>
+
+
+

@@ -1,0 +1,2002 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - التقارير والأرباح</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link href="assets/material-symbols.css" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: {
+                        'DEFAULT': '0.75rem',
+                        'lg': '1rem',
+                        'xl': '1.5rem',
+                        '2xl': '2rem',
+                        '3xl': '2.5rem',
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    },
+                    boxShadow: {
+                        'premium': '0 10px 40px -10px rgba(0,0,0,0.05)',
+                        'premium-hover': '0 20px 50px -12px rgba(0,0,0,0.08)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        [x-cloak] { display: none !important; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+        body { font-family: 'Cairo', sans-serif; background-color: #F8FAFC; }
+        .report-print-only { display: none; }
+        @media print {
+            @page { size: A4; margin: 10mm; }
+            body { background: #ffffff !important; margin: 0 !important; padding: 0 !important; }
+            body.printing-report > .flex { display: none !important; }
+            body.printing-report .report-print-only { display: block !important; color: #111827 !important; direction: rtl; font-family: 'Cairo', sans-serif; }
+            .report-print-sheet { width: 100%; background: #ffffff; color: #111827; }
+            .report-print-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; margin-bottom: 12px; }
+            .report-print-title { margin: 0 0 4px; font-size: 20pt; font-weight: 900; }
+            .report-print-subtitle { margin: 0; font-size: 9pt; color: #475569; font-weight: 800; line-height: 1.7; }
+            .report-print-meta { text-align: left; font-size: 8.5pt; font-weight: 800; line-height: 1.8; color: #334155; }
+            .report-print-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+            .report-print-card { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; break-inside: avoid; }
+            .report-print-card-label { display: block; font-size: 7pt; color: #64748b; font-weight: 900; margin-bottom: 3px; }
+            .report-print-card-value { display: block; font-size: 11pt; font-weight: 900; }
+            .report-print-section { margin-top: 12px; break-inside: auto; }
+            .report-print-section-title { font-size: 11pt; font-weight: 900; margin: 0 0 7px; padding-bottom: 4px; border-bottom: 1px solid #cbd5e1; }
+            .report-print-table { width: 100%; border-collapse: collapse; font-size: 7.5pt; margin-bottom: 8px; }
+            .report-print-table th, .report-print-table td { border: 1px solid #cbd5e1; padding: 4px 5px; vertical-align: top; }
+            .report-print-table th { background: #f1f5f9; font-weight: 900; }
+            .report-print-table thead { display: table-header-group; }
+            .report-print-table tr { break-inside: avoid; page-break-inside: avoid; }
+            .report-print-empty { border: 1px dashed #94a3b8; border-radius: 6px; padding: 10px; text-align: center; font-size: 9pt; font-weight: 800; color: #64748b; }
+        }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="assets/js/chart.min.js"></script>
+    <script src="auth.js"></script>
+
+</head>
+
+<body class="text-on-surface antialiased overflow-x-hidden" x-data="reportsData()" x-init="initData()">
+    
+    <div class="flex min-h-screen">
+        <!-- Mobile Sidebar Backdrop -->
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <!-- القائمة الجانبية (Sidebar) -->
+        <aside 
+            @mouseenter="sidebarExpanded = true" 
+            @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'" class="w-full h-full object-contain transition-transform duration-300" :class="(window.getLogoPath(user?.branch_id, branches) || '').includes('women') ? 'scale-[1.35]' : ''" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)" 
+                        class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm" :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">point_of_sale</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">styler</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">architecture</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">group</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'" x-text="(user && window.hasInventoryAdminAccess && window.hasInventoryAdminAccess(user)) ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">auto_delete</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">badge</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">bar_chart</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">barcode_scanner</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">settings</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()" class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">logout</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+</aside>
+
+        <!-- منطقة المحتوى الرئيسية -->
+        <div class="flex-1 flex flex-col min-w-0">
+            <!-- الهيدر (Header) -->
+            <header class="h-20 bg-white/70 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 flex-1">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <h2 class="text-lg md:text-xl font-extrabold text-primary">تقارير الأرباح والمصاريف</h2>
+                </div>
+                
+                <div class="flex items-center gap-2 md:gap-4">
+                    <template x-if="user && user.role === 'admin'">
+                        <select x-model="selectedBranch" @change="initData()" class="bg-white border-2 border-slate-300 rounded-xl py-2 px-4 text-sm font-extrabold text-slate-600 focus:ring-2 focus:ring-primary/20">
+                            <option value="all">كل الفروع</option>
+                            <template x-for="branch in branches" :key="branch.id">
+                                <template x-if="!branch.is_main_warehouse">
+                                    <option :value="branch.id" x-text="branch.name"></option>
+                                </template>
+                            </template>
+                        </select>
+                    </template>
+                    
+                    
+                    
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline hidden md:flex"></div>
+                </div>
+            </header>
+
+            <div class="bg-white/80 backdrop-blur-md border-b border-outline px-8 py-4 sticky top-20 z-30 flex justify-center sm:justify-start">
+                <div class="flex bg-slate-100 p-1 rounded-xl w-fit">
+                    <button @click="activeTab = 'daily'" :class="activeTab === 'daily' ? 'bg-white text-primary shadow-sm' : 'text-slate-500'" class="px-6 py-2 rounded-lg text-xs font-bold transition-all">تقارير يومية</button>
+                    <button @click="activeTab = 'monthly'" :class="activeTab === 'monthly' ? 'bg-white text-primary shadow-sm' : 'text-slate-500'" class="px-6 py-2 rounded-lg text-xs font-bold transition-all">تقارير شهرية</button>
+                </div>
+            </div>
+
+            <!-- المحتوى الرئيسي -->
+            <main class="p-8">
+                <div class="max-w-[90rem] mx-auto">
+                    
+                    <!-- 📅 Daily Reports History (Accordion) -->
+                    <div x-show="activeTab === 'daily'" x-transition class="space-y-4">
+                        <div class="flex items-center justify-between mb-8">
+                            <div>
+                                <h1 class="text-3xl font-extrabold text-primary mb-2">تاريخ التقارير اليومية</h1>
+                            </div>
+                        </div>
+
+                        <!-- فلتر اليومي -->
+                        <div class="bg-white rounded-2xl border-2 border-slate-200 p-5 mb-6 flex flex-wrap items-end gap-4">
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">من تاريخ</label>
+                                <input type="date" x-model="dailyFrom"
+                                       class="bg-slate-50 border-2 border-slate-200 rounded-xl py-2 px-4 text-sm font-bold text-primary focus:border-primary focus:outline-none transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">إلى تاريخ</label>
+                                <input type="date" x-model="dailyTo"
+                                       class="bg-slate-50 border-2 border-slate-200 rounded-xl py-2 px-4 text-sm font-bold text-primary focus:border-primary focus:outline-none transition-all">
+                            </div>
+                            <button @click="expandedDay = null; dailyHistory.forEach(d => d.details = null); initDailyData()"
+                                    class="px-6 py-2.5 rounded-xl bg-primary text-white text-sm font-black hover:bg-slate-800 transition-all flex items-center gap-2">
+                                <span class="material-symbols-outlined text-base">search</span> تطبيق
+                            </button>
+                            <button @click="dailyFrom = ''; dailyTo = ''; expandedDay = null; dailyHistory.forEach(d => d.details = null); initDailyData()"
+                                    class="px-5 py-2.5 rounded-xl border-2 border-slate-200 text-sm font-black text-slate-500 hover:bg-slate-50 transition-all flex items-center gap-2">
+                                <span class="material-symbols-outlined text-base">refresh</span> إعادة تعيين
+                            </button>
+                            <div x-show="dailyFrom || dailyTo" class="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl border border-indigo-100">
+                                <span class="material-symbols-outlined text-sm">filter_list</span>
+                                <span x-text="(dailyFrom || '...') + ' → ' + (dailyTo || '...')"></span>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-right">
+                                    <thead class="bg-slate-900 text-[11px] font-black uppercase text-slate-200 tracking-widest">
+                                        <tr>
+                                            <th class="px-8 py-5">اليوم والتاريخ</th>
+                                            <th class="px-8 py-5 text-center">الإيرادات</th>
+                                            <th class="px-8 py-5 text-center" x-text="costColumnTitle(true)"></th>
+                                            <th x-cloak x-show="canViewProfit()" class="px-8 py-5 text-center">صافي الربح</th>
+                                            <th class="px-8 py-5 text-left">التفاصيل</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <template x-if="dailyHistory.length === 0">
+                                            <tr>
+                                                <td :colspan="canViewProfit() ? 5 : 4" class="px-8 py-20 text-center text-slate-400">
+                                                    <span class="material-symbols-outlined text-4xl mb-2">event_busy</span>
+                                                    <p class="text-xs font-bold uppercase tracking-widest">لا توجد تقارير مسجلة لهذه الفترة</p>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                        <template x-for="day in dailyHistory" :key="day.date">
+                                            <tr class="transition-all">
+                                                <td :colspan="canViewProfit() ? 5 : 4" class="p-0">
+                                                    <!-- Row Header -->
+                                                    <div @click="toggleDailyDay(day)" 
+                                                         class="flex items-center justify-between px-8 py-6 cursor-pointer hover:bg-slate-50 transition-colors group"
+                                                         :class="expandedDay === day.date ? 'bg-slate-50' : ''">
+                                                        <div class="grid w-full items-center" :style="reportRowGridStyle()">
+                                                            <div class="flex items-center gap-4">
+                                                                <div class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
+                                                                    <span class="material-symbols-outlined text-sm">calendar_month</span>
+                                                                </div>
+                                                                <div>
+                                                                    <p class="text-sm font-black text-primary" x-text="new Date(day.date).toLocaleDateString('ar-EG-u-nu-latn', { weekday: 'long' })"></p>
+                                                                    <p class="text-[10px] font-bold text-slate-400" x-text="day.date"></p>
+                                                                </div>
+                                                            </div>
+                                                            <div class="text-center font-bold text-success" x-text="day.revenue.toLocaleString() + ' ج.م'"></div>
+                                                            <div class="text-center font-bold text-accent" x-text="protectedCostTotal(day, true)"></div>
+                                                            <div x-cloak x-show="canViewProfit()" class="text-center font-black" :class="canRevealSensitiveValues() ? (Number(day.profit || 0) >= 0 ? 'text-primary' : 'text-accent') : 'text-slate-400'" x-text="protectedCurrency(day.profit)"></div>
+                                                            <div class="text-left">
+                                                                <span class="material-symbols-outlined transition-transform duration-300" :class="expandedDay === day.date ? 'rotate-180' : ''">expand_more</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <!-- Expanded Content -->
+                                                    <div x-show="expandedDay === day.date" 
+                                                         x-collapse 
+                                                         class="bg-slate-50/50 border-t border-slate-100">
+                                                        <div class="p-8 space-y-8">
+                                                            <div class="flex justify-end" x-show="!isLoadingDay && day.details">
+                                                                <button @click="printReport('daily', day)" class="ml-3 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center gap-2 transition-colors">
+                                                                    <span class="material-symbols-outlined text-sm">print</span>
+                                                                    طباعة التقرير
+                                                                </button>
+                                                                <button @click="exportToExcel(day.details, 'daily', day.date)" class="px-5 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl flex items-center gap-2 transition-colors">
+                                                                    <span class="material-symbols-outlined text-sm">download</span>
+                                                                    تصدير للإكسيل
+                                                                </button>
+                                                            </div>
+                                                            <template x-if="isLoadingDay">
+                                                                <div class="flex flex-col items-center py-12 text-slate-400">
+                                                                    <div class="w-12 h-12 border-4 border-slate-200 border-t-primary rounded-full animate-spin mb-4"></div>
+                                                                    <p class="text-xs font-bold">جاري تحميل تفاصيل اليوم...</p>
+                                                                </div>
+                                                            </template>
+                                                            
+                                                            <template x-if="!isLoadingDay && day.details">
+                                                                <div class="space-y-12">
+                                                                    <!-- Sub-Summary -->
+                                                                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-4">
+                                                                        <div class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <p class="text-[9px] text-slate-400 font-black uppercase mb-1">إيرادات البيع</p>
+                                                                            <p class="text-lg font-black text-primary" x-text="day.details.branch_sales.reduce((a,b)=>a+Number(b.total_sales),0).toLocaleString() + ' ج.م'"></p>
+                                                                        </div>
+                                                                        <div class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <p class="text-[9px] text-slate-400 font-black uppercase mb-1">إجمالي التأجيرات</p>
+                                                                            <p class="text-lg font-black text-indigo-600" x-text="day.details.branch_sales.reduce((a,b)=>a+Number(b.total_rentals),0).toLocaleString() + ' ج.م'"></p>
+                                                                        </div>
+                                                                        <div class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <p class="text-[9px] text-slate-400 font-black uppercase mb-1">التفصيل</p>
+                                                                            <p class="text-lg font-black text-purple-600" x-text="day.details.branch_sales.reduce((a,b)=>a+Number(b.total_tailoring || 0),0).toLocaleString() + ' ج.م'"></p>
+                                                                        </div>
+                                                                        <div class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <p class="text-[9px] text-slate-400 font-black uppercase mb-1">عدد الأوردرات</p>
+                                                                            <p class="text-lg font-black text-slate-700" x-text="day.details.branch_sales.reduce((a,b)=>a+Number(b.order_count),0) + ' أوردر'"></p>
+                                                                        </div>
+                                                                        <div class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <p class="text-[9px] text-slate-400 font-black uppercase mb-1">المبلغ في الدرج</p>
+                                                                            <p class="text-lg font-black text-emerald-600" x-text="formatCurrency(reportCashDrawer(day.details.branch_sales))"></p>
+                                                                        </div>
+                                                                        <div x-cloak x-show="canViewProfit()" class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <div class="flex items-center justify-between gap-2 mb-1">
+                                                                                <p class="text-[9px] text-slate-400 font-black uppercase">تكلفة المبيعات (المنتجات)</p>
+                                                                                <button type="button" @click.stop="toggleSensitiveValues()" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-primary transition-colors" :title="sensitiveToggleTitle()">
+                                                                                    <span class="material-symbols-outlined text-base" x-text="sensitiveValuesUnlocked ? 'visibility_off' : 'visibility'"></span>
+                                                                                </button>
+                                                                            </div>
+                                                                            <p class="text-lg font-black text-accent" x-text="protectedCurrency(day.details.branch_sales.reduce((a,b)=>a+Number(b.cogs || 0),0))"></p>
+                                                                        </div>
+                                                                        <div x-cloak x-show="canViewProfit()" class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <div class="flex items-center justify-between gap-2 mb-1">
+                                                                                <p class="text-[9px] text-slate-400 font-black uppercase">قيمة المخزون</p>
+                                                                                <button type="button" @click.stop="toggleSensitiveValues()" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-primary transition-colors" :title="sensitiveToggleTitle()">
+                                                                                    <span class="material-symbols-outlined text-base" x-text="sensitiveValuesUnlocked ? 'visibility_off' : 'visibility'"></span>
+                                                                                </button>
+                                                                            </div>
+                                                                            <p class="text-lg font-black text-blue-600" x-text="protectedCurrency(day.details.branch_sales.reduce((a,b)=>a+Number(b.total_inventory_value || 0),0))"></p>
+                                                                        </div>
+                                                                        <div x-cloak x-show="canViewProfit()" class="bg-white p-4 rounded-2xl border border-slate-200">
+                                                                            <div class="flex items-center justify-between gap-2 mb-1">
+                                                                                <p class="text-[9px] text-slate-400 font-black uppercase">صافي الربح</p>
+                                                                                <button type="button" @click.stop="toggleSensitiveValues()" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-primary transition-colors" :title="sensitiveToggleTitle()">
+                                                                                    <span class="material-symbols-outlined text-base" x-text="sensitiveValuesUnlocked ? 'visibility_off' : 'visibility'"></span>
+                                                                                </button>
+                                                                            </div>
+                                                                            <p class="text-lg font-black" :class="canRevealSensitiveValues() ? (Number(day.profit || 0) >= 0 ? 'text-success' : 'text-accent') : 'text-slate-400'" x-text="protectedCurrency(day.profit)"></p>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                                                        <!-- Branch Analysis -->
+                                                                        <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                                                                            <div class="p-6 border-b border-slate-50 bg-slate-50/50"><h4 class="font-black text-primary text-sm" x-text="branchPerformanceTitle()"></h4></div>
+                                                                            <table class="w-full text-right text-xs">
+                                                                                <thead class="bg-slate-50/80 font-black text-slate-400 uppercase">
+                                                                                    <tr><th class="px-6 py-4">الفرع</th><th class="px-6 py-4">إجمالي الإيراد</th><th class="px-6 py-4">المبلغ في الدرج</th><th class="px-6 py-4" x-text="costColumnTitle(true)"></th><th x-cloak x-show="canViewProfit()" class="px-6 py-4 text-left">صافي الربح</th></tr>
+                                                                                </thead>
+                                                                                <tbody class="divide-y divide-slate-50">
+                                                                                    <template x-for="b in day.details.branch_sales">
+                                                                                        <tr>
+                                                                                            <td class="px-6 py-4 font-black text-primary" x-text="b.branch_name"></td>
+                                                                                            <td class="px-6 py-4 font-bold text-success" x-text="Number(b.total_revenue ?? (Number(b.total_sales) + Number(b.total_rentals) + Number(b.total_tailoring || 0))).toLocaleString() + ' ج.م'"></td>
+                                                                                            <td class="px-6 py-4 font-bold text-emerald-600" x-text="formatCurrency(b.cash_drawer)"></td>
+                                                                                            <td class="px-6 py-4 font-bold text-accent" x-text="protectedCostTotal(b, true)"></td>
+                                                                                            <td x-cloak x-show="canViewProfit()" class="px-6 py-4 font-black text-left" :class="canRevealSensitiveValues() ? (Number(b.net_profit || 0) >= 0 ? 'text-primary' : 'text-accent') : 'text-slate-400'" x-text="protectedCurrency(b.net_profit)"></td>
+                                                                                        </tr>
+                                                                                    </template>
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+
+                                                                        <!-- Payment Methods -->
+                                                                        <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                                                                            <div class="p-6 border-b border-slate-50 bg-slate-50/50"><h4 class="font-black text-primary text-sm">طرق التحصيل</h4></div>
+                                                                            <table class="w-full text-right text-xs">
+                                                                                <thead class="bg-slate-50/80 font-black text-slate-400 uppercase">
+                                                                                    <tr><th class="px-6 py-4">طريقة الدفع</th><th class="px-6 py-4 text-left">الإجمالي</th></tr>
+                                                                                </thead>
+                                                                                <tbody class="divide-y divide-slate-50">
+                                                                                    <template x-for="p in day.details.payments">
+                                                                                        <tr>
+                                                                                            <td class="px-6 py-4 font-bold text-primary" x-text="paymentMethodLabel(p.payment_method)"></td>
+                                                                                            <td class="px-6 py-4 text-left font-black text-success" x-text="Number(p.total).toLocaleString() + ' ج.م'"></td>
+                                                                                        </tr>
+                                                                                    </template>
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <!-- Expenses -->
+                                                                    <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                                                                        <div class="p-6 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between gap-4">
+                                                                            <div class="flex items-center gap-2">
+                                                                                <span class="material-symbols-outlined text-warning text-sm">receipt_long</span>
+                                                                                <h4 class="font-black text-primary text-sm">المصروفات اليومية</h4>
+                                                                            </div>
+                                                                            <div class="text-left">
+                                                                                <p class="text-[9px] font-black text-slate-400 uppercase">الإجمالي</p>
+                                                                                <p class="text-lg font-black text-warning" x-text="formatCurrency(reportExpenses(day.details).total)"></p>
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="overflow-x-auto">
+                                                                                <table class="w-full text-right text-xs">
+                                                                                    <thead class="bg-slate-50/80 font-black text-slate-400 uppercase">
+                                                                                        <tr><th class="px-6 py-4">التاريخ</th><th class="px-6 py-4">التصنيف</th><th class="px-6 py-4">ملاحظات</th><th class="px-6 py-4 text-left">المبلغ</th></tr>
+                                                                                    </thead>
+                                                                                    <tbody class="divide-y divide-slate-50">
+                                                                                        <template x-if="reportExpenseItems(day.details).length === 0">
+                                                                                            <tr><td colspan="4" class="px-6 py-8 text-center font-bold text-slate-400">لا توجد مصروفات لهذه الفترة</td></tr>
+                                                                                        </template>
+                                                                                        <template x-for="expense in reportExpenseItems(day.details)" :key="expense.id">
+                                                                                            <tr>
+                                                                                                <td class="px-6 py-4 font-bold text-slate-500" x-text="expense.expense_date"></td>
+                                                                                                <td class="px-6 py-4 font-black text-primary" x-text="expense.category"></td>
+                                                                                                <td class="px-6 py-4 font-bold text-slate-500" x-text="expense.notes || '-'"></td>
+                                                                                                <td class="px-6 py-4 text-left font-black text-warning" x-text="formatCurrency(expense.amount)"></td>
+                                                                                            </tr>
+                                                                                        </template>
+                                                                                    </tbody>
+                                                                                </table>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <!-- Tailoring Orders -->
+                                                                    <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden mt-6">
+                                                                        <div class="p-6 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between gap-4">
+                                                                            <div class="flex items-center gap-2">
+                                                                                <span class="material-symbols-outlined text-purple-600 text-sm">content_cut</span>
+                                                                                <h4 class="font-black text-primary text-sm">فواتير التفصيل</h4>
+                                                                            </div>
+                                                                            <div class="text-left">
+                                                                                <p class="text-[9px] font-black text-slate-400 uppercase">الإجمالي</p>
+                                                                                <p class="text-lg font-black text-purple-600" x-text="formatCurrency(reportTailoring(day.details).total)"></p>
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="overflow-x-auto">
+                                                                            <table class="w-full text-right text-xs">
+                                                                                <thead class="bg-slate-50/80 font-black text-slate-400 uppercase">
+                                                                                    <tr><th class="px-6 py-4">التاريخ</th><th class="px-6 py-4">رقم الفاتورة</th><th class="px-6 py-4">اسم العميل</th><th class="px-6 py-4">وصف المنتج</th><th class="px-6 py-4 text-left">المدفوع</th></tr>
+                                                                                </thead>
+                                                                                <tbody class="divide-y divide-slate-50">
+                                                                                    <template x-if="reportTailoringItems(day.details).length === 0">
+                                                                                        <tr><td colspan="5" class="px-6 py-8 text-center font-bold text-slate-400">لا توجد فواتير تفصيل لهذا اليوم</td></tr>
+                                                                                    </template>
+                                                                                    <template x-for="tailor in reportTailoringItems(day.details)" :key="tailor.id">
+                                                                                        <tr>
+                                                                                            <td class="px-6 py-4 font-bold text-slate-500" x-text="tailor.created_date"></td>
+                                                                                            <td class="px-6 py-4 font-black text-primary">
+                                                                                                <span x-text="tailor.invoice_number"></span>
+                                                                                                <span x-show="tailor.is_remainder" class="mr-2 inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700">سداد متبقي</span>
+                                                                                            </td>
+                                                                                            <td class="px-6 py-4 font-bold text-slate-500" x-text="tailor.customer_name"></td>
+                                                                                            <td class="px-6 py-4 font-bold text-slate-500" x-text="tailor.product_description || '-'"></td>
+                                                                                            <td class="px-6 py-4 text-left font-black text-purple-600" x-text="formatCurrency(tailor.amount)"></td>
+                                                                                        </tr>
+                                                                                    </template>
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <!-- Salary Movements -->
+                                                                    <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                                                                        <div class="p-6 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between gap-4">
+                                                                            <div class="flex items-center gap-2">
+                                                                                <span class="material-symbols-outlined text-indigo-600 text-sm">payments</span>
+                                                                                <h4 class="font-black text-primary text-sm">رواتب الموظفين المدفوعة</h4>
+                                                                            </div>
+                                                                            <div class="text-left">
+                                                                                <p class="text-[9px] font-black text-slate-400 uppercase">الإجمالي</p>
+                                                                                <p class="text-lg font-black text-indigo-600" x-text="formatCurrency(reportSalaries(day.details).total)"></p>
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="overflow-x-auto">
+                                                                            <table class="w-full text-right text-xs">
+                                                                                <thead class="bg-slate-50/80 font-black text-slate-400 uppercase">
+                                                                                    <tr><th class="px-6 py-4">التاريخ</th><th class="px-6 py-4">الموظف</th><th class="px-6 py-4">نوع الحركة</th><th class="px-6 py-4">ملاحظات</th><th class="px-6 py-4 text-left">المبلغ</th></tr>
+                                                                                </thead>
+                                                                                <tbody class="divide-y divide-slate-50">
+                                                                                    <template x-if="reportSalaryItems(day.details).length === 0">
+                                                                                        <tr><td colspan="5" class="px-6 py-8 text-center font-bold text-slate-400">لا توجد حركات رواتب لهذا اليوم</td></tr>
+                                                                                    </template>
+                                                                                    <template x-for="salary in reportSalaryItems(day.details)" :key="salary.id">
+                                                                                        <tr>
+                                                                                            <td class="px-6 py-4 font-bold text-slate-500" x-text="salary.payment_date"></td>
+                                                                                            <td class="px-6 py-4 font-black text-primary" x-text="salary.employee_name"></td>
+                                                                                            <td class="px-6 py-4 font-bold" :class="salaryTransactionClass(salary.transaction_type)" x-text="salaryTransactionLabel(salary.transaction_type)"></td>
+                                                                                            <td class="px-6 py-4 font-bold text-slate-500" x-text="cleanNotes(salary.notes)"></td>
+                                                                                            <td class="px-6 py-4 text-left font-black" :class="Number(salary.report_amount || 0) >= 0 ? 'text-indigo-600' : 'text-accent'" x-text="formatCurrency(salary.report_amount)"></td>
+                                                                                        </tr>
+                                                                                    </template>
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <!-- Top Items -->
+                                                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                                                        <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                                                                            <div class="p-6 border-b border-slate-50 bg-slate-50/50 flex items-center gap-2">
+                                                                                <span class="material-symbols-outlined text-success text-sm">trending_up</span>
+                                                                                <h4 class="font-black text-primary text-sm">الأكثر مبيعاً</h4>
+                                                                            </div>
+                                                                            <table class="w-full text-right text-xs">
+                                                                                <tbody class="divide-y divide-slate-50">
+                                                                                    <template x-for="item in day.details.top_sales">
+                                                                                        <tr>
+                                                                                            <td class="px-6 py-4">
+                                                                                                <p class="font-bold text-primary" x-text="window.productDisplayName(item)"></p>
+                                                                                                <p class="text-[10px] font-black text-slate-400 mt-1" x-text="barcodeLabel(item)"></p>
+                                                                                            </td>
+                                                                                            <td class="px-6 py-4 text-center font-bold text-success" x-text="item.total_sold + ' قطعة'"></td>
+                                                                                            <td class="px-6 py-4 text-left font-black text-primary" x-text="Number(item.revenue).toLocaleString() + ' ج.م'"></td>
+                                                                                        </tr>
+                                                                                    </template>
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                        <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                                                                            <div class="p-6 border-b border-slate-50 bg-slate-50/50 flex items-center gap-2">
+                                                                                <span class="material-symbols-outlined text-indigo-600 text-sm">styler</span>
+                                                                                <h4 class="font-black text-primary text-sm">الأكثر تأجيراً</h4>
+                                                                            </div>
+                                                                            <table class="w-full text-right text-xs">
+                                                                                <tbody class="divide-y divide-slate-50">
+                                                                                    <template x-for="item in day.details.top_rentals">
+                                                                                        <tr>
+                                                                                            <td class="px-6 py-4">
+                                                                                                <p class="font-bold text-primary" x-text="window.productDisplayName(item)"></p>
+                                                                                                <p class="text-[10px] font-black text-slate-400 mt-1" x-text="barcodeLabel(item)"></p>
+                                                                                            </td>
+                                                                                            <td class="px-6 py-4 text-center font-bold text-indigo-600" x-text="item.times_rented + ' مرة'"></td>
+                                                                                            <td class="px-6 py-4 text-left font-black text-primary" x-text="Number(item.rental_revenue).toLocaleString() + ' ج.م'"></td>
+                                                                                        </tr>
+                                                                                    </template>
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 📊 Monthly Reports Section -->
+                    <div x-show="activeTab === 'monthly'" x-transition class="space-y-4">
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h1 class="text-3xl font-extrabold text-primary mb-2">تاريخ التقارير الشهرية</h1>
+        </div>
+    </div>
+
+    <!-- فلتر الشهري -->
+    <div class="bg-white rounded-2xl border-2 border-slate-200 p-5 mb-6 flex flex-wrap items-end gap-4">
+        <div>
+            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">من شهر</label>
+            <input type="month" x-model="monthlyFromMonth"
+                   class="bg-slate-50 border-2 border-slate-200 rounded-xl py-2 px-4 text-sm font-bold text-primary focus:border-primary focus:outline-none transition-all">
+        </div>
+        <div>
+            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">إلى شهر</label>
+            <input type="month" x-model="monthlyToMonth"
+                   class="bg-slate-50 border-2 border-slate-200 rounded-xl py-2 px-4 text-sm font-bold text-primary focus:border-primary focus:outline-none transition-all">
+        </div>
+        <button @click="expandedMonth = null; monthlyHistory.forEach(m => m.details = null); Object.values(chartInstances).forEach(c => { try { c.destroy(); } catch(e){} }); chartInstances = {}; initMonthlyHistory()"
+                class="px-6 py-2.5 rounded-xl bg-primary text-white text-sm font-black hover:bg-slate-800 transition-all flex items-center gap-2">
+            <span class="material-symbols-outlined text-base">search</span> تطبيق
+        </button>
+        <button @click="monthlyFromMonth = ''; monthlyToMonth = ''; expandedMonth = null; monthlyHistory.forEach(m => m.details = null); Object.values(chartInstances).forEach(c => { try { c.destroy(); } catch(e){} }); chartInstances = {}; initMonthlyHistory()"
+                class="px-5 py-2.5 rounded-xl border-2 border-slate-200 text-sm font-black text-slate-500 hover:bg-slate-50 transition-all flex items-center gap-2">
+            <span class="material-symbols-outlined text-base">refresh</span> إعادة تعيين
+        </button>
+        <div x-show="monthlyFromMonth || monthlyToMonth" class="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl border border-indigo-100">
+            <span class="material-symbols-outlined text-sm">filter_list</span>
+            <span x-text="(monthlyFromMonth || '...') + ' → ' + (monthlyToMonth || '...')"></span>
+        </div>
+    </div>
+    <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-right">
+                <thead class="bg-slate-900 text-[11px] font-black uppercase text-slate-200 tracking-widest">
+                    <tr>
+                        <th class="px-8 py-5">الشهر</th>
+                        <th class="px-8 py-5 text-center">الإيرادات</th>
+                        <th class="px-8 py-5 text-center" x-text="costColumnTitle(true)"></th>
+                        <th x-cloak x-show="canViewProfit()" class="px-8 py-5 text-center">صافي الربح</th>
+                        <th class="px-8 py-5 text-left">التفاصيل</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    <template x-if="monthlyHistory.length === 0">
+                        <tr>
+                            <td :colspan="canViewProfit() ? 5 : 4" class="px-8 py-20 text-center text-slate-400">
+                                <span class="material-symbols-outlined text-4xl mb-2">event_busy</span>
+                                <p class="text-xs font-bold uppercase tracking-widest">لا توجد تقارير مسجلة</p>
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="monthObj in monthlyHistory" :key="monthObj.month">
+                        <tr class="transition-all">
+                            <td :colspan="canViewProfit() ? 5 : 4" class="p-0">
+                                <div @click="toggleMonthlyMonth(monthObj)" 
+                                     class="flex items-center justify-between px-8 py-6 cursor-pointer hover:bg-slate-50 transition-colors group"
+                                     :class="expandedMonth === monthObj.month ? 'bg-slate-50' : ''">
+                                    <div class="grid w-full items-center" :style="reportRowGridStyle()">
+                                        <div class="flex items-center gap-4">
+                                            <div class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
+                                                <span class="material-symbols-outlined text-sm">calendar_today</span>
+                                            </div>
+                                            <div>
+                                                <p class="text-sm font-black text-primary" x-text="monthObj.month"></p>
+                                            </div>
+                                        </div>
+                                        <div class="text-center font-bold text-success" x-text="monthObj.revenue.toLocaleString() + ' ج.م'"></div>
+                                        <div class="text-center font-bold text-accent" x-text="protectedCostTotal(monthObj, true)"></div>
+                                        <div x-cloak x-show="canViewProfit()" class="text-center font-black" :class="canRevealSensitiveValues() ? (Number(monthObj.profit || 0) >= 0 ? 'text-primary' : 'text-accent') : 'text-slate-400'" x-text="protectedCurrency(monthObj.profit)"></div>
+                                        <div class="text-left">
+                                            <span class="material-symbols-outlined transition-transform duration-300" :class="expandedMonth === monthObj.month ? 'rotate-180' : ''">expand_more</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div x-show="expandedMonth === monthObj.month" x-collapse class="bg-slate-50/50 border-t border-slate-100">
+                                    <div class="p-8 space-y-8">
+                                        <div class="flex justify-end" x-show="!isLoadingMonth && monthObj.details">
+                                            <button @click="printReport('monthly', monthObj)" class="ml-3 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center gap-2 transition-colors">
+                                                <span class="material-symbols-outlined text-sm">print</span>
+                                                طباعة التقرير
+                                            </button>
+                                            <button @click="exportToExcel(monthObj.details, 'monthly', monthObj.month)" class="px-5 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl flex items-center gap-2 transition-colors">
+                                                <span class="material-symbols-outlined text-sm">download</span>
+                                                تصدير للإكسيل
+                                            </button>
+                                        </div>
+                                        <template x-if="isLoadingMonth">
+                                            <div class="flex flex-col items-center py-12 text-slate-400">
+                                                <div class="w-12 h-12 border-4 border-slate-200 border-t-primary rounded-full animate-spin mb-4"></div>
+                                                <p class="text-xs font-bold">جاري تحميل تفاصيل الشهر...</p>
+                                            </div>
+                                        </template>
+                                        <template x-if="!isLoadingMonth && monthObj.details">
+                                            <div class="space-y-12">
+                                                <!-- Summary -->
+                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-4 md:gap-6">
+                            <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-300 shadow-premium">
+                                <p class="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest mb-1">إجمالي الإيرادات</p>
+                                <h4 class="text-xl font-black text-primary" x-text="(monthObj.details.summary.total_revenue ?? ((monthObj.details.summary.total_sales || 0) + (monthObj.details.summary.total_rentals || 0) + (monthObj.details.summary.total_tailoring || 0))).toLocaleString() + ' ج.م'"></h4>
+                            </div>
+                            <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-300 shadow-premium">
+                                <p class="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest mb-1">المبلغ في الدرج</p>
+                                <h4 class="text-xl font-black text-emerald-600" x-text="formatCurrency(monthObj.details.summary.cash_drawer)"></h4>
+                            </div>
+                            <div x-cloak x-show="canViewProfit()" class="bg-white p-6 rounded-[2rem] border-2 border-slate-300 shadow-premium">
+                                <div class="flex items-center justify-between gap-2 mb-1">
+                                    <p class="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest">تكلفة البضاعة (المباعة)</p>
+                                    <button type="button" @click.stop="toggleSensitiveValues()" class="w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-primary transition-colors" :title="sensitiveToggleTitle()">
+                                        <span class="material-symbols-outlined text-base" x-text="sensitiveValuesUnlocked ? 'visibility_off' : 'visibility'"></span>
+                                    </button>
+                                </div>
+                                <h4 class="text-xl font-black text-accent" x-text="protectedCurrency(monthObj.details.summary.cogs)"></h4>
+                            </div>
+                            <div x-cloak x-show="canViewProfit()" class="bg-white p-6 rounded-[2rem] border-2 border-slate-300 shadow-premium">
+                                <div class="flex items-center justify-between gap-2 mb-1">
+                                    <p class="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest">قيمة المخزون الحالي</p>
+                                    <button type="button" @click.stop="toggleSensitiveValues()" class="w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-primary transition-colors" :title="sensitiveToggleTitle()">
+                                        <span class="material-symbols-outlined text-base" x-text="sensitiveValuesUnlocked ? 'visibility_off' : 'visibility'"></span>
+                                    </button>
+                                </div>
+                                <h4 class="text-xl font-black text-blue-600" x-text="protectedCurrency(monthObj.details.summary.total_inventory_value)"></h4>
+                            </div>
+                            <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-300 shadow-premium">
+                                <p class="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest mb-1">المصاريف + الرواتب المدفوعة</p>
+                                <h4 class="text-xl font-black text-warning" x-text="((monthObj.details.summary.expenses || 0) + (monthObj.details.summary.total_salaries_paid || 0)).toLocaleString() + ' ج.م'"></h4>
+                            </div>
+                            <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-300 shadow-premium">
+                                <p class="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest mb-1">إجمالي التأجيرات</p>
+                                <h4 class="text-xl font-black text-indigo-600" x-text="(monthObj.details.summary.total_rentals || 0).toLocaleString() + ' ج.م'"></h4>
+                            </div>
+                            <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-300 shadow-premium">
+                                <p class="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest mb-1">التفصيل</p>
+                                <h4 class="text-xl font-black text-purple-600" x-text="(monthObj.details.summary.total_tailoring || 0).toLocaleString() + ' ج.م'"></h4>
+                            </div>
+                            <div x-cloak x-show="canViewProfit()" class="p-6 rounded-[2rem] border shadow-premium" :class="canRevealSensitiveValues() ? (Number(monthObj.details.summary.net_profit || 0) >= 0 ? 'bg-primary text-white border-primary' : 'bg-accent text-white border-accent') : 'bg-slate-700 text-white border-slate-700'">
+                                <div class="flex items-center justify-between gap-2 mb-1">
+                                    <p class="text-[9px] font-extrabold uppercase tracking-widest text-white/70">صافي الربح الشهري</p>
+                                    <button type="button" @click.stop="toggleSensitiveValues()" class="w-8 h-8 rounded-xl flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition-colors" :title="sensitiveToggleTitle()">
+                                        <span class="material-symbols-outlined text-base" x-text="sensitiveValuesUnlocked ? 'visibility_off' : 'visibility'"></span>
+                                    </button>
+                                </div>
+                                <h4 class="text-xl font-black" x-text="protectedCurrency(monthObj.details.summary.net_profit)"></h4>
+                            </div>
+                        </div>
+                        
+                        <!-- 📉 Monthly Profit Chart -->
+                        <div x-cloak x-show="canRevealSensitiveValues()" class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium p-8">
+                            <div class="flex items-center justify-between mb-8">
+                                <div>
+                                    <h3 class="font-extrabold text-primary" x-text="monthlyProfitTitle()"></h3>
+                                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest" x-text="monthlyProfitSubtitle()"></p>
+                                </div>
+                                <span class="material-symbols-outlined text-primary/20 text-4xl">bar_chart</span>
+                            </div>
+                            <div class="h-80 relative">
+                                <canvas :id="'branchProfitChart_' + monthObj.month"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <!-- Branch Analysis -->
+                            <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                                <div class="p-8 border-b border-slate-100 flex items-center justify-between">
+                                    <h3 class="font-extrabold text-primary" x-text="monthlyBranchAnalysisTitle()"></h3>
+                                    <span class="text-[10px] font-black text-slate-400 uppercase" x-text="monthObj.month"></span>
+                                </div>
+                                <table class="w-full text-center">
+                                    <thead class="bg-slate-50 text-[10px] font-black uppercase text-slate-400">
+                                        <tr>
+                                            <th class="px-6 py-5">الفرع</th>
+                                            <th class="px-6 py-5">إجمالي الإيراد</th>
+                                            <th class="px-6 py-5">المبلغ في الدرج</th>
+                                            <th class="px-6 py-5" x-text="costColumnTitle(true)"></th>
+                                            <th x-cloak x-show="canViewProfit()" class="px-6 py-5">صافي الربح</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-50">
+                                        <template x-for="report in monthObj.details.branchReports">
+                                            <tr class="hover:bg-slate-50 transition-colors">
+                                                <td class="px-6 py-6 font-black text-primary" x-text="report.branch_name"></td>
+                                                <td class="px-6 py-6 font-bold text-success" x-text="Number(report.total_revenue ?? (Number(report.total_sales) + Number(report.total_rentals) + Number(report.total_tailoring || 0))).toLocaleString() + ' ج.م'"></td>
+                                                <td class="px-6 py-6 font-bold text-emerald-600" x-text="formatCurrency(report.cash_drawer)"></td>
+                                                <td class="px-6 py-6 font-bold text-accent" x-text="protectedCostTotal(report, true)"></td>
+                                                <td x-cloak x-show="canViewProfit()" class="px-6 py-6 font-black" :class="canRevealSensitiveValues() ? (Number(report.net_profit || 0) >= 0 ? 'text-primary' : 'text-accent') : 'text-slate-400'" x-text="protectedCurrency(report.net_profit)"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <!-- Payments -->
+                            <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                                <div class="p-8 border-b border-slate-100"><h3 class="font-extrabold text-primary">طرق التحصيل الشهري</h3></div>
+                                <table class="w-full text-center">
+                                    <thead class="bg-slate-50 text-[10px] font-black uppercase text-slate-400">
+                                        <tr><th class="px-8 py-5">طريقة الدفع</th><th class="px-8 py-5">الإجمالي</th></tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-50">
+                                        <template x-for="p in monthObj.details.payments">
+                                            <tr>
+                                                <td class="px-8 py-6 font-bold text-primary" x-text="paymentMethodLabel(p.payment_method)"></td>
+                                                <td class="px-8 py-6 font-black text-success" x-text="Number(p.total).toLocaleString() + ' ج.م'"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Expenses -->
+                        <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                            <div class="p-8 border-b border-slate-100 flex items-center justify-between gap-4">
+                                <div class="flex items-center gap-3">
+                                    <span class="material-symbols-outlined text-warning">receipt_long</span>
+                                    <h3 class="font-extrabold text-primary">المصروفات الشهرية</h3>
+                                </div>
+                                <div class="text-left">
+                                    <p class="text-[10px] font-black text-slate-400 uppercase">الإجمالي</p>
+                                    <p class="text-xl font-black text-warning" x-text="formatCurrency(reportExpenses(monthObj.details).total)"></p>
+                                </div>
+                            </div>
+                            <div class="overflow-x-auto">
+                                    <table class="w-full text-center">
+                                        <thead class="bg-slate-50 text-[10px] font-black uppercase text-slate-400">
+                                            <tr><th class="px-6 py-5">التاريخ</th><th class="px-6 py-5">التصنيف</th><th class="px-6 py-5">ملاحظات</th><th class="px-6 py-5">المبلغ</th></tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-50">
+                                            <template x-if="reportExpenseItems(monthObj.details).length === 0">
+                                                <tr><td colspan="4" class="px-6 py-10 text-center font-bold text-slate-400">لا توجد مصروفات لهذا الشهر</td></tr>
+                                            </template>
+                                            <template x-for="expense in reportExpenseItems(monthObj.details)" :key="expense.id">
+                                                <tr>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="expense.expense_date"></td>
+                                                    <td class="px-6 py-5 font-black text-primary" x-text="expense.category"></td>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="expense.notes || '-'"></td>
+                                                    <td class="px-6 py-5 font-black text-warning" x-text="formatCurrency(expense.amount)"></td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                            </div>
+                        </div>
+
+                        <!-- Monthly Tailoring Orders -->
+                        <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden mb-8">
+                            <div class="p-8 border-b border-slate-100 flex items-center justify-between gap-4">
+                                <div class="flex items-center gap-3">
+                                    <span class="material-symbols-outlined text-purple-600">content_cut</span>
+                                    <h3 class="font-extrabold text-primary">فواتير التفصيل</h3>
+                                </div>
+                                <div class="text-left">
+                                    <p class="text-[10px] font-black text-slate-400 uppercase">الإجمالي</p>
+                                    <p class="text-xl font-black text-purple-600" x-text="formatCurrency(reportTailoring(monthObj.details).total)"></p>
+                                </div>
+                            </div>
+                            <div class="overflow-x-auto">
+                                    <table class="w-full text-center">
+                                        <thead class="bg-slate-50 text-[10px] font-black uppercase text-slate-400">
+                                            <tr><th class="px-6 py-5">التاريخ</th><th class="px-6 py-5">رقم الفاتورة</th><th class="px-6 py-5">الفرع</th><th class="px-6 py-5">اسم العميل</th><th class="px-6 py-5">وصف المنتج</th><th class="px-6 py-5 text-left">المدفوع</th></tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-50">
+                                            <template x-if="reportTailoringItems(monthObj.details).length === 0">
+                                                <tr><td colspan="6" class="px-6 py-10 text-center font-bold text-slate-400">لا توجد فواتير تفصيل لهذا الشهر</td></tr>
+                                            </template>
+                                            <template x-for="tailor in reportTailoringItems(monthObj.details)" :key="tailor.id">
+                                                <tr>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="tailor.created_date"></td>
+                                                    <td class="px-6 py-5 font-black text-primary">
+                                                        <span x-text="tailor.invoice_number"></span>
+                                                        <span x-show="tailor.is_remainder" class="mr-2 inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700">سداد متبقي</span>
+                                                    </td>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="tailor.branch_name || '-'"></td>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="tailor.customer_name"></td>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="tailor.product_description || '-'"></td>
+                                                    <td class="px-6 py-5 text-left font-black text-purple-600" x-text="formatCurrency(tailor.amount)"></td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                            </div>
+                        </div>
+
+                        <!-- Paid Salaries -->
+                        <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                            <div class="p-8 border-b border-slate-100 flex items-center justify-between gap-4">
+                                <div class="flex items-center gap-3">
+                                    <span class="material-symbols-outlined text-indigo-600">payments</span>
+                                    <h3 class="font-extrabold text-primary">رواتب الموظفين المدفوعة</h3>
+                                </div>
+                                <div class="text-left">
+                                    <p class="text-[10px] font-black text-slate-400 uppercase">الإجمالي</p>
+                                    <p class="text-xl font-black text-indigo-600" x-text="formatCurrency(reportSalaries(monthObj.details).total)"></p>
+                                </div>
+                            </div>
+                            <div class="overflow-x-auto">
+                                    <table class="w-full text-center">
+                                        <thead class="bg-slate-50 text-[10px] font-black uppercase text-slate-400">
+                                            <tr><th class="px-6 py-5">التاريخ</th><th class="px-6 py-5">الموظف</th><th class="px-6 py-5">الفرع</th><th class="px-6 py-5">نوع الحركة</th><th class="px-6 py-5">ملاحظات</th><th class="px-6 py-5">المبلغ</th></tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-50">
+                                            <template x-if="reportSalaryItems(monthObj.details).length === 0">
+                                                <tr><td colspan="6" class="px-6 py-10 text-center font-bold text-slate-400">لا توجد حركات رواتب لهذا الشهر</td></tr>
+                                            </template>
+                                            <template x-for="salary in reportSalaryItems(monthObj.details)" :key="salary.id">
+                                                <tr>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="salary.payment_date"></td>
+                                                    <td class="px-6 py-5 font-black text-primary" x-text="salary.employee_name"></td>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="salary.branch_name || '-'"></td>
+                                                    <td class="px-6 py-5 font-bold" :class="salaryTransactionClass(salary.transaction_type)" x-text="salaryTransactionLabel(salary.transaction_type)"></td>
+                                                    <td class="px-6 py-5 font-bold text-slate-500" x-text="cleanNotes(salary.notes)"></td>
+                                                    <td class="px-6 py-5 font-black" :class="Number(salary.report_amount || 0) >= 0 ? 'text-indigo-600' : 'text-accent'" x-text="formatCurrency(salary.report_amount)"></td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                            </div>
+                        </div>
+
+                        <!-- Top Items -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                                <div class="p-8 border-b border-slate-100 flex items-center gap-3">
+                                    <span class="material-symbols-outlined text-success">trending_up</span>
+                                    <h3 class="font-extrabold text-primary">الأكثر مبيعاً هذا الشهر</h3>
+                                </div>
+                                <table class="w-full text-center">
+                                    <template x-for="item in monthObj.details.topSales">
+                                        <tr>
+                                            <td class="px-8 py-4">
+                                                <p class="font-bold text-primary" x-text="window.productDisplayName(item)"></p>
+                                                <p class="text-[10px] font-black text-slate-400 mt-1" x-text="barcodeLabel(item)"></p>
+                                            </td>
+                                            <td class="px-8 py-4 font-bold text-success" x-text="item.total_sold"></td>
+                                            <td class="px-8 py-4 font-black text-primary" x-text="Number(item.revenue || 0).toLocaleString() + ' ج.م'"></td>
+                                        </tr>
+                                    </template>
+                                </table>
+                            </div>
+                            <div class="bg-white rounded-[2.5rem] border-2 border-slate-300 shadow-premium overflow-hidden">
+                                <div class="p-8 border-b border-slate-100 flex items-center gap-3">
+                                    <span class="material-symbols-outlined text-indigo-600">styler</span>
+                                    <h3 class="font-extrabold text-primary">الأكثر تأجيراً هذا الشهر</h3>
+                                </div>
+                                <table class="w-full text-center">
+                                    <template x-for="item in monthObj.details.topRentals">
+                                        <tr>
+                                            <td class="px-8 py-4">
+                                                <p class="font-bold text-primary" x-text="window.productDisplayName(item)"></p>
+                                                <p class="text-[10px] font-black text-slate-400 mt-1" x-text="barcodeLabel(item)"></p>
+                                            </td>
+                                            <td class="px-8 py-4 font-bold text-indigo-600" x-text="item.times_rented"></td>
+                                            <td class="px-8 py-4 font-black text-primary" x-text="Number(item.rental_revenue || 0).toLocaleString() + ' ج.م'"></td>
+                                        </tr>
+                                    </template>
+                                </table>
+                            </div>
+                        </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div x-cloak x-show="sensitivePasswordModalOpen" x-transition.opacity class="fixed inset-0 z-[120] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4" @keydown.escape.window="closeSensitivePasswordModal()">
+        <div class="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-6" @click.outside="closeSensitivePasswordModal()">
+            <div class="flex items-center justify-between gap-4 mb-5">
+                <div>
+                    <h3 class="text-lg font-black text-primary">كلمة مرور القيم المخفية</h3>
+                    <p class="text-xs font-bold text-slate-400 mt-1">اكتب كلمة المرور لعرض صافي الربح وقيمة المخزون وتكلفة المبيعات.</p>
+                </div>
+                <button type="button" @click="closeSensitivePasswordModal()" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-primary transition-colors">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <input x-ref="sensitivePasswordInput" type="password" x-model="sensitivePasswordInput" @keydown.enter="submitSensitivePassword()" class="w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-center font-black tracking-widest focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none" autocomplete="off">
+            <p x-show="sensitivePasswordError" x-text="sensitivePasswordError" class="mt-3 text-xs font-black text-accent text-center"></p>
+            <div class="flex items-center gap-3 mt-6">
+                <button type="button" @click="submitSensitivePassword()" class="flex-1 px-5 py-3 bg-primary text-white rounded-xl font-black hover:bg-slate-800 transition-colors">عرض القيم</button>
+                <button type="button" @click="closeSensitivePasswordModal()" class="px-5 py-3 bg-slate-100 text-slate-600 rounded-xl font-black hover:bg-slate-200 transition-colors">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="report-print-only" x-show="printReportData" x-cloak>
+        <template x-if="printReportData">
+        <div class="report-print-sheet">
+            <div class="report-print-header">
+                <div>
+                    <h1 class="report-print-title" x-text="printReportData.title"></h1>
+                    <p class="report-print-subtitle" x-text="'الفترة: ' + printReportData.period + ' | الفرع: ' + printReportData.branchLabel"></p>
+                </div>
+                <div class="report-print-meta">
+                    <div x-text="'تاريخ الطباعة: ' + new Date(printReportData.printedAt).toLocaleString('ar-EG-u-nu-latn')"></div>
+                    <div x-text="'عدد الفروع/السجلات: ' + (printReportData.branchRows?.length || 0)"></div>
+                </div>
+            </div>
+
+            <div class="report-print-grid">
+                <template x-for="card in printSummaryCards()" :key="card[0]">
+                    <div class="report-print-card">
+                        <span class="report-print-card-label" x-text="card[0]"></span>
+                        <span class="report-print-card-value" x-text="printCardValue(card)"></span>
+                    </div>
+                </template>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title" x-text="branchPerformanceTitle()"></h2>
+                <table class="report-print-table">
+                    <thead>
+                        <tr>
+                            <th>الفرع</th>
+                            <th>البيع</th>
+                            <th>التأجير</th>
+                            <th>التفصيل</th>
+                            <th>إجمالي الإيراد</th>
+                            <th>المبلغ في الدرج</th>
+                            <th>المصروفات</th>
+                            <th>الرواتب</th>
+                            <th x-show="canViewProfit()">تكلفة البضاعة</th>
+                            <th x-show="canViewProfit()">صافي الربح</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="row in printReportData.branchRows" :key="row.branch_id || row.branch_name">
+                            <tr>
+                                <td x-text="row.branch_name || '-'"></td>
+                                <td x-text="formatCurrency(row.total_sales)"></td>
+                                <td x-text="formatCurrency(row.total_rentals)"></td>
+                                <td x-text="formatCurrency(row.total_tailoring)"></td>
+                                <td x-text="formatCurrency(reportTotalRevenue(row))"></td>
+                                <td x-text="formatCurrency(row.cash_drawer)"></td>
+                                <td x-text="formatCurrency(row.expenses)"></td>
+                                <td x-text="formatCurrency(row.total_salaries_paid ?? row.salaries)"></td>
+                                <td x-show="canViewProfit()" x-text="protectedCurrency(row.cogs)"></td>
+                                <td x-show="canViewProfit()" x-text="protectedCurrency(row.net_profit)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title">طرق التحصيل</h2>
+                <table class="report-print-table">
+                    <thead><tr><th>طريقة الدفع</th><th>الإجمالي</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.payments?.length"><tr><td colspan="2">لا توجد طرق تحصيل مسجلة</td></tr></template>
+                        <template x-for="p in printReportData.payments" :key="p.payment_method">
+                            <tr><td x-text="paymentMethodLabel(p.payment_method)"></td><td x-text="formatCurrency(p.total)"></td></tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title">فواتير البيع</h2>
+                <table class="report-print-table">
+                    <thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>الكاشير</th><th>طريقة الدفع</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.salesInvoices?.length"><tr><td colspan="7">لا توجد فواتير بيع في هذا التقرير</td></tr></template>
+                        <template x-for="inv in printReportData.salesInvoices" :key="'sale-' + inv.invoice_number + '-' + inv.created_date">
+                            <tr>
+                                <td x-text="inv.invoice_number"></td>
+                                <td x-text="inv.created_date"></td>
+                                <td x-text="inv.cashier_name || '-'"></td>
+                                <td x-text="paymentMethodLabel(inv.payment_method)"></td>
+                                <td x-text="formatCurrency(inv.amount)"></td>
+                                <td x-text="formatCurrency(inv.paid_amount)"></td>
+                                <td x-text="formatCurrency(inv.remainder)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title">فواتير التأجير</h2>
+                <table class="report-print-table">
+                    <thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>الكاشير</th><th>طريقة الدفع</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.rentalInvoices?.length"><tr><td colspan="7">لا توجد فواتير تأجير في هذا التقرير</td></tr></template>
+                        <template x-for="inv in printReportData.rentalInvoices" :key="'rental-' + inv.invoice_number + '-' + inv.created_date">
+                            <tr>
+                                <td x-text="inv.invoice_number"></td>
+                                <td x-text="inv.created_date"></td>
+                                <td x-text="inv.cashier_name || '-'"></td>
+                                <td x-text="paymentMethodLabel(inv.payment_method)"></td>
+                                <td x-text="formatCurrency(inv.amount)"></td>
+                                <td x-text="formatCurrency(inv.paid_amount)"></td>
+                                <td x-text="formatCurrency(inv.remainder)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title" x-text="'المصروفات - الإجمالي: ' + formatCurrency(printReportData.expensesTotal)"></h2>
+                <table class="report-print-table">
+                    <thead><tr><th>التاريخ</th><th>التصنيف</th><th>ملاحظات</th><th>المبلغ</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.expenses?.length"><tr><td colspan="4">لا توجد مصروفات</td></tr></template>
+                        <template x-for="expense in printReportData.expenses" :key="'expense-' + expense.id">
+                            <tr><td x-text="expense.expense_date"></td><td x-text="expense.category"></td><td x-text="expense.notes || '-'"></td><td x-text="formatCurrency(expense.amount)"></td></tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title" x-text="'فواتير التفصيل - الإجمالي: ' + formatCurrency(printReportData.tailoringTotal)"></h2>
+                <table class="report-print-table">
+                    <thead><tr><th>التاريخ</th><th>رقم الفاتورة</th><th>الفرع</th><th>العميل</th><th>وصف المنتج</th><th>المدفوع</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.tailoring?.length"><tr><td colspan="6">لا توجد فواتير تفصيل</td></tr></template>
+                        <template x-for="tailor in printReportData.tailoring" :key="'tailor-' + tailor.id">
+                            <tr>
+                                <td x-text="tailor.created_date"></td>
+                                <td x-text="tailor.invoice_number"></td>
+                                <td x-text="tailor.branch_name || '-'"></td>
+                                <td x-text="tailor.customer_name || '-'"></td>
+                                <td x-text="tailor.product_description || '-'"></td>
+                                <td x-text="formatCurrency(tailor.amount)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title" x-text="'رواتب الموظفين المدفوعة - الإجمالي: ' + formatCurrency(printReportData.salariesTotal)"></h2>
+                <table class="report-print-table">
+                    <thead><tr><th>التاريخ</th><th>الموظف</th><th>الفرع</th><th>نوع الحركة</th><th>ملاحظات</th><th>المبلغ</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.salaries?.length"><tr><td colspan="6">لا توجد حركات رواتب</td></tr></template>
+                        <template x-for="salary in printReportData.salaries" :key="'salary-' + salary.id">
+                            <tr>
+                                <td x-text="salary.payment_date || salary.transaction_date"></td>
+                                <td x-text="salary.employee_name || '-'"></td>
+                                <td x-text="salary.branch_name || '-'"></td>
+                                <td x-text="salaryTransactionLabel(salary.transaction_type || salary.type)"></td>
+                                <td x-text="cleanNotes(salary.notes)"></td>
+                                <td x-text="formatCurrency(salary.report_amount ?? salary.amount)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title">الأكثر مبيعًا</h2>
+                <table class="report-print-table">
+                    <thead><tr><th>المنتج</th><th>الباركود</th><th>الكمية</th><th>الإيراد</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.topSales?.length"><tr><td colspan="4">لا توجد بيانات</td></tr></template>
+                        <template x-for="item in printReportData.topSales" :key="'top-sale-' + (item.barcode || item.name)">
+                            <tr><td x-text="window.productDisplayName(item)"></td><td x-text="item.barcode || '-'"></td><td x-text="item.total_sold || 0"></td><td x-text="formatCurrency(item.revenue)"></td></tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section">
+                <h2 class="report-print-section-title">الأكثر تأجيرًا</h2>
+                <table class="report-print-table">
+                    <thead><tr><th>المنتج</th><th>الباركود</th><th>عدد المرات</th><th>الإيراد</th></tr></thead>
+                    <tbody>
+                        <template x-if="!printReportData.topRentals?.length"><tr><td colspan="4">لا توجد بيانات</td></tr></template>
+                        <template x-for="item in printReportData.topRentals" :key="'top-rental-' + (item.barcode || item.name)">
+                            <tr><td x-text="window.productDisplayName(item)"></td><td x-text="item.barcode || '-'"></td><td x-text="item.times_rented || 0"></td><td x-text="formatCurrency(item.rental_revenue)"></td></tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="report-print-section" x-show="printReportData.attendance?.length">
+                <h2 class="report-print-section-title">الحضور والانصراف</h2>
+                <table class="report-print-table">
+                    <thead><tr><th>التاريخ</th><th>الموظف</th><th>حضور</th><th>انصراف</th><th>الساعات</th><th>ملاحظات</th></tr></thead>
+                    <tbody>
+                        <template x-for="att in printReportData.attendance" :key="'att-' + att.employee_name + '-' + att.date">
+                            <tr><td x-text="att.date"></td><td x-text="att.employee_name"></td><td x-text="att.check_in || '-'"></td><td x-text="att.check_out || '-'"></td><td x-text="att.total_hours || 0"></td><td x-text="att.notes || '-'"></td></tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        </template>
+    </div>
+
+    <!-- Alpine.js -->
+    <script defer src="assets/js/xlsx-js-style.bundle.js"></script>
+    <script defer src="assets/js/alpine-collapse.min.js"></script>
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('reportsData', () => ({
+    sidebarExpanded: false,
+    sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+    mobileMenuOpen: false,
+    
+    activeTab: 'daily',
+    selectedBranch: 'all',
+    
+    user: window.currentUser || null,
+    branches: [],
+    selectedBranchInitialized: false,
+    
+    // Daily filters
+    dailyFrom: '',
+    dailyTo: '',
+
+    // Monthly filters
+    monthlyFromMonth: '',
+    monthlyToMonth: '',
+
+    dailyHistory: [],
+    expandedDay: null,
+    isLoadingDay: false,
+    
+    monthlyHistory: [],
+    expandedMonth: null,
+    isLoadingMonth: false,
+    
+    chartInstances: {},
+    printReportData: null,
+    reportPrintAfterAttached: false,
+    sensitiveReportPassword: '48312',
+    sensitiveValuesUnlocked: false,
+    sensitivePasswordModalOpen: false,
+    sensitivePasswordInput: '',
+    sensitivePasswordError: '',
+    sensitiveValueMask: '******',
+
+    async readJson(res, fallback) {
+        if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+        const data = await res.json();
+        return data ?? fallback;
+    },
+
+    exportToExcel(dataObj, type, dateStr) {
+        if (typeof XLSX === 'undefined') {
+            alert('عذراً، لم يتم تحميل مكتبة الإكسيل بنجاح.');
+            return;
+        }
+
+        let aoa = [];
+        let headerRows = []; // To keep track of which rows need bold/bg styling
+        this.addExcelSummaryRows(aoa, headerRows, dataObj);
+
+        // 1. Sales Invoices
+        const hasSales = Array.isArray(dataObj.sales_invoices) && dataObj.sales_invoices.length > 0;
+        if (hasSales) {
+            if (aoa.length > 0) aoa.push([]);
+            headerRows.push(aoa.length);
+            aoa.push(['رقم الفاتوره', 'تاريخ العملية', 'البيان', 'الاجمالي', 'المدفوع', 'الباقي', 'اسم البائع', 'ملاحظات']);
+            dataObj.sales_invoices.forEach(p => {
+                aoa.push([
+                    p.invoice_number || '',
+                    p.created_date || '',
+                    'مبيعات',
+                    Number(p.amount || 0),
+                    Number(p.paid_amount || 0),
+                    Number(p.remainder || 0),
+                    p.cashier_name || '',
+                    p.payment_method ? `دفع: ${this.paymentMethodLabel(p.payment_method)}` : ''
+                ]);
+            });
+        }
+
+        // 2. Rental Invoices
+        const hasRentals = Array.isArray(dataObj.rental_invoices) && dataObj.rental_invoices.length > 0;
+        if (hasRentals) {
+            if (aoa.length > 0) aoa.push([]); // Empty row separator
+            headerRows.push(aoa.length);
+            aoa.push(['رقم الفاتوره', 'تاريخ العملية', 'البيان', 'الاجمالي', 'المدفوع', 'الباقي', 'اسم البائع', 'ملاحظات']);
+            dataObj.rental_invoices.forEach(p => {
+                aoa.push([
+                    p.invoice_number || '',
+                    p.created_date || '',
+                    'تأجير',
+                    Number(p.amount || 0),
+                    Number(p.paid_amount || 0),
+                    Number(p.remainder || 0),
+                    p.cashier_name || '',
+                    p.payment_method ? `دفع: ${this.paymentMethodLabel(p.payment_method)}` : ''
+                ]);
+            });
+        }
+
+        // 3. Tailoring Invoices
+        const tailoringItems = this.reportTailoringItems(dataObj);
+        const hasTailoring = tailoringItems.length > 0;
+        if (hasTailoring) {
+            if (aoa.length > 0) aoa.push([]); // Empty row separator
+            headerRows.push(aoa.length);
+            aoa.push(['رقم الفاتوره', 'تاريخ العملية', 'البيان', 'الاجمالي', 'المدفوع', 'الباقي', 'اسم العميل', 'ملاحظات']);
+            tailoringItems.forEach(p => {
+                aoa.push([
+                    p.invoice_number || '',
+                    p.created_date || '',
+                    'تفصيل/ترزية',
+                    Number(p.total_amount || 0),
+                    Number(p.amount || 0),
+                    Number(p.remaining_amount || 0),
+                    p.customer_name || '', 
+                    p.is_remainder ? 'دفعة متبقية' : 'دفعة مقدمة'
+                ]);
+            });
+        }
+
+        // 2. Expenses
+        const expensesItems = this.reportExpenseItems(dataObj);
+        if (expensesItems.length > 0) {
+            if (aoa.length > 0) aoa.push([]); // Empty row separator
+            headerRows.push(aoa.length);
+            aoa.push(['تاريخ العملية', 'البيان', 'قيمة المصروف', 'ملاحظات']);
+            expensesItems.forEach(e => {
+                aoa.push([
+                    e.expense_date || '',
+                    e.category || 'مصروف عام',
+                    Number(e.amount || 0),
+                    e.notes || ''
+                ]);
+            });
+        }
+
+        // 3. Salaries
+        const salaryItems = this.reportSalaryItems(dataObj);
+        if (salaryItems.length > 0) {
+            if (aoa.length > 0) aoa.push([]); // Empty row separator
+            headerRows.push(aoa.length);
+            aoa.push(['تاريخ العملية', 'البيان', 'اسم الموظف', 'القيمة', 'ملاحظات']);
+            salaryItems.forEach(s => {
+                aoa.push([
+                    s.payment_date || s.transaction_date || '',
+                    this.salaryTransactionLabel(s.transaction_type || s.type),
+                    s.employee_name || '',
+                    Number(s.amount || 0),
+                    this.cleanNotes(s.notes)
+                ]);
+            });
+        }
+
+        // 4. Attendance
+        if (Array.isArray(dataObj.attendance) && dataObj.attendance.length > 0) {
+            if (aoa.length > 0) aoa.push([]); // Empty row separator
+            headerRows.push(aoa.length);
+            aoa.push(['التاريخ', 'اسم الموظف', 'وقت الحضور', 'وقت الانصراف', 'عدد الساعات', 'ملاحظات']);
+            dataObj.attendance.forEach(a => {
+                aoa.push([
+                    a.date || '',
+                    a.employee_name || '',
+                    a.check_in || '',
+                    a.check_out || '',
+                    Number(a.total_hours || 0),
+                    a.notes || ''
+                ]);
+            });
+        }
+
+        if (aoa.length === 0) {
+            alert('لا توجد بيانات لتصديرها');
+            return;
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        
+        // Auto-fit columns and center align text
+        if(!ws['!cols']) ws['!cols'] = [];
+        ws['!dir'] = 'rtl'; // Right to left
+        
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+            let maxW = 10; // Minimum width
+            for (let R = range.s.r; R <= range.e.r; ++R) {
+                const cellRef = XLSX.utils.encode_cell({c: C, r: R});
+                if (!ws[cellRef]) continue;
+
+                // Center align all cells and apply basic font styling
+                ws[cellRef].s = {
+                    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+                    font: { name: 'Arial', sz: 11 }
+                };
+                
+                // Style header rows specifically
+                if (headerRows.includes(R)) {
+                    ws[cellRef].s.font.bold = true;
+                    ws[cellRef].s.fill = { fgColor: { rgb: "E2E8F0" } }; // Light slate gray background
+                }
+
+                // Calculate max width for the column
+                const val = ws[cellRef].v ? String(ws[cellRef].v) : '';
+                // Count Arabic characters as roughly wider than English
+                const estimatedLength = val.length + (val.match(/[\u0600-\u06FF]/g) ? val.match(/[\u0600-\u06FF]/g).length * 0.5 : 0);
+                if (estimatedLength > maxW) maxW = estimatedLength;
+            }
+            // Set final column width with padding
+            ws['!cols'][C] = { wch: Math.min(Math.max(Math.ceil(maxW) + 4, 15), 60) };
+        }
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'التقرير');
+        const filename = `تقرير_${type === 'daily' ? 'يومي' : 'شهري'}_${dateStr}.xlsx`;
+        XLSX.writeFile(wb, filename);
+    },
+
+    emptyProfitData() {
+        return {
+            summary: { total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0, cash_drawer: 0, cogs: 0, expenses: 0, total_salaries_paid: 0, net_profit: 0, total_inventory_value: 0 },
+            branch_reports: [],
+            payments: [],
+            expenses: { total: 0, items: [] },
+            salaries: { total: 0, items: [] },
+            tailoring: { total: 0, items: [] }
+        };
+    },
+
+    emptyDailyDetails(date) {
+        return { date, branch_sales: [], payments: [], expenses: { total: 0, items: [] }, salaries: { total: 0, items: [] }, top_sales: [], top_rentals: [] };
+    },
+
+    exportSummary(details) {
+        const branchRows = details?.branch_sales || details?.branchReports || details?.branch_reports || [];
+        const summary = details?.summary || {};
+        const totalSales = Number(summary.total_sales ?? branchRows.reduce((sum, row) => sum + Number(row.total_sales || 0), 0));
+        const totalRentals = Number(summary.total_rentals ?? branchRows.reduce((sum, row) => sum + Number(row.total_rentals || 0), 0));
+        const totalTailoring = Number(summary.total_tailoring ?? branchRows.reduce((sum, row) => sum + Number(row.total_tailoring || 0), 0));
+        const totalRevenue = Number(summary.total_revenue ?? (totalSales + totalRentals + totalTailoring));
+        const cashDrawer = Number(summary.cash_drawer ?? this.reportCashDrawer(branchRows));
+
+        return {
+            totalRevenue,
+            cashDrawer,
+            totalSales,
+            totalRentals,
+            totalTailoring,
+            expenses: Number(summary.expenses ?? this.reportExpenses(details).total ?? 0),
+            totalSalariesPaid: Number(summary.total_salaries_paid ?? this.reportSalaries(details).total ?? 0),
+            cogs: Number(summary.cogs ?? branchRows.reduce((sum, row) => sum + Number(row.cogs || 0), 0)),
+            totalInventoryValue: Number(summary.total_inventory_value ?? branchRows.reduce((sum, row) => sum + Number(row.total_inventory_value || 0), 0)),
+            netProfit: Number(summary.net_profit ?? branchRows.reduce((sum, row) => sum + Number(row.net_profit || 0), 0))
+        };
+    },
+
+    addExcelSummaryRows(aoa, headerRows, details) {
+        const summary = this.exportSummary(details);
+        headerRows.push(aoa.length);
+        aoa.push(['ملخص التقرير']);
+        headerRows.push(aoa.length);
+        aoa.push(['البند', 'القيمة']);
+        aoa.push(['إجمالي الإيرادات', summary.totalRevenue]);
+        aoa.push(['المبلغ في الدرج', summary.cashDrawer]);
+        aoa.push(['إيرادات البيع', summary.totalSales]);
+        aoa.push(['إجمالي التأجير', summary.totalRentals]);
+        aoa.push(['التفصيل', summary.totalTailoring]);
+        aoa.push(['المصروفات', summary.expenses]);
+        aoa.push(['الرواتب المدفوعة', summary.totalSalariesPaid]);
+        if (this.canViewProfit()) {
+            aoa.push(['تكلفة المبيعات (المنتجات)', this.sensitiveExcelValue(summary.cogs)]);
+            aoa.push(['قيمة المخزون', this.sensitiveExcelValue(summary.totalInventoryValue)]);
+            aoa.push(['صافي الربح', this.sensitiveExcelValue(summary.netProfit)]);
+        }
+    },
+
+    reportTotalRevenue(row) {
+        return Number(row?.total_revenue ?? (Number(row?.total_sales || 0) + Number(row?.total_rentals || 0) + Number(row?.total_tailoring || 0)));
+    },
+
+    reportCashDrawer(rows) {
+        return (Array.isArray(rows) ? rows : []).reduce((sum, row) => sum + Number(row.cash_drawer || 0), 0);
+    },
+
+    selectedBranchLabel() {
+        if (this.selectedBranch === 'all') return 'كل الفروع';
+        const branch = this.branches.find(b => String(b.id) === String(this.selectedBranch));
+        return branch?.name || 'فرع محدد';
+    },
+
+    buildPrintReport(type, item) {
+        const details = item?.details || {};
+        const isDaily = type === 'daily';
+        const period = isDaily ? item.date : item.month;
+        const branchRows = isDaily ? (details.branch_sales || []) : (details.branchReports || []);
+        const summary = isDaily ? {
+            total_sales: branchRows.reduce((sum, row) => sum + Number(row.total_sales || 0), 0),
+            total_rentals: branchRows.reduce((sum, row) => sum + Number(row.total_rentals || 0), 0),
+            total_tailoring: branchRows.reduce((sum, row) => sum + Number(row.total_tailoring || 0), 0),
+            total_revenue: branchRows.reduce((sum, row) => sum + this.reportTotalRevenue(row), 0),
+            cash_drawer: this.reportCashDrawer(branchRows),
+            cogs: branchRows.reduce((sum, row) => sum + Number(row.cogs || 0), 0),
+            expenses: Number(this.reportExpenses(details).total || 0),
+            total_salaries_paid: Number(this.reportSalaries(details).total || 0),
+            net_profit: Number(item.profit || 0),
+            total_inventory_value: branchRows.reduce((sum, row) => sum + Number(row.total_inventory_value || 0), 0)
+        } : (details.summary || this.emptyProfitData().summary);
+
+        return {
+            type,
+            title: isDaily ? 'تقرير يومي' : 'تقرير شهري',
+            period,
+            branchLabel: this.selectedBranchLabel(),
+            printedAt: new Date(),
+            summary,
+            branchRows,
+            payments: details.payments || [],
+            expenses: this.reportExpenseItems(details),
+            expensesTotal: Number(this.reportExpenses(details).total || 0),
+            tailoring: this.reportTailoringItems(details),
+            tailoringTotal: Number(this.reportTailoring(details).total || 0),
+            salaries: this.reportSalaryItems(details),
+            salariesTotal: Number(this.reportSalaries(details).total || 0),
+            topSales: details.topSales || details.top_sales || [],
+            topRentals: details.topRentals || details.top_rentals || [],
+            salesInvoices: details.sales_invoices || [],
+            rentalInvoices: details.rental_invoices || [],
+            attendance: details.attendance || []
+        };
+    },
+
+    printReport(type, item) {
+        if (!item?.details) return;
+        this.printReportData = this.buildPrintReport(type, item);
+        document.body.classList.add('printing-report');
+        this.$nextTick(() => {
+            setTimeout(() => window.print(), 50);
+        });
+    },
+
+    printSummaryCards() {
+        const s = this.printReportData?.summary || {};
+        const cards = [
+            ['إجمالي الإيرادات', s.total_revenue ?? (Number(s.total_sales || 0) + Number(s.total_rentals || 0) + Number(s.total_tailoring || 0)), false],
+            ['المبلغ في الدرج', s.cash_drawer, false],
+            ['إيرادات البيع', s.total_sales, false],
+            ['إجمالي التأجير', s.total_rentals, false],
+            ['التفصيل', s.total_tailoring, false],
+            ['المصروفات', s.expenses, false],
+            ['الرواتب المدفوعة', s.total_salaries_paid, false],
+        ];
+        if (this.canViewProfit()) {
+            cards.push(['تكلفة البضاعة', s.cogs, true]);
+            cards.push(['قيمة المخزون', s.total_inventory_value, true]);
+            cards.push(['صافي الربح', s.net_profit, true]);
+        }
+        return cards;
+    },
+
+    printCardValue(card) {
+        return card?.[2] ? this.protectedCurrency(card[1]) : this.formatCurrency(card?.[1]);
+    },
+
+    canViewProfit() {
+        const u = this.user || window.currentUser;
+        return Boolean(u && u.role === 'admin');
+    },
+
+    canRevealSensitiveValues() {
+        return this.canViewProfit() && this.sensitiveValuesUnlocked;
+    },
+
+    sensitiveToggleTitle() {
+        return this.sensitiveValuesUnlocked ? 'إخفاء القيم' : 'إظهار القيم';
+    },
+
+    toggleSensitiveValues() {
+        if (!this.canViewProfit()) return;
+        if (this.sensitiveValuesUnlocked) {
+            this.sensitiveValuesUnlocked = false;
+            this.destroyProfitCharts();
+            return;
+        }
+        this.openSensitivePasswordModal();
+    },
+
+    openSensitivePasswordModal() {
+        this.sensitivePasswordInput = '';
+        this.sensitivePasswordError = '';
+        this.sensitivePasswordModalOpen = true;
+        this.$nextTick(() => this.$refs.sensitivePasswordInput?.focus());
+    },
+
+    closeSensitivePasswordModal() {
+        this.sensitivePasswordModalOpen = false;
+        this.sensitivePasswordInput = '';
+        this.sensitivePasswordError = '';
+    },
+
+    submitSensitivePassword() {
+        if (String(this.sensitivePasswordInput || '') === this.sensitiveReportPassword) {
+            this.sensitiveValuesUnlocked = true;
+            this.closeSensitivePasswordModal();
+            this.$nextTick(() => this.refreshUnlockedProfitChart());
+            return;
+        }
+        this.sensitivePasswordError = 'كلمة المرور غير صحيحة';
+        this.sensitivePasswordInput = '';
+        this.$nextTick(() => this.$refs.sensitivePasswordInput?.focus());
+    },
+
+    reportRowGridStyle() {
+        return { gridTemplateColumns: `repeat(${this.canViewProfit() ? 5 : 4}, minmax(0, 1fr))` };
+    },
+
+    formatCurrency(value) {
+        return `${Number(value || 0).toLocaleString()} ج.م`;
+    },
+
+    protectedCurrency(value) {
+        return this.canRevealSensitiveValues() ? this.formatCurrency(value) : this.sensitiveValueMask;
+    },
+
+    protectedCostTotal(report, includeSalaries = false) {
+        if (this.canViewProfit()) return this.protectedCurrency(this.reportCostTotal(report, includeSalaries));
+        return this.formatCurrency(this.reportCostTotal(report, includeSalaries));
+    },
+
+    destroyProfitCharts() {
+        Object.values(this.chartInstances).forEach(chart => { try { chart.destroy(); } catch(e){} });
+        this.chartInstances = {};
+    },
+
+    refreshUnlockedProfitChart() {
+        if (!this.canRevealSensitiveValues() || this.activeTab !== 'monthly' || !this.expandedMonth) return;
+        const monthObj = this.monthlyHistory.find(m => m.month === this.expandedMonth);
+        if (monthObj?.details) this.updateChart(monthObj);
+    },
+
+    sensitiveExcelValue(value) {
+        return this.canRevealSensitiveValues() ? Number(value || 0) : this.sensitiveValueMask;
+    },
+    
+    cleanNotes(notes) {
+        // إزالة أكواد UUID من الملاحظات مثل [EXP-uuid] و [SAL-uuid]
+        if (!notes) return '-';
+        return String(notes)
+            .replace(/\s*\[EXP-[^\]]+\]\s*/g, ' ')
+            .replace(/\s*\[SAL-[^\]]+\]\s*/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim() || '-';
+    },
+
+    reportCostTotal(report, includeSalaries = false) {
+        const expenses = Number(report?.expenses || 0);
+        const salaries = includeSalaries ? Number(report?.salaries ?? report?.total_salaries_paid ?? 0) : 0;
+        const cogs = this.canViewProfit() ? Number(report?.cogs || 0) : 0;
+        return expenses + salaries + cogs;
+    },
+
+    costColumnTitle(includeSalaries = false) {
+        if (this.canViewProfit()) return 'التكاليف';
+        return includeSalaries ? 'المصاريف + الرواتب المدفوعة' : 'المصاريف';
+    },
+
+    barcodeLabel(item) {
+        return `باركود: ${item && item.barcode ? item.barcode : '-'}`;
+    },
+
+    paymentMethodLabel(method) {
+        const labels = {
+            cash: 'كاش',
+            visa: 'فيزا',
+            bank_transfer: 'تحويل بنكي',
+            transfer: 'تحويل بنكي',
+            wallet: 'محفظة'
+        };
+        return labels[method] || method || 'كاش';
+    },
+
+    salaryTransactionLabel(type) {
+        const labels = {
+            salary_payment: 'تسديد راتب',
+            advance: 'سلفة',
+            deduction: 'خصم',
+            bonus: 'مكافأة'
+        };
+        return labels[type] || type || '-';
+    },
+
+    salaryTransactionClass(type) {
+        if (type === 'deduction') return 'text-accent';
+        if (type === 'bonus') return 'text-success';
+        if (type === 'advance') return 'text-warning';
+        return 'text-indigo-600';
+    },
+
+    reportExpenses(details) {
+        return (details && details.expenses) || { total: 0, items: [] };
+    },
+
+    reportExpenseItems(details) {
+        const expenses = this.reportExpenses(details);
+        return Array.isArray(expenses.items) ? expenses.items : [];
+    },
+
+    reportTailoring(details) {
+        return (details && details.tailoring) || { total: 0, items: [] };
+    },
+
+    reportTailoringItems(details) {
+        const tailoring = this.reportTailoring(details);
+        return Array.isArray(tailoring.items) ? tailoring.items : [];
+    },
+
+    reportSalaries(details) {
+        return (details && details.salaries) || { total: 0, items: [] };
+    },
+
+    reportSalaryItems(details) {
+        const salaries = this.reportSalaries(details);
+        return Array.isArray(salaries.items) ? salaries.items : [];
+    },
+
+    isSingleBranchReport() {
+        return this.selectedBranch !== 'all' || (this.user && this.user.role !== 'admin');
+    },
+
+    branchPerformanceTitle() {
+        return this.isSingleBranchReport() ? 'أداء الفرع' : 'الأداء حسب الفروع';
+    },
+
+    monthlyProfitTitle() {
+        return this.isSingleBranchReport() ? 'تحليل أرباح الفرع' : 'تحليل أرباح الفروع';
+    },
+
+    monthlyProfitSubtitle() {
+        return this.isSingleBranchReport() ? 'صافي الربح لهذا الفرع خلال الشهر' : 'مقارنة صافي الربح لكل فرع خلال الشهر';
+    },
+
+    monthlyBranchAnalysisTitle() {
+        return this.isSingleBranchReport() ? 'التحليل المالي للفرع الشهري' : 'التحليل المالي للفروع الشهري';
+    },
+
+    async initData() {
+        try {
+            if (!this.reportPrintAfterAttached) {
+                this.reportPrintAfterAttached = true;
+                window.addEventListener('afterprint', () => {
+                    document.body.classList.remove('printing-report');
+                });
+            }
+            // Reset expanded states and clear cached details
+            this.expandedDay = null;
+            this.expandedMonth = null;
+            this.dailyHistory.forEach(d => { d.details = null; });
+            this.monthlyHistory.forEach(m => { m.details = null; });
+            // Destroy all chart instances
+            Object.values(this.chartInstances).forEach(c => { try { c.destroy(); } catch(e){} });
+            this.chartInstances = {};
+
+            if (!window.currentUser) {
+                const res = await fetch('/api/me');
+                if (res.ok) {
+                    const data = await res.json();
+                    window.currentUser = data.user;
+                }
+            }
+            this.user = window.currentUser;
+            if (this.user?.branch_id && (!this.selectedBranchInitialized || this.user.role !== 'admin')) {
+                this.selectedBranch = String(this.user.branch_id);
+            }
+            this.selectedBranchInitialized = true;
+
+            const brRes = await fetch('/api/branches');
+            this.branches = await brRes.json();
+            if (this.user && this.user.role !== 'admin' && this.user.branch_id) {
+                this.branches = this.branches.filter(branch => String(branch.id) === String(this.user.branch_id));
+            }
+            
+            await Promise.all([
+                this.initMonthlyHistory(),
+                this.initDailyData()
+            ]);
+        } catch (err) {
+            console.error('Error fetching reports:', err);
+        }
+    },
+    
+    async initMonthlyHistory() {
+        try {
+            let url = `/api/reports/monthly-history?branch_id=${this.selectedBranch}`;
+            if (this.monthlyFromMonth) url += `&from_month=${this.monthlyFromMonth}`;
+            if (this.monthlyToMonth)   url += `&to_month=${this.monthlyToMonth}`;
+            const res = await fetch(url);
+            const data = await this.readJson(res, []);
+            this.monthlyHistory = Array.isArray(data) ? data : [];
+        } catch (err) {
+            console.error(err);
+            this.monthlyHistory = [];
+        }
+    },
+    
+    async initDailyData() {
+        try {
+            let url = `/api/reports/daily-history?branch_id=${this.selectedBranch}`;
+            if (this.dailyFrom) url += `&from=${this.dailyFrom}`;
+            if (this.dailyTo)   url += `&to=${this.dailyTo}`;
+            const res = await fetch(url);
+            const data = await this.readJson(res, []);
+            this.dailyHistory = Array.isArray(data) ? data : [];
+        } catch (err) {
+            console.error(err);
+            this.dailyHistory = [];
+        }
+    },
+
+    async toggleMonthlyMonth(monthObj) {
+        if (this.expandedMonth === monthObj.month) {
+            this.expandedMonth = null;
+            return;
+        }
+        
+        this.expandedMonth = monthObj.month;
+        if (!monthObj.details) {
+            this.isLoadingMonth = true;
+            try {
+                const [profitRes, topRes] = await Promise.all([
+                    fetch(`/api/reports/profit?month=${monthObj.month}&branch_id=${this.selectedBranch}`),
+                    fetch(`/api/reports/top-products?month=${monthObj.month}&branch_id=${this.selectedBranch}`)
+                ]);
+                 
+                const profitData = await this.readJson(profitRes, this.emptyProfitData());
+                const topData = await this.readJson(topRes, { top_sales: [], top_rentals: [] });
+                 
+                monthObj.details = {
+                    summary: profitData.summary || this.emptyProfitData().summary,
+                    branchReports: Array.isArray(profitData.branch_reports) ? profitData.branch_reports : [],
+                    payments: profitData.payments || [],
+                    expenses: profitData.expenses || this.emptyProfitData().expenses,
+                    salaries: profitData.salaries || this.emptyProfitData().salaries,
+                    tailoring: profitData.tailoring || this.emptyProfitData().tailoring,
+                    topSales: Array.isArray(topData.top_sales) ? topData.top_sales : [],
+                    topRentals: Array.isArray(topData.top_rentals) ? topData.top_rentals : [],
+                    sales_invoices: Array.isArray(profitData.sales_invoices) ? profitData.sales_invoices : [],
+                    rental_invoices: Array.isArray(profitData.rental_invoices) ? profitData.rental_invoices : [],
+                    attendance: Array.isArray(profitData.attendance) ? profitData.attendance : []
+                };
+            } catch (err) {
+                console.error(err);
+                monthObj.details = {
+                    summary: this.emptyProfitData().summary,
+                    branchReports: [],
+                    payments: [],
+                    expenses: this.emptyProfitData().expenses,
+                    salaries: this.emptyProfitData().salaries,
+                    tailoring: this.emptyProfitData().tailoring,
+                    topSales: [],
+                    topRentals: []
+                };
+            } finally {
+                this.isLoadingMonth = false;
+            }
+            
+            if (this.canRevealSensitiveValues()) this.$nextTick(() => { this.updateChart(monthObj); });
+        } else {
+            if (this.canRevealSensitiveValues()) this.$nextTick(() => { this.updateChart(monthObj); });
+        }
+    },
+
+    async toggleDailyDay(day) {
+        if (this.expandedDay === day.date) {
+            this.expandedDay = null;
+            return;
+        }
+        
+        this.expandedDay = day.date;
+        if (!day.details) {
+            this.isLoadingDay = true;
+            try {
+                const res = await fetch(`/api/reports/daily?date=${day.date}&branch_id=${this.selectedBranch}`);
+                const data = await this.readJson(res, this.emptyDailyDetails(day.date));
+                day.details = {
+                    ...this.emptyDailyDetails(day.date),
+                    ...data,
+                    branch_sales: Array.isArray(data.branch_sales) ? data.branch_sales : [],
+                    payments: Array.isArray(data.payments) ? data.payments : [],
+                    expenses: data.expenses || this.emptyDailyDetails(day.date).expenses,
+                    salaries: data.salaries || this.emptyDailyDetails(day.date).salaries,
+                    top_sales: Array.isArray(data.top_sales) ? data.top_sales : [],
+                    top_rentals: Array.isArray(data.top_rentals) ? data.top_rentals : []
+                };
+            } catch (err) {
+                console.error(err);
+                day.details = this.emptyDailyDetails(day.date);
+            } finally {
+                this.isLoadingDay = false;
+            }
+        }
+    },
+    
+    updateChart(monthObj) {
+        if (!this.canRevealSensitiveValues()) return;
+        const canvasId = 'branchProfitChart_' + monthObj.month;
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || !monthObj.details || !Array.isArray(monthObj.details.branchReports) || typeof Chart === 'undefined') return;
+
+        if (this.chartInstances[monthObj.month]) {
+            this.chartInstances[monthObj.month].destroy();
+        }
+
+        const ctx = canvas.getContext('2d');
+        
+        const labels = monthObj.details.branchReports.map(b => b.branch_name);
+        const profits = monthObj.details.branchReports.map(b => b.net_profit);
+
+        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, 'rgba(15, 23, 42, 0.8)');
+        gradient.addColorStop(1, 'rgba(15, 23, 42, 0.2)');
+
+        this.chartInstances[monthObj.month] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'صافي الربح (ج.م)',
+                    data: profits,
+                    backgroundColor: gradient,
+                    borderRadius: 12,
+                    borderSkipped: false,
+                    barThickness: 40
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#0f172a',
+                        titleFont: { family: 'Cairo', size: 14 },
+                        bodyFont: { family: 'Cairo', size: 14, weight: 'bold' },
+                        padding: 16,
+                        cornerRadius: 12,
+                        callbacks: {
+                            label: function(context) {
+                                return context.parsed.y.toLocaleString() + ' ج.م';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { borderDash: [5, 5], color: '#e2e8f0' },
+                        ticks: {
+                            font: { family: 'Cairo', weight: 'bold' },
+                            color: '#64748b',
+                            callback: function(value) { return value.toLocaleString(); }
+                        }
+                    },
+                    x: {
+                        grid: { display: false, drawBorder: false },
+                        ticks: {
+                            font: { family: 'Cairo', weight: 'bold' },
+                            color: '#475569'
+                        }
+                    }
+                }
+            }
+        });
+    }
+}));
+        });
+    </script>
+</body>
+</html>
+
+
+
+

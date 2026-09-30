@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تفصيل | Bebyoon Center</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link rel="stylesheet" href="assets/icons.css">
+    <link rel="stylesheet" href="assets/cairo.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: {
+                colors: {
+                    primary: '#1E293B', secondary: '#64748B', accent: '#EF4444',
+                    success: '#22C55E', warning: '#F59E0B', background: '#F8FAFC',
+                    surface: '#FFFFFF', 'on-surface': '#0F172A', outline: '#CBD5E1'
+                },
+                fontFamily: { display: ['Cairo', 'sans-serif'], body: ['Cairo', 'sans-serif'] },
+                boxShadow: { premium: '0 10px 40px -10px rgba(0,0,0,.08)' }
+            }}
+        };
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+        body { font-family: 'Cairo', sans-serif; background: #f8fafc; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+        .field-label { display: block; margin: 0 0 .5rem; color: #334155; font-size: .75rem; font-weight: 900; }
+        .field-control { width: 100%; border: 2px solid #e2e8f0; border-radius: 1rem; background: #fff; padding: .85rem 1rem; color: #0f172a; font-size: .875rem; font-weight: 700; transition: .2s; outline: none; }
+        .field-control:focus { border-color: #1e293b; box-shadow: 0 0 0 4px rgba(30,41,59,.08); }
+        .invoice-paper { width: 100%; max-width: 28rem; color: #000; background: #fff; }
+        @media print {
+            @page {
+                size: 80mm auto;
+                margin: 0mm;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                width: 80mm !important;
+                height: auto !important;
+                overflow: visible !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                font-size: 11px !important;
+                background: white !important;
+            }
+            .no-print, .sidebar-main, header, main, .sidebar-backdrop, .fixed.inset-0.bg-black\/60 {
+                display: none !important;
+                height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            .fixed.inset-0:not(.no-print) {
+                position: static !important;
+                display: block !important;
+                overflow: visible !important;
+                width: 80mm !important;
+                height: auto !important;
+                min-height: 0 !important;
+            }
+            .flex.items-center.justify-center.min-h-screen {
+                display: block !important;
+                min-height: 0 !important;
+                padding: 0 !important;
+            }
+            .min-h-screen, .h-screen { min-height: 0 !important; height: auto !important; }
+            #tailoring-invoice {
+                position: static !important;
+                inset: auto !important;
+                display: block !important;
+                width: 72mm !important;
+                max-width: 72mm !important;
+                box-shadow: none !important;
+                border: none !important;
+                border-radius: 0 !important;
+                margin-right: -0.2mm !important;
+                padding: 2mm 4mm !important;
+                page-break-after: avoid;
+                page-break-inside: avoid;
+                background: white !important;
+            }
+            #tailoring-invoice .p-6 {
+                padding: 2mm 1mm !important;
+            }
+            #tailoring-invoice .p-4 {
+                padding: 2mm 1mm !important;
+            }
+            #tailoring-invoice h2 {
+                font-size: 13px !important;
+                margin: 0 !important;
+            }
+            #tailoring-invoice .text-xl {
+                font-size: 12px !important;
+            }
+            #tailoring-invoice .text-lg {
+                font-size: 11px !important;
+            }
+            #tailoring-invoice .text-sm {
+                font-size: 10px !important;
+            }
+            #tailoring-invoice .text-xs,
+            #tailoring-invoice .text-\[10px\],
+            #tailoring-invoice .text-\[11px\] {
+                font-size: 9px !important;
+            }
+            #tailoring-invoice .grid {
+                gap: 2px !important;
+            }
+            #tailoring-invoice .space-y-5 > * + * {
+                margin-top: 4px !important;
+            }
+            #tailoring-invoice .space-y-3 > * + * {
+                margin-top: 2px !important;
+            }
+            #tailoring-invoice .pb-4 {
+                padding-bottom: 4px !important;
+            }
+            #tailoring-invoice .pt-3 {
+                padding-top: 3px !important;
+            }
+            #tailoring-invoice .invoice-logo-frame {
+                min-height: var(--invoice-logo-height, 160px) !important;
+                margin-bottom: var(--invoice-logo-spacing, 8px) !important;
+            }
+            #tailoring-invoice .invoice-logo-image {
+                height: var(--invoice-logo-height, 160px) !important;
+                max-height: 260px !important;
+                max-width: 100% !important;
+                margin: 0 auto !important;
+            }
+        }
+    </style>
+    <script src="router.js"></script>
+    <link rel="stylesheet" href="responsive.css">
+    <script src="auth.js"></script>
+</head>
+<body class="text-on-surface antialiased overflow-hidden" x-data="tailoringApp()" x-init="initData()">
+    <div class="flex h-screen overflow-hidden">
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+        <aside @mouseenter="sidebarExpanded = true" @mouseleave="sidebarExpanded = false"
+               class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden shrink-0 shadow-2xl flex flex-col"
+               :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'" class="w-full h-full object-contain" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)" class="p-2 rounded-lg hover:bg-white/10" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm">push_pin</span>
+                </button>
+            </div>
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">dashboard</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">point_of_sale</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">styler</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html" class="nav-link flex items-center rounded-xl text-slate-300 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">architecture</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">content_cut</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">group</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">inventory_2</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المخزون والموردين</span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">inventory_2</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">auto_delete</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">badge</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">receipt_long</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">bar_chart</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">barcode_scanner</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">settings</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+            <div class="p-3 border-t border-white/10">
+                <button onclick="logout()" class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">logout</span></div>
+                    <span class="whitespace-nowrap transition-opacity" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+        </aside>
+
+        <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto bg-background">
+            <header class="h-20 bg-white/70 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 flex-1 min-w-0">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white"><span class="material-symbols-outlined">menu</span></button>
+                    <div class="hidden sm:block">
+                        <h2 class="text-xl font-extrabold text-primary">طلبات التفصيل</h2>
+                        <p class="text-[10px] text-secondary font-bold uppercase tracking-widest">إنشاء طلب تفصيل وطباعة فاتورة العميل</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 md:gap-4 shrink-0">
+                    <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline"></div>
+                </div>
+            </header>
+
+            <main class="p-4 md:p-8 space-y-6">
+                <div x-show="notice" x-transition class="fixed top-24 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-2xl shadow-xl text-sm font-black" :class="noticeType === 'error' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'" x-text="notice"></div>
+
+                <section class="grid grid-cols-1 xl:grid-cols-[1.4fr_.6fr] gap-6 items-start">
+                    <form @submit.prevent="saveOrder" class="bg-white rounded-[2rem] border-2 border-slate-200 shadow-premium overflow-hidden">
+                        <div class="p-6 border-b border-slate-200 bg-gradient-to-l from-slate-50 to-white flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center"><span class="material-symbols-outlined">design_services</span></div>
+                            <div><h3 class="font-black text-primary">بيانات طلب التفصيل</h3><p class="text-xs text-slate-500 font-bold">كل الخانات مطلوبة لإصدار الفاتورة</p></div>
+                        </div>
+                        <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div class="relative" @click.away="if(showCustomerSuggestions === 'name') showCustomerSuggestions = false">
+                                <label class="field-label">اسم العميل</label>
+                                <div class="relative">
+                                    <input x-model.trim="form.customer_name" @input="showCustomerSuggestions = 'name'" @focus="showCustomerSuggestions = 'name'" class="field-control" maxlength="255" placeholder="اسم العميل بالكامل" required>
+                                    <!-- Suggestions Dropdown -->
+                                    <div x-show="showCustomerSuggestions === 'name' && filteredCustomers.length > 0" x-cloak class="absolute z-[120] top-full left-0 right-0 bg-white border-2 border-slate-200 rounded-2xl shadow-premium overflow-hidden">
+                                        <template x-for="c in filteredCustomers" :key="c.id">
+                                            <button @click="selectCustomer(c)" type="button" class="w-full text-right px-6 py-4 hover:bg-slate-50 border-b border-slate-100 last:border-0 transition-colors">
+                                                <div class="flex items-center justify-between">
+                                                    <div>
+                                                        <p class="text-sm font-black text-primary" x-text="c.name"></p>
+                                                        <p class="text-[10px] font-bold text-slate-400" x-text="c.phone"></p>
+                                                    </div>
+                                                    <span class="material-symbols-outlined text-slate-300 text-sm">history</span>
+                                                </div>
+                                            </button>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="relative" @click.away="if(showCustomerSuggestions === 'phone') showCustomerSuggestions = false">
+                                <label class="field-label">رقم التليفون</label>
+                                <div class="relative">
+                                    <input x-model.trim="form.customer_phone" @input="showCustomerSuggestions = 'phone'" @focus="showCustomerSuggestions = 'phone'" class="field-control" dir="ltr" inputmode="tel" maxlength="20" placeholder="01xxxxxxxxx" required>
+                                    <!-- Suggestions Dropdown for Phone -->
+                                    <div x-show="showCustomerSuggestions === 'phone' && filteredCustomers.length > 0" x-cloak class="absolute z-[120] top-full left-0 right-0 bg-white border-2 border-slate-200 rounded-2xl shadow-premium overflow-hidden">
+                                        <template x-for="c in filteredCustomers" :key="c.id + '_p'">
+                                            <button @click="selectCustomer(c)" type="button" class="w-full text-right px-6 py-4 hover:bg-slate-50 border-b border-slate-100 last:border-0 transition-colors">
+                                                <div class="flex items-center justify-between">
+                                                    <div>
+                                                        <p class="text-sm font-black text-primary" x-text="c.name"></p>
+                                                        <p class="text-[10px] font-bold text-slate-400" x-text="c.phone"></p>
+                                                    </div>
+                                                    <span class="material-symbols-outlined text-slate-300 text-sm">history</span>
+                                                </div>
+                                            </button>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="field-label">وصف المنتج</label>
+                                <textarea x-model.trim="form.product_description" class="field-control min-h-28 resize-y" maxlength="2000" placeholder="مثال: بدلة رجالي قطعتين، قماش كحلي..." required></textarea>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="field-label">المقاسات</label>
+                                <textarea x-model.trim="form.measurements" class="field-control min-h-32 resize-y" maxlength="2000" placeholder="الصدر: ... | الوسط: ... | الطول: ... | الكتف: ..." required></textarea>
+                            </div>
+                            <div>
+                                <label class="field-label">المدفوع</label>
+                                <div class="relative"><input x-model.number="form.paid_amount" type="number" min="0.01" step="0.01" class="field-control pl-14" required><span class="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-black text-slate-500">ج.م</span></div>
+                            </div>
+                            <div>
+                                <label class="field-label">المتبقي</label>
+                                <div class="relative"><input x-model.number="form.remaining_amount" type="number" min="0" step="0.01" class="field-control pl-14" required><span class="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-black text-slate-500">ج.م</span></div>
+                            </div>
+                            <div>
+                                <label class="field-label">طريقة الدفع</label>
+                                <select x-model="form.payment_method" class="field-control" required>
+                                    <option value="cash">كاش</option><option value="visa">فيزا</option><option value="wallet">محفظة إلكترونية</option><option value="bank_transfer">تحويل بنكي</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="field-label">الموظف البائع</label>
+                                <select x-model="form.seller_id" class="field-control" required>
+                                    <option value="">اختر الموظف...</option>
+                                    <template x-for="emp in filteredSellers" :key="emp.id">
+                                        <option :value="emp.id" x-text="emp.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div x-show="user?.role === 'admin'">
+                                <label class="field-label">الفرع</label>
+                                <select x-model="form.branch_id" class="field-control"><template x-for="branch in branches" :key="branch.id"><option :value="branch.id" x-text="branch.name"></option></template></select>
+                            </div>
+                        </div>
+                        <div class="p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div><p class="text-xs font-black text-slate-500">إجمالي الطلب</p><p class="text-2xl font-black text-primary" x-text="money(totalAmount)"></p></div>
+                            <button type="submit" :disabled="saving" class="w-full sm:w-auto px-8 py-4 rounded-2xl bg-primary text-white font-black text-sm hover:bg-slate-800 shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">
+                                <span class="material-symbols-outlined" x-text="saving ? 'progress_activity' : 'receipt_long'"></span><span x-text="saving ? 'جاري الحفظ...' : 'حفظ وطباعة الفاتورة'"></span>
+                            </button>
+                        </div>
+                    </form>
+
+                    <aside class="bg-white rounded-[2rem] border-2 border-slate-200 p-6 shadow-premium sticky top-28">
+                        <div class="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-5"><span class="material-symbols-outlined text-3xl text-primary">straighten</span></div>
+                        <h3 class="text-lg font-black text-primary mb-2">ملخص الفاتورة</h3><p class="text-xs text-slate-500 font-bold leading-6">راجع المبالغ قبل الحفظ. الإجمالي يُحسب تلقائيًا من المدفوع والمتبقي.</p>
+                        <div class="mt-6 space-y-4">
+                            <div class="flex justify-between border-b border-slate-200 pb-3"><span class="text-sm font-bold text-slate-500">المدفوع</span><span class="font-black text-primary" x-text="money(form.paid_amount)"></span></div>
+                            <div class="flex justify-between border-b border-slate-200 pb-3"><span class="text-sm font-bold text-slate-500">المتبقي</span><span class="font-black text-accent" x-text="money(form.remaining_amount)"></span></div>
+                            <div class="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-2xl p-4"><span class="font-black text-primary">الإجمالي</span><span class="text-xl font-black text-primary" x-text="money(totalAmount)"></span></div>
+                        </div>
+                    </aside>
+                </section>
+
+                <section class="bg-white rounded-[2rem] border-2 border-slate-200 shadow-premium overflow-hidden">
+                    <div class="p-5 border-b border-slate-200 flex flex-col xl:flex-row justify-between gap-4 items-start xl:items-center">
+                        <div><h3 class="font-black text-primary mb-2 xl:mb-0">آخر فواتير التفصيل</h3></div>
+                        <div class="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
+                            <div class="relative w-full sm:w-48"><span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">tag</span><input x-model="filter_invoice" @input.debounce.350ms="loadOrders(1)" class="field-control pr-9 py-2 text-sm" placeholder="رقم الفاتورة"></div>
+                            <div class="relative w-full sm:w-56"><span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">person</span><input x-model="filter_name" @input.debounce.350ms="loadOrders(1)" class="field-control pr-9 py-2 text-sm" placeholder="اسم العميل"></div>
+                            <div class="relative w-full sm:w-48"><span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">phone</span><input x-model="filter_phone" @input.debounce.350ms="loadOrders(1)" class="field-control pr-9 py-2 text-sm" placeholder="رقم التليفون"></div>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-right min-w-[1550px]">
+                            <thead class="bg-slate-900 text-white">
+                                <tr>
+                                    <th class="p-4 text-xs">رقم الفاتورة</th>
+                                    <th class="p-4 text-xs">التاريخ</th>
+                                    <th class="p-4 text-xs">اسم العميل</th>
+                                    <th class="p-4 text-xs">الموظف</th>
+                                    <th class="p-4 text-xs">رقم التليفون</th>
+                                    <th class="p-4 text-xs">وصف المنتج</th>
+                                    <th class="p-4 text-xs">المقاسات</th>
+                                    <th class="p-4 text-xs">الإجمالي</th>
+                                    <th class="p-4 text-xs">المدفوع</th>
+                                    <th class="p-4 text-xs">المتبقي</th>
+                                    <th class="p-4 text-xs text-center">التحكم</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <template x-for="order in orders" :key="order.offline_uuid || order.id"><tr class="hover:bg-slate-50">
+                                    <td class="p-4"><p class="font-black text-primary" x-text="order.invoice_number"></p><span x-show="Number(order.pending_sync) === 1" class="inline-block mt-1 px-2 py-1 rounded-full bg-amber-100 text-amber-800 text-[9px] font-black">بانتظار المزامنة</span></td>
+                                    <td class="p-4 text-xs font-bold text-slate-600 whitespace-nowrap" x-text="formatDate(order.created_at)"></td>
+                                    <td class="p-4 font-black text-sm" x-text="order.customer_name"></td>
+                                    <td class="p-4 text-sm font-bold text-slate-600" x-text="order.seller_name || '-'"></td>
+                                    <td class="p-4 text-sm font-bold whitespace-nowrap" dir="ltr" x-text="order.customer_phone"></td>
+                                    <td class="p-4 max-w-[230px]">
+                                        <button type="button" @click="showFullText('وصف المنتج', order.product_description)" class="w-full text-right text-sm font-bold leading-6 hover:text-blue-700 hover:underline" x-text="truncateText(order.product_description)"></button>
+                                    </td>
+                                    <td class="p-4 max-w-[230px]">
+                                        <button type="button" @click="showFullText('المقاسات', order.measurements)" class="w-full text-right text-sm font-bold leading-6 hover:text-blue-700 hover:underline" x-text="truncateText(order.measurements)"></button>
+                                    </td>
+                                    <td class="p-4 font-black" x-text="money(Number(order.paid_amount) + Number(order.remaining_amount))"></td>
+                                    <td class="p-4 font-black text-success" x-text="money(order.paid_amount)"></td>
+                                    <td class="p-4 font-black text-accent" x-text="money(order.remaining_amount)"></td>
+                                    <td class="p-4 text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button @click="openInvoice(order)" class="px-4 py-2 rounded-xl bg-slate-100 text-primary hover:bg-primary hover:text-white text-xs font-black inline-flex items-center gap-2" title="طباعة الفاتورة">
+                                                <span class="material-symbols-outlined text-base">print</span>طباعة
+                                            </button>
+                                            <button x-show="Number(order.remaining_amount) > 0" @click="payRemaining(order)" class="px-4 py-2 rounded-xl bg-green-50 text-green-600 hover:bg-green-600 hover:text-white text-xs font-black inline-flex items-center gap-2" title="دفع المتبقي">
+                                                <span class="material-symbols-outlined text-base">payments</span>تسديد
+                                            </button>
+                                            <button @click="deleteOrder(order)" class="px-4 py-2 rounded-xl bg-red-50 text-red-600 hover:bg-red-600 hover:text-white text-xs font-black inline-flex items-center gap-2" title="حذف الفاتورة">
+                                                <span class="material-symbols-outlined text-base">delete</span>حذف
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr></template>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div x-show="!loading && orders.length === 0" class="py-14 text-center"><span class="material-symbols-outlined text-5xl text-slate-300">content_cut</span><p class="mt-3 text-sm font-black text-slate-500">لا توجد فواتير تفصيل حتى الآن</p></div>
+                    <div class="p-4 border-t border-slate-200 flex justify-between items-center"><span class="text-xs font-bold text-slate-500" x-text="'إجمالي ' + pagination.total + ' فاتورة'"></span><div class="flex gap-2"><button @click="loadOrders(pagination.page - 1)" :disabled="!pagination.hasPrev" class="px-4 py-2 border rounded-xl text-xs font-black disabled:opacity-30">السابق</button><button @click="loadOrders(pagination.page + 1)" :disabled="!pagination.hasNext" class="px-4 py-2 bg-primary text-white rounded-xl text-xs font-black disabled:opacity-30">التالي</button></div></div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <div x-show="showTextDetails" x-cloak class="fixed inset-0 z-[140] overflow-y-auto no-print">
+        <div class="min-h-screen p-4 flex items-center justify-center">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showTextDetails = false"></div>
+            <div class="relative bg-white rounded-[2rem] border-2 border-slate-200 shadow-2xl w-full max-w-xl overflow-hidden">
+                <div class="p-5 border-b border-slate-200 flex items-center justify-between">
+                    <h3 class="text-lg font-black text-primary" x-text="textDetailsTitle"></h3>
+                    <button type="button" @click="showTextDetails = false" class="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center"><span class="material-symbols-outlined">close</span></button>
+                </div>
+                <div class="p-6 max-h-[65vh] overflow-y-auto">
+                    <p class="text-sm font-bold text-primary leading-8 whitespace-pre-wrap break-words" x-text="textDetailsContent"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="showInvoice" x-cloak class="fixed inset-0 z-[120] overflow-y-auto">
+        <div class="min-h-screen p-4 flex items-center justify-center">
+            <div class="fixed inset-0 bg-black/70 backdrop-blur-sm no-print" @click="showInvoice = false"></div>
+            <div id="tailoring-invoice" class="invoice-paper invoice-box relative bg-white border-2 border-black shadow-2xl overflow-hidden">
+                <div class="p-6 text-center border-b-2 border-black">
+                    <div x-show="invoice && getLogoPath(invoice.branch_id)" :style="getInvoiceLogoFrameStyle(invoice.branch_id)" class="invoice-logo-frame mx-auto flex items-center justify-center overflow-hidden transition-all mb-2">
+                        <img :src="getLogoPath(invoice?.branch_id)" class="invoice-logo-image mx-auto w-auto max-w-full object-contain block transition-all" :style="getInvoiceLogoStyle(invoice?.branch_id)">
+                    </div>
+                    <h2 class="text-xl font-black">فاتورة تفصيل</h2>
+                </div>
+                <div class="p-6 space-y-5">
+                    <div class="grid grid-cols-2 gap-4 pb-4 border-b border-black"><div><p class="text-[10px] font-bold">رقم الفاتورة</p><p class="font-black" x-text="invoice?.invoice_number"></p></div><div class="text-left"><p class="text-[10px] font-bold">التاريخ</p><p class="font-black text-sm" x-text="formatDate(invoice?.created_at)"></p></div></div>
+                    <div class="grid grid-cols-2 gap-4 pb-4 border-b border-black"><div><p class="text-[10px] font-bold">اسم العميل</p><p class="font-black" x-text="invoice?.customer_name"></p></div><div class="text-left"><p class="text-[10px] font-bold">رقم التليفون</p><p class="font-black" dir="ltr" x-text="invoice?.customer_phone ? '***' + invoice.customer_phone.slice(-5) : '-'"></p></div></div>
+                    <div class="flex justify-between pb-3 border-b border-black"><span class="font-bold">الموظف</span><span class="font-black" x-text="invoice?.seller_name || sellerName(invoice?.seller_id) || '-'"></span></div>
+                    <div class="pb-4 border-b border-black">
+                        <p class="text-[10px] font-bold">وصف المنتج / التفاصيل</p>
+                        <p class="font-black text-sm whitespace-pre-line" x-text="invoice?.product_description || 'لا يوجد'"></p>
+                    </div>
+                    <div class="flex justify-between pb-3 border-b border-black"><span class="font-bold">طريقة الدفع</span><span class="font-black" x-text="paymentLabel(invoice?.payment_method)"></span></div>
+                    <div class="space-y-3"><div class="flex justify-between"><span class="font-bold">إجمالي الطلب</span><span class="font-black" x-text="money(Number(invoice?.paid_amount || 0) + Number(invoice?.remaining_amount || 0))"></span></div><div class="flex justify-between"><span class="font-bold">المدفوع</span><span class="font-black" x-text="money(invoice?.paid_amount)"></span></div><div class="flex justify-between text-lg border-t-2 border-black pt-3"><span class="font-black">المتبقي</span><span class="font-black" x-text="money(invoice?.remaining_amount)"></span></div></div>
+                    <p x-show="invoice?.offline || Number(invoice?.pending_sync) === 1" class="text-center text-[10px] font-bold">تم إصدار الفاتورة أوفلاين وستتم مزامنتها تلقائيًا.</p>
+                </div>
+                <div class="p-4 text-center border-t border-black"><p class="text-xs font-black whitespace-pre-line" x-text="settings.cashier_footer || 'شكراً لزيارتكم'"></p></div>
+                <div class="p-4 bg-slate-100 flex gap-3 no-print"><button @click="window.print()" class="flex-1 py-3 bg-primary text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><span class="material-symbols-outlined">print</span>طباعة الفاتورة</button><button @click="showInvoice = false" class="px-5 py-3 border border-slate-300 rounded-xl text-xs font-black">إغلاق</button></div>
+            </div>
+        </div>
+    </div>
+
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('tailoringApp', () => ({
+                user: window.currentUser || null, branches: [], employees: [], settings: {}, orders: [], invoice: null,
+                showInvoice: false, showTextDetails: false, textDetailsTitle: '', textDetailsContent: '', saving: false, loading: false, search: '', filter_invoice: '', filter_name: '', filter_phone: '', notice: '', noticeType: 'success',
+                mobileMenuOpen: false, sidebarExpanded: false, sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                pagination: { page: 1, total: 0, totalPages: 1, hasNext: false, hasPrev: false },
+                form: { customer_name: '', customer_phone: '', product_description: '', measurements: '', paid_amount: '', remaining_amount: 0, payment_method: 'cash', seller_id: '', branch_id: '' },
+                customers: [], showCustomerSuggestions: false, customerSearchDebounce: null,
+
+                get totalAmount() { return Number(this.form.paid_amount || 0) + Number(this.form.remaining_amount || 0); },
+                get filteredSellers() {
+                    if (!this.form.branch_id) return [];
+                    return this.employees.filter(e => String(e.branch_id) === String(this.form.branch_id));
+                },
+                async initData() {
+                    try {
+                        this.$watch('form.customer_name', () => this.queueCustomerSearch());
+                        this.$watch('form.customer_phone', () => this.queueCustomerSearch());
+                        if (!window.currentUser) { const me = await fetch('/api/me'); if (me.ok) window.currentUser = (await me.json()).user; }
+                        this.user = window.currentUser;
+                        const [branchRes, settingsRes, empRes] = await Promise.all([fetch('/api/branches'), fetch('/api/public/settings'), fetch('/api/employees/options')]);
+                        if (branchRes.ok) this.branches = await branchRes.json();
+                        if (settingsRes.ok) this.settings = await settingsRes.json();
+                        if (empRes.ok) this.employees = await empRes.json();
+                        this.form.branch_id = this.getDefaultTailoringBranchId(this.form.branch_id);
+                        this.$watch('form.branch_id', () => { this.form.seller_id = ''; });
+                        await this.loadOrders(1);
+                    } catch (err) { console.error(err); this.flash('تعذر تحميل بيانات الصفحة', 'error'); }
+                },
+                getDefaultTailoringBranchId(currentBranchId = '') {
+                    const userBranchId = this.user?.branch_id || window.currentUser?.branch_id;
+                    if (userBranchId) return userBranchId;
+                    if (currentBranchId && this.branches.some(b => String(b.id) === String(currentBranchId))) return currentBranchId;
+                    const availableBranch = this.branches.find(b => !b.is_main_warehouse);
+                    return availableBranch?.id || this.branches[0]?.id || '';
+                },
+                async loadOrders(page = 1) {
+                    if (page < 1) return;
+                    this.loading = true;
+                    try {
+                        const params = new URLSearchParams({ page, limit: 30 });
+                        if (this.search.trim()) params.set('search', this.search.trim());
+                        if (this.filter_invoice.trim()) params.set('invoice_number', this.filter_invoice.trim());
+                        if (this.filter_name.trim()) params.set('customer_name', this.filter_name.trim());
+                        if (this.filter_phone.trim()) params.set('customer_phone', this.filter_phone.trim());
+                        const res = await fetch('/api/tailoring-orders?' + params.toString());
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'تعذر تحميل الفواتير');
+                        this.orders = data.data || data;
+                        if (data.pagination) this.pagination = data.pagination;
+                    } catch (err) { this.flash(err.message, 'error'); } finally { this.loading = false; }
+                },
+                validate() {
+                    if (!this.form.customer_name || !this.form.customer_phone || !this.form.product_description || !this.form.measurements) return 'أكمل كل بيانات الطلب';
+                    if (!this.form.seller_id) return 'الرجاء اختيار الموظف البائع';
+                    if (!/^\+?[0-9\s-]{7,20}$/.test(this.form.customer_phone)) return 'رقم التليفون غير صحيح';
+                    if (this.form.paid_amount === '' || this.form.paid_amount === null || !Number.isFinite(Number(this.form.paid_amount)) || Number(this.form.paid_amount) <= 0) return 'المدفوع يجب أن يكون أكبر من صفر';
+                    if (Number(this.form.remaining_amount) < 0) return 'لا يمكن إدخال مبلغ سالب';
+                    return '';
+                },
+                async saveOrder() {
+                    const error = this.validate(); if (error) return this.flash(error, 'error');
+                    this.saving = true;
+                    try {
+                        const res = await fetch('/api/tailoring-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.form) });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'تعذر حفظ طلب التفصيل');
+                        data.seller_name = data.seller_name || this.sellerName(data.seller_id || this.form.seller_id);
+                        this.invoice = data; this.showInvoice = true;
+                        this.flash(data.offline ? 'تم الحفظ أوفلاين وسيتم الرفع تلقائيًا' : 'تم حفظ فاتورة التفصيل بنجاح');
+                        this.resetForm(); await this.loadOrders(1);
+                    } catch (err) { this.flash(err.message, 'error'); } finally { this.saving = false; }
+                },
+                resetForm() { const branchId = this.form.branch_id; this.form = { customer_name: '', customer_phone: '', product_description: '', measurements: '', paid_amount: '', remaining_amount: 0, payment_method: 'cash', seller_id: '', branch_id: branchId }; },
+                queueCustomerSearch() {
+                    clearTimeout(this.customerSearchDebounce);
+                    this.customerSearchDebounce = setTimeout(() => this.fetchCustomers(), 200);
+                },
+                async fetchCustomers() {
+                    const name = this.form.customer_name.trim();
+                    const phone = this.form.customer_phone.trim();
+                    if (!name && !phone) {
+                        this.customers = [];
+                        return;
+                    }
+                    const params = new URLSearchParams({ page: 1, limit: 8 });
+                    if (name) params.set('name', name);
+                    if (phone) params.set('phone', phone);
+                    const res = await fetch(`/api/customers?${params.toString()}`);
+                    if (!res.ok) return;
+                    const payload = await res.json();
+                    this.customers = payload.data || payload;
+                },
+                get filteredCustomers() {
+                    const nameQuery = this.form.customer_name.trim().toLowerCase();
+                    const phoneQuery = this.form.customer_phone.trim().toLowerCase();
+                    if (!nameQuery && !phoneQuery) return [];
+                    return this.customers;
+                },
+                selectCustomer(c) {
+                    this.form.customer_name = c.name;
+                    this.form.customer_phone = c.phone;
+                    this.showCustomerSuggestions = false;
+                },
+                openInvoice(order) { this.invoice = order; this.showInvoice = true; },
+                async payRemaining(order) {
+                    if (!confirm(`هل أنت متأكد من تسديد المبلغ المتبقي (${this.money(order.remaining_amount)}) للفاتورة رقم ${order.invoice_number}؟`)) return;
+                    
+                    try {
+                        const orderId = order.offline_uuid || order.id;
+                        const res = await fetch(`/api/tailoring-orders/${orderId}/pay-remaining`, { method: 'PUT' });
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.error || 'فشل في عملية التسديد');
+                        }
+                        this.flash('تم تسديد المبلغ المتبقي بنجاح', 'success');
+                        await this.loadOrders(this.pagination.page);
+                    } catch (err) {
+                        this.flash(err.message, 'error');
+                    }
+                },
+                async deleteOrder(order) {
+                    if (!confirm(`هل أنت متأكد من حذف فاتورة التفصيل رقم ${order.invoice_number}؟\n\nتحذير: هذا الإجراء لا يمكن التراجع عنه!`)) return;
+                    
+                    try {
+                        const orderId = order.offline_uuid || order.id;
+                        const res = await fetch(`/api/tailoring-orders/${orderId}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        
+                        if (!res.ok) throw new Error(data.error || 'فشل حذف الفاتورة');
+                        
+                        this.flash('تم حذف الفاتورة بنجاح');
+                        await this.loadOrders(this.pagination.page);
+                    } catch (err) {
+                        this.flash(err.message, 'error');
+                    }
+                },
+                truncateText(value, limit = 55) { const text = String(value || '').trim(); return text.length > limit ? text.slice(0, limit) + '.....' : text; },
+                showFullText(title, content) { this.textDetailsTitle = title; this.textDetailsContent = content || '-'; this.showTextDetails = true; },
+                flash(message, type = 'success') { this.notice = message; this.noticeType = type; clearTimeout(this._noticeTimer); this._noticeTimer = setTimeout(() => this.notice = '', 3500); },
+                money(value) { return Number(value || 0).toLocaleString('ar-EG-u-nu-latn', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ج.م'; },
+                formatDate(value) { if (!value) return '-'; return new Date(value).toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }); },
+                paymentLabel(value) { return ({ cash: 'كاش', visa: 'فيزا', wallet: 'محفظة إلكترونية', bank_transfer: 'تحويل بنكي', transfer: 'تحويل بنكي' })[value] || value || '-'; },
+                branchName(id) { return this.branches.find(b => String(b.id) === String(id))?.name || ''; },
+                sellerName(id) { return this.employees.find(e => String(e.id) === String(id))?.name || ''; },
+                getLogoPath(id) { return window.getLogoPath(id, this.branches); },
+                getInvoiceLogoStyle(branchId) {
+                    return window.getInvoiceLogoStyle ? window.getInvoiceLogoStyle(branchId, this.branches) : {};
+                },
+                getInvoiceLogoFrameStyle(branchId) {
+                    return window.getInvoiceLogoFrameStyle ? window.getInvoiceLogoFrameStyle(branchId, this.branches) : {};
+                }
+            }));
+        });
+    </script>
+</body>
+</html>

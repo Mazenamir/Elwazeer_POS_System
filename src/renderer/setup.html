@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - إعداد النظام</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link href="assets/material-symbols.css" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        outline: "#CBD5E1",
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #F8FAFC; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex items-center justify-center relative overflow-hidden" x-data="setupApp()" x-init="checkSetup()">
+    
+    <!-- Background Elements -->
+    <div class="absolute top-[-10%] right-[-5%] w-[40vw] h-[40vw] rounded-full bg-accent/10 blur-3xl mix-blend-multiply"></div>
+    <div class="absolute bottom-[-10%] left-[-5%] w-[40vw] h-[40vw] rounded-full bg-blue-500/10 blur-3xl mix-blend-multiply"></div>
+
+    <div class="w-full max-w-lg p-8 z-10">
+        <div class="glass-panel p-10 rounded-[3rem] shadow-2xl shadow-primary/5 border border-white">
+            
+            <div class="flex flex-col items-center justify-center mb-10">
+                <div class="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center shadow-xl shadow-primary/30 mb-4">
+                    <span class="material-symbols-outlined text-white text-3xl font-bold">admin_panel_settings</span>
+                </div>
+                <h1 class="text-3xl font-black text-primary">إعداد النظام</h1>
+                <p class="text-sm font-bold text-slate-400 mt-2">إنشاء أول حساب مدير للنظام</p>
+            </div>
+
+            <div class="space-y-6">
+                <div x-show="errorMessage" x-cloak class="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-bold border border-red-100 flex items-center gap-2">
+                    <span class="material-symbols-outlined">error</span>
+                    <span x-text="errorMessage"></span>
+                </div>
+
+                <div>
+                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 px-1">الاسم الكامل</label>
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">badge</span>
+                        <input x-model="fullName" type="text" class="w-full bg-white/80 border-2 border-slate-300/50 rounded-xl py-3 pr-12 pl-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all shadow-sm" placeholder="أدخل اسمك الكامل">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 px-1">اسم المستخدم</label>
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">person</span>
+                        <input x-model="username" type="text" class="w-full bg-white/80 border-2 border-slate-300/50 rounded-xl py-3 pr-12 pl-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all shadow-sm" placeholder="أدخل اسم المستخدم">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2 px-1">كلمة المرور</label>
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">lock</span>
+                        <input x-model="password" type="password" class="w-full bg-white/80 border-2 border-slate-300/50 rounded-xl py-3 pr-12 pl-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all shadow-sm" placeholder="أدخل كلمة المرور">
+                    </div>
+                </div>
+
+                <button @click="submitSetup" :disabled="isLoading" class="w-full py-4 mt-4 bg-primary text-white rounded-2xl text-sm font-extrabold hover:bg-slate-800 transition-all shadow-xl shadow-primary/20 flex justify-center items-center gap-2">
+                    <span x-show="!isLoading">إنشاء الحساب وبدء النظام</span>
+                    <span x-show="isLoading" class="material-symbols-outlined animate-spin" x-cloak>progress_activity</span>
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Alpine.js -->
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('setupApp', () => ({
+                fullName: '',
+                username: '',
+                password: '',
+                errorMessage: '',
+                isLoading: false,
+
+                async checkSetup() {
+                    try {
+                        const res = await fetch('/api/public/check-setup');
+                        const data = await res.json();
+                        if (!data.needsSetup) {
+                            window.location.href = '/login.html';
+                        }
+                    } catch (err) {
+                        console.error('Error checking setup:', err);
+                    }
+                },
+
+                async submitSetup() {
+                    if (!this.fullName || !this.username || !this.password) {
+                        this.errorMessage = 'الرجاء إدخال جميع البيانات المطلوبة';
+                        return;
+                    }
+                    if (this.password.length < 6) {
+                        this.errorMessage = 'كلمة المرور يجب أن تكون 6 أحرف على الأقل';
+                        return;
+                    }
+                    
+                    this.errorMessage = '';
+                    this.isLoading = true;
+
+                    try {
+                        const res = await fetch('/api/public/setup', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                full_name: this.fullName, 
+                                username: this.username.trim(), 
+                                password: this.password 
+                            })
+                        });
+
+                        const data = await res.json();
+                        
+                        if (!res.ok) {
+                            this.errorMessage = data.error || 'حدث خطأ غير معروف';
+                            this.isLoading = false;
+                            return;
+                        }
+
+                        // Success -> redirect to login
+                        alert('تم إنشاء حساب المدير بنجاح! يمكنك الآن تسجيل الدخول.');
+                        window.location.href = '/login.html';
+                    } catch (err) {
+                        this.errorMessage = 'حدث خطأ في الاتصال بالخادم';
+                        this.isLoading = false;
+                    }
+                }
+            }));
+        });
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - مخزون التأجير</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet" />
+    <link href="assets/icons.css" rel="stylesheet" />
+    
+    <!-- مكتبة JsBarcode المحلية - بدون defer لضمان التحميل قبل Alpine.js -->
+    <script src="assets/js/JsBarcode.all.min.js"></script>
+    
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: {
+                        'DEFAULT': '0.75rem',
+                        'lg': '1rem',
+                        'xl': '1.5rem',
+                        '2xl': '2rem',
+                        '3xl': '2.5rem',
+                    },
+                    fontFamily: {
+                        display: ["Cairo", "sans-serif"],
+                        body: ["Cairo", "sans-serif"],
+                    },
+                    boxShadow: {
+                        'premium': '0 10px 40px -10px rgba(0,0,0,0.05)',
+                        'premium-hover': '0 20px 50px -12px rgba(0,0,0,0.08)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+        }
+
+        [x-cloak] {
+            display: none !important;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #CBD5E1;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94A3B8;
+        }
+
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #F8FAFC;
+        }
+
+        .print-only {
+            display: none;
+        }
+
+        @media print {
+            @page {
+                size: 1.80in 0.98in;
+                margin: 0;
+            }
+
+            .no-print {
+                display: none !important;
+            }
+
+            .print-only {
+                display: block !important;
+            }
+
+            body {
+                background: white !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                overflow: visible !important;
+            }
+
+            .barcode-page {
+                display: block !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+
+            .barcode-label {
+                width: 1.68in;
+                height: 0.98in;
+                position: relative;
+                overflow: hidden;
+                page-break-after: always;
+                background: white;
+            }
+
+            .barcode-content-wrapper {
+                position: relative;
+                width: 1.68in;
+                height: 0.98in;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+                padding: 2pt 3pt;
+                box-sizing: border-box;
+                color: black !important;
+            }
+
+            .barcode-content-wrapper .header {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                margin-bottom: 1pt;
+                height: 0.25in;
+                overflow: hidden;
+            }
+
+            .barcode-content-wrapper .branch-logo {
+                max-height: 100%;
+                max-width: 90%;
+                object-fit: contain;
+                display: block;
+            }
+
+            .barcode-content-wrapper .product-name {
+                font-size: 6pt;
+                font-weight: 900;
+                line-height: 1;
+                margin: 1pt 0;
+                text-align: center;
+                width: 100%;
+            }
+
+            .barcode-content-wrapper .product-variant {
+                font-size: 5pt;
+                font-weight: 800;
+                text-align: center;
+                margin-bottom: 1pt;
+                line-height: 1;
+            }
+
+            .barcode-image {
+                width: 1in !important;
+                height: 0.30in !important;
+                margin: 3pt auto 2pt;
+                display: block !important;
+                image-rendering: auto;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .barcode-number {
+                font-size: 6pt;
+                font-weight: 900;
+                font-family: 'Courier New', monospace;
+                letter-spacing: 0.5pt;
+                text-align: center;
+                width: 100%;
+                margin-top: 1pt;
+                margin-bottom: 1pt;
+                line-height: 1;
+            }
+
+            .barcode-rental-type {
+                font-size: 6pt;
+                font-weight: 900;
+                text-align: center;
+                width: 100%;
+                line-height: 1;
+                margin-top: 0;
+            }
+        }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <script src="auth.js"></script>
+</head>
+
+<body class="text-on-surface antialiased overflow-x-hidden" x-data="rentalInvApp()" x-init="initData()">
+
+    <div class="flex min-h-screen no-print">
+        <!-- Mobile Sidebar Backdrop -->
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <!-- القائمة الجانبية (Sidebar) -->
+        <aside @mouseenter="sidebarExpanded = true" @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div
+                        class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="getLogoPath(user?.branch_id) || 'logos/men.png'"
+                            class="w-full h-full object-contain" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)"
+                    class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                    :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm"
+                        :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">point_of_sale</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">styler</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">architecture</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">group</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">inventory_2</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'" x-text="window.hasInventoryAdminAccess(user) ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">inventory_2</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">auto_delete</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">badge</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">bar_chart</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">barcode_scanner</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html"
+                    class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">settings</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()"
+                    class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">logout</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- منطقة المحتوى الرئيسية -->
+        <div class="flex-1 flex flex-col min-w-0">
+            <!-- الهيدر (Header) -->
+            <header
+                class="h-20 bg-white/70 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 flex-1">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen"
+                        class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <h2 class="text-lg md:text-xl font-extrabold text-primary">إدارة مخزون التأجير</h2>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline hidden md:flex"></div>
+                </div>
+            </header>
+
+            <!-- المحتوى الرئيسي -->
+            <main class="p-8 space-y-6">
+                <!-- مخزون التأجير -->
+                <div class="bg-white rounded-3xl border-2 border-slate-300 shadow-sm overflow-hidden mb-8">
+                    <div
+                        class="p-6 border-b border-outline bg-slate-50 flex flex-col md:flex-row items-center justify-between gap-4">
+                        <h3 class="text-base font-extrabold text-primary flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary">inventory_2</span> منتجات التأجير
+                            <span class="px-2 py-0.5 bg-primary/10 text-primary rounded-full text-[10px] font-black" x-text="rentalInventory.length"></span>
+                        </h3>
+                    </div>
+
+                    <div class="mb-10 bg-white rounded-[2.5rem] border-2 border-slate-200 p-8 shadow-premium">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">اسم المنتج</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
+                                    <input x-model="rentalInvFilters.name" type="text" placeholder="ابحث بالاسم..." class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:bg-white focus:border-primary transition-all">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">الباركود</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">barcode</span>
+                                    <input x-model="rentalInvFilters.barcode" type="text" placeholder="سحب باركود..." class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:bg-white focus:border-primary transition-all">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">التصنيف</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">category</span>
+                                    <select x-model="rentalInvFilters.category" class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:bg-white focus:border-primary transition-all appearance-none">
+                                        <option value="">كل التصنيفات</option>
+                                        <template x-for="cat in dynamicCategories" :key="cat"><option :value="cat" x-text="cat"></option></template>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">اللون</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">palette</span>
+                                    <input x-model="rentalInvFilters.color" list="rentalColorsList" type="text" placeholder="أسود، أزرق..." class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:bg-white focus:border-primary transition-all">
+                                    <datalist id="rentalColorsList">
+                                        <template x-for="c in dynamicColors" :key="c"><option :value="c"></option></template>
+                                    </datalist>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">المقاس</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">straighten</span>
+                                    <input x-model="rentalInvFilters.size" type="text" placeholder="XL, 52..." class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:bg-white focus:border-primary transition-all">
+                                </div>
+                            </div>
+                            <div x-show="hasInventoryAdminAccess()">
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pr-2">الفرع</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">store</span>
+                                    <select x-model="rentalInvFilters.branch_id" class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl py-2.5 pr-10 pl-4 text-sm font-bold text-primary focus:bg-white focus:border-primary transition-all appearance-none">
+                                        <option value="">كل الفروع</option>
+                                        <template x-for="branch in branches" :key="branch.id">
+                                            <option :value="branch.id" x-text="branch.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-6 flex items-center justify-between border-t border-slate-50 pt-6">
+                            <div class="flex items-center gap-4">
+                                <p class="text-xs font-bold text-slate-400">
+                                    تم العثور على <span class="text-primary font-black" x-text="filteredRentalInventory.length"></span> منتجات
+                                </p>
+                            </div>
+                            <button @click="rentalInvFilters = { name: '', barcode: '', category: '', color: '', size: '', branch_id: '' }" class="text-xs font-black text-accent hover:underline flex items-center gap-1">
+                                <span class="material-symbols-outlined text-sm">filter_alt_off</span> مسح كل الفلاتر
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto max-h-[600px] overflow-y-auto">
+                        <table class="w-full text-center text-sm">
+                            <thead class="bg-slate-900 text-white font-bold text-sm sticky top-0 z-10">
+                                <tr>
+                                    <th class="p-4">الصورة</th>
+                                    <th class="p-4">الاسم</th>
+                                    <th class="p-4">الفئة</th>
+                                    <th class="p-4">الباركود</th>
+                                    <th class="p-4">اللون</th>
+                                    <th class="p-4">المقاس</th>
+                                    <th class="p-4 text-xs">الكمية</th>
+                                    <th class="p-4">إجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-outline font-bold text-slate-700">
+                                <template x-if="filteredRentalInventory.length === 0">
+                                    <tr>
+                                        <td colspan="8" class="p-8 text-center text-slate-400">لا يوجد منتجات في مخزون
+                                            التأجير.</td>
+                                    </tr>
+                                </template>
+                                <template x-for="(item, idx) in filteredRentalInventory" :key="item.id">
+                                    <tr class="hover:bg-slate-50 transition-colors">
+                                        <td class="p-4">
+                                            <div @click="previewImageIndex = idx"
+                                                class="w-12 h-12 rounded-lg overflow-hidden border border-slate-200 mx-auto cursor-pointer hover:border-primary bg-slate-50 transition-all">
+                                                <template x-if="item.image_url">
+                                                    <img :src="item.image_url" class="w-full h-full object-cover">
+                                                </template>
+                                                <template x-if="!item.image_url">
+                                                    <div class="w-full h-full flex items-center justify-center"><span
+                                                            class="material-symbols-outlined text-slate-300">image</span>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </td>
+                                        <td class="p-4 font-black text-primary" x-text="window.productDisplayName(item)"></td>
+                                        <td class="p-4 text-slate-500" x-text="item.category || '-'"></td>
+                                        <td class="p-4"><span
+                                                class="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-black"
+                                                x-text="item.barcode || '-'"></span></td>
+                                        <td class="p-4" x-text="item.color || '-'"></td>
+                                        <td class="p-4" x-text="item.size_cut || '-'"></td>
+                                        <td class="px-6 py-5 text-center">
+                                            <div class="flex flex-col items-center gap-2">
+                                                <template x-if="isBranchScoped()">
+                                                    <template x-for="bs in (item.branch_stocks || [])" :key="bs.branch_id">
+                                                        <template x-if="bs.branch_id == user.branch_id">
+                                                            <div class="flex items-center gap-2">
+                                                                <div :class="Number(bs.stock_level || 0) <= 0 ? 'bg-accent' : 'bg-success'" class="w-2 h-2 rounded-full animate-pulse"></div>
+                                                                <span class="text-sm font-bold" :class="Number(bs.stock_level || 0) <= 0 ? 'text-accent' : 'text-success'" x-text="Number(bs.stock_level || 0) + ' قطعة متوفرة'"></span>
+                                                            </div>
+                                                        </template>
+                                                    </template>
+                                                </template>
+
+                                                <template x-if="!user || window.hasInventoryAllBranchesAccess(user)">
+                                                    <div class="flex flex-col items-center gap-2">
+                                                        <div class="mb-1" x-show="!rentalInvFilters.branch_id">
+                                                            <span class="px-3 py-1 rounded-lg text-sm font-bold uppercase tracking-tight shadow-sm"
+                                                                  :class="getRentalTotalStock(item) <= 0 ? 'bg-accent text-white' : 'bg-primary text-white'"
+                                                                  x-text="'إجمالي: ' + getRentalTotalStock(item)"></span>
+                                                        </div>
+                                                        <div class="flex flex-wrap justify-center gap-1.5">
+                                                            <template x-for="bs in (item.branch_stocks || [])" :key="bs.branch_id">
+                                                                <template x-if="!rentalInvFilters.branch_id || bs.branch_id == rentalInvFilters.branch_id">
+                                                                    <div class="px-2 py-1 rounded text-[10px] font-black border transition-all"
+                                                                         :class="Number(bs.stock_level || 0) <= 0 ? 'bg-red-50 border-red-200 text-red-600 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600'">
+                                                                        <span x-text="getBranchName(bs.branch_id) + ':'"></span>
+                                                                        <span class="font-black" x-text="Number(bs.stock_level || 0)"></span>
+                                                                    </div>
+                                                                </template>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <button @click="printRentalBarcode(item)"
+                                                title="طباعة الباركود"
+                                                class="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all"><span
+                                                    class="material-symbols-outlined text-sm">print</span></button>
+                                            <button @click="openWornRentalModal(item)"
+                                                title="تسجيل كمنتج مهترئ"
+                                                class="p-1.5 text-accent hover:bg-accent/10 rounded-lg transition-all"><span
+                                                    class="material-symbols-outlined text-sm">auto_delete</span></button>
+                                            <template x-if="hasInventoryAdminAccess()">
+                                                <button @click="openEditRentalModal(item)"
+                                                    title="تعديل"
+                                                    class="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all"><span
+                                                        class="material-symbols-outlined text-sm">edit</span></button>
+                                            </template>
+                                            <template x-if="hasInventoryAdminAccess()">
+                                                <button @click="deleteRentalInvItem(item.id)"
+                                                    title="حذف"
+                                                    class="p-1.5 text-accent hover:bg-accent/10 rounded-lg transition-all"><span
+                                                        class="material-symbols-outlined text-sm">delete</span></button>
+                                            </template>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="p-5 border-t border-outline flex flex-col sm:flex-row items-center justify-between gap-3 bg-white">
+                        <p class="text-xs font-bold text-slate-400" x-text="'صفحة ' + pagination.page + ' من ' + pagination.totalPages + ' - إجمالي ' + pagination.total"></p>
+                        <div class="flex items-center gap-2">
+                            <button @click="changePage(pagination.page - 1)" :disabled="!pagination.hasPrev" class="px-4 py-2 rounded-xl border-2 border-slate-200 text-xs font-black text-primary disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">السابق</button>
+                            <button @click="changePage(pagination.page + 1)" :disabled="!pagination.hasNext" class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800">التالي</button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Worn Product Modal -->
+    <div x-show="showWornModal" x-cloak class="fixed inset-0 z-[250] overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div @click="showWornModal = false" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity"></div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+            <div class="inline-block align-bottom bg-white rounded-[2rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-xl sm:w-full p-8">
+                <div class="flex items-start justify-between gap-4 mb-6">
+                    <div>
+                        <h3 class="text-xl font-extrabold text-primary">تسجيل منتج تأجير مهترئ</h3>
+                        <p class="text-sm font-bold text-slate-500 mt-1" x-text="wornData.productName"></p>
+                    </div>
+                    <button @click="showWornModal = false" class="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">الفرع</label>
+                        <select x-model="wornData.branch_id" :disabled="!hasInventoryAdminAccess()" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold disabled:bg-slate-100 disabled:opacity-70">
+                            <template x-for="b in branches" :key="b.id">
+                                <option :value="b.id" x-text="b.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">المتاح في الفرع</label>
+                        <div class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl py-3 px-4 text-sm font-black text-primary" x-text="selectedWornStock + ' قطعة'"></div>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">الكمية المهترئة</label>
+                        <input x-model.number="wornData.quantity" type="number" min="1" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">الخسارة التقديرية</label>
+                        <input x-model.number="wornData.estimated_loss" type="number" min="0" step="0.01" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">درجة التلف</label>
+                        <select x-model="wornData.condition" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                            <option value="worn">مهترئ</option>
+                            <option value="damaged">تالف</option>
+                            <option value="lost">فاقد</option>
+                        </select>
+                    </div>
+                    <label class="flex items-center gap-3 rounded-xl border-2 border-slate-200 p-4 cursor-pointer">
+                        <input x-model="wornData.deduct_stock" type="checkbox" class="rounded text-primary focus:ring-primary">
+                        <span class="text-sm font-black text-primary">خصم من مخزون التأجير</span>
+                    </label>
+                    <div class="md:col-span-2">
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">السبب</label>
+                        <input x-model="wornData.reason" type="text" placeholder="تلف، استخدام، كسر..." class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">ملاحظات</label>
+                        <textarea x-model="wornData.notes" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold min-h-24"></textarea>
+                    </div>
+                </div>
+                <div class="mt-8 flex gap-3">
+                    <button @click="submitWornRental()" class="flex-1 py-4 bg-accent text-white rounded-2xl text-sm font-extrabold hover:bg-red-600 transition-all shadow-xl shadow-accent/20">نقل للمهترئ</button>
+                    <button @click="showWornModal = false" class="px-8 py-4 bg-slate-100 text-slate-400 rounded-2xl text-sm font-extrabold">إلغاء</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Rental Inventory Modal -->
+    <div x-show="showEditRentalModal" x-cloak class="fixed inset-0 z-[260] overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div @click="showEditRentalModal = false" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity"></div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+            <div class="inline-block align-bottom bg-white rounded-[2rem] text-right overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full p-8">
+                <div class="flex items-start justify-between gap-4 mb-6">
+                    <div>
+                        <h3 class="text-xl font-extrabold text-primary">تعديل منتج تأجير</h3>
+                        <p class="text-sm font-bold text-slate-500 mt-1" x-text="window.formatProductName(editRentalForm.name || 'منتج تأجير', editRentalForm.category)"></p>
+                    </div>
+                    <button @click="showEditRentalModal = false" class="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">اسم المنتج</label>
+                        <input x-model.trim="editRentalForm.name" type="text" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">الباركود</label>
+                        <input x-model="editRentalForm.barcode" @input="editRentalForm.barcode = String(editRentalForm.barcode || '').replace(/\D/g, '')" inputmode="numeric" type="text" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">التصنيف</label>
+                        <input x-model.trim="editRentalForm.category" list="rentalEditCategoriesList" type="text" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                        <datalist id="rentalEditCategoriesList">
+                            <template x-for="cat in dynamicCategories" :key="cat"><option :value="cat"></option></template>
+                        </datalist>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">اللون</label>
+                        <input x-model.trim="editRentalForm.color" list="rentalEditColorsList" type="text" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                        <datalist id="rentalEditColorsList">
+                            <template x-for="c in dynamicColors" :key="c"><option :value="c"></option></template>
+                        </datalist>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">المقاس</label>
+                        <input x-model.trim="editRentalForm.size_cut" type="text" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">صورة المنتج</label>
+                        <div class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-4 items-start">
+                            <div class="aspect-square rounded-2xl overflow-hidden border-2 border-slate-200 bg-slate-50 flex items-center justify-center">
+                                <template x-if="editRentalForm.image_url">
+                                    <img :src="editRentalForm.image_url" class="w-full h-full object-cover">
+                                </template>
+                                <template x-if="!editRentalForm.image_url">
+                                    <div class="text-center text-slate-400">
+                                        <span class="material-symbols-outlined text-4xl">image</span>
+                                        <p class="text-[10px] font-bold">لا توجد صورة</p>
+                                    </div>
+                                </template>
+                            </div>
+                            <div class="space-y-3">
+                                <label class="flex items-center justify-center gap-2 cursor-pointer w-full py-3 px-4 rounded-xl bg-primary text-white text-sm font-black hover:bg-slate-800 transition-all" :class="isEditImageProcessing ? 'opacity-60 pointer-events-none' : ''">
+                                    <span class="material-symbols-outlined text-lg">upload</span>
+                                    <span x-text="isEditImageProcessing ? 'جاري تجهيز الصورة...' : 'رفع صورة من الجهاز'"></span>
+                                    <input type="file" accept="image/*" class="hidden" @change="handleEditRentalImageUpload($event)">
+                                </label>
+                                <input x-model.trim="editRentalForm.image_url" type="text" placeholder="أو رابط الصورة (اختياري)" class="w-full bg-white border-2 border-slate-300 rounded-xl py-3 px-4 text-sm font-bold">
+                                <button type="button" x-show="editRentalForm.image_url" @click="editRentalForm.image_url = ''" class="w-full py-2 rounded-xl bg-slate-100 text-slate-500 text-xs font-black hover:bg-slate-200 transition-all">إزالة الصورة</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6 rounded-2xl border-2 border-slate-100 bg-slate-50 p-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="text-sm font-black text-primary">كميات الفروع</h4>
+                        <span class="text-[10px] font-bold text-slate-400" x-text="hasInventoryAllBranchesAccess() ? 'كل الفروع' : 'فرعك فقط'"></span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <template x-for="stock in editRentalForm.branch_stocks" :key="stock.branch_id">
+                            <div class="flex items-center gap-3 rounded-xl bg-white border border-slate-200 p-3">
+                                <span class="flex-1 text-xs font-black text-primary" x-text="getBranchName(stock.branch_id)"></span>
+                                <input x-model.number="stock.stock_level" type="number" min="0" class="w-24 bg-slate-50 border-2 border-slate-200 rounded-lg py-2 px-3 text-sm font-black text-center">
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="mt-8 flex gap-3">
+                    <button @click="submitEditRental()" :disabled="isEditImageProcessing" class="flex-1 py-4 bg-primary text-white rounded-2xl text-sm font-extrabold hover:bg-slate-800 transition-all shadow-xl shadow-primary/20 disabled:opacity-60 disabled:cursor-not-allowed">حفظ التعديل</button>
+                    <button @click="showEditRentalModal = false" class="px-8 py-4 bg-slate-100 text-slate-400 rounded-2xl text-sm font-extrabold">إلغاء</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Preview Modal -->
+    <div x-show="previewImageIndex !== null" x-cloak class="fixed inset-0 z-[300] overflow-y-auto" x-transition>
+        <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div @click="previewImageIndex = null" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md transition-opacity">
+            </div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+            <div
+                class="inline-block align-middle bg-transparent rounded-3xl overflow-hidden shadow-2xl transform transition-all max-w-3xl w-full">
+                <div class="relative group">
+                    <button @click="previewImageIndex = null"
+                        class="absolute top-4 right-4 w-10 h-10 bg-black/50 text-white rounded-full flex items-center justify-center hover:bg-black/70 backdrop-blur-sm z-20"><span
+                            class="material-symbols-outlined">close</span></button>
+                    <div class="absolute inset-0 flex items-center justify-between px-4 pointer-events-none">
+                        <button
+                            @click.stop="previewImageIndex = (previewImageIndex > 0) ? previewImageIndex - 1 : filteredRentalInventory.length - 1"
+                            class="pointer-events-auto w-12 h-12 bg-black/30 text-white rounded-2xl flex items-center justify-center transition-all backdrop-blur-sm z-10 group-hover:opacity-100 opacity-0 md:opacity-50 hover:md:opacity-100"><span
+                                class="material-symbols-outlined text-3xl">chevron_right</span></button>
+                        <button
+                            @click.stop="previewImageIndex = (previewImageIndex < filteredRentalInventory.length - 1) ? previewImageIndex + 1 : 0"
+                            class="pointer-events-auto w-12 h-12 bg-black/30 text-white rounded-2xl flex items-center justify-center transition-all backdrop-blur-sm z-10 group-hover:opacity-100 opacity-0 md:opacity-50 hover:md:opacity-100"><span
+                                class="material-symbols-outlined text-3xl">chevron_left</span></button>
+                    </div>
+                    <template x-if="filteredRentalInventory[previewImageIndex]?.image_url">
+                        <img :src="filteredRentalInventory[previewImageIndex]?.image_url"
+                            class="w-full h-auto max-h-[85vh] object-contain rounded-3xl bg-white/5 backdrop-blur-xl shadow-2xl">
+                    </template>
+                    <div
+                        class="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-black/50 backdrop-blur-md rounded-full text-white text-xs font-bold z-10">
+                        <span x-text="(previewImageIndex + 1) + ' / ' + filteredRentalInventory.length"></span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="print-only">
+        <div class="barcode-page">
+            <template x-for="item in printQueue" :key="item.key">
+                <div class="barcode-label">
+                    <div class="barcode-content-wrapper">
+                        <!-- تم إزالة اللوجو بناءً على طلبك -->
+                        <div class="product-name" x-text="window.productDisplayName(item)"></div>
+                        <div class="product-variant" x-text="'اللون: ' + (item.color || '-') + ' | المقاس: ' + (item.size || '-')"></div>
+                        <canvas :id="'rental-barcode-' + item.key" class="barcode-image" width="480" height="90"></canvas>
+                        <div class="barcode-number" x-text="item.barcode"></div>
+                        <div class="barcode-rental-type">تأجير</div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        // التحقق من تحميل المكتبات عند بدء الصفحة
+        window.addEventListener('DOMContentLoaded', function() {
+            console.log('🔍 فحص المكتبات المحملة في صفحة مخزون التأجير:');
+            console.log('JsBarcode:', typeof JsBarcode !== 'undefined' ? '✅ محملة' : '❌ غير محملة');
+        });
+
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('rentalInvApp', () => ({
+                sidebarExpanded: false,
+                sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                mobileMenuOpen: false,
+                rentalInventory: [],
+                pagination: { page: 1, limit: 60, total: 0, totalPages: 1, hasNext: false, hasPrev: false },
+                searchDebounce: null,
+                branches: [],
+                rentalInvFilters: { name: '', barcode: '', category: '', color: '', size: '', branch_id: '' },
+                dynamicColors: ['أبيض', 'أسود', 'كحلي', 'رمادي', 'أزرق', 'أحمر', 'أخضر', 'أصفر', 'بني', 'زيتي', 'جملي', 'نبيتي', 'بيج', 'رصاصي', 'سماوي', 'ذهبي', 'فضي'],
+                dynamicCategories: ['بدل', 'بنطلون', 'قميص', 'بليزر', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة'],
+                previewImageIndex: null,
+                showWornModal: false,
+                showEditRentalModal: false,
+                isEditImageProcessing: false,
+                printQueue: [],
+                wornData: { productId: null, productName: '', branch_id: '', quantity: 1, estimated_loss: 0, condition: 'worn', reason: '', notes: '', deduct_stock: true },
+                editRentalForm: { id: null, name: '', category: '', size_cut: '', color: '', barcode: '', image_url: '', branch_stocks: [] },
+                user: null,
+
+                hasInventoryAdminAccess() {
+                    return window.hasInventoryAdminAccess(this.user);
+                },
+
+                hasInventoryAllBranchesAccess() {
+                    return window.hasInventoryAllBranchesAccess(this.user);
+                },
+
+                isBranchScoped() {
+                    return window.isBranchScopedUser(this.user);
+                },
+
+                getDefaultRentalInventoryBranchId(currentBranchId = '') {
+                    const userBranchId = this.user?.branch_id || window.currentUser?.branch_id;
+                    if (userBranchId) return userBranchId;
+                    if (currentBranchId && this.branches.some(b => String(b.id) === String(currentBranchId))) return currentBranchId;
+                    const availableBranch = this.branches.find(b => !b.is_main_warehouse);
+                    return availableBranch?.id || this.branches[0]?.id || '';
+                },
+
+                async initData() {
+                    try {
+                        const meRes = await fetch('/api/me');
+                        if (meRes.ok) {
+                            const meData = await meRes.json();
+                            this.user = meData.user;
+                            if (!this.hasInventoryAdminAccess()) {
+                                this.rentalInvFilters.branch_id = this.user.branch_id;
+                            }
+                        }
+                        if (!this._watchersReady) {
+                            Object.keys(this.rentalInvFilters).forEach(key => {
+                                this.$watch(`rentalInvFilters.${key}`, () => {
+                                    clearTimeout(this.searchDebounce);
+                                    this.searchDebounce = setTimeout(() => {
+                                        this.pagination.page = 1;
+                                        this.loadRentalInventory();
+                                    }, 250);
+                                });
+                            });
+                            this._watchersReady = true;
+                        }
+                        const [_, branchRes, metadataRes] = await Promise.all([
+                            this.loadRentalInventory(),
+                            fetch('/api/branches'),
+                            fetch('/api/inventory/metadata')
+                        ]);
+                        this.branches = await branchRes.json();
+                        if (metadataRes && metadataRes.ok) {
+                            const meta = await metadataRes.json();
+                            const uniqueCats = new Set([...this.dynamicCategories, ...(meta.categories || [])]);
+                            this.dynamicCategories = Array.from(uniqueCats);
+                            const uniqueColors = new Set([...this.dynamicColors, ...(meta.colors || [])]);
+                            this.dynamicColors = Array.from(uniqueColors);
+                        }
+                    } catch (err) { console.error(err); }
+                },
+                async loadRentalInventory() {
+                    const params = new URLSearchParams({
+                        page: this.pagination.page,
+                        limit: this.pagination.limit
+                    });
+                    Object.entries(this.rentalInvFilters).forEach(([key, value]) => {
+                        if (value !== '' && value !== null && value !== undefined) params.set(key, value);
+                    });
+                    const res = await fetch(`/api/rental-inventory?${params.toString()}`);
+                    const payload = await res.json();
+                    this.rentalInventory = payload.data || payload;
+                    if (payload.pagination) this.pagination = payload.pagination;
+                },
+                changePage(page) {
+                    if (page < 1 || page > this.pagination.totalPages || page === this.pagination.page) return;
+                    this.pagination.page = page;
+                    this.loadRentalInventory();
+                },
+
+                getLogoPath(branchId) {
+                    if (!branchId || !this.branches) return 'logos/men.png';
+                    const branch = this.branches.find(b => b.id == branchId);
+                    return branch && branch.logo_path ? branch.logo_path : 'logos/men.png';
+                },
+
+                getBranchName(id) {
+                    return this.branches.find(x => x.id == id)?.name || 'مجهول';
+                },
+
+                getRentalTotalStock(item) {
+                    if (Number.isFinite(Number(item?.stock_level))) return Number(item.stock_level);
+                    return (item?.branch_stocks || []).reduce((sum, bs) => sum + Number(bs.stock_level || 0), 0);
+                },
+
+                async printRentalBarcode(item) {
+                    if (!item?.barcode) {
+                        alert('هذا المنتج لا يحتوي على باركود للطباعة');
+                        return;
+                    }
+
+                    // الانتظار حتى يتم تحميل JsBarcode
+                    if (typeof JsBarcode === 'undefined') {
+                        console.log('⏳ انتظار تحميل مكتبة JsBarcode...');
+                        let attempts = 0;
+                        while (typeof JsBarcode === 'undefined' && attempts < 50) {
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            attempts++;
+                        }
+                        if (typeof JsBarcode === 'undefined') {
+                            alert('❌ فشل تحميل مكتبة الباركود. تحقق من اتصال الإنترنت وأعد المحاولة.');
+                            return;
+                        }
+                    }
+
+                    const branchLogo = window.getLogoPath(this.user?.branch_id, this.branches);
+                    this.printQueue = [{
+                        ...item,
+                        key: `${item.id}-${Date.now()}`,
+                        size: item.size_cut,
+                        branchLogo
+                    }];
+
+                    this.$nextTick(() => {
+                        setTimeout(() => {
+                            this.printQueue.forEach(label => {
+                                try {
+                                    const canvas = document.getElementById(`rental-barcode-${label.key}`);
+                                    if (!canvas) return;
+                                    JsBarcode(canvas, String(label.barcode), {
+                                        format: 'CODE128',
+                                        width: 1,
+                                        height: 70,
+                                        displayValue: false,
+                                        margin: 4,
+                                        lineColor: '#000000',
+                                        background: '#FFFFFF',
+                                        flat: true
+                                    });
+                                } catch (err) {
+                                    console.error('JsBarcode Error', err);
+                                }
+                            });
+                            setTimeout(() => window.print(), 500);
+                        }, 100);
+                    });
+                },
+
+                get selectedWornStock() {
+                    if (!this.wornData.productId || !this.wornData.branch_id) return 0;
+                    const item = this.rentalInventory.find(p => p.id == this.wornData.productId);
+                    const branchStock = item?.branch_stocks?.find(bs => bs.branch_id == this.wornData.branch_id);
+                    return Number(branchStock?.stock_level || 0);
+                },
+
+                getDefaultWornBranch(item) {
+                    if (!this.hasInventoryAdminAccess()) return this.user?.branch_id || '';
+                    const userBranchId = this.user?.branch_id || window.currentUser?.branch_id;
+                    if (userBranchId) return userBranchId;
+                    if (this.rentalInvFilters.branch_id) return this.rentalInvFilters.branch_id;
+                    const stockedBranch = item.branch_stocks?.find(bs => Number(bs.stock_level || 0) > 0);
+                    return stockedBranch?.branch_id || this.getDefaultRentalInventoryBranchId();
+                },
+
+                openWornRentalModal(item) {
+                    const branchId = this.getDefaultWornBranch(item);
+                    this.wornData = {
+                        productId: item.id,
+                        productName: [window.productDisplayName(item), item.color, item.size_cut, item.barcode ? `#${item.barcode}` : ''].filter(Boolean).join(' - '),
+                        branch_id: branchId,
+                        quantity: 1,
+                        estimated_loss: 0,
+                        condition: 'worn',
+                        reason: '',
+                        notes: '',
+                        deduct_stock: true
+                    };
+                    this.showWornModal = true;
+                },
+
+                async submitWornRental() {
+                    if (!this.wornData.productId || !this.wornData.branch_id || Number(this.wornData.quantity) <= 0) {
+                        alert('برجاء اختيار الفرع وإدخال كمية صحيحة');
+                        return;
+                    }
+                    if (this.wornData.deduct_stock && Number(this.wornData.quantity) > this.selectedWornStock) {
+                        alert('الكمية أكبر من المتاح في الفرع المحدد');
+                        return;
+                    }
+                    const res = await fetch('/api/worn-products', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            product_type: 'rental',
+                            rental_inventory_id: this.wornData.productId,
+                            branch_id: this.wornData.branch_id,
+                            quantity: this.wornData.quantity,
+                            condition: this.wornData.condition,
+                            reason: this.wornData.reason,
+                            estimated_loss: this.wornData.estimated_loss || 0,
+                            notes: this.wornData.notes,
+                            deduct_stock: this.wornData.deduct_stock
+                        })
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        alert(err.error || 'تعذر نقل المنتج للمهترئ');
+                        return;
+                    }
+                    this.showWornModal = false;
+                    await this.initData();
+                    alert('تم نقل المنتج للمهترئ بنجاح');
+                },
+
+                getEditableRentalStocks(item) {
+                    const stocks = Array.isArray(item?.branch_stocks) ? item.branch_stocks : [];
+                    if (this.hasInventoryAllBranchesAccess()) {
+                        return this.branches.map(branch => {
+                            const current = stocks.find(bs => Number(bs.branch_id) === Number(branch.id));
+                            return {
+                                branch_id: branch.id,
+                                stock_level: Number(current?.stock_level || 0)
+                            };
+                        });
+                    }
+                    const branchId = this.user?.branch_id;
+                    const current = stocks.find(bs => Number(bs.branch_id) === Number(branchId));
+                    return [{
+                        branch_id: branchId,
+                        stock_level: Number(current?.stock_level || 0)
+                    }];
+                },
+
+                openEditRentalModal(item) {
+                    if (!this.hasInventoryAdminAccess()) {
+                        alert('هذه الصلاحية متاحة فقط لمن لديه صلاحيات المخزون كاملة مثل المدير');
+                        return;
+                    }
+                    this.editRentalForm = {
+                        id: item.id,
+                        name: item.name || '',
+                        category: item.category || '',
+                        size_cut: item.size_cut || '',
+                        color: item.color || '',
+                        barcode: item.barcode || '',
+                        image_url: item.image_url || '',
+                        branch_stocks: this.getEditableRentalStocks(item)
+                    };
+                    this.showEditRentalModal = true;
+                },
+
+                handleEditRentalImageUpload(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    if (!file.type || !file.type.startsWith('image/')) {
+                        alert('برجاء اختيار ملف صورة صحيح');
+                        event.target.value = '';
+                        return;
+                    }
+
+                    this.isEditImageProcessing = true;
+                    const reader = new FileReader();
+                    reader.onerror = () => {
+                        this.isEditImageProcessing = false;
+                        event.target.value = '';
+                        alert('تعذر قراءة الصورة');
+                    };
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.onerror = () => {
+                            this.isEditImageProcessing = false;
+                            event.target.value = '';
+                            alert('تعذر تجهيز الصورة');
+                        };
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const MAX_WIDTH = 600;
+                            const MAX_HEIGHT = 600;
+                            let width = img.width;
+                            let height = img.height;
+
+                            if (width > height) {
+                                if (width > MAX_WIDTH) {
+                                    height *= MAX_WIDTH / width;
+                                    width = MAX_WIDTH;
+                                }
+                            } else if (height > MAX_HEIGHT) {
+                                width *= MAX_HEIGHT / height;
+                                height = MAX_HEIGHT;
+                            }
+
+                            canvas.width = Math.round(width);
+                            canvas.height = Math.round(height);
+                            const ctx = canvas.getContext('2d');
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                            this.editRentalForm.image_url = canvas.toDataURL('image/jpeg', 0.65);
+                            this.isEditImageProcessing = false;
+                            event.target.value = '';
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                },
+
+                async submitEditRental() {
+                    if (!this.hasInventoryAdminAccess()) {
+                        alert('هذه الصلاحية متاحة فقط لمن لديه صلاحيات المخزون كاملة مثل المدير');
+                        return;
+                    }
+                    if (!this.editRentalForm.name.trim()) {
+                        alert('برجاء إدخال اسم المنتج');
+                        return;
+                    }
+                    const invalidStock = this.editRentalForm.branch_stocks.some(bs => Number(bs.stock_level) < 0 || !Number.isFinite(Number(bs.stock_level)));
+                    if (invalidStock) {
+                        alert('لا يمكن إدخال قيم سالبة');
+                        return;
+                    }
+                    const payload = {
+                        name: this.editRentalForm.name.trim(),
+                        category: this.editRentalForm.category,
+                        size_cut: this.editRentalForm.size_cut,
+                        color: this.editRentalForm.color,
+                        barcode: String(this.editRentalForm.barcode || '').replace(/\D/g, ''),
+                        image_url: this.editRentalForm.image_url,
+                        branch_stocks: this.editRentalForm.branch_stocks.map(bs => ({
+                            branch_id: bs.branch_id,
+                            stock_level: Number(bs.stock_level || 0)
+                        }))
+                    };
+                    try {
+                        const res = await fetch(`/api/rental-inventory/${this.editRentalForm.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            alert(data.error || 'تعذر تعديل المنتج');
+                            return;
+                        }
+                        this.showEditRentalModal = false;
+                        await this.loadRentalInventory();
+                        alert('تم تعديل منتج التأجير بنجاح');
+                    } catch (err) {
+                        console.error(err);
+                        alert('تعذر تعديل المنتج');
+                    }
+                },
+
+                get filteredRentalInventory() {
+                    return this.rentalInventory;
+                },
+
+                async deleteRentalInvItem(id) {
+                    if (!confirm('هل أنت متأكد من حذف هذا المنتج من مخزون التأجير؟')) return;
+                    try {
+                        const res = await fetch(`/api/rental-inventory/${id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                            this.rentalInventory = this.rentalInventory.filter(item => item.id !== id);
+                            alert('تم حذف المنتج بنجاح');
+                        }
+                    } catch (err) { console.error(err); }
+                }
+            }));
+        });
+    </script>
+</body>
+
+</html>
+
+
+
+
+
+
+
+

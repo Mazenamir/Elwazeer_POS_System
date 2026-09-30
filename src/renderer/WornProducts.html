@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - المنتجات المهترئة</title>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link href="assets/material-symbols.css" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1E293B",
+                        secondary: "#64748B",
+                        accent: "#EF4444",
+                        success: "#22C55E",
+                        warning: "#F59E0B",
+                        background: "#F8FAFC",
+                        surface: "#FFFFFF",
+                        "on-surface": "#0F172A",
+                        outline: "#CBD5E1",
+                    },
+                    borderRadius: { DEFAULT: "0.5rem", lg: "0.5rem", xl: "0.75rem", "2xl": "1rem" },
+                    fontFamily: { display: ["Cairo", "sans-serif"], body: ["Cairo", "sans-serif"] }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        [x-cloak] { display: none !important; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+        body { font-family: 'Cairo', sans-serif; background-color: #F8FAFC; }
+        .field label { display:block; font-size:11px; font-weight:900; color:#64748b; margin-bottom:0.5rem; }
+        .field input, .field select, .field textarea {
+            width:100%; border:2px solid #e2e8f0; border-radius:0.5rem; padding:0.75rem 1rem;
+            font-size:0.875rem; font-weight:700; color:#0f172a; background:white; min-height:46px;
+        }
+        .field textarea { min-height: 92px; }
+        .field input:focus, .field select:focus, .field textarea:focus {
+            outline:none; border-color:#1E293B; box-shadow:0 0 0 4px rgba(30,41,59,0.06);
+        }
+    </style>
+    <script src="router.js"></script>
+    <link href="responsive.css" rel="stylesheet">
+    <script src="auth.js"></script>
+</head>
+
+<body class="text-on-surface antialiased overflow-x-hidden" x-data="wornProductsApp()" x-init="initData()">
+    <div class="flex min-h-screen">
+        <div class="sidebar-backdrop" :class="mobileMenuOpen ? 'active' : ''" @click="mobileMenuOpen = false"></div>
+
+        <aside
+            @mouseenter="sidebarExpanded = true"
+            @mouseleave="sidebarExpanded = false"
+            class="sidebar-main sticky top-0 h-screen bg-primary text-white z-[70] transition-all duration-300 overflow-hidden group shrink-0 shadow-2xl flex flex-col"
+            :class="[(sidebarExpanded || sidebarLocked) ? 'w-72' : 'w-20', mobileMenuOpen ? 'mobile-open' : '']">
+            <div class="py-6 px-5 flex items-center justify-between overflow-hidden">
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center shadow-lg shadow-white/10 overflow-hidden p-1">
+                        <img :src="window.getLogoPath(user?.branch_id, branches) || 'logos/men.png'" class="w-full h-full object-contain" onerror="this.src='logos/men.png'">
+                    </div>
+                    <h1 class="text-xl font-extrabold tracking-tight transition-opacity duration-300 whitespace-nowrap" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">Bebyoon Center</h1>
+                </div>
+                <button @click="sidebarLocked = !sidebarLocked; localStorage.setItem('sidebarLocked', sidebarLocked)"
+                        class="transition-all duration-300 hover:bg-white/10 p-2 rounded-lg"
+                        :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+                    <span class="material-symbols-outlined text-sm" :style="sidebarLocked ? 'font-variation-settings: \'FILL\' 1' : ''">push_pin</span>
+                </button>
+                    <!-- Zoom Controls (EXE Only) -->
+                    <div class="exe-only flex-col gap-1 hidden">
+                        <button onclick="window.postMessage({type: 'zoom-in'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تكبير الشاشة">
+                            <span class="material-symbols-outlined text-xs">add</span>
+                        </button>
+                        <button onclick="window.postMessage({type: 'zoom-out'}, '*')" class="w-6 h-6 flex items-center justify-center rounded bg-white/10 hover:bg-white/20 text-white transition-all" title="تصغير الشاشة">
+                            <span class="material-symbols-outlined text-xs">remove</span>
+                        </button>
+                    </div>
+            </div>
+
+            <nav class="mt-4 px-3 flex flex-col gap-2 flex-1 overflow-y-auto overflow-x-hidden">
+                <a href="Dashboard.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">dashboard</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">لوحة التحكم</span>
+                </a>
+                <a href="index.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">point_of_sale</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الكاشير</span>
+                </a>
+                <a href="Rentals.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">styler</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التأجير</span>
+                </a>
+                <a href="Alterations.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">architecture</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التعديلات</span>
+                </a>
+                <a href="Tailoring.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined">content_cut</span>
+                    </div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تفصيل</span>
+                </a>
+                <a href="Customers.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">group</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">العملاء</span>
+                </a>
+                <a href="Suppliers.html?tab=inventory" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">inventory_2</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'" x-text="window.hasInventoryAdminAccess(user) ? 'المخزون والموردين' : 'إدارة المخزون'"></span>
+                </a>
+                <a href="RentalInventory.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">inventory_2</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">مخزون التأجير</span>
+                </a>
+                <a href="WornProducts.html" class="nav-link flex items-center rounded-xl bg-white/10 text-white font-medium transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">auto_delete</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المنتجات المهترئة</span>
+                </a>
+                <a href="Employees.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">badge</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الموظفين</span>
+                </a>
+                <a href="Expenses.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">receipt_long</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">المصاريف</span>
+                </a>
+                <a href="Reports.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">bar_chart</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">التقارير</span>
+                </a>
+                <a href="Barcodes.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">barcode_scanner</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">طباعة الباركود</span>
+                </a>
+                <a href="Settings.html" class="nav-link flex items-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">settings</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">الإعدادات</span>
+                </a>
+            </nav>
+
+            <div class="p-3 mt-auto border-t border-white/10">
+                <button onclick="logout()" class="w-full flex items-center rounded-xl text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                    <div class="w-14 h-12 flex items-center justify-center shrink-0"><span class="material-symbols-outlined">logout</span></div>
+                    <span class="transition-opacity duration-300 whitespace-nowrap overflow-hidden" :class="(sidebarExpanded || sidebarLocked) ? 'opacity-100' : 'opacity-0'">تسجيل الخروج</span>
+                </button>
+            </div>
+        </aside>
+
+        <div class="flex-1 flex flex-col min-w-0">
+            <header class="h-20 bg-white/80 backdrop-blur-xl border-b border-outline sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between">
+                <div class="flex items-center gap-3 min-w-0">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="mobile-menu-btn w-10 h-10 items-center justify-center rounded-xl bg-primary text-white">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <div class="min-w-0">
+                        <h2 class="text-lg md:text-xl font-extrabold text-primary truncate">المنتجات المهترئة</h2>
+                        <p class="text-xs font-bold text-slate-400 truncate" x-text="hasInventoryAdminAccess() ? 'عرض كل الفروع' : currentBranchName"></p>
+                    </div>
+                </div>
+                
+                                        <div id="user-info-display" class="flex items-center gap-3 pr-4 md:border-r border-outline hidden md:flex"></div>
+            </header>
+
+            <main class="p-4 md:p-8">
+                <div class="w-full space-y-6">
+                    <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
+                        <!-- Card 1 -->
+                        <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-100 shadow-premium relative overflow-hidden">
+                            <div class="flex items-center gap-5 relative z-10">
+                                <div class="w-16 h-16 rounded-[1.25rem] bg-slate-50 text-primary flex items-center justify-center shrink-0 shadow-sm border border-slate-100">
+                                    <span class="material-symbols-outlined text-3xl">list_alt</span>
+                                </div>
+                                <div>
+                                    <p class="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">عدد السجلات</p>
+                                    <p class="text-3xl font-black text-primary" x-text="summary.records"></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Card 2 -->
+                        <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-100 shadow-premium relative overflow-hidden">
+                            <div class="flex items-center gap-5 relative z-10">
+                                <div class="w-16 h-16 rounded-[1.25rem] bg-red-50 text-accent flex items-center justify-center shrink-0 shadow-sm border border-red-100">
+                                    <span class="material-symbols-outlined text-3xl">inventory</span>
+                                </div>
+                                <div>
+                                    <p class="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">إجمالي القطع</p>
+                                    <p class="text-3xl font-black text-primary" x-text="summary.quantity"></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Card 3 -->
+                        <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-100 shadow-premium relative overflow-hidden">
+                            <div class="flex items-center gap-5 relative z-10">
+                                <div class="w-16 h-16 rounded-[1.25rem] bg-amber-50 text-warning flex items-center justify-center shrink-0 shadow-sm border border-amber-100">
+                                    <span class="material-symbols-outlined text-3xl">calendar_month</span>
+                                </div>
+                                <div>
+                                    <p class="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">هالك الشهر</p>
+                                    <p class="text-3xl font-black text-primary" x-text="summary.month_quantity"></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Card 4 -->
+                        <div class="bg-white p-6 rounded-[2rem] border-2 border-slate-100 shadow-premium relative overflow-hidden">
+                            <div class="flex items-center gap-5 relative z-10">
+                                <div class="w-16 h-16 rounded-[1.25rem] bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 shadow-sm border border-indigo-100">
+                                    <span class="material-symbols-outlined text-3xl">payments</span>
+                                </div>
+                                <div>
+                                    <p class="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">خسارة تقديرية</p>
+                                    <p class="text-2xl font-black text-primary" x-text="formatMoney(summary.estimated_loss)"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
+                        <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                            <div class="field md:col-span-2">
+                                <label>بحث</label>
+                                <input x-model.debounce.300ms="filters.search" type="search" placeholder="اسم المنتج أو الباركود">
+                            </div>
+                            <div class="field" x-show="!isBranchScoped()">
+                                <label>الفرع</label>
+                                <select x-model="filters.branch_id" :disabled="isBranchScoped()">
+                                    <option value="all">كل الفروع</option>
+                                    <template x-for="branch in branches" :key="branch.id">
+                                        <option :value="branch.id" x-text="branch.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>نوع المخزون</label>
+                                <select x-model="filters.product_type">
+                                    <option value="all">الكل</option>
+                                    <option value="sales">بيع</option>
+                                    <option value="rental">تأجير</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>الحالة</label>
+                                <select x-model="filters.status">
+                                    <option value="all">الكل</option>
+                                    <option value="recorded">مسجل</option>
+                                    <option value="reviewed">تمت المراجعة</option>
+                                    <option value="disposed">تم التخلص</option>
+                                </select>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm mt-6">
+                        <div class="table-responsive">
+                            <table class="w-full text-right border-collapse responsive-table">
+                                <thead>
+                                    <tr class="bg-slate-900">
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200">التاريخ</th>
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200" x-show="!isBranchScoped()">الفرع</th>
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200">المنتج</th>
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200">النوع</th>
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200">الكمية</th>
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200">السبب</th>
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200">الخسارة</th>
+                                        <th class="px-5 py-4 text-xs font-extrabold text-slate-200">الحالة</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    <template x-if="records.length === 0">
+                                        <tr>
+                                            <td colspan="8" class="px-6 py-16 text-center text-slate-400">
+                                                <span class="material-symbols-outlined text-4xl mb-2">auto_delete</span>
+                                                <p class="text-sm font-black">لا توجد سجلات مطابقة</p>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-for="record in records" :key="record.id">
+                                        <tr class="hover:bg-slate-50 transition-colors">
+                                            <td class="px-5 py-4 text-sm font-bold text-slate-600" x-text="formatDate(record.occurred_at)"></td>
+                                            <td class="px-5 py-4 text-sm font-black text-primary" x-show="!isBranchScoped()" x-text="record.branch_name || '-'"></td>
+                                            <td class="px-5 py-4">
+                                                <p class="text-sm font-black text-primary" x-text="record.product_name ? window.productDisplayName(record) : 'منتج محذوف'"></p>
+                                                <p class="text-xs font-bold text-slate-400" x-text="record.product_barcode || ''"></p>
+                                            </td>
+                                            <td class="px-5 py-4">
+                                                <span class="px-3 py-1 rounded-full text-xs font-black" :class="record.product_type === 'rental' ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'" x-text="record.product_type === 'rental' ? 'تأجير' : 'بيع'"></span>
+                                            </td>
+                                            <td class="px-5 py-4 text-sm font-black text-accent" x-text="record.quantity"></td>
+                                            <td class="px-5 py-4 text-sm font-bold text-slate-500 max-w-xs" x-text="record.reason || record.notes || '-'"></td>
+                                            <td class="px-5 py-4 text-sm font-black text-primary" x-text="formatMoney(record.estimated_loss)"></td>
+                                            <td class="px-5 py-4">
+                                                <select class="border-2 border-slate-200 rounded-lg text-xs font-black py-1.5" x-model="record.status" @change="updateStatus(record)">
+                                                    <option value="recorded">مسجل</option>
+                                                    <option value="reviewed">تمت المراجعة</option>
+                                                    <option value="disposed">تم التخلص</option>
+                                                </select>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="p-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                            <p class="text-xs font-bold text-slate-400" x-text="'صفحة ' + pagination.page + ' من ' + pagination.totalPages + ' - إجمالي ' + pagination.total"></p>
+                            <div class="flex items-center gap-2">
+                                <button @click="changePage(pagination.page - 1)" :disabled="!pagination.hasPrev" class="px-4 py-2 rounded-lg border-2 border-slate-200 text-xs font-black text-primary disabled:opacity-40">السابق</button>
+                                <button @click="changePage(pagination.page + 1)" :disabled="!pagination.hasNext" class="px-4 py-2 rounded-lg bg-primary text-white text-xs font-black disabled:opacity-40">التالي</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </main>
+
+            <div x-show="showModal" x-cloak class="fixed inset-0 z-[100] overflow-y-auto">
+                <div class="flex min-h-screen items-center justify-center p-4">
+                    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm" @click="showModal = false"></div>
+                    <div class="relative bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl p-6 md:p-10 border border-slate-100">
+                        <div class="flex items-center justify-between gap-4 mb-6">
+                            <h3 class="text-xl font-black text-primary">تسجيل منتج مهترئ</h3>
+                            <button @click="showModal = false" class="w-10 h-10 rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center">
+                                <span class="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="field">
+                                <label>نوع المخزون</label>
+                                <select x-model="form.product_type" @change="loadProducts(); form.product_id = ''">
+                                    <option value="sales">بيع</option>
+                                    <option value="rental">تأجير</option>
+                                </select>
+                            </div>
+                            <div class="field" x-show="!isBranchScoped()">
+                                <label>الفرع</label>
+                                <select x-model="form.branch_id" :disabled="isBranchScoped()" @change="loadProducts(); form.product_id = ''">
+                                    <option value="">اختر الفرع</option>
+                                    <template x-for="branch in branches" :key="branch.id">
+                                        <option :value="branch.id" x-text="branch.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="field md:col-span-2">
+                                <label>المنتج</label>
+                                <input x-model.debounce.300ms="productSearch" @input="loadProducts(); form.product_id = ''" type="search" placeholder="ابحث باسم المنتج أو الباركود أو اللون أو المقاس">
+                                <select x-model="form.product_id">
+                                    <option value="">اختر المنتج</option>
+                                    <template x-for="product in products" :key="product.id">
+                                        <option :value="product.id" x-text="productLabel(product)"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>الكمية</label>
+                                <input x-model.number="form.quantity" type="number" min="1">
+                            </div>
+                            <div class="field">
+                                <label>الخسارة التقديرية</label>
+                                <input x-model.number="form.estimated_loss" type="number" min="0" step="0.01">
+                            </div>
+                            <div class="field">
+                                <label>درجة التلف</label>
+                                <select x-model="form.condition">
+                                    <option value="worn">مهترئ</option>
+                                    <option value="damaged">تالف</option>
+                                    <option value="lost">فاقد</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>التاريخ</label>
+                                <input x-model="form.occurred_at" type="date">
+                            </div>
+                            <label class="md:col-span-2 flex items-center gap-3 rounded-lg border-2 border-slate-200 p-4 cursor-pointer">
+                                <input x-model="form.deduct_stock" type="checkbox" class="rounded text-primary focus:ring-primary">
+                                <span class="text-sm font-black text-primary">خصم الكمية من مخزون الفرع</span>
+                            </label>
+                            <div class="field md:col-span-2">
+                                <label>السبب</label>
+                                <input x-model="form.reason" type="text" placeholder="تلف، استخدام، كسر، فقد...">
+                            </div>
+                            <div class="field md:col-span-2">
+                                <label>ملاحظات</label>
+                                <textarea x-model="form.notes"></textarea>
+                            </div>
+                        </div>
+
+                        <div class="mt-8 flex gap-3">
+                            <button @click="saveRecord()" class="flex-1 py-3.5 bg-accent text-white rounded-lg text-sm font-black hover:bg-red-600 transition-all">حفظ</button>
+                            <button @click="showModal = false" class="px-6 py-3.5 bg-slate-100 text-slate-500 rounded-lg text-sm font-black hover:bg-slate-200 transition-all">إلغاء</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('wornProductsApp', () => ({
+                sidebarExpanded: false,
+                sidebarLocked: localStorage.getItem('sidebarLocked') === 'true',
+                mobileMenuOpen: false,
+                user: window.currentUser || null,
+                branches: [],
+                records: [],
+                products: [],
+                productSearch: '',
+                summary: { records: 0, quantity: 0, estimated_loss: 0, month_quantity: 0 },
+                pagination: { page: 1, limit: 50, total: 0, totalPages: 1, hasNext: false, hasPrev: false },
+                filters: { search: '', branch_id: 'all', product_type: 'all', status: 'all' },
+                showModal: false,
+                form: {
+                    product_type: 'sales',
+                    product_id: '',
+                    branch_id: '',
+                    quantity: 1,
+                    condition: 'worn',
+                    reason: '',
+                    estimated_loss: 0,
+                    notes: '',
+                    occurred_at: window.getEgyptDateString(),
+                    deduct_stock: true
+                },
+
+                hasInventoryAdminAccess() {
+                    return window.hasInventoryAdminAccess(this.user);
+                },
+
+                isBranchScoped() {
+                    return window.isBranchScopedUser(this.user);
+                },
+
+                getDefaultWornBranchId(currentBranchId = '') {
+                    const userBranchId = this.user?.branch_id || window.currentUser?.branch_id;
+                    if (userBranchId) return userBranchId;
+                    if (currentBranchId && this.branches.some(b => String(b.id) === String(currentBranchId))) return currentBranchId;
+                    const availableBranch = this.branches.find(b => !b.is_main_warehouse);
+                    return availableBranch?.id || this.branches[0]?.id || '';
+                },
+
+                async initData() {
+                    await window.syncServerTime();
+                    this.form.occurred_at = window.getEgyptDateString();
+                    if (!this.user) {
+                        const meRes = await fetch('/api/me');
+                        if (meRes.ok) {
+                            const data = await meRes.json();
+                            this.user = data.user;
+                            window.currentUser = this.user;
+                        }
+                    }
+                    const branchesRes = await fetch('/api/branches');
+                    this.branches = branchesRes.ok ? await branchesRes.json() : [];
+                    if (this.isBranchScoped()) {
+                        this.filters.branch_id = String(this.user.branch_id);
+                        this.form.branch_id = this.user.branch_id;
+                    } else {
+                        this.form.branch_id = this.getDefaultWornBranchId(this.form.branch_id);
+                    }
+
+                    if (!this._watchersReady) {
+                        Object.keys(this.filters).forEach(key => {
+                            this.$watch(`filters.${key}`, () => {
+                                this.pagination.page = 1;
+                                this.loadRecords();
+                            });
+                        });
+                        this._watchersReady = true;
+                    }
+
+                    await Promise.all([this.loadRecords(), this.loadProducts()]);
+                },
+
+                buildQuery() {
+                    const params = new URLSearchParams({ page: this.pagination.page, limit: this.pagination.limit });
+                    Object.entries(this.filters).forEach(([key, value]) => {
+                        if (value !== '' && value !== null && value !== undefined) params.set(key, value);
+                    });
+                    return params.toString();
+                },
+
+                async loadRecords() {
+                    const query = this.buildQuery();
+                    const [recordsRes, summaryRes] = await Promise.all([
+                        fetch(`/api/worn-products?${query}`),
+                        fetch(`/api/worn-products/summary?${query}`)
+                    ]);
+                    if (recordsRes.ok) {
+                        const payload = await recordsRes.json();
+                        this.records = payload.data || payload;
+                        if (payload.pagination) this.pagination = payload.pagination;
+                    }
+                    if (summaryRes.ok) this.summary = await summaryRes.json();
+                },
+
+                async loadProducts() {
+                    const params = new URLSearchParams({ page: 1, limit: 50 });
+                    if (this.form.branch_id) params.set('branch_id', this.form.branch_id);
+                    if (this.productSearch) params.set('search', this.productSearch);
+                    const endpoint = this.form.product_type === 'rental' ? '/api/rental-inventory' : '/api/inventory';
+                    const res = await fetch(`${endpoint}?${params.toString()}`);
+                    if (!res.ok) {
+                        this.products = [];
+                        return;
+                    }
+                    const payload = await res.json();
+                    this.products = payload.data || payload;
+                },
+
+                openAddModal() {
+                    this.productSearch = '';
+                    this.form = {
+                        product_type: 'sales',
+                        product_id: '',
+                        branch_id: this.getDefaultWornBranchId(this.form.branch_id),
+                        quantity: 1,
+                        condition: 'worn',
+                        reason: '',
+                        estimated_loss: 0,
+                        notes: '',
+                        occurred_at: window.getEgyptDateString(),
+                        deduct_stock: true
+                    };
+                    this.loadProducts();
+                    this.showModal = true;
+                },
+
+                async saveRecord() {
+                    if (!this.form.branch_id || !this.form.product_id || !this.form.quantity || Number(this.form.quantity) <= 0) {
+                        alert('برجاء استكمال الفرع والمنتج والكمية');
+                        return;
+                    }
+                    const body = {
+                        product_type: this.form.product_type,
+                        branch_id: this.form.branch_id,
+                        quantity: this.form.quantity,
+                        condition: this.form.condition,
+                        reason: this.form.reason,
+                        estimated_loss: this.form.estimated_loss || 0,
+                        notes: this.form.notes,
+                        occurred_at: this.form.occurred_at,
+                        deduct_stock: this.form.deduct_stock
+                    };
+                    if (this.form.product_type === 'rental') body.rental_inventory_id = this.form.product_id;
+                    else body.inventory_id = this.form.product_id;
+
+                    const res = await fetch('/api/worn-products', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        alert(err.error || 'حدث خطأ أثناء الحفظ');
+                        return;
+                    }
+                    this.showModal = false;
+                    await this.loadRecords();
+                    await this.loadProducts();
+                },
+
+                async updateStatus(record) {
+                    const res = await fetch(`/api/worn-products/${record.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: record.status })
+                    });
+                    if (!res.ok) alert('تعذر تحديث الحالة');
+                },
+
+                changePage(page) {
+                    if (page < 1 || page > this.pagination.totalPages || page === this.pagination.page) return;
+                    this.pagination.page = page;
+                    this.loadRecords();
+                },
+
+                productLabel(product) {
+                    const parts = [window.productDisplayName(product), product.color, product.size_cut || product.size, product.barcode ? `#${product.barcode}` : ''].filter(Boolean);
+                    return `${parts.join(' - ')} (${Number(product.stock_level || 0)} قطعة)`;
+                },
+
+                formatDate(value) {
+                    if (!value) return '-';
+                    return new Date(value).toLocaleDateString('ar-EG-u-nu-latn');
+                },
+
+                formatMoney(value) {
+                    return `${Number(value || 0).toFixed(2)} ج.م`;
+                },
+
+                get currentBranchName() {
+                    return this.branches.find(branch => branch.id == this.user?.branch_id)?.name || 'فرع';
+                }
+            }));
+        });
+    </script>
+</body>
+</html>
+
