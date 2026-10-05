@@ -1,0 +1,108 @@
+// src/renderer/services/api/client.js
+// Centralized API client with automatic auth handling, error parsing, and mutation idempotency
+
+let onUnauthorizedCallback = null;
+
+export function registerUnauthorizedHandler(callback) {
+  onUnauthorizedCallback = callback;
+}
+
+function generateIdempotencyKey() {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
+
+export class ApiError extends Error {
+  constructor(message, status, data) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
+async function request(endpoint, options = {}) {
+  const url = endpoint.startsWith('http') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  const method = (options.method || 'GET').toUpperCase();
+  
+  const headers = {
+    'Accept': 'application/json',
+    ...(options.headers || {}),
+  };
+
+  // Automatically attach JSON content type if sending body
+  if (options.body && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  // Idempotency key for mutating requests to prevent duplicate transactions
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers['x-idempotency-key']) {
+    headers['x-idempotency-key'] = generateIdempotencyKey();
+  }
+
+  const config = {
+    method,
+    headers,
+    credentials: 'include', // send cookies automatically
+    ...options,
+  };
+
+  if (options.body && !(options.body instanceof FormData) && typeof options.body === 'object') {
+    config.body = JSON.stringify(options.body);
+  }
+
+  try {
+    const response = await fetch(url, config);
+
+    const isVerificationEndpoint = url.includes('/verify-password') || 
+                                   url.includes('/verify-invoice-edit-password') || 
+                                   url.includes('/login') ||
+                                   url.includes('/public/');
+
+    if (response.status === 401 && !isVerificationEndpoint) {
+      if (onUnauthorizedCallback) {
+        onUnauthorizedCallback();
+      }
+    }
+
+    // Try parsing JSON response
+    const contentType = response.headers.get('content-type') || '';
+    let data = null;
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+
+    if (!response.ok) {
+      const errorMessage = data?.error || data?.message || `طلب غير ناجح (${response.status})`;
+      throw new ApiError(errorMessage, response.status, data);
+    }
+
+    if (data && typeof data === 'object') {
+      try {
+        if (data.data === undefined) {
+          Object.defineProperty(data, 'data', {
+            value: data,
+            writable: true,
+            enumerable: false,
+            configurable: true,
+          });
+        }
+      } catch (e) {}
+    }
+
+    return data;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(err.message || 'حدث خطأ في الاتصال بالخادم', 0, null);
+  }
+}
+
+export const api = {
+  get: (endpoint, options = {}) => request(endpoint, { ...options, method: 'GET' }),
+  post: (endpoint, body, options = {}) => request(endpoint, { ...options, method: 'POST', body }),
+  put: (endpoint, body, options = {}) => request(endpoint, { ...options, method: 'PUT', body }),
+  delete: (endpoint, options = {}) => request(endpoint, { ...options, method: 'DELETE' }),
+};
+
+export default api;
