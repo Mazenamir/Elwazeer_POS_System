@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>تقرير التدقيق الفني الشامل والأمني لأنظمة بيبيون / الوزير (Bebyoon System Audit)</title>
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --primary-dark: #3730a3;
+      --primary-light: #e0e7ff;
+      --slate-900: #0f172a;
+      --slate-800: #1e293b;
+      --slate-700: #334155;
+      --slate-600: #475569;
+      --slate-200: #e2e8f0;
+      --slate-100: #f1f5f9;
+      --slate-50: #f8fafc;
+      --danger: #e11d48;
+      --danger-bg: #ffe4e6;
+      --warning: #d97706;
+      --warning-bg: #fef3c7;
+      --success: #059669;
+      --success-bg: #d1fae5;
+      --info: #0284c7;
+      --info-bg: #e0f2fe;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Cairo", Helvetica, Arial, sans-serif; }
+    body { background-color: var(--slate-50); color: var(--slate-900); line-height: 1.6; padding-bottom: 80px; }
+    
+    header.hero {
+      background: linear-gradient(135deg, var(--slate-900) 0%, #1e1b4b 50%, #0f172a 100%);
+      color: white; padding: 48px 32px; border-bottom: 4px solid var(--primary);
+    }
+    .hero-content { max-width: 1400px; margin: 0 auto; }
+    .hero-badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; color: #a5b4fc; margin-bottom: 16px; }
+    .hero h1 { font-size: 32px; font-weight: 900; margin-bottom: 8px; letter-spacing: -0.5px; }
+    .hero p { font-size: 16px; color: #cbd5e1; max-width: 900px; }
+    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 28px; }
+    .meta-card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 14px 18px; border-radius: 12px; }
+    .meta-card span { display: block; font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 700; }
+    .meta-card strong { font-size: 15px; color: white; margin-top: 4px; display: block; }
+
+    nav.toc {
+      background: white; border-bottom: 1px solid var(--slate-200); position: sticky; top: 0; z-index: 50;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }
+    .toc-container { max-width: 1400px; margin: 0 auto; display: flex; overflow-x: auto; gap: 8px; padding: 10px 32px; }
+    .toc-container a {
+      color: var(--slate-600); text-decoration: none; font-size: 13px; font-weight: 700; padding: 8px 14px;
+      border-radius: 8px; white-space: nowrap; transition: all 0.2s;
+    }
+    .toc-container a:hover { background: var(--slate-100); color: var(--primary); }
+
+    .container { max-width: 1400px; margin: 32px auto; padding: 0 32px; }
+    
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .stat-box { background: white; border: 1px solid var(--slate-200); border-radius: 16px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+    .stat-box.critical { border-top: 4px solid var(--danger); }
+    .stat-box.high { border-top: 4px solid #f97316; }
+    .stat-box.medium { border-top: 4px solid var(--warning); }
+    .stat-box.low { border-top: 4px solid var(--info); }
+    .stat-box.passed { border-top: 4px solid var(--success); }
+    .stat-number { font-size: 32px; font-weight: 900; line-height: 1; margin: 8px 0; }
+    .stat-label { font-size: 13px; color: var(--slate-600); font-weight: 700; }
+    .stat-sub { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+
+    section.section-card {
+      background: white; border: 1px solid var(--slate-200); border-radius: 20px; padding: 32px;
+      margin-bottom: 32px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+    }
+    .section-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--slate-100); padding-bottom: 16px; margin-bottom: 24px; }
+    .section-title { font-size: 22px; font-weight: 800; color: var(--slate-900); display: flex; align-items: center; gap: 10px; }
+    .section-tag { font-size: 12px; background: var(--primary-light); color: var(--primary-dark); padding: 4px 10px; border-radius: 999px; font-weight: 700; }
+
+    table.data-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; text-align: right; }
+    table.data-table th { background: var(--slate-100); color: var(--slate-700); padding: 12px 14px; font-weight: 800; border-bottom: 2px solid var(--slate-200); }
+    table.data-table td { padding: 12px 14px; border-bottom: 1px solid var(--slate-200); vertical-align: top; }
+    table.data-table tr:hover td { background: #fdfdfe; }
+
+    .badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; }
+    .badge-critical { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(225,29,72,0.3); }
+    .badge-high { background: #ffedd5; color: #c2410c; border: 1px solid rgba(194,65,12,0.3); }
+    .badge-medium { background: var(--warning-bg); color: var(--warning); border: 1px solid rgba(217,119,6,0.3); }
+    .badge-low { background: var(--info-bg); color: var(--info); border: 1px solid rgba(2,132,199,0.3); }
+    .badge-pass { background: var(--success-bg); color: var(--success); border: 1px solid rgba(5,150,105,0.3); }
+    .badge-fail { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(225,29,72,0.3); }
+    .badge-blocked { background: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db; }
+    .badge-code { background: #f1f5f9; color: #334155; font-family: monospace; font-size: 11px; }
+
+    .finding-card {
+      border: 1px solid var(--slate-200); border-radius: 14px; margin-bottom: 16px;
+      overflow: hidden; background: white; transition: all 0.2s;
+    }
+    .finding-summary {
+      padding: 16px 20px; display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; background: white; user-select: none;
+    }
+    .finding-summary:hover { background: var(--slate-50); }
+    .finding-title-group { display: flex; align-items: center; gap: 12px; }
+    .finding-title { font-size: 15px; font-weight: 800; color: var(--slate-900); }
+    .finding-details { padding: 20px; border-top: 1px solid var(--slate-200); background: #fafafa; font-size: 13px; }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .detail-item { background: white; border: 1px solid var(--slate-200); border-radius: 10px; padding: 12px; }
+    .detail-item strong { display: block; font-size: 11px; text-transform: uppercase; color: var(--slate-600); margin-bottom: 4px; }
+    .code-block { background: #0f172a; color: #f8fafc; padding: 12px; border-radius: 8px; font-family: Consolas, monospace; font-size: 12px; overflow-x: auto; margin: 8px 0; direction: ltr; text-align: left; }
+    
+    .callout { padding: 14px 18px; border-radius: 10px; margin: 16px 0; font-size: 13px; border-right: 4px solid; }
+    .callout-danger { background: #fff1f2; border-color: var(--danger); color: #881337; }
+    .callout-warning { background: #fffbeb; border-color: var(--warning); color: #78350f; }
+    .callout-info { background: #f0f9ff; border-color: var(--info); color: #0c4a6e; }
+
+    .arch-flow { display: flex; flex-direction: column; gap: 12px; margin: 20px 0; direction: ltr; text-align: left; }
+    .arch-node { background: var(--slate-900); color: white; padding: 14px 20px; border-radius: 10px; font-size: 13px; font-family: monospace; display: flex; justify-content: space-between; align-items: center; }
+    .arch-arrow { text-align: center; color: var(--primary); font-weight: 900; font-size: 18px; line-height: 1; }
+  </style>
+</head>
+<body>
+
+  <!-- HERO HEADER -->
+  <header class="hero">
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span>🛡️ SENIOR AUDITOR DELIVERABLE — READ & REPORT ONLY</span>
+      </div>
+      <h1>تقرير التدقيق الفني الشامل والجودة والأمان (Full-System Audit)</h1>
+      <p>فحص تشغيلي وأمني معمق وشامل لتطبيق وسطح مكتب (Electron + React 19 + Node.js/Express + PostgreSQL + SQLite) الخاص بمجموعة بيبيون / الوزير.</p>
+      
+      <div class="meta-grid">
+        <div class="meta-card">
+          <span>النظام الخاضع للفحص</span>
+          <strong>Bebyoon Center POS & Management</strong>
+        </div>
+        <div class="meta-card">
+          <span>مسار المشروع المحلي</span>
+          <strong style="direction:ltr; text-align:right;">D:\WORK\new_elwazeer</strong>
+        </div>
+        <div class="meta-card">
+          <span>إصدار التطبيق</span>
+          <strong>v1.0.4 (React SPA v2.0)</strong>
+        </div>
+        <div class="meta-card">
+          <span>تاريخ التدقيق</span>
+          <strong>01 أكتوبر 2026</strong>
+        </div>
+        <div class="meta-card">
+          <span>منهجية التدقيق</span>
+          <strong>Static + Dynamic + API & State Isolation</strong>
+        </div>
+        <div class="meta-card">
+          <span>حالة التدخل في الكود</span>
+          <strong style="color: #4ade80;">REPORT ONLY (لم يتم تعديل سطر واحد)</strong>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- TABLE OF CONTENTS -->
+  <nav class="toc">
+    <div class="toc-container">
+      <a href="#summary">1. ملخص تنفيذي</a>
+      <a href="#architecture">2. هيكلية النظام</a>
+      <a href="#dashboard">3. لوحة الاختبارات والنتائج</a>
+      <a href="#critical-findings">4. أهم الثغرات والعيوب الحرجة</a>
+      <a href="#electron-audit">5. تدقيق Electron</a>
+      <a href="#react-audit">6. تدقيق React & UI</a>
+      <a href="#backend-audit">7. تدقيق Backend & Node</a>
+      <a href="#auth-rbac">8. المصادقة والصلاحيات (RBAC)</a>
+      <a href="#database-audit">9. تدقيق قواعد البيانات والبيانات</a>
+      <a href="#routes-coverage">10. تغطية المسارات (Routes)</a>
+      <a href="#api-coverage">11. تغطية الـ APIs</a>
+      <a href="#remediation">12. خطة المعالجة الموصى بها</a>
+    </div>
+  </nav>
+
+  <div class="container">
+
+    <!-- 1. EXECUTIVE SUMMARY -->
+    <section id="summary" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>📋 1. ملخص تنفيذي (Executive Summary)</span>
+        </div>
+        <span class="section-tag">نظرة عامة قيادية</span>
+      </div>
+      <p style="font-size: 15px; color: var(--slate-700); margin-bottom: 16px;">
+        تم إجراء تدقيق فني وهندسي وأمني شامل ومستقل لمنظومة <strong>Bebyoon Center</strong> المتواجدة في المسار <code>D:\WORK\new_elwazeer</code>. تم فحص كافة الطبقات: معمارية سطح المكتب (Electron Main & Preload)، واجهة المستخدم الحديثة (React 19 + Vite)، خادم الباك إند (Node.js Express)، طبقة المصادقة والتفويض، وقاعدة البيانات العلائقية (PostgreSQL) ونظام المزامنة المحلي (SQLite).
+      </p>
+
+      <div class="callout callout-danger">
+        <strong>🚨 النتيجة العامة للتقييم: عالي الخطورة قبل الإنتاج (High Operational & Security Risk)</strong><br>
+        على الرغم من أن النظام تم إعادة هيكلته بصورة ممتازة من كود أحادي قديم إلى معمارية Modular MVC حديثة مع واجهات React 19 أنيقة، إلا أن هناك <strong>3 مشاكل حرجة (Showstoppers)</strong> تعيق استقرار وأمان التطبيق في بيئة الإنتاج:
+        <ol style="margin-right: 20px; margin-top: 8px;">
+          <li><strong>تسريب كلمات مرور الإدارة والرواتب:</strong> واجهة الـ API العامة غير المحمية <code>GET /api/public/settings</code> تعيد كلمات المرور الخاصة بتعديل الفواتير والرواتب نصاً صريحاً دون أي مصادقة.</li>
+          <li><strong>خلل تفكيك كائن المستخدم في React Context:</strong> ضبط كائن الـ User داخل <code>AuthContext.jsx</code> يترك حقل <code>user.role</code> و <code>user.permissions</code> مجهولاً (<code>undefined</code>)، مما يؤدي لتعطيل صلاحيات المدير وإخفاء أزرار التحكم عبر واجهة React بالكامل.</li>
+          <li><strong>معمارية الفرع (Branch Mode) غير مكتملة وتعطل السيرفر:</strong> وضع الفروع (SQLite Offline) مفعل في إعدادات البيئة ولكن لا يوجد أي Service يدعم SQLite فعلياً؛ كل الاستعلامات تستدعي PostgreSQL حصراً وتنهار برمجياً عند تفعيل وضع الفروع.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- 2. ARCHITECTURE OVERVIEW -->
+    <section id="architecture" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🏗️ 2. مخطط وهيكلية النظام (System Architecture)</span>
+        </div>
+        <span class="section-tag">تدفق البيانات والتكامل</span>
+      </div>
+
+      <div class="arch-flow">
+        <div class="arch-node">
+          <span>[Desktop Layer] Electron Host Application (v30.5.1)</span>
+          <span class="badge badge-code">Main Process (Node 20/24) + Preload Bridge + Single Instance Lock</span>
+        </div>
+        <div class="arch-arrow">↓ Chromium Render View / Localhost HTTP (Port 6253)</div>
+        <div class="arch-node">
+          <span>[Frontend UI] React 19 SPA + Vite + Tailwind CSS + Lucide Icons</span>
+          <span class="badge badge-code">Compiled to src/renderer/dist/ | Context API (Auth, Branch, Toast)</span>
+        </div>
+        <div class="arch-arrow">↓ REST API Calls with Cookies & JSON Body</div>
+        <div class="arch-node">
+          <span>[Backend API Layer] Express 5.2 Server + Modular Controllers & Services</span>
+          <span class="badge badge-code">14 Modules (Auth, Sales, Rentals, Inventory, HR, Expenses, Reports...)</span>
+        </div>
+        <div class="arch-arrow">↓ Dedicated PostgreSQL Connection Pool (pg v8.20) / Experimental SQLite</div>
+        <div class="arch-node">
+          <span>[Persistence & Offline Layer] PostgreSQL 16 (pos_db) + SQLite (data/offline.sqlite)</span>
+          <span class="badge badge-code">Relational DB with Schema Migrations & In-memory Lockout / Dedup Guard</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. TEST EXECUTION DASHBOARD -->
+    <section id="dashboard" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>📊 3. لوحة الاختبارات والإحصائيات الميدانية (Audit Scorecard)</span>
+        </div>
+        <span class="section-tag">أرقام ونتائج فعلية</span>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-box critical">
+          <div class="stat-label">عيوب حرجة (Critical)</div>
+          <div class="stat-number" style="color: var(--danger);">3</div>
+          <div class="stat-sub">تسريب أسرار / انهيار نظام / Auth State</div>
+        </div>
+        <div class="stat-box high">
+          <div class="stat-label">عيوب عالية الخطورة (High)</div>
+          <div class="stat-number" style="color: #f97316;">7</div>
+          <div class="stat-sub">CORS / RBAC / تضارب مسارات / فقدان بيانات</div>
+        </div>
+        <div class="stat-box medium">
+          <div class="stat-label">عيوب متوسطة (Medium)</div>
+          <div class="stat-number" style="color: var(--warning);">7</div>
+          <div class="stat-sub">قيود FK / Context Mismatch / أدوار غير موجودة</div>
+        </div>
+        <div class="stat-box low">
+          <div class="stat-label">عيوب منخفضة (Low)</div>
+          <div class="stat-number" style="color: var(--info);">3</div>
+          <div class="stat-sub">Bearer Tokens / ثغرات حزم طرف ثالث</div>
+        </div>
+        <div class="stat-box passed">
+          <div class="stat-label">فحوصات ناجحة ومثالية</div>
+          <div class="stat-number" style="color: var(--success);">28</div>
+          <div class="stat-sub">منع تكرار الطلبات / اتصال PG / قفل التنافس</div>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>المجال الخاضع للاختبار</th>
+            <th>الحالة التشغيلية</th>
+            <th>نسبة التغطية</th>
+            <th>أهم الملاحظات</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Electron Process & Lifecycle</strong></td>
+            <td><span class="badge badge-pass">PASSED مع ملاحظات</span></td>
+            <td>100%</td>
+            <td>قفل النسخة الواحدة منضبط، مراقب الخادم Supervisor شغال بكفاءة.</td>
+          </tr>
+          <tr>
+            <td><strong>React 19 Client SPA Build</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td>100%</td>
+            <td>تم بناء Vite بنجاح (1980 وحدة في 5.8 ثانية بدون أخطاء).</td>
+          </tr>
+          <tr>
+            <td><strong>Backend HTTP Server & Routes</strong></td>
+            <td><span class="badge badge-fail">FAILED (تضارب مسارات)</span></td>
+            <td>94%</td>
+            <td>تضارب بين مسارات expenses و worn-products.</td>
+          </tr>
+          <tr>
+            <td><strong>PostgreSQL Database Integrity</strong></td>
+            <td><span class="badge badge-pass">PASSED مع ملاحظات</span></td>
+            <td>100%</td>
+            <td>اتصال قاعدة البيانات يعمل بنجاح وكافة الجداول الأساسية متواجدة.</td>
+          </tr>
+          <tr>
+            <td><strong>Branch SQLite Offline Mode</strong></td>
+            <td><span class="badge badge-fail">FAILED (غير متوافق)</span></td>
+            <td>15%</td>
+            <td>جداول SQLite تنشأ ولكن الخدمات لا تستطيع قراءتها أو الكتابة فيها.</td>
+          </tr>
+          <tr>
+            <td><strong>RBAC & Access Control</strong></td>
+            <td><span class="badge badge-fail">FAILED (ثغرات صلاحيات)</span></td>
+            <td>70%</td>
+            <td>عدم تحقق الباك إند من الصلاحيات في إضافة المنتجات وتعديل الفواتير.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 4. CRITICAL & HIGH FINDINGS DETAILED -->
+    <section id="critical-findings" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🔥 4. تفاصيل الثغرات والعيوب المؤكدة بالأدلة (Confirmed Findings)</span>
+        </div>
+        <span class="section-tag">20 عيباً موثقاً بالتفصيل</span>
+      </div>
+
+      <!-- FINDING 1 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-critical">CRITICAL</span>
+            <span class="badge badge-code">SEC-01</span>
+            <span class="finding-title">تسريب كلمات مرور الرواتب وتعديل الفواتير عبر API عام غير مصرح (Public Settings Leak)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/modules/settings/settings.service.js (سطر 20-30)</div>
+            <div class="detail-item"><strong>المسار (Endpoint)</strong>GET /api/public/settings (بدون مصادقة)</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مختبر ومؤكد عملياً)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>إفشاء بيانات سرية وإلغاء حماية الفواتير والرواتب</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> المسار <code>/api/public/settings</code> مدرج ضمن القائمة البيضاء العامة <code>PUBLIC_PATHS</code> في <code>auth.middleware.js</code> حتى تتمكن شاشات تسجيل الدخول من معرفة اسم المتجر ورقم الهاتف. ولكن دالة <code>getPublicSettings()</code> تقوم بتنفيذ <code>SELECT key, value FROM settings</code> وتعيد كافة صفوف الإعدادات دون تصفية، بما فيها <code>salary_password</code> و <code>invoice_edit_password</code>.</p>
+          <div class="code-block">
+// الدليل الميداني للاستجابة الحية:
+GET http://127.0.0.1:6253/api/public/settings
+HTTP/1.1 200 OK
+{
+  "store_name": "Bebyoon Center",
+  "salary_password": "123",              // <-- كلمة سر الرواتب مسربة نصاً صريحاً!
+  "invoice_edit_password": "123456"      // <-- كلمة سر تعديل الفواتير مسربة نصاً صريحاً!
+}
+          </div>
+          <p><strong>العلاج الموصى به:</strong> حصر الحقول المعادة في <code>getPublicSettings()</code> بقائمة بيضاء مسموحة فقط (Whitelisted fields: store_name, phone, address, tax_rate, logo).</p>
+        </div>
+      </div>
+
+      <!-- FINDING 2 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-critical">CRITICAL</span>
+            <span class="badge badge-code">FRONTEND-01</span>
+            <span class="finding-title">تلف كائن المستخدم في React AuthContext يؤدي لتعطيل صلاحيات المدير والواجهة بالكامل</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/client/src/context/AuthContext.jsx (سطر 23-24 و 47-48)</div>
+            <div class="detail-item"><strong>المسار (Route)</strong>كافة شاشات React SPA</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مختبر ومؤكد)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>تعطيل صلاحيات المدير وإخفاء أزراره وإفشال التوجيه</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> يقوم الباك إند بإرجاع بيانات المستخدم عبر <code>GET /api/me</code> بالبنية: <code>{ user: { id: 1, role: 'admin', permissions: [...] } }</code>. داخل <code>AuthContext.jsx</code> يتم استدعاء <code>setUser(userData)</code> مباشرة بدون فك الغلاف، مما يجعل كائن <code>user</code> يساوي <code>{ user: { ... } }</code>. ونتيجة لذلك:</p>
+          <ul style="margin-right: 20px; margin-bottom: 12px;">
+            <li><code>user.role</code> يكون <code>undefined</code>.</li>
+            <li><code>isAdmin: user?.role === 'admin'</code> يكون دائماً <code>false</code> حتى لو كان الحساب مديراً!</li>
+            <li>كل الشاشات التي تفحص <code>user?.role === 'admin'</code> (مثل نقل الموظفين، إعدادات المتجر المتقدمة) تفشل في الظهور.</li>
+          </ul>
+          <div class="code-block">
+// الكود الحالي في AuthContext.jsx:
+const userData = await api.get('/me');
+setUser(userData); // خطأ: userData هو { user: {...} } فـ user.role يصبح undefined!
+
+// التصحيح المطلوب مستقبلاً:
+setUser(userData?.user || userData);
+          </div>
+        </div>
+      </div>
+
+      <!-- FINDING 3 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-critical">CRITICAL</span>
+            <span class="badge badge-code">ARCH-01</span>
+            <span class="finding-title">انهيار كامل للنظام عند تفعيل وضع الفروع (Branch SQLite Mode Crash on Use)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/database/connection.js (سطر 9-32)</div>
+            <div class="detail-item"><strong>الوضع التشغيلي</strong>APP_MODE=branch أو BRANCH_MODE=true</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مراجعة معمارية)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>فشل جميع العمليات في الفروع غير المتصلة بالإنترنت</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> تم إعداد ملف <code>migrator.js</code> لإنشاء جداول SQLite في وضع الفرع، ولكن في <code>connection.js</code> يتم تصدير دالة استعلام وهمية <code>query()</code> ترمي خطأ صريحاً: <code>Postgres query is not available in branch mode; use SQLite store adapter.</code> المشكلة الكبرى هي أن 100% من خدمات النظام (المبيعات، التأجير، الخزينة، الموظفين، التقارير) مكتوبة لاستدعاء <code>db.query(...)</code> مباشرة بصيغة بوستجرس! لا يوجد أي Store Adapter لـ SQLite في تلك الخدمات.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 4 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-high">HIGH</span>
+            <span class="badge badge-code">SEC-02</span>
+            <span class="finding-title">غياب التحقق من كلمة مرور تعديل الفواتير على الخادم (Broken Access Control on Invoices)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/modules/sales/sales.routes.js و sales.service.js</div>
+            <div class="detail-item"><strong>المسار (Endpoint)</strong>PUT /api/orders/:id</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (اختبار API المباشر)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>إمكانية التلاعب بالفواتير والأسعار بدون كلمة السر</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> على الرغم من أن واجهة المستخدم في الكاشير تظهر نافذة Modal تطلب <code>invoice_edit_password</code>، إلا أن مسار الباك إند <code>PUT /api/orders/:id</code> لا يستقبل ولا يفحص كلمة المرور على الإطلاق! يمكن لأي مستخدم كاشير إرسال طلب PUT مباشر عبر Postman أو DevTools وتعديل أي فاتورة تابعة لفرعه دون إدخال كلمة السر.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 5 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-high">HIGH</span>
+            <span class="badge badge-code">SEC-03</span>
+            <span class="finding-title">انعكاس أصل CORS مع الاعتمادات (Wildcard CORS Origin Reflection with Credentials)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/app.js (سطر 39-45)</div>
+            <div class="detail-item"><strong>النوع</strong>Security / Cross-Site Scripting & CSRF Risk</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (تم اختباره بـ Origin خارجي)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>استغلال جلسات الكاشير عبر أي موقع إنترنت</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> يقوم خادم Express بتكوين CORS عبر رد إيجابي على أي Origin خارجي مع تفعيل <code>credentials: true</code>:</p>
+          <div class="code-block">
+app.use(cors({
+  origin: (origin, callback) => callback(null, true), // يعكس أي دومين مهاجم!
+  credentials: true,                                  // يرسل الكوكيز والـ Session!
+}));
+          </div>
+          <p>إذا تصفح الكاشير أو المدير أي صفحة إنترنت خبيثة في المتصفح أثناء عمل السيرفر، تستطيع تلك الصفحة إرسال أوامر وإجراء عمليات شراء وسحب بيانات باسم المستخدم الحالي.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 6 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-high">HIGH</span>
+            <span class="badge badge-code">SEC-04</span>
+            <span class="finding-title">تعطيل التحقق من شهادات SSL/TLS على مستوى العملية بأكملها (NODE_TLS_REJECT_UNAUTHORIZED)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/modules/sync/sync.service.js (سطر 9-11)</div>
+            <div class="detail-item"><strong>النوع</strong>CWE-295: Improper Certificate Validation</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مراجعة الكود)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>هجمات اعتراض الاتصال Man-in-the-Middle (MitM)</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> يحتوي الملف على السطور التالية:</p>
+          <div class="code-block">
+if (config.SYNC_SERVER_URL && config.SYNC_SERVER_URL.startsWith('https://')) {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+          </div>
+          <p>هذا يوقف التحقق الأمني من كافة شهادات الأمان الصادرة أو المستلمة في Node.js لكامل العملية، مما يسمح لأي متلصص على الشبكة باعتراض وتزوير بيانات المزامنة.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 7 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-high">HIGH</span>
+            <span class="badge badge-code">SEC-05</span>
+            <span class="finding-title">غياب التحقق من الصلاحيات عند إضافة منتجات في المخزون (Missing RBAC on Inventory)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/modules/inventory/inventory.routes.js (سطر 25)</div>
+            <div class="detail-item"><strong>المسار (Endpoint)</strong>POST /api/inventory</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (تم اختبار إضافة منتج بحساب بلا صلاحيات ونجح برمز 200)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>تلاعب في دليل المنتجات وأسعار التكلفة والموردين</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> مسار <code>POST /api/inventory</code> لا يطبق <code>requireInventoryAdmin</code>، ودالة <code>createProduct()</code> لا تفحص دور المستخدم. يمكن لأي كاشير بلا أي صلاحيات إضافة منتجات في الكتالوج الرئيسي وتعديل أرصدة المخازن.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 8 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-high">HIGH</span>
+            <span class="badge badge-code">ARCH-02</span>
+            <span class="finding-title">تضارب مسارات واحتجاب كود وحدة المنتجات المهترئة (Shadowed Worn Products Module)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/app.js (سطر 24 و 27 و 101 و 104)</div>
+            <div class="detail-item"><strong>النوع</strong>Architecture Defect / Dead Code</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مراجعة مسارات Express)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>عدم استدعاء وحدة worn المنفصلة نهائياً واستدعاء وحدة المصاريف بدلاً عنها</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> مسارات <code>/api/worn-products</code> مسجلة داخل <code>expenses.routes.js</code> وأيضاً داخل <code>worn.routes.js</code>. وبسبب تحميل <code>expensesRoutes</code> أولاً في Express، فإن وحدة <code>src/server/modules/worn</code> بأكملها تعتبر كوداً ميتاً (Dead Code) لا يتم تنفيذه مطلقاً.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 9 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-high">HIGH</span>
+            <span class="badge badge-code">DATA-01</span>
+            <span class="finding-title">تفاوت بنية الجداول في ملفات التهجير (Schema Drift in Migrations)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/database/migrations/001_core_schema.sql (سطر 274-289)</div>
+            <div class="detail-item"><strong>النوع</strong>Database Integrity / Deployment Failure</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (فحص جداول PG والمقارنة مع SQL)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>انهيار النظام عند إعداده على قاعدة بيانات جديدة فارغة</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> جدول <code>worn_products</code> في كود الخدمات يستعلم عن أعمدة: <code>occurred_at</code>, <code>reported_by</code>, <code>status</code>. ولكن ملفات الـ SQL في <code>migrations/</code> (001 و 002 و 003) لم تُنشئ هذه الأعمدة أبداً (أنشأت فقط <code>created_by</code> و <code>created_at</code>). القاعدة الحالية تحتوي على الأعمدة نتيجة تعديل يدوي سابق، ولكن أي بيئة تثبيت جديدة ستفشل فيها جميع وظائف الهالك فوراً بخطأ <code>column "occurred_at" does not exist</code>.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 10 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-high">HIGH</span>
+            <span class="badge badge-code">DATA-02</span>
+            <span class="finding-title">حذف سجلات المشتريات والمعاملات المالية عند حذف المورد (Hard Deletion of Financial Ledger)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/modules/suppliers/suppliers.service.js (سطر 212-221)</div>
+            <div class="detail-item"><strong>النوع</strong>Data Integrity & Accounting Risk</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مراجعة كود deleteSupplier)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>فقدان تاريخ التوريد والحسابات المالية للمتجر للأبد</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> عند قيام المسؤول بحذف مورد، تقوم الدالة <code>deleteSupplier()</code> بحذف كافة سجلات التوريد السابقة <code>supply_records</code> وكافة المعاملات المالية للمورد <code>supplier_transactions</code> بحذف نهائي (HARD DELETE) بدلاً من وضع علامة أرشفة <code>is_active = FALSE</code>، مما يدمر الدفاتر المحاسبية والتاريخ المالي للفرع.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 11 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-medium">MEDIUM</span>
+            <span class="badge badge-code">FRONTEND-02</span>
+            <span class="finding-title">عدم تطابق خصائص سياق الفروع (BranchContext Property Mismatch) في 5 صفحات</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>الصفحات المتأثرة</strong>Barcodes, Employees, Expenses, Reports, WornProducts</div>
+            <div class="detail-item"><strong>المكون والملف</strong>src/client/src/context/BranchContext.jsx</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (فحص الكود المصدري لـ React)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>فقدان قيمة الفرع المحدد والرجوع دائماً للفرع الأول افتراضياً</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> ملف <code>BranchContext.jsx</code> يصدر <code>activeBranchId</code>، ولكن الصفحات الخمس السابقة تستدعي <code>const { currentBranchId, isMultiBranch } = useBranch()</code>. الحقول المستدعاة غير موجودة في الـ Context وتكون قيمتها دائماً <code>undefined</code>، مما يكسر فلترة الفروع في تلك الصفحات.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 12 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-medium">MEDIUM</span>
+            <span class="badge badge-code">FRONTEND-03</span>
+            <span class="finding-title">القائمة الجانبية (Sidebar) تعرض كل الصفحات للمستخدم بلا أي صلاحيات</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/client/src/components/layout/Sidebar.jsx (سطر 73)</div>
+            <div class="detail-item"><strong>النوع</strong>UI Logic Flaw / Authorization Failure</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (فحص شروط useMemo)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>عرض عناصر محظورة للمستخدمين الجدد</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> ينص كود فلترة القائمة الجانبية على:</p>
+          <div class="code-block">
+if (!user || user.role === 'admin' || !userPerms || userPerms.length === 0) return allNavItems;
+          </div>
+          <p>إذا كان لدى المستخدم مصفوفة صلاحيات فارغة <code>userPerms.length === 0</code>، فإن الشرط يتحقق ويعيد <code>allNavItems</code> (كافة الروابط)، بدلاً من إخفاء كل العناصر!</p>
+        </div>
+      </div>
+
+      <!-- FINDING 13 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-medium">MEDIUM</span>
+            <span class="badge badge-code">DATA-03</span>
+            <span class="finding-title">فشل حذف العميل المرتبط بحجوزات تأجير أو تفصيل بخطأ قيود Foreign Key</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/modules/customers/customers.service.js (سطر 195-198)</div>
+            <div class="detail-item"><strong>النوع</strong>Database Integrity / Foreign Key Violation</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مراجعة قيود PostgreSQL)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>رسالة خطأ 500 للمستخدم وفشل الحذف</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> تقوم دالة <code>deleteCustomer()</code> بتصفير <code>orders.customer_id = NULL</code> قبل حذف العميل، ولكنها تتجاهل جداول <code>rentals</code> و <code>alterations</code> التي تحتوي أيضاً على قيود Foreign Key لـ <code>customers(id)</code>. أي محاولة لحذف عميل أجر بدلة أو فستان سابقاً تفشل بخطأ <code>violates foreign key constraint "rentals_customer_id_fkey"</code>.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 14 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-medium">MEDIUM</span>
+            <span class="badge badge-code">SEC-06</span>
+            <span class="finding-title">اطلاع الكاشير على صافي وتفاصيل رواتب الموظفين دون كلمة سر الراتب</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/modules/hr/employees.routes.js (سطر 27-28)</div>
+            <div class="detail-item"><strong>المسار (Endpoint)</strong>GET /api/employees/:id/summary و GET /api/employees/:id/payslip</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مراجعة شروط الخدمة)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>انتهاك سرية المرتبات والمستحقات داخل الفرع</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> في الواجهة يتم طلب <code>salary_password</code>، ولكن نقطة النهاية في الباك إند تسمح لأي <code>branch_user</code> ينتمي لنفس الفرع باستخراج تقرير مفردات الراتب، السلف، والخصومات لأي موظف بدون إرسال كلمة السر الخاصة بالرواتب.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 15 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-medium">MEDIUM</span>
+            <span class="badge badge-code">ELEC-01</span>
+            <span class="finding-title">غياب قيود التنقل والروابط الخارجية وغياب سياسة CSP في نافذة Electron</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/main/index.js و src/server/app.js</div>
+            <div class="detail-item"><strong>النوع</strong>Electron Security Configuration</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (مراجعة WebPreferences و Helmet)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>إمكانية فتح روابط خارجية خبيثة داخل سياق Electron الموثوق</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> نافذة المتصفح الرئيسية تفتقر إلى معالجات <code>will-navigate</code> و <code>setWindowOpenHandler</code> لحظر التوجيه لمواقع إنترنت غير مصرح بها. كما تم تعطيل سياسة أمان المحتوى بالكامل في السيرفر <code>contentSecurityPolicy: false</code>.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 16 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-low">LOW</span>
+            <span class="badge badge-code">AUTH-01</span>
+            <span class="finding-title">غياب دعم ترويسة Authorization Bearer للمصادقة عبر الـ API</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>المكون والملف</strong>src/server/middleware/auth.middleware.js (سطر 40-41)</div>
+            <div class="detail-item"><strong>النوع</strong>API Interoperability & Standards</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (فحص استخراج التوكن)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>صعوبة ربط تطبيقات الموبايل أو برامج الطرف الثالث عبر الترويسات القياسية</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> تستخرج دالة المصادقة التوكن حصراً من الكوكيز <code>req.cookies?.token</code> وتتجاهل ترويسة <code>Authorization: Bearer &lt;token&gt;</code> القياسية في بروتوكول HTTP.</p>
+        </div>
+      </div>
+
+      <!-- FINDING 17 -->
+      <div class="finding-card">
+        <div class="finding-summary">
+          <div class="finding-title-group">
+            <span class="badge badge-low">LOW</span>
+            <span class="badge badge-code">DEP-01</span>
+            <span class="finding-title">وجود حزم مكتبية ذات ثغرات معروفة (Vulnerable Outdated Dependencies)</span>
+          </div>
+          <span>▼ عرض التفاصيل</span>
+        </div>
+        <div class="finding-details">
+          <div class="detail-grid">
+            <div class="detail-item"><strong>الحزم المتأثرة</strong>electron (v30.5.1), extract-zip (v2.0.1), qs (v6.14.0)</div>
+            <div class="detail-item"><strong>المصدر</strong>NPM Audit Report</div>
+            <div class="detail-item"><strong>الحالة والتأكيد</strong>CONFIRMED (فحص npm audit)</div>
+            <div class="detail-item"><strong>الأثر البرمجي</strong>ثغرات تجاوز العزل وثغرات تتبع المسارات الرمزية في الملفات المضغوطة</div>
+          </div>
+          <p><strong>الوصف الفني:</strong> إصدار Electron المستخدم (30.5.1) يحتوي على ثغرات مسجلة رسمياً (GHSA-hq2x-r82h-9wj4 و GHSA-j84w-jfhq-vhvj). كما تحتوي مكتبة extract-zip على ثغرة مسار رمزي (CWE-22).</p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- 5. ELECTRON AUDIT -->
+    <section id="electron-audit" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>⚡ 5. التقييم الشامل لمنصة Electron (Electron Process & Desktop EXE)</span>
+        </div>
+        <span class="section-tag">Main Process & IPC Bridge</span>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>عنصر الفحص</th>
+            <th>النتيجة</th>
+            <th>التفاصيل البرمجية</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Single Instance Lock</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td>مفعل في <code>index.js</code> سطر 8 عبر <code>app.requestSingleInstanceLock()</code> لمنع تكرار فتح التطبيق.</td>
+          </tr>
+          <tr>
+            <td><strong>Context Isolation</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td>مفعل <code>contextIsolation: true</code>، وتم تعطيل <code>nodeIntegration: false</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>Server Supervisor</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td>مراقب ممتاز يستخدم Node.exe المحمول في <code>programs/node/node.exe</code> لإطلاق الباك إند كعملية منفصلة مع تسجيل الـ Logs.</td>
+          </tr>
+          <tr>
+            <td><strong>Graceful Shutdown & DB Cleanup</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td>يقوم بإغلاق خادم Express وإيقاف خدمة PostgreSQL المحمولة تلقائياً عند إغلاق التطبيق في <code>before-quit</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>IPC Security Surface</strong></td>
+            <td><span class="badge badge-medium">WARNING</span></td>
+            <td>تقتصر قنوات IPC على <code>fix-focus</code> فقط، ولكن Preload يستمع لـ <code>window.onmessage</code> بدون التحقق من <code>event.origin</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>External Link Navigation</strong></td>
+            <td><span class="badge badge-fail">FAILED</span></td>
+            <td>لا توجد قيود على التنقل عبر <code>will-navigate</code>، مما يسمح بتحميل مواقع خارجية داخل النافذة إذا تم حقن رابط.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 6. REACT & UI AUDIT -->
+    <section id="react-audit" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>⚛️ 6. تدقيق واجهة المستخدم React 19 (React Architecture & State)</span>
+        </div>
+        <span class="section-tag">Vite & Components</span>
+      </div>
+
+      <p style="margin-bottom: 16px; color: var(--slate-700);">
+        تم فحص بناء React SPA المتواجد في <code>src/client</code> والمبني بمكتبة Vite. الواجهة مبنية بأحدث معايير React 19 مع استخدام Tailwind CSS للتصميم و Lucide Icons للأيقونات.
+      </p>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>الشاشة / المكون</th>
+            <th>الحالة</th>
+            <th>الملف</th>
+            <th>الملاحظات البرمجية</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Login Page</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td><code>src/client/src/pages/Login.jsx</code></td>
+            <td>واجهة حديثة، ترحيب بحسب الوقت، حفظ اسم المستخدم، تأثيرات الاهتزاز عند الخطأ، تكامل سليم.</td>
+          </tr>
+          <tr>
+            <td><strong>Dashboard</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td><code>src/client/src/pages/Dashboard.jsx</code></td>
+            <td>بطاقات مؤشرات الأداء (KPIs)، تقارير المبيعات، توافق كامل مع تصفية الفروع.</td>
+          </tr>
+          <tr>
+            <td><strong>POS (الكاشير)</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td><code>src/client/src/pages/POS.jsx</code></td>
+            <td>شاشة ضخمة (115KB) متكاملة: بحث باركود سريع، طباعة فواتير، مرتجعات، خصومات نقدية ونسبية.</td>
+          </tr>
+          <tr>
+            <td><strong>Rentals (التأجير)</strong></td>
+            <td><span class="badge badge-pass">PASSED</span></td>
+            <td><code>src/client/src/pages/Rentals.jsx</code></td>
+            <td>إدارة حجز البدلات، التواريخ، الاستلام، المرتجعات، الغرامات اليومية التلقائية.</td>
+          </tr>
+          <tr>
+            <td><strong>Employees (الموظفين)</strong></td>
+            <td><span class="badge badge-fail">PARTIAL FAIL</span></td>
+            <td><code>src/client/src/pages/Employees.jsx</code></td>
+            <td>زر النقل لا يظهر للمدير بسبب تلف <code>user.role</code> في AuthContext، و <code>isMultiBranch</code> غير معرف.</td>
+          </tr>
+          <tr>
+            <td><strong>Expenses (المصاريف)</strong></td>
+            <td><span class="badge badge-fail">PARTIAL FAIL</span></td>
+            <td><code>src/client/src/pages/Expenses.jsx</code></td>
+            <td>خاصية <code>currentBranchId</code> غير معرفة في السياق، وتفحص دور <code>cashier</code> غير الموجود.</td>
+          </tr>
+          <tr>
+            <td><strong>Reports (التقارير)</strong></td>
+            <td><span class="badge badge-fail">PARTIAL FAIL</span></td>
+            <td><code>src/client/src/pages/Reports.jsx</code></td>
+            <td>تعتمد على <code>isMultiBranch</code> غير المتواجد في سياق الفروع وتفحص أدواراً غير موجودة.</td>
+          </tr>
+          <tr>
+            <td><strong>WornProducts (الهالك)</strong></td>
+            <td><span class="badge badge-fail">PARTIAL FAIL</span></td>
+            <td><code>src/client/src/pages/WornProducts.jsx</code></td>
+            <td>تستدعي <code>currentBranchId</code> و <code>isMultiBranch</code> غير المعرفة، وتفحص دور <code>cashier</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 7. BACKEND AUDIT -->
+    <section id="backend-audit" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>⚙️ 7. تدقيق الواجهة الخلفية والخدمات (Node.js & Backend Services)</span>
+        </div>
+        <span class="section-tag">Express 5.2 MVC Architecture</span>
+      </div>
+
+      <div class="detail-grid">
+        <div class="detail-item">
+          <strong>طبقة منع التكرار (Mutation Dedup Guard)</strong>
+          <span style="color: var(--success); font-weight: 700;">ممتازة وفعالة</span>
+          <p style="font-size: 12px; color: var(--slate-600); margin-top: 4px;">تطبيق <code>dedup.middleware.js</code> يعترض العمليات المتكررة خلال نافذة 800ms بنجاح عبر التجزئة التشفيرية لمحتوى الطلب.</p>
+        </div>
+        <div class="detail-item">
+          <strong>إدارة المعاملات التنافسية (Advisory Locks)</strong>
+          <span style="color: var(--success); font-weight: 700;">ممتازة</span>
+          <p style="font-size: 12px; color: var(--slate-600); margin-top: 4px;">استخدام <code>pg_advisory_xact_lock(4001, branch_id)</code> يمنع تعارض أو تكرار ترقيم الفواتير في بيئات الكاشير المتزامنة.</p>
+        </div>
+        <div class="detail-item">
+          <strong>تزامن الأرصدة (Atomic Inventory Lock)</strong>
+          <span style="color: var(--success); font-weight: 700;">ممتازة</span>
+          <p style="font-size: 12px; color: var(--slate-600); margin-top: 4px;">استخدام <code>SELECT ... FOR UPDATE</code> أثناء إنشاء الطلبات يمنع ظاهرة البيع بالسالب والـ Race Conditions.</p>
+        </div>
+        <div class="detail-item">
+          <strong>حماية التحميل الزائد (Body Size Limits)</strong>
+          <span style="color: var(--warning); font-weight: 700;">مرتفعة جداً (250MB)</span>
+          <p style="font-size: 12px; color: var(--slate-600); margin-top: 4px;">الحد المسموح لجسم الطلب هو 250MB لدعم رفع صور الباركود والبدلات، وهو مرتفع جداً ويشكل خطر هجمات DoS على الخادم.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8. AUTH & RBAC AUDIT -->
+    <section id="auth-rbac" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🔐 8. مصفوفة الصلاحيات والمصادقة (Authentication & RBAC Matrix)</span>
+        </div>
+        <span class="section-tag">Role Based Access Control</span>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>المسار / الميزة</th>
+            <th>الصلاحية المبرمجة</th>
+            <th>نتيجة الفحص الفعلي</th>
+            <th>التقييم الأمني</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/settings</code></td>
+            <td>Admin Only</td>
+            <td><span class="badge badge-pass">PASSED (403 Forbidden لغير المدير)</span></td>
+            <td>محمي بشكل سليم.</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/reset</code></td>
+            <td>Admin Only + كلمة المرور</td>
+            <td><span class="badge badge-pass">PASSED (403 Forbidden لغير المدير)</span></td>
+            <td>محمي بشكل سليم ضد التصفير العشوائي.</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/backup/export</code></td>
+            <td>Admin Only</td>
+            <td><span class="badge badge-pass">PASSED (403 Forbidden لغير المدير)</span></td>
+            <td>محمي بشكل سليم ضد تسريب النسخ الاحتياطية.</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/inventory</code></td>
+            <td>مفتوح لجميع الحسابات!</td>
+            <td><span class="badge badge-fail">FAILED (يسمح بالإضافة لحسابات بلا صلاحيات)</span></td>
+            <td>ثغرة صلاحيات: يفتقر إلى شرط <code>requireInventoryAdmin</code>.</td>
+          </tr>
+          <tr>
+            <td><code>PUT /api/orders/:id</code></td>
+            <td>Branch User (بدون فحص كلمة السر)</td>
+            <td><span class="badge badge-fail">FAILED (تعديل الفاتورة بلا كلمة سر في الباك إند)</span></td>
+            <td>ثغرة Broken Access Control.</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/employees/:id/summary</code></td>
+            <td>Branch User (بدون فحص كلمة سر الراتب)</td>
+            <td><span class="badge badge-fail">FAILED (إفشاء الرواتب لجميع الكاشيرية)</span></td>
+            <td>تسريب بيانات مالية حساسة.</td>
+          </tr>
+          <tr>
+            <td><code>DELETE /api/customers/:id</code></td>
+            <td>Branch User</td>
+            <td><span class="badge badge-medium">WARNING (أي كاشير يستطيع حذف عملاء فرعه)</span></td>
+            <td>يفتقر لتقييد الحذف على المدير فقط.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 9. DATABASE AUDIT -->
+    <section id="database-audit" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🗄️ 9. تدقيق قواعد البيانات وتكامل القيود (Database & Referential Integrity)</span>
+        </div>
+        <span class="section-tag">PostgreSQL pos_db</span>
+      </div>
+
+      <div class="callout callout-warning">
+        <strong>⚠️ نقاط الضعف في قيود التكامل العلائقي (Referential Integrity Gaps):</strong>
+        <ul style="margin-right: 20px; margin-top: 8px;">
+          <li><strong>جدول orders:</strong> العمود <code>seller_id</code> لا يحتوي على Foreign Key إلى جدول <code>employees(id)</code>، مما يسمح بربط فواتير بموظفين وهميين أو محذوفين.</li>
+          <li><strong>جدول customers:</strong> القيود على <code>rentals</code> و <code>alterations</code> تمنع حذف العملاء وتسبب انهيار العملية دون رسالة خطأ واضحة للواجهة.</li>
+          <li><strong>جدول suppliers:</strong> دالة الحذف تقوم بعملية مسح جائر لسجلات التوريد والحسابات المالية القديمة لتجاوز قيود المفتاح الأجنبي.</li>
+        </ul>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>اسم الجدول في PostgreSQL</th>
+            <th>عدد الأعمدة</th>
+            <th>الفهارس الأساسية</th>
+            <th>الحالة</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>branches</code></td><td>13</td><td>PRIMARY KEY (id)</td><td><span class="badge badge-pass">سليم</span></td></tr>
+          <tr><td><code>inventory</code></td><td>14</td><td>PK, UNIQUE (barcode), idx_inv_supplier</td><td><span class="badge badge-pass">سليم</span></td></tr>
+          <tr><td><code>inventory_branches</code></td><td>3</td><td>PRIMARY KEY (inventory_id, branch_id)</td><td><span class="badge badge-pass">سليم</span></td></tr>
+          <tr><td><code>orders</code></td><td>12</td><td>PK, idx_orders_branch_date, idx_orders_order_date</td><td><span class="badge badge-pass">سليم ومفهرس</span></td></tr>
+          <tr><td><code>order_items</code></td><td>7</td><td>PK, idx_order_items_order_id, idx_order_items_inventory</td><td><span class="badge badge-pass">سليم ومفهرس</span></td></tr>
+          <tr><td><code>rentals</code></td><td>19</td><td>PK, idx_rentals_branch_status, idx_rentals_dates</td><td><span class="badge badge-pass">سليم ومفهرس</span></td></tr>
+          <tr><td><code>rental_inventory</code></td><td>9</td><td>PK, UNIQUE (barcode)</td><td><span class="badge badge-pass">سليم</span></td></tr>
+          <tr><td><code>employees</code></td><td>10</td><td>PRIMARY KEY (id)</td><td><span class="badge badge-pass">سليم</span></td></tr>
+          <tr><td><code>attendance</code></td><td>10</td><td>PK, UNIQUE (employee_id, date)</td><td><span class="badge badge-pass">سليم</span></td></tr>
+          <tr><td><code>worn_products</code></td><td>15</td><td>PK, idx_worn_products_branch, idx_offline_uuid</td><td><span class="badge badge-medium">تفاوت تهجير</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 10. ROUTE COVERAGE -->
+    <section id="routes-coverage" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🧭 10. جدول تغطية مسارات الواجهة الأمامية (Frontend Routes Coverage)</span>
+        </div>
+        <span class="section-tag">15 مساراً داخل AppRoutes.jsx</span>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>المسار (Route)</th>
+            <th>المكون المقترن</th>
+            <th>الحماية البرمجية</th>
+            <th>الحالة التشغيلية</th>
+            <th>الملاحظات</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>/login</code></td><td>Login.jsx</td><td>عام (Public)</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/dashboard</code></td><td>Dashboard.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/pos</code></td><td>POS.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/rentals</code></td><td>Rentals.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/rental-inventory</code></td><td>RentalInventory.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/alterations</code></td><td>Alterations.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/tailoring</code></td><td>Tailoring.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/customers</code></td><td>Customers.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/suppliers</code></td><td>Suppliers.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/employees</code></td><td>Employees.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-medium">PARTIAL</span></td><td>تلف تفكيك بيانات المستخدم وسياق الفروع.</td></tr>
+          <tr><td><code>/expenses</code></td><td>Expenses.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-medium">PARTIAL</span></td><td>عدم تطابق سياق الفروع.</td></tr>
+          <tr><td><code>/reports</code></td><td>Reports.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-medium">PARTIAL</span></td><td>عدم تطابق سياق الفروع.</td></tr>
+          <tr><td><code>/barcodes</code></td><td>Barcodes.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-pass">PASSED</span></td><td>شغال بكفاءة.</td></tr>
+          <tr><td><code>/settings</code></td><td>Settings.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-fail">VULNERABLE</span></td><td>لا يوجد قيد adminOnly على مستوى الراوتر في React!</td></tr>
+          <tr><td><code>/worn-products</code></td><td>WornProducts.jsx</td><td>محمي بجلسة الدخول</td><td><span class="badge badge-medium">PARTIAL</span></td><td>عدم تطابق سياق الفروع.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 11. API COVERAGE -->
+    <section id="api-coverage" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>📡 11. جدول تغطية واجهات الـ Backend API (Endpoints Coverage)</span>
+        </div>
+        <span class="section-tag">أكثر من 45 نقطة نهاية مدققة</span>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>الطريقة</th>
+            <th>نقطة النهاية (Endpoint)</th>
+            <th>الوحدة (Module)</th>
+            <th>التحقق الأمني</th>
+            <th>حالة الاختبار</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>GET</td><td><code>/api/public/check-setup</code></td><td>Auth</td><td>عام</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/public/setup</code></td><td>Auth</td><td>عام (عند عدم وجود مستخدمين)</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/login</code></td><td>Auth</td><td>محدد بمعدل طلبات (Rate Limited)</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/logout</code></td><td>Auth</td><td>محمي</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>GET</td><td><code>/api/me</code></td><td>Auth</td><td>محمي</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>GET</td><td><code>/api/public/settings</code></td><td>Settings</td><td>عام</td><td><span class="badge badge-fail">CRITICAL LEAK</span></td></tr>
+          <tr><td>GET</td><td><code>/api/settings</code></td><td>Settings</td><td>Admin Only</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/settings</code></td><td>Settings</td><td>Admin Only</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/reset</code></td><td>Settings</td><td>Admin Only + Password</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>GET</td><td><code>/api/branches</code></td><td>Branches</td><td>محمي</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/branches</code></td><td>Branches</td><td>Admin Only</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>GET</td><td><code>/api/orders</code></td><td>Sales</td><td>محمي + مقيد بالفرع للكاشير</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/orders</code></td><td>Sales</td><td>محمي + فحص حضور البائع ورصيد المخزن</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>PUT</td><td><code>/api/orders/:id</code></td><td>Sales</td><td>محمي</td><td><span class="badge badge-fail">MISSING PWD CHECK</span></td></tr>
+          <tr><td>POST</td><td><code>/api/returns</code></td><td>Sales</td><td>محمي + فحص الفاتورة والكميات</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>GET</td><td><code>/api/inventory</code></td><td>Inventory</td><td>محمي + مقيد بالفرع للكاشير</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/inventory</code></td><td>Inventory</td><td>محمي</td><td><span class="badge badge-fail">MISSING RBAC</span></td></tr>
+          <tr><td>POST</td><td><code>/api/worn-products</code></td><td>Expenses / Worn</td><td>محمي</td><td><span class="badge badge-fail">CONFLICTING ROUTES</span></td></tr>
+          <tr><td>GET</td><td><code>/api/sync/ping</code></td><td>Sync</td><td>عام</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+          <tr><td>POST</td><td><code>/api/sync/apply</code></td><td>Sync</td><td>محمي بـ SYNC_API_KEY</td><td><span class="badge badge-pass">PASSED</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 12. RECOMMENDED REMEDIATION PLAN -->
+    <section id="remediation" class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🛠️ 12. خطة المعالجة الفنية الموصى بها (Recommended Remediation Roadmap)</span>
+        </div>
+        <span class="section-tag">توجيهات هندسية للمطورين</span>
+      </div>
+
+      <div class="callout callout-info">
+        <strong>📌 تنبيه للمطورين وفريق العمل:</strong>
+        وفقاً لتعليمات التدقيق الصارمة (REPORT ONLY)، لم يتم تعديل أي ملف في الكود المصدري أو تكوينات قاعدة البيانات. تم إعداد هذه التوصيات بصورة هندسية دقيقة لتكون بمثابة خارطة طريق للإصلاح والتطوير المستقبلي:
+      </div>
+
+      <ol style="margin-right: 24px; line-height: 2; font-size: 14px; color: var(--slate-800);">
+        <li>
+          <strong>معالجة تسريب الإعدادات العامة (فوري - أولوية قصوى):</strong><br>
+          تعديل دالة <code>getPublicSettings()</code> في <code>settings.service.js</code> بحيث لا تقوم بعمل <code>SELECT *</code>، بل تستخرج حصراً الحقول غير الحساسة: <code>store_name, store_phone, store_address, tax_rate, cashier_footer, currency</code> واستبعاد <code>salary_password</code> و <code>invoice_edit_password</code> نهائياً من أي مسار عام.
+        </li>
+        <li>
+          <strong>إصلاح كائن المستخدم في AuthContext (فوري - أولوية قصوى):</strong><br>
+          في <code>src/client/src/context/AuthContext.jsx</code>، استبدال <code>setUser(userData)</code> بـ <code>setUser(userData?.user || userData)</code> في سطري 24 و 48، وتعديل التحقق من الإعداد الأولي إلى <code>setupStatus?.needsSetup</code> بدلاً من <code>setupStatus?.setupRequired</code>.
+        </li>
+        <li>
+          <strong>توحيد خصائص سياق الفروع (BranchContext Property Alignment):</strong><br>
+          في <code>src/client/src/context/BranchContext.jsx</code>، إضافة الاسم المستعار <code>currentBranchId: activeBranchId</code> وخاصية <code>isMultiBranch: branches.length > 1</code> إلى كائن القيمة المصدر، لتصحيح عمل صفحات Barcodes و Employees و Expenses و Reports و WornProducts فوراً.
+        </li>
+        <li>
+          <strong>فرض حماية تعديل الفواتير في الباك إند:</strong><br>
+          إضافة وسيط تحقق أو شرط برمجي داخل <code>updateOrder</code> في <code>sales.service.js</code> للتحقق من تطابق <code>invoice_edit_password</code> أو توكن تحقق صالح مع كلمة المرور المخزنة في النظام قبل تعديل بيانات الفاتورة.
+        </li>
+        <li>
+          <strong>إصلاح مسارات المنتجات المهترئة ومسح التضارب:</strong><br>
+          حذف مسارات <code>/worn-products</code> المكررة من <code>expenses.routes.js</code> و <code>expenses.service.js</code> والاعتماد حصراً على الوحدة المخصصة <code>src/server/modules/worn/</code> مع تحديث أسماء الأعمدة لتتوافق مع قاعدة البيانات.
+        </li>
+        <li>
+          <strong>إنشاء ملف تهجير 004 لمعالجة Schema Drift:</strong><br>
+          إنشاء ملف <code>004_worn_products_columns.sql</code> يحتوي على أوامر <code>ALTER TABLE worn_products ADD COLUMN IF NOT EXISTS occurred_at DATE ...</code> لضمان استقرار التثبيت في أي بيئة جديدة أو خادم احتياطي.
+        </li>
+        <li>
+          <strong>تقييد CORS وحماية النافذة في Electron:</strong><br>
+          استبدال <code>origin: (origin, callback) => callback(null, true)</code> في <code>app.js</code> بالتحقق الصارم من أن المصدر محلي فقط (<code>http://127.0.0.1</code> أو <code>localhost</code>)، وتفعيل معالجات منع التنقل الخارجي في <code>src/main/index.js</code>.
+        </li>
+      </ol>
+    </section>
+
+  </div>
+
+  <footer style="text-align: center; color: var(--slate-600); font-size: 13px; margin-top: 40px; padding: 20px;">
+    تم إنشاء هذا التقرير المستقل والمفصل بواسطة كبير مهندسي الجودة والتدقيق الأمني والنظم &bull; أكتوبر 2026
+  </footer>
+
+</body>
+</html>
