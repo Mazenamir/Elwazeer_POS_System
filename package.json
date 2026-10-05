@@ -4,25 +4,46 @@
   "description": "Bebyoon / El-Wazeer POS & Management System",
   "main": "src/main/index.js",
   "scripts": {
+    "prestart": "node -e \"const fs = require('fs'); if (!fs.existsSync('dist/renderer/index.html')) { require('child_process').execSync('npm run build:client', { stdio: 'inherit' }); }\"",
     "start": "electron .",
+    "build": "vite build",
     "server": "node src/server/server.js",
+    "dev:client": "vite",
+    "dev:electron": "electron . --dev",
+    "dev:web": "concurrently -k -n server,client -c blue,green \"npm run server\" \"npm run dev:client\"",
+    "dev": "concurrently -k -n server,client,electron -c blue,green,magenta \"npm run server\" \"npm run dev:client\" \"electron . --dev --external-server\"",
+    "build:client": "vite build",
+    "build:css": "tailwindcss -i ./src/renderer/assets/css/tailwind-input.css -o ./src/renderer/assets/css/tailwind.min.css --minify",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
+    "jsbarcode": "^3.12.3",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.20.0"
+    "lucide-react": "^1.49.0",
+    "pg": "^8.20.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
-    "electron": "^30.0.0",
-    "electron-builder": "^26.15.3"
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.1",
+    "concurrently": "^10.0.5",
+    "electron": "^30.5.1",
+    "electron-builder": "^26.15.3",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.17",
+    "vite": "^8.3.1"
   },
   "build": {
     "appId": "com.bebyoon.system",
