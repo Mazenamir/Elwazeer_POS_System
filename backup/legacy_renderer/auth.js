@@ -768,6 +768,7 @@ async function playCheckoutReminderBell(force = false) {
             try { node.disconnect?.(); } catch {}
         });
         state.bellPlaying = false;
+        try { ctx.suspend?.(); } catch {}
     }, CHECKOUT_REMINDER_BELL_MS + 250);
 }
 
@@ -936,8 +937,13 @@ function installCheckoutReminderEvents() {
     if (window.__checkoutReminderEventsInstalled) return;
     window.__checkoutReminderEventsInstalled = true;
 
-    document.addEventListener('pointerdown', unlockCheckoutReminderAudio);
-    document.addEventListener('keydown', unlockCheckoutReminderAudio);
+    const unlockOnce = () => {
+        const state = getCheckoutReminderState();
+        if (state.audibleReminders?.length) {
+            unlockCheckoutReminderAudio();
+        }
+    };
+    document.addEventListener('pointerdown', unlockOnce, { once: true, passive: true });
 
     document.addEventListener('click', event => {
         const navButton = event.target.closest?.('#checkout-reminder-nav-button');
@@ -1249,8 +1255,11 @@ window.syncNow = async function() {
 
 document.addEventListener('DOMContentLoaded', () => {
     if (window.location.pathname === '/login.html' || window.location.pathname === '/setup.html') return;
-    window.syncNow();
-    setInterval(() => window.syncNow(), BACKGROUND_SYNC_INTERVAL_MS);
+    window.syncNow().then(status => {
+        if (status && status.configured) {
+            setInterval(() => window.syncNow(), BACKGROUND_SYNC_INTERVAL_MS);
+        }
+    });
     window.addEventListener('online', () => window.syncNow());
 });
 

@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <title>Bebyoon Center - الموردين والمخزون</title>
+    <link href="assets/css/tailwind.min.css" rel="stylesheet"/>
     <script src="assets/js/tailwind.js"></script>
     <link href="assets/cairo.css" rel="stylesheet"/>
     <link href="assets/material-symbols.css" rel="stylesheet"/>
@@ -920,7 +921,7 @@
                                             <th class="px-6 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center">اللون</th>
                                             <th class="px-6 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center">المقاس</th>
                                             <th x-show="hasInventoryAdminAccess()" class="px-6 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center">المورد</th>
-                                            <th class="px-6 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center">المخزون</th>
+                                            <th class="px-4 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center min-w-[170px]">المخزون</th>
                                             <th class="px-6 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center">سعر البيع</th>
                                             <th x-show="hasInventoryAdminAccess()" class="px-6 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center">جملة</th>
                                             <th x-show="hasInventoryAdminAccess()" class="px-6 py-4 text-sm font-bold text-slate-200 uppercase tracking-widest text-center">نص جملة</th>
@@ -986,19 +987,53 @@
                                                             </div>
                                                         </template>
                                                         <template x-if="!window.currentUser || window.hasInventoryAllBranchesAccess(window.currentUser)">
-                                                            <div class="flex flex-col items-center gap-2">
-                                                                <div class="mb-1" x-show="!searchFilters.branch_id">
-                                                                    <span class="px-3 py-1 rounded-lg text-sm font-bold uppercase tracking-tight shadow-sm" :class="item.stock_level <= (item.min_stock_level ?? 5) ? 'bg-accent text-white' : 'bg-primary text-white'" x-text="'إجمالي: ' + item.stock_level"></span>
+                                                            <div class="flex flex-col items-center justify-center gap-1.5 w-full" x-data="{ showZeroBranches: false }">
+                                                                <!-- Total Stock Pill -->
+                                                                <div class="flex items-center justify-center" x-show="!searchFilters.branch_id">
+                                                                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black whitespace-nowrap shadow-sm"
+                                                                          :class="Number(item.stock_level || 0) <= 0 ? 'bg-red-600 text-white' : (Number(item.stock_level || 0) <= (item.min_stock_level ?? 5) ? 'bg-amber-500 text-white' : 'bg-slate-900 text-white')">
+                                                                        <span class="w-1.5 h-1.5 rounded-full" :class="Number(item.stock_level || 0) <= 0 ? 'bg-red-200' : (Number(item.stock_level || 0) <= (item.min_stock_level ?? 5) ? 'bg-amber-200 animate-pulse' : 'bg-emerald-400')"></span>
+                                                                        <span x-text="'إجمالي: ' + (item.stock_level || 0) + ' قطعة'"></span>
+                                                                    </span>
                                                                 </div>
-                                                                <div class="flex flex-wrap justify-center gap-1.5">
-                                                                    <template x-for="bs in item.branch_stocks" :key="bs.branch_id">
-                                                                        <template x-if="!searchFilters.branch_id || bs.branch_id == searchFilters.branch_id">
-                                                                            <div class="px-2 py-1 rounded text-[10px] font-black border transition-all"
-                                                                                 :class="bs.stock_level <= (item.min_stock_level ?? 5) ? 'bg-red-50 border-red-200 text-red-600 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600'">
-                                                                                <span x-text="getBranchName(bs.branch_id) + ':'"></span>
-                                                                                <span class="font-black" x-text="bs.stock_level"></span>
+
+                                                                <!-- Specific Branch Filter Selected -->
+                                                                <template x-if="searchFilters.branch_id">
+                                                                    <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black border whitespace-nowrap"
+                                                                         :class="(item.branch_stocks?.find(bs => bs.branch_id == searchFilters.branch_id)?.stock_level || 0) <= (item.min_stock_level ?? 5) ? 'bg-red-50 border-red-200 text-red-600' : 'bg-emerald-50 border-emerald-200 text-emerald-700'">
+                                                                        <span x-text="getBranchName(searchFilters.branch_id) + ':'"></span>
+                                                                        <span class="font-black" x-text="(item.branch_stocks?.find(bs => bs.branch_id == searchFilters.branch_id)?.stock_level || 0) + ' قطعة'"></span>
+                                                                    </div>
+                                                                </template>
+
+                                                                <!-- Branch Distribution (Only branches with stock > 0) -->
+                                                                <div x-show="!searchFilters.branch_id" class="flex flex-wrap items-center justify-center gap-1 max-w-[240px]">
+                                                                    <template x-for="bs in (item.branch_stocks || []).filter(b => Number(b.stock_level) > 0)" :key="bs.branch_id">
+                                                                        <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap shadow-2xs">
+                                                                            <span class="text-slate-500" x-text="getBranchName(bs.branch_id) + ':'"></span>
+                                                                            <span class="font-black text-primary" x-text="bs.stock_level"></span>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <!-- When no branch has stock -->
+                                                                    <template x-if="Number(item.stock_level || 0) <= 0 || !(item.branch_stocks || []).some(b => Number(b.stock_level) > 0)">
+                                                                        <span class="text-[10px] font-bold text-slate-400">غير متوفر بأي فرع</span>
+                                                                    </template>
+
+                                                                    <!-- Optional toggle for remaining 0-stock branches -->
+                                                                    <template x-if="(item.branch_stocks || []).some(b => Number(b.stock_level) === 0)">
+                                                                        <div class="w-full text-center">
+                                                                            <button @click.stop="showZeroBranches = !showZeroBranches" class="text-[9px] font-bold text-slate-400 hover:text-indigo-600 transition-colors inline-flex items-center gap-0.5 mt-0.5">
+                                                                                <span x-text="showZeroBranches ? '▲ إخفاء الفروع الفارغة' : '▼ باقي الفروع (0)'"></span>
+                                                                            </button>
+                                                                            <div x-show="showZeroBranches" class="mt-1 flex flex-wrap justify-center gap-1">
+                                                                                <template x-for="bs in (item.branch_stocks || []).filter(b => Number(b.stock_level) === 0)" :key="'zero-' + bs.branch_id">
+                                                                                    <div class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-50 text-slate-400 border border-slate-200/60 whitespace-nowrap">
+                                                                                        <span x-text="getBranchName(bs.branch_id) + ': 0'"></span>
+                                                                                    </div>
+                                                                                </template>
                                                                             </div>
-                                                                        </template>
+                                                                        </div>
                                                                     </template>
                                                                 </div>
                                                             </div>
@@ -2882,7 +2917,9 @@
 
                     this.$nextTick(() => this.setupNonNegativeNumberInputs());
                     this.initData();
-                    setInterval(() => this.refreshTransfers(), 30000);
+                    setInterval(() => {
+                        if (document.visibilityState === 'visible') this.refreshTransfers();
+                    }, 60000);
                 },
 
                 async initData() {

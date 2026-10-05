@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="light">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Bebyoon Center - تسجيل الدخول</title>
+    <link href="assets/css/tailwind.min.css" rel="stylesheet"/>
+    <script src="assets/js/tailwind.js"></script>
+    <link href="assets/cairo.css" rel="stylesheet"/>
+    <link href="assets/material-symbols.css" rel="stylesheet"/>
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #0b0f19;
+            color: #0f172a;
+        }
+
+        @keyframes pulseSlow {
+            0%, 100% { transform: scale(1); opacity: 0.35; }
+            50% { transform: scale(1.1); opacity: 0.55; }
+        }
+
+        @keyframes floatSubtle {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-6px); }
+            40%, 80% { transform: translateX(6px); }
+        }
+
+        .anim-pulse-slow {
+            animation: pulseSlow 8s ease-in-out infinite;
+        }
+
+        .anim-float {
+            animation: floatSubtle 5s ease-in-out infinite;
+        }
+
+        .anim-shake {
+            animation: shake 0.4s ease-in-out;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.94);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+        }
+
+        .brand-pattern {
+            background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+    </style>
+</head>
+<body class="min-h-screen antialiased flex items-center justify-center p-4 sm:p-6 lg:p-10 select-none overflow-x-hidden relative" x-data="loginApp()">
+
+    <!-- Ambient Glow Blobs in Background -->
+    <div class="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div class="absolute -top-32 -right-32 w-96 sm:w-[32rem] h-96 sm:h-[32rem] rounded-full bg-indigo-600/20 blur-[100px] anim-pulse-slow"></div>
+        <div class="absolute -bottom-32 -left-32 w-96 sm:w-[32rem] h-96 sm:h-[32rem] rounded-full bg-rose-600/15 blur-[100px] anim-pulse-slow" style="animation-delay: -4s;"></div>
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[40rem] h-[40rem] rounded-full bg-blue-600/10 blur-[130px]"></div>
+    </div>
+
+    <!-- Main Container Card -->
+    <main class="w-full max-w-5xl rounded-[2.5rem] bg-slate-900/90 border border-slate-800/80 shadow-2xl shadow-black/60 overflow-hidden relative z-10 flex flex-col lg:flex-row items-stretch min-h-[640px]">
+        
+        <!-- Left Side: Brand Showcase & Creative Visuals -->
+        <section class="lg:w-1/2 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/70 p-8 sm:p-12 flex flex-col justify-between relative overflow-hidden border-b lg:border-b-0 lg:border-l border-slate-800/60 brand-pattern">
+            
+            <!-- Ambient interior light -->
+            <div class="absolute top-0 right-0 w-72 h-72 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none"></div>
+            <div class="absolute bottom-0 left-0 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            <!-- Top Header & Brand Badge -->
+            <div class="relative z-10">
+                <div class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/15 text-slate-300 text-xs font-bold shadow-sm backdrop-blur-md">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 -mr-4"></span>
+                    <span>النظام متصل ومستقر</span>
+                </div>
+
+                <div class="mt-8 flex items-center gap-4">
+                    <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 p-0.5 shadow-xl shadow-indigo-500/20 anim-float">
+                        <div class="w-full h-full rounded-[14px] bg-slate-950 flex items-center justify-center overflow-hidden">
+                            <img src="logos/app-icon.png" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" class="w-12 h-12 object-contain" alt="Logo">
+                            <span class="material-symbols-outlined text-white text-3xl hidden">storefront</span>
+                        </div>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl sm:text-3xl font-black text-white tracking-tight login-brand-title" x-text="storeName">Bebyoon Center</h1>
+                        <p class="text-xs sm:text-sm font-semibold text-slate-400 mt-1">نظام إدارة المبيعات والمخزون والتأجير المتكامل</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Middle Feature Showcase Pills -->
+            <div class="my-10 space-y-3.5 relative z-10">
+                <div class="p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.08] backdrop-blur-sm flex items-center gap-3.5 transition-all hover:bg-white/[0.07] hover:border-white/15">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined text-xl">point_of_sale</span>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-black text-white">كاشير ونقاط بيع فورية</h4>
+                        <p class="text-[11px] font-medium text-slate-400 mt-0.5">فواتير بيع سريعة وإدارة ذكية للخصومات والمرتجع</p>
+                    </div>
+                </div>
+
+                <div class="p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.08] backdrop-blur-sm flex items-center gap-3.5 transition-all hover:bg-white/[0.07] hover:border-white/15">
+                    <div class="w-10 h-10 rounded-xl bg-violet-500/20 text-violet-400 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined text-xl">inventory_2</span>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-black text-white">إدارة مخزون وحجوزات دقيقة</h4>
+                        <p class="text-[11px] font-medium text-slate-400 mt-0.5">تتبع شامل للفروع، المقاسات، والباركود الذكي</p>
+                    </div>
+                </div>
+
+                <div class="p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.08] backdrop-blur-sm flex items-center gap-3.5 transition-all hover:bg-white/[0.07] hover:border-white/15">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined text-xl">offline_bolt</span>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-black text-white">عمل متواصل بدون انقطاع</h4>
+                        <p class="text-[11px] font-medium text-slate-400 mt-0.5">قاعدة بيانات محلية متوافقة مع وضع الأوفلاين السريع</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom System Info -->
+            <div class="pt-6 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 relative z-10">
+                <span class="font-bold flex items-center gap-1.5">
+                    <span class="material-symbols-outlined text-sm text-slate-400">shield_lock</span>
+                    نسخة النظام v1.0.4
+                </span>
+                <span class="font-medium" x-text="greetingText">مرحباً بك مجدداً</span>
+            </div>
+        </section>
+
+        <!-- Right Side: Clean Stylish Login Form -->
+        <section class="lg:w-1/2 bg-slate-900/60 p-8 sm:p-12 lg:p-14 flex flex-col justify-center relative">
+            <div class="w-full max-w-md mx-auto">
+                
+                <!-- Form Greeting Header -->
+                <div class="mb-8">
+                    <span class="text-xs font-extrabold uppercase tracking-wider text-indigo-400" x-text="greetingText">مساء الخير</span>
+                    <h2 class="text-2xl sm:text-3xl font-black text-white mt-1">تسجيل الدخول للنظام</h2>
+                    <p class="text-xs sm:text-sm font-semibold text-slate-400 mt-2">من فضلك قم بإدخال بيانات حسابك المعتمد للوصول للوحة التشغيل</p>
+                </div>
+
+                <!-- Error Message Banner -->
+                <div x-show="errorMessage" 
+                     x-cloak 
+                     :class="{ 'anim-shake': isShaking }"
+                     class="mb-6 p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-3 shadow-lg shadow-rose-950/30">
+                    <span class="material-symbols-outlined text-rose-400 text-lg shrink-0">error</span>
+                    <span x-text="errorMessage"></span>
+                </div>
+
+                <!-- Actual Form -->
+                <form @submit.prevent="login" class="space-y-5">
+                    
+                    <!-- Username Field -->
+                    <div>
+                        <label for="username-input" class="block text-xs font-extrabold text-slate-300 mb-2">اسم المستخدم</label>
+                        <div class="relative group">
+                            <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors pointer-events-none text-xl">person</span>
+                            <input id="username-input"
+                                   x-model="username" 
+                                   type="text" 
+                                   name="username"
+                                   autocomplete="username"
+                                   required
+                                   class="w-full bg-slate-950/60 border border-slate-700/80 rounded-2xl py-3.5 pr-12 pl-4 text-sm font-bold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all shadow-inner" 
+                                   placeholder="أدخل اسم المستخدم">
+                        </div>
+                    </div>
+
+                    <!-- Password Field -->
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label for="password-input" class="block text-xs font-extrabold text-slate-300">كلمة المرور</label>
+                        </div>
+                        <div class="relative group">
+                            <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors pointer-events-none text-xl">lock</span>
+                            <input id="password-input"
+                                   x-model="password" 
+                                   :type="showPassword ? 'text' : 'password'" 
+                                   name="password"
+                                   autocomplete="current-password"
+                                   enterkeyhint="go"
+                                   required
+                                   class="w-full bg-slate-950/60 border border-slate-700/80 rounded-2xl py-3.5 pr-12 pl-12 text-sm font-bold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all shadow-inner" 
+                                   placeholder="أدخل كلمة المرور">
+                            
+                            <!-- Toggle Password Visibility -->
+                            <button type="button" 
+                                    @click="showPassword = !showPassword" 
+                                    class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors p-1 flex items-center justify-center"
+                                    :aria-label="showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'">
+                                <span class="material-symbols-outlined text-lg" x-text="showPassword ? 'visibility_off' : 'visibility'"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Options: Remember Me -->
+                    <div class="flex items-center justify-between pt-1 text-xs">
+                        <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+                            <input type="checkbox" x-model="rememberMe" class="w-4 h-4 rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-indigo-500/30 focus:ring-offset-0 cursor-pointer accent-indigo-600">
+                            <span class="font-bold text-slate-400 hover:text-slate-300 transition-colors">تذكر اسم المستخدم</span>
+                        </label>
+                        <span class="text-slate-500 font-semibold flex items-center gap-1">
+                            <span class="material-symbols-outlined text-xs">keyboard</span>
+                            اضغط Enter للدخول
+                        </span>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" 
+                            :disabled="isLoading" 
+                            class="w-full py-4 mt-2 bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 hover:from-indigo-500 hover:to-indigo-500 text-white rounded-2xl text-sm font-black transition-all shadow-xl shadow-indigo-600/30 hover:shadow-indigo-600/40 active:scale-[0.99] flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span x-show="!isLoading" class="flex items-center gap-2">
+                            <span>تسجيل الدخول</span>
+                            <span class="material-symbols-outlined text-base">arrow_back</span>
+                        </span>
+                        <span x-show="isLoading" class="flex items-center gap-2 text-indigo-100" x-cloak>
+                            <span class="material-symbols-outlined animate-spin text-lg">progress_activity</span>
+                            <span>جاري التحقق والدخول...</span>
+                        </span>
+                    </button>
+                </form>
+
+                <!-- Footer Hint -->
+                <div class="mt-8 text-center">
+                    <p class="text-[11px] font-semibold text-slate-500">
+                        للحصول على مساعدة أو استعادة الصلاحيات، يرجى التواصل مع إدارة النظام.
+                    </p>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Alpine.js -->
+    <script defer src="assets/js/alpine.min.js"></script>
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('loginApp', () => ({
+                username: localStorage.getItem('bebyoon_remembered_username') || '',
+                password: '',
+                showPassword: false,
+                rememberMe: !!localStorage.getItem('bebyoon_remembered_username'),
+                errorMessage: '',
+                isLoading: false,
+                isShaking: false,
+                storeName: 'Bebyoon Center',
+                greetingText: 'مرحباً بك',
+
+                init() {
+                    this.calculateGreeting();
+                    this.fetchPublicSettings();
+                },
+
+                calculateGreeting() {
+                    const hour = new Date().getHours();
+                    if (hour >= 5 && hour < 12) {
+                        this.greetingText = 'صباح الخير ☀️';
+                    } else if (hour >= 12 && hour < 18) {
+                        this.greetingText = 'مساء الخير 🌤️';
+                    } else {
+                        this.greetingText = 'أهلاً بك 🌙';
+                    }
+                },
+
+                async fetchPublicSettings() {
+                    try {
+                        const res = await fetch('/api/public/settings');
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.store_name) {
+                                this.storeName = data.store_name;
+                                document.title = data.store_name + ' - تسجيل الدخول';
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Could not fetch public settings:', e);
+                    }
+                },
+
+                triggerShake() {
+                    this.isShaking = true;
+                    setTimeout(() => { this.isShaking = false; }, 450);
+                },
+
+                async login() {
+                    if (!this.username.trim() || !this.password) {
+                        this.errorMessage = 'الرجاء إدخال اسم المستخدم وكلمة المرور';
+                        this.triggerShake();
+                        return;
+                    }
+
+                    this.errorMessage = '';
+                    this.isLoading = true;
+
+                    try {
+                        const res = await fetch('/api/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                username: this.username.trim(), 
+                                password: this.password 
+                            })
+                        });
+
+                        const data = await res.json();
+                        
+                        if (!res.ok) {
+                            this.errorMessage = data.error || 'اسم المستخدم أو كلمة المرور غير صحيحة';
+                            this.isLoading = false;
+                            this.triggerShake();
+                            return;
+                        }
+
+                        // Remember username preference
+                        if (this.rememberMe) {
+                            localStorage.setItem('bebyoon_remembered_username', this.username.trim());
+                        } else {
+                            localStorage.removeItem('bebyoon_remembered_username');
+                        }
+
+                        // Success -> redirect to home dashboard
+                        window.location.href = '/index.html';
+                    } catch (err) {
+                        this.errorMessage = 'حدث خطأ في الاتصال بالخادم. يرجى المحاولة لاحقاً';
+                        this.isLoading = false;
+                        this.triggerShake();
+                    }
+                }
+            }));
+        });
+    </script>
+</body>
+</html>

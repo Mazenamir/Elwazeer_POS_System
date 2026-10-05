@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <title>Bebyoon Center - إدارة الموظفين</title>
+    <link href="assets/css/tailwind.min.css" rel="stylesheet"/>
     <script src="assets/js/tailwind.js"></script>
     <link href="assets/cairo.css" rel="stylesheet"/>
     <link href="assets/material-symbols.css" rel="stylesheet"/>
@@ -1637,9 +1638,15 @@
                     }
                 },
                 async openSummary(emp) {
+                    if (this.user?.role !== 'admin' && !this.salaryAuthVerified) {
+                        this.pendingAuthAction = () => this.openSummary(emp);
+                        this.openSalaryAuth();
+                        return;
+                    }
                     const empId = emp?.id || emp;
                     try {
-                        const res = await fetch(`/api/employees/${empId}/summary`);
+                        const headers = this.salaryAuthPassword ? { 'x-salary-password': this.salaryAuthPassword } : {};
+                        const res = await fetch(`/api/employees/${empId}/summary`, { headers });
                         if(res.ok) {
                             this.selectedSummaryEmployee = this.employees.find(e => Number(e.id) === Number(empId)) || emp;
                             this.activeSalarySummaryTab = 'daily';
@@ -1652,7 +1659,7 @@
                     }
                 },
                 async openPayslip(emp) {
-                    if (!this.salaryAuthVerified) {
+                    if (this.user?.role !== 'admin' && !this.salaryAuthVerified) {
                         this.pendingAuthAction = () => this.openPayslip(emp);
                         this.openSalaryAuth();
                         return;
@@ -1667,7 +1674,8 @@
                     if (!this.payslipEmployeeId || !this.payslipMonth || this.payslipLoading) return;
                     this.payslipLoading = true;
                     try {
-                        const res = await fetch(`/api/employees/${this.payslipEmployeeId}/payslip?month=${encodeURIComponent(this.payslipMonth)}`);
+                        const headers = this.salaryAuthPassword ? { 'x-salary-password': this.salaryAuthPassword } : {};
+                        const res = await fetch(`/api/employees/${this.payslipEmployeeId}/payslip?month=${encodeURIComponent(this.payslipMonth)}`, { headers });
                         if (res.ok) {
                             const data = await res.json();
                             data.employee = data.employee || { name: '', position: '', branch_name: '' };
