@@ -1,0 +1,2241 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Package,
+  Plus,
+  Search,
+  RotateCcw,
+  Edit2,
+  Trash2,
+  Building2,
+  Phone,
+  DollarSign,
+  ArrowRightLeft,
+  FileText,
+  Tag,
+  Receipt,
+  Download,
+  Barcode,
+  Layers,
+  CheckCircle2,
+  Sparkles,
+  Copy,
+  Printer,
+  Undo2,
+  Check,
+  X,
+  Truck,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { useBranch } from '../../context/BranchContext';
+import { useToast } from '../../context/ToastContext';
+import api from '../../api/client';
+import Button from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
+import Modal from '../../components/ui/Modal';
+import Badge from '../../components/ui/Badge';
+import { Card, CardHeader } from '../../components/ui/Card';
+
+const BASE_CATEGORIES = ['الكل', 'FORMAL SUIT', 'TUXEDO SUIT', 'SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'صديري', 'تيشيرت', 'جينز', 'KIDS', 'ترنج', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'إكسسوارات', 'WALLET', 'أخرى'];
+
+export function Suppliers() {
+  const { user, isAdmin } = useAuth();
+  const { activeBranchId, branches } = useBranch();
+  const toast = useToast();
+
+  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory' | 'suppliers'
+
+  // INVENTORY STATE
+  const [products, setProducts] = useState([]);
+  const [categoriesList, setCategoriesList] = useState(BASE_CATEGORIES);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [productSearch, setProductSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('الكل');
+  const [inventoryPagination, setInventoryPagination] = useState({
+    page: 1,
+    limit: 50,
+    total: 0,
+    totalPages: 1,
+  });
+
+  // Load Metadata categories
+  useEffect(() => {
+    api.get('/inventory/metadata')
+      .then((meta) => {
+        if (meta?.categories && Array.isArray(meta.categories)) {
+          const merged = Array.from(new Set([...BASE_CATEGORIES, ...meta.categories]));
+          setCategoriesList(merged);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Add / Edit Product Modal
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [productSubmitting, setProductSubmitting] = useState(false);
+  const [pName, setPName] = useState('');
+  const [pCategory, setPCategory] = useState('FORMAL SUIT');
+  const [pColor, setPColor] = useState('');
+  const [pSize, setPSize] = useState('');
+  const [pPrice, setPPrice] = useState('');
+  const [pCost, setPCost] = useState('');
+  const [pBarcode, setPBarcode] = useState('');
+  const [pStock, setPStock] = useState('0');
+  const [pMinStock, setPMinStock] = useState('5');
+  const [pImage, setPImage] = useState('');
+  const [pSupplierId, setPSupplierId] = useState('');
+
+  // Stock Transfer Modal
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferProduct, setTransferProduct] = useState(null);
+  const [toBranchId, setToBranchId] = useState('');
+  const [transferQty, setTransferQty] = useState('1');
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+
+  // Transfer to Rental Modal
+  const [showRentalTransferModal, setShowRentalTransferModal] = useState(false);
+  const [rentalProduct, setRentalProduct] = useState(null);
+  const [rentalPrice, setRentalPrice] = useState('');
+  const [rentalDeposit, setRentalDeposit] = useState('');
+  const [rentalCondition, setRentalCondition] = useState('ممتاز');
+  const [rentalNotes, setRentalNotes] = useState('');
+  const [rentalSubmitting, setRentalSubmitting] = useState(false);
+
+  // Duplicate Product Modal
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [dupSourceProduct, setDupSourceProduct] = useState(null);
+  const [dupColor, setDupColor] = useState('');
+  const [dupSize, setDupSize] = useState('');
+  const [dupBarcode, setDupBarcode] = useState('');
+  const [dupStock, setDupStock] = useState('1');
+  const [dupSubmitting, setDupSubmitting] = useState(false);
+
+  // Inter-Branch Requests
+  const [incomingRequests, setIncomingRequests] = useState([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
+
+  // SUPPLIERS STATE
+  const [suppliers, setSuppliers] = useState([]);
+  const [loadingSuppliers, setLoadingSuppliers] = useState(false);
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [supplierPagination, setSupplierPagination] = useState({
+    page: 1,
+    limit: 50,
+    total: 0,
+    totalPages: 1,
+  });
+
+  // Add / Edit Supplier Modal
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState(null);
+  const [supplierSubmitting, setSupplierSubmitting] = useState(false);
+  const [sName, setSName] = useState('');
+  const [sCompany, setSCompany] = useState('');
+  const [sPhone, setSPhone] = useState('');
+  const [sAddress, setSAddress] = useState('');
+  const [sNotes, setSNotes] = useState('');
+
+  // Supplier Statement Modal
+  const [showStatementModal, setShowStatementModal] = useState(false);
+  const [selectedSupplier, setSelectedSupplier] = useState(null);
+  const [statementData, setStatementData] = useState(null);
+  const [loadingStatement, setLoadingStatement] = useState(false);
+
+  // Supplier Payment Transaction Modal
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+
+  // Purchase Return to Supplier Modal
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnSupplierId, setReturnSupplierId] = useState('');
+  const [returnProductName, setReturnProductName] = useState('');
+  const [returnQuantity, setReturnQuantity] = useState('1');
+  const [returnUnitPrice, setReturnUnitPrice] = useState('');
+  const [returnNotes, setReturnNotes] = useState('');
+  const [returnSubmitting, setReturnSubmitting] = useState(false);
+
+  // Supply Batch / Restock Modal
+  const [showSupplyModal, setShowSupplyModal] = useState(false);
+  const [supplySupplierId, setSupplySupplierId] = useState('');
+  const [supplyProductId, setSupplyProductId] = useState('');
+  const [supplyQuantity, setSupplyQuantity] = useState('10');
+  const [supplyCostPrice, setSupplyCostPrice] = useState('');
+  const [supplyPaidAmount, setSupplyPaidAmount] = useState('0');
+  const [supplyNotes, setSupplyNotes] = useState('');
+  const [supplySubmitting, setSupplySubmitting] = useState(false);
+  const [supplyProductsList, setSupplyProductsList] = useState([]);
+  const [loadingSupplyProducts, setLoadingSupplyProducts] = useState(false);
+  const [supplyProductSearch, setSupplyProductSearch] = useState('');
+
+  // Fetch all products for supply restock modal when opened
+  useEffect(() => {
+    if (showSupplyModal) {
+      if (supplyProductsList.length === 0) {
+        setLoadingSupplyProducts(true);
+        api.get('/inventory?all=true')
+          .then((res) => {
+            const list = Array.isArray(res) ? res : res?.items || res?.data || [];
+            setSupplyProductsList(list);
+          })
+          .catch(() => {})
+          .finally(() => setLoadingSupplyProducts(false));
+      }
+    }
+  }, [showSupplyModal, supplyProductsList.length]);
+
+  const activeSupplyProducts = useMemo(() => {
+    const base = supplyProductsList.length > 0 ? supplyProductsList : products;
+    if (!supplyProductSearch.trim()) return base;
+    const term = supplyProductSearch.trim().toLowerCase();
+    return base.filter(
+      (p) =>
+        (p.name && p.name.toLowerCase().includes(term)) ||
+        (p.barcode && p.barcode.toLowerCase().includes(term)) ||
+        (p.category && p.category.toLowerCase().includes(term)) ||
+        (p.color && p.color.toLowerCase().includes(term)) ||
+        String(p.id).includes(term)
+    );
+  }, [supplyProductsList, products, supplyProductSearch]);
+
+  // Load Inventory Products
+  const fetchProducts = useCallback(async () => {
+    try {
+      setLoadingProducts(true);
+      const query = new URLSearchParams();
+      if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
+      if (productSearch.trim()) query.append('search', productSearch.trim());
+      if (selectedCategory !== 'الكل') query.append('category', selectedCategory);
+
+      if (inventoryPagination.limit === 'all') {
+        query.append('all', 'true');
+      } else {
+        query.append('page', inventoryPagination.page.toString());
+        query.append('limit', inventoryPagination.limit.toString());
+      }
+
+      const data = await api.get(`/inventory?${query.toString()}`);
+      const items = Array.isArray(data) ? data : data?.items || [];
+      setProducts(items);
+
+      if (data?.pagination) {
+        setInventoryPagination((prev) => ({
+          ...prev,
+          total: data.pagination.total ?? prev.total,
+          totalPages: data.pagination.totalPages || 1,
+        }));
+      } else if (typeof data?.total === 'number') {
+        setInventoryPagination((prev) => ({
+          ...prev,
+          total: data.total,
+          totalPages: Math.max(1, Math.ceil(data.total / (prev.limit === 'all' ? data.total || 1 : prev.limit))),
+        }));
+      } else {
+        setInventoryPagination((prev) => ({
+          ...prev,
+          total: items.length,
+          totalPages: 1,
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to load inventory products:', err);
+    } finally {
+      setLoadingProducts(false);
+    }
+  }, [activeBranchId, productSearch, selectedCategory, inventoryPagination.page, inventoryPagination.limit]);
+
+  // Load Suppliers
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      setLoadingSuppliers(true);
+      const query = new URLSearchParams();
+      if (supplierSearch.trim()) query.append('search', supplierSearch.trim());
+
+      if (supplierPagination.limit === 'all') {
+        query.append('all', 'true');
+      } else {
+        query.append('page', supplierPagination.page.toString());
+        query.append('limit', supplierPagination.limit.toString());
+      }
+
+      const data = await api.get(`/suppliers?${query.toString()}`);
+      const list = Array.isArray(data) ? data : (data?.suppliers || data?.data || data?.items || []);
+      setSuppliers(list);
+
+      if (data?.pagination) {
+        setSupplierPagination((prev) => ({
+          ...prev,
+          total: data.pagination.total ?? prev.total,
+          totalPages: data.pagination.totalPages || 1,
+        }));
+      } else if (typeof data?.total === 'number') {
+        setSupplierPagination((prev) => ({
+          ...prev,
+          total: data.total,
+          totalPages: Math.max(1, Math.ceil(data.total / (prev.limit === 'all' ? data.total || 1 : prev.limit))),
+        }));
+      } else {
+        setSupplierPagination((prev) => ({
+          ...prev,
+          total: list.length,
+          totalPages: 1,
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to load suppliers:', err);
+    } finally {
+      setLoadingSuppliers(false);
+    }
+  }, [supplierSearch, supplierPagination.page, supplierPagination.limit]);
+
+  // Load Inter-branch transfer requests
+  const fetchRequests = useCallback(async () => {
+    try {
+      setLoadingRequests(true);
+      const data = await api.get('/inventory/transfers/requests').catch(() => []);
+      setIncomingRequests(Array.isArray(data) ? data : data?.requests || []);
+    } catch {
+      setIncomingRequests([]);
+    } finally {
+      setLoadingRequests(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'inventory') {
+      const timer = setTimeout(() => {
+        fetchProducts();
+        fetchRequests();
+      }, 200);
+      return () => clearTimeout(timer);
+    } else {
+      const timer = setTimeout(fetchSuppliers, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, fetchProducts, fetchSuppliers, fetchRequests]);
+
+  // Reset pagination when branch changes
+  useEffect(() => {
+    setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+    setSupplierPagination((prev) => ({ ...prev, page: 1 }));
+  }, [activeBranchId]);
+
+  const handleInventoryPageChange = (newPage) => {
+    const pageNum = Math.max(1, Math.min(newPage, inventoryPagination.totalPages));
+    setInventoryPagination((prev) => ({ ...prev, page: pageNum }));
+  };
+
+  const handleInventoryLimitChange = (newLimit) => {
+    setInventoryPagination((prev) => ({
+      ...prev,
+      limit: newLimit === 'all' ? 'all' : Number(newLimit),
+      page: 1,
+    }));
+  };
+
+  const handleSupplierPageChange = (newPage) => {
+    const pageNum = Math.max(1, Math.min(newPage, supplierPagination.totalPages));
+    setSupplierPagination((prev) => ({ ...prev, page: pageNum }));
+  };
+
+  const handleSupplierLimitChange = (newLimit) => {
+    setSupplierPagination((prev) => ({
+      ...prev,
+      limit: newLimit === 'all' ? 'all' : Number(newLimit),
+      page: 1,
+    }));
+  };
+
+  // Open Create Product Modal
+  const openCreateProduct = () => {
+    setEditingProduct(null);
+    setPName('');
+    setPCategory('FORMAL SUIT');
+    setPColor('');
+    setPSize('');
+    setPPrice('');
+    setPCost('');
+    setPBarcode('');
+    setPStock('10');
+    setPMinStock('5');
+    setPImage('');
+    setPSupplierId(suppliers[0]?.id ? String(suppliers[0].id) : '');
+    setShowProductModal(true);
+  };
+
+  // Open Edit Product Modal
+  const openEditProduct = (p) => {
+    setEditingProduct(p);
+    setPName(p.name || '');
+    setPCategory(p.category || 'FORMAL SUIT');
+    setPColor(p.color || '');
+    setPSize(p.size_cut || p.size || '');
+    setPPrice(p.price ? p.price.toString() : '');
+    setPCost(p.cost_price ? p.cost_price.toString() : '');
+    setPBarcode(p.barcode || '');
+    setPStock(p.stock_level ?? p.stock ?? '0');
+    setPMinStock(p.min_stock_level ?? '5');
+    setPImage(p.image_url || '');
+    setPSupplierId(p.preferred_supplier_id ? String(p.preferred_supplier_id) : (suppliers[0]?.id ? String(suppliers[0].id) : ''));
+    setShowProductModal(true);
+  };
+
+  // Submit Save Product (Create / Update)
+  const handleSaveProduct = async (e) => {
+    e.preventDefault();
+    if (!pName.trim()) {
+      toast.error('يرجى إدخال اسم المنتج');
+      return;
+    }
+
+    setProductSubmitting(true);
+    try {
+      const selectedSupId = Number(pSupplierId) || suppliers[0]?.id || 1;
+      const payload = {
+        name: pName.trim(),
+        category: pCategory,
+        color: pColor.trim(),
+        size_cut: pSize.trim(),
+        price: Number(pPrice) || 0,
+        cost_price: Number(pCost) || 0,
+        barcode: pBarcode.trim(),
+        stock: Number(pStock) || 0,
+        stock_level: Number(pStock) || 0,
+        min_stock_level: Number(pMinStock) || 5,
+        supplier_id: selectedSupId,
+        preferred_supplier_id: selectedSupId,
+        image_url: pImage.trim(),
+        branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
+      };
+
+      if (editingProduct) {
+        await api.put(`/inventory/${editingProduct.id}`, payload);
+        toast.success('تم تحديث بيانات المنتج بنجاح! 📦');
+      } else {
+        await api.post('/inventory', payload);
+        toast.success('تمت إضافة المنتج للمخزون بنجاح! 📦');
+      }
+
+      setShowProductModal(false);
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.message || 'فشل حفظ المنتج');
+    } finally {
+      setProductSubmitting(false);
+    }
+  };
+
+  // Delete Product
+  const handleDeleteProduct = async (id) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا المنتج نهائياً من المخزون؟')) return;
+    try {
+      await api.delete(`/inventory/${id}`);
+      toast.success('تم حذف المنتج من المخزون');
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.message || 'فشل حذف المنتج');
+    }
+  };
+
+  // Open Transfer Modal
+  const openTransferModal = (p) => {
+    setTransferProduct(p);
+    setTransferQty('1');
+    const otherBranches = branches.filter((b) => b.id.toString() !== activeBranchId?.toString());
+    if (otherBranches.length > 0) {
+      setToBranchId(otherBranches[0].id.toString());
+    }
+    setShowTransferModal(true);
+  };
+
+  // Submit Stock Transfer
+  const handleTransferSubmit = async (e) => {
+    e.preventDefault();
+    if (!transferProduct || !toBranchId) return;
+
+    setTransferSubmitting(true);
+    try {
+      await api.post('/inventory/transfer', {
+        inventory_id: transferProduct.id,
+        from_branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
+        to_branch_id: Number(toBranchId),
+        quantity: Number(transferQty),
+      });
+
+      toast.success('تم تحويل كمية المخزون للفرع الآخر بنجاح! 🚚');
+      setShowTransferModal(false);
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.message || 'فشل تحويل المخزون');
+    } finally {
+      setTransferSubmitting(false);
+    }
+  };
+
+  // Open Transfer to Rental Modal
+  const openRentalTransferModal = (p) => {
+    setRentalProduct(p);
+    setRentalPrice(p.price ? (Number(p.price) * 0.4).toFixed(0) : '200');
+    setRentalDeposit(p.price ? (Number(p.price) * 0.5).toFixed(0) : '300');
+    setRentalCondition('ممتاز');
+    setRentalNotes('');
+    setShowRentalTransferModal(true);
+  };
+
+  // Submit Transfer to Rental
+  const handleRentalTransferSubmit = async (e) => {
+    e.preventDefault();
+    if (!rentalProduct) return;
+
+    try {
+      setRentalSubmitting(true);
+      await api.post('/rental-inventory/transfer-from-sales', {
+        inventory_id: rentalProduct.id,
+        rental_price: Number(rentalPrice),
+        deposit: Number(rentalDeposit),
+        condition: rentalCondition,
+        notes: rentalNotes,
+        branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
+      });
+
+      toast.success('تم تحويل المنتج إلى مخزون التأجير بنجاح! ✨');
+      setShowRentalTransferModal(false);
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.message || 'فشل تحويل المنتج لمخزون التأجير');
+    } finally {
+      setRentalSubmitting(false);
+    }
+  };
+
+  // Open Duplicate Product Modal
+  const openDuplicateModal = (p) => {
+    setDupSourceProduct(p);
+    setDupColor(p.color || '');
+    setDupSize(p.size_cut || p.size || '');
+    setDupBarcode(p.barcode ? `${p.barcode}-1` : '');
+    setDupStock('1');
+    setShowDuplicateModal(true);
+  };
+
+  // Submit Duplicate Product
+  const handleDuplicateSubmit = async (e) => {
+    e.preventDefault();
+    if (!dupSourceProduct) return;
+
+    try {
+      setDupSubmitting(true);
+      const supId = dupSourceProduct.preferred_supplier_id || suppliers[0]?.id || 1;
+      const payload = {
+        name: dupSourceProduct.name,
+        category: dupSourceProduct.category,
+        color: dupColor.trim(),
+        size_cut: dupSize.trim(),
+        price: Number(dupSourceProduct.price || 0),
+        cost_price: Number(dupSourceProduct.cost_price || 0),
+        barcode: dupBarcode.trim(),
+        stock: Number(dupStock) || 1,
+        stock_level: Number(dupStock) || 1,
+        min_stock_level: Number(dupSourceProduct.min_stock_level || 5),
+        supplier_id: supId,
+        preferred_supplier_id: supId,
+        image_url: dupSourceProduct.image_url || '',
+        branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
+      };
+
+      await api.post('/inventory', payload);
+      toast.success('تم تكرار المنتج بنجاح! 📋');
+      setShowDuplicateModal(false);
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.message || 'فشل تكرار المنتج');
+    } finally {
+      setDupSubmitting(false);
+    }
+  };
+
+  // Inter-branch Request Actions
+  const handleApproveRequest = async (requestId) => {
+    try {
+      await api.post(`/inventory/transfers/${requestId}/approve`);
+      toast.success('تمت الموافقة على طلب التحويل بنجاح! ✅');
+      fetchRequests();
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.message || 'فشل الموافقة على الطلب');
+    }
+  };
+
+  const handleRejectRequest = async (requestId) => {
+    if (!window.confirm('هل أنت متأكد من رفض هذا الطلب؟')) return;
+    try {
+      await api.post(`/inventory/transfers/${requestId}/reject`);
+      toast.info('تم رفض طلب التحويل');
+      fetchRequests();
+    } catch (err) {
+      toast.error(err.message || 'فشل رفض الطلب');
+    }
+  };
+
+  // Export to Excel / CSV
+  const [exporting, setExporting] = useState(false);
+  const handleExportCSV = async (type) => {
+    try {
+      setExporting(true);
+      let csvContent = '\uFEFF'; // UTF-8 BOM for Arabic in Excel
+      let filename = 'export.csv';
+
+      if (type === 'inventory') {
+        toast.info('جاري تجهيز بيانات المخزون للتصدير... 📊');
+        const query = new URLSearchParams();
+        if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
+        if (productSearch.trim()) query.append('search', productSearch.trim());
+        if (selectedCategory !== 'الكل') query.append('category', selectedCategory);
+        query.append('all', 'true');
+
+        const res = await api.get(`/inventory?${query.toString()}`);
+        const exportItems = Array.isArray(res) ? res : res?.items || res?.data || products;
+
+        filename = `inventory_${new Date().toISOString().split('T')[0]}.csv`;
+        csvContent += 'الرقم,اسم المنتج,القسم,اللون,المقاس,الباركود,سعر البيع,سعر التكلفة,الكمية المتاحة\n';
+        exportItems.forEach((p) => {
+          csvContent += `"${p.id}","${p.name || ''}","${p.category || ''}","${p.color || ''}","${p.size_cut || p.size || ''}","${p.barcode || ''}","${p.price || 0}","${p.cost_price || 0}","${p.stock_level ?? p.stock ?? 0}"\n`;
+        });
+      } else {
+        toast.info('جاري تجهيز سجل الموردين للتصدير... 📊');
+        const query = new URLSearchParams();
+        if (supplierSearch.trim()) query.append('search', supplierSearch.trim());
+        query.append('all', 'true');
+
+        const res = await api.get(`/suppliers?${query.toString()}`);
+        const exportSuppliers = Array.isArray(res) ? res : res?.suppliers || res?.data || res?.items || suppliers;
+
+        filename = `suppliers_${new Date().toISOString().split('T')[0]}.csv`;
+        csvContent += 'الرقم,اسم المورد,الشركة,رقم الهاتف,العنوان,إجمالي المشتريات,الرصيد المستحق\n';
+        exportSuppliers.forEach((s) => {
+          csvContent += `"${s.id}","${s.name || ''}","${s.company || ''}","${s.phone || ''}","${s.address || ''}","${s.total_purchases || 0}","${s.balance || 0}"\n`;
+        });
+      }
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('تم تصدير وتحميل الملف بنجاح! 📊');
+    } catch (err) {
+      toast.error('فشل تصدير الملف');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Open Create Supplier Modal
+  const openCreateSupplier = () => {
+    setEditingSupplier(null);
+    setSName('');
+    setSCompany('');
+    setSPhone('');
+    setSAddress('');
+    setSNotes('');
+    setShowSupplierModal(true);
+  };
+
+  // Open Edit Supplier Modal
+  const openEditSupplier = (s) => {
+    setEditingSupplier(s);
+    setSName(s.name || '');
+    setSCompany(s.company_name || s.company || '');
+    setSPhone(s.phone || '');
+    setSAddress(s.address || '');
+    setSNotes(s.notes || '');
+    setShowSupplierModal(true);
+  };
+
+  // Submit Save Supplier
+  const handleSaveSupplier = async (e) => {
+    e.preventDefault();
+    if (!sName.trim()) {
+      toast.error('يرجى إدخال اسم المورد');
+      return;
+    }
+
+    setSupplierSubmitting(true);
+    try {
+      const payload = {
+        name: sName.trim(),
+        company_name: sCompany.trim(),
+        company: sCompany.trim(),
+        phone: sPhone.trim(),
+        address: sAddress.trim(),
+        notes: sNotes.trim(),
+      };
+
+      if (editingSupplier) {
+        await api.put(`/suppliers/${editingSupplier.id}`, payload);
+        toast.success('تم تحديث بيانات المورد بنجاح! 🏭');
+      } else {
+        await api.post('/suppliers', payload);
+        toast.success('تمت إضافة المورد بنجاح! 🏭');
+      }
+
+      setShowSupplierModal(false);
+      fetchSuppliers();
+    } catch (err) {
+      toast.error(err.message || 'فشل حفظ بيانات المورد');
+    } finally {
+      setSupplierSubmitting(false);
+    }
+  };
+
+  // Delete Supplier
+  const handleDeleteSupplier = async (id) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا المورد؟')) return;
+    try {
+      await api.delete(`/suppliers/${id}`);
+      toast.success('تم حذف المورد بنجاح');
+      fetchSuppliers();
+    } catch (err) {
+      toast.error(err.message || 'فشل حذف المورد');
+    }
+  };
+
+  // Open Supplier Statement
+  const openStatement = async (supplier) => {
+    setSelectedSupplier(supplier);
+    setShowStatementModal(true);
+    setLoadingStatement(true);
+    try {
+      const data = await api.get(`/suppliers/${supplier.id}/statement`);
+      setStatementData(data);
+    } catch (err) {
+      console.error('Failed to load statement:', err);
+    } finally {
+      setLoadingStatement(false);
+    }
+  };
+
+  // Submit Supplier Payment
+  const handlePaymentSubmit = async (e) => {
+    e.preventDefault();
+    const amount = Number(paymentAmount);
+    if (!amount || amount <= 0) {
+      toast.error('يرجى إدخال مبلغ صحيح');
+      return;
+    }
+
+    setPaymentSubmitting(true);
+    try {
+      await api.post('/suppliers/transactions', {
+        supplier_id: selectedSupplier.id,
+        amount,
+        type: 'payment',
+        notes: paymentNotes,
+      });
+
+      toast.success('تم تسجيل سداد الدفعة بنجاح! 💵');
+      setShowPaymentModal(false);
+      setPaymentAmount('');
+      setPaymentNotes('');
+      fetchSuppliers();
+      if (showStatementModal) {
+        openStatement(selectedSupplier);
+      }
+    } catch (err) {
+      toast.error(err.message || 'فشل تسجيل السداد');
+    } finally {
+      setPaymentSubmitting(false);
+    }
+  };
+
+  // Purchase Return to Supplier Submit
+  const handlePurchaseReturnSubmit = async (e) => {
+    e.preventDefault();
+    if (!returnSupplierId) {
+      toast.warning('يرجى اختيار المورد');
+      return;
+    }
+    const qty = Number(returnQuantity);
+    const unitPrice = Number(returnUnitPrice);
+    if (!qty || qty <= 0 || !unitPrice || unitPrice <= 0) {
+      toast.warning('يرجى إدخال كمية وسعر صالحين');
+      return;
+    }
+
+    try {
+      setReturnSubmitting(true);
+      await api.post('/suppliers/returns', {
+        supplier_id: Number(returnSupplierId),
+        product_name: returnProductName.trim(),
+        quantity: qty,
+        unit_price: unitPrice,
+        notes: returnNotes.trim(),
+      });
+
+      toast.success('تم تسجيل مرتجع المشتريات للمورد بنجاح! 🔄');
+      setShowReturnModal(false);
+      setReturnProductName('');
+      setReturnQuantity('1');
+      setReturnUnitPrice('');
+      setReturnNotes('');
+      fetchSuppliers();
+    } catch (err) {
+      toast.error(err.message || 'فشل تسجيل مرتجع المشتريات');
+    } finally {
+      setReturnSubmitting(false);
+    }
+  };
+
+  // Supply Batch (Restock) Submit
+  const handleSupplySubmit = async (e) => {
+    e.preventDefault();
+    if (!supplySupplierId || !supplyProductId) {
+      toast.warning('يرجى اختيار المورد والمنتج');
+      return;
+    }
+
+    try {
+      setSupplySubmitting(true);
+      await api.post('/supply-records', {
+        supplier_id: Number(supplySupplierId),
+        inventory_id: Number(supplyProductId),
+        quantity: Number(supplyQuantity),
+        cost_price: Number(supplyCostPrice),
+        paid_amount: Number(supplyPaidAmount || 0),
+        notes: supplyNotes.trim(),
+        branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
+      });
+
+      toast.success('تم تسجيل فاتورة التوريد وتحديث المخزون بنجاح! 📥');
+      setShowSupplyModal(false);
+      fetchProducts();
+      fetchSuppliers();
+    } catch (err) {
+      toast.error(err.message || 'فشل تسجيل فاتورة التوريد');
+    } finally {
+      setSupplySubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5 max-w-[1700px] mx-auto select-none" style={{ direction: 'rtl' }}>
+      {/* Top Header & Navigation Tabs */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm no-print">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('inventory')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+              activeTab === 'inventory'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            <span>إدارة المخزون والمنتجات</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('suppliers')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+              activeTab === 'suppliers'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            <span>سجل الموردين والشركات</span>
+          </button>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            icon={Download}
+            onClick={() => handleExportCSV(activeTab)}
+          >
+            تصدير Excel
+          </Button>
+
+          {activeTab === 'inventory' ? (
+            <>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  icon={Truck}
+                  onClick={() => setShowSupplyModal(true)}
+                >
+                  توريدة مشتريات
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                icon={Plus}
+                onClick={openCreateProduct}
+                className="!bg-indigo-600 hover:!bg-indigo-700"
+              >
+                إضافة منتج جديد
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                icon={Undo2}
+                onClick={() => {
+                  setReturnSupplierId(suppliers[0]?.id ? suppliers[0].id.toString() : '');
+                  setShowReturnModal(true);
+                }}
+              >
+                مرتجع لمورد
+              </Button>
+              <Button
+                variant="primary"
+                icon={Plus}
+                onClick={openCreateSupplier}
+                className="!bg-indigo-600 hover:!bg-indigo-700"
+              >
+                إضافة مورد جديد
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* TAB 1: INVENTORY MANAGEMENT */}
+      {activeTab === 'inventory' && (
+        <div className="space-y-4">
+          {/* Pending Transfer Requests Banner */}
+          {incomingRequests.length > 0 && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-3xl p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-amber-900 font-black">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                  <span>طلبات نقل بضاعة واردة من فروع أخرى ({incomingRequests.length})</span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-amber-100/70 font-black text-amber-900">
+                    <tr>
+                      <th className="p-2.5">رقم الطلب</th>
+                      <th className="p-2.5">الصنف</th>
+                      <th className="p-2.5">الفرع الطالب</th>
+                      <th className="p-2.5">الكمية</th>
+                      <th className="p-2.5">التاريخ</th>
+                      <th className="p-2.5 text-center">الإجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-200/50 font-bold">
+                    {incomingRequests.map((req) => (
+                      <tr key={req.id}>
+                        <td className="p-2.5">#{req.id}</td>
+                        <td className="p-2.5">{req.product_name || req.inventory_name}</td>
+                        <td className="p-2.5">{req.from_branch_name || req.target_branch_name}</td>
+                        <td className="p-2.5 font-mono text-sm">{req.quantity}</td>
+                        <td className="p-2.5" dir="ltr">{new Date(req.created_at).toLocaleDateString('ar-EG')}</td>
+                        <td className="p-2.5 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => handleApproveRequest(req.id)}
+                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-black text-xs"
+                            >
+                              موافقة وإرسال
+                            </button>
+                            <button
+                              onClick={() => handleRejectRequest(req.id)}
+                              className="px-3 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg font-black text-xs"
+                            >
+                              رفض
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <Card>
+            <CardHeader
+              title="قائمة أصناف المخزون"
+              subtitle={`إجمالي الأصناف: ${Number(inventoryPagination.total || products.length).toLocaleString()} صنف${
+                inventoryPagination.totalPages > 1 && inventoryPagination.limit !== 'all'
+                  ? ` (صفحة ${inventoryPagination.page} من ${inventoryPagination.totalPages})`
+                  : ''
+              }`}
+              action={
+                <div className="flex items-center gap-2">
+                  <div className="relative w-64">
+                    <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={productSearch}
+                      onChange={(e) => {
+                        setProductSearch(e.target.value);
+                        setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                      }}
+                      placeholder="ابحث بالاسم، الكود، الباركود..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                    />
+                  </div>
+                  <Button variant="outline" onClick={fetchProducts} icon={RotateCcw}>
+                    تحديث
+                  </Button>
+                </div>
+              }
+            />
+
+            {/* Category Filter Pills */}
+            <div className="px-6 py-2 border-b border-slate-100 flex items-center gap-2 overflow-x-auto no-scrollbar">
+              {categoriesList.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => {
+                    setSelectedCategory(cat);
+                    setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    selectedCategory === cat
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            {loadingProducts ? (
+              <div className="py-20 text-center text-slate-400 font-bold text-sm">
+                جاري تحميل منتجات المخزون...
+              </div>
+            ) : products.length === 0 ? (
+              <div className="py-20 text-center text-slate-400 font-bold text-sm">
+                لا توجد منتجات مسجلة مطابقة للبحث
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
+                      <th className="pb-3 pr-4">الصورة</th>
+                      <th className="pb-3">الاسم والكود</th>
+                      <th className="pb-3">التصنيف</th>
+                      <th className="pb-3">الخصائص</th>
+                      <th className="pb-3">الباركود</th>
+                      <th className="pb-3">سعر البيع</th>
+                      {isAdmin && <th className="pb-3">سعر التكلفة</th>}
+                      {isAdmin && <th className="pb-3">المورد التابع له</th>}
+                      <th className="pb-3">الرصيد</th>
+                      <th className="pb-3 pl-4 text-center">إجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium">
+                    {products.map((p) => {
+                      const stock = Number(p.stock_level ?? p.stock_quantity ?? p.stock ?? 0);
+                      const isLow = stock <= (p.min_stock_level ?? 5);
+
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 pr-4">
+                            <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
+                              {p.image_url ? (
+                                <img
+                                  src={p.image_url}
+                                  alt={p.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <Tag className="w-4 h-4 text-slate-400" />
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3">
+                            <div className="font-bold text-slate-900">{p.name}</div>
+                            <div className="text-[11px] font-mono text-slate-500 mt-0.5 flex items-center gap-1.5">
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
+                                كود: #{p.id}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3">
+                            <Badge variant="neutral">{p.category || 'عام'}</Badge>
+                          </td>
+                          <td className="py-3">
+                            <div className="flex items-center gap-1 text-xs font-bold">
+                              {p.color && (
+                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                                  {p.color}
+                                </span>
+                              )}
+                              {(p.size_cut || p.size) && (
+                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                                  {p.size_cut || p.size}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 font-mono text-xs text-slate-500" dir="ltr">
+                            {p.barcode || '-'}
+                          </td>
+                          <td className="py-3 font-black text-indigo-600">
+                            {Number(p.price || 0).toLocaleString()} ج.م
+                          </td>
+                          {isAdmin && (
+                            <td className="py-3 text-slate-500 font-bold text-xs">
+                              {Number(p.cost_price || 0).toLocaleString()} ج.م
+                            </td>
+                          )}
+                          {isAdmin && (
+                            <td className="py-3 text-slate-600 font-bold text-xs">
+                              {p.supplier_name || '-'}
+                            </td>
+                          )}
+                          <td className="py-3">
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-xs font-black border ${
+                                isLow
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              }`}
+                            >
+                              {stock} قطعة
+                            </span>
+                          </td>
+                          <td className="py-3 pl-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {/* Transfer to Rental Button */}
+                              <button
+                                onClick={() => openRentalTransferModal(p)}
+                                className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="تحويل لمخزون التأجير"
+                              >
+                                <Sparkles className="w-4 h-4" />
+                              </button>
+
+                              {/* Duplicate Product Button */}
+                              <button
+                                onClick={() => openDuplicateModal(p)}
+                                className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                title="تكرار المنتج (نسخ)"
+                              >
+                                <Copy className="w-4 h-4" />
+                              </button>
+
+                              {/* Transfer Between Branches */}
+                              {branches.length > 1 && (
+                                <button
+                                  onClick={() => openTransferModal(p)}
+                                  className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                  title="تحويل مخزون لفرع آخر"
+                                >
+                                  <ArrowRightLeft className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {/* Edit Button */}
+                              <button
+                                onClick={() => openEditProduct(p)}
+                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="تعديل المنتج"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+
+                              {/* Delete Button */}
+                              {isAdmin && (
+                                <button
+                                  onClick={() => handleDeleteProduct(p.id)}
+                                  className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                  title="حذف المنتج"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Inventory Pagination Bar */}
+            {inventoryPagination.total > 0 && (
+              <div className="p-4 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/50 rounded-b-2xl">
+                {/* Info summary & Page size */}
+                <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-600">
+                  <span>
+                    عرض{' '}
+                    <span className="text-indigo-600 font-black">
+                      {inventoryPagination.limit === 'all'
+                        ? `1 - ${inventoryPagination.total}`
+                        : `${(inventoryPagination.page - 1) * inventoryPagination.limit + 1} - ${Math.min(
+                            inventoryPagination.page * inventoryPagination.limit,
+                            inventoryPagination.total
+                          )}`}
+                    </span>{' '}
+                    من إجمالي{' '}
+                    <span className="text-slate-900 font-black">
+                      {Number(inventoryPagination.total).toLocaleString()}
+                    </span>{' '}
+                    صنف
+                  </span>
+
+                  <div className="flex items-center gap-1.5 mr-2">
+                    <span className="text-slate-400">لكل صفحة:</span>
+                    {[30, 50, 100, 200, 'الكل'].map((lim) => (
+                      <button
+                        key={lim}
+                        onClick={() => handleInventoryLimitChange(lim)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                          inventoryPagination.limit === lim || (lim === 'الكل' && inventoryPagination.limit === 'all')
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {lim}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Page Navigation Controls */}
+                {inventoryPagination.totalPages > 1 && inventoryPagination.limit !== 'all' && (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={inventoryPagination.page <= 1}
+                      onClick={() => handleInventoryPageChange(1)}
+                      title="الصفحة الأولى"
+                      className="!px-2"
+                    >
+                      <ChevronsRight className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={inventoryPagination.page <= 1}
+                      onClick={() => handleInventoryPageChange(inventoryPagination.page - 1)}
+                      className="!text-xs !py-1"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                      السابق
+                    </Button>
+
+                    <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800">
+                      صفحة {inventoryPagination.page} من {inventoryPagination.totalPages}
+                    </span>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={inventoryPagination.page >= inventoryPagination.totalPages}
+                      onClick={() => handleInventoryPageChange(inventoryPagination.page + 1)}
+                      className="!text-xs !py-1"
+                    >
+                      التالي
+                      <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={inventoryPagination.page >= inventoryPagination.totalPages}
+                      onClick={() => handleInventoryPageChange(inventoryPagination.totalPages)}
+                      title="الصفحة الأخيرة"
+                      className="!px-2"
+                    >
+                      <ChevronsLeft className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Suppliers Pagination Bar */}
+            {supplierPagination.total > 0 && (
+              <div className="p-4 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/50 rounded-b-2xl">
+                {/* Info summary & Page size */}
+                <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-600">
+                  <span>
+                    عرض{' '}
+                    <span className="text-indigo-600 font-black">
+                      {supplierPagination.limit === 'all'
+                        ? `1 - ${supplierPagination.total}`
+                        : `${(supplierPagination.page - 1) * supplierPagination.limit + 1} - ${Math.min(
+                            supplierPagination.page * supplierPagination.limit,
+                            supplierPagination.total
+                          )}`}
+                    </span>{' '}
+                    من إجمالي{' '}
+                    <span className="text-slate-900 font-black">
+                      {Number(supplierPagination.total).toLocaleString()}
+                    </span>{' '}
+                    مورد
+                  </span>
+
+                  <div className="flex items-center gap-1.5 mr-2">
+                    <span className="text-slate-400">لكل صفحة:</span>
+                    {[30, 50, 100, 200, 'الكل'].map((lim) => (
+                      <button
+                        key={lim}
+                        onClick={() => handleSupplierLimitChange(lim)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                          supplierPagination.limit === lim || (lim === 'الكل' && supplierPagination.limit === 'all')
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {lim}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Page Navigation Controls */}
+                {supplierPagination.totalPages > 1 && supplierPagination.limit !== 'all' && (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={supplierPagination.page <= 1}
+                      onClick={() => handleSupplierPageChange(1)}
+                      title="الصفحة الأولى"
+                      className="!px-2"
+                    >
+                      <ChevronsRight className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={supplierPagination.page <= 1}
+                      onClick={() => handleSupplierPageChange(supplierPagination.page - 1)}
+                      className="!text-xs !py-1"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                      السابق
+                    </Button>
+
+                    <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800">
+                      صفحة {supplierPagination.page} من {supplierPagination.totalPages}
+                    </span>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={supplierPagination.page >= supplierPagination.totalPages}
+                      onClick={() => handleSupplierPageChange(supplierPagination.page + 1)}
+                      className="!text-xs !py-1"
+                    >
+                      التالي
+                      <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={supplierPagination.page >= supplierPagination.totalPages}
+                      onClick={() => handleSupplierPageChange(supplierPagination.totalPages)}
+                      title="الصفحة الأخيرة"
+                      className="!px-2"
+                    >
+                      <ChevronsLeft className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* TAB 2: SUPPLIERS DIRECTORY */}
+      {activeTab === 'suppliers' && (
+        <Card>
+          <CardHeader
+            title="سجل الموردين والشركات"
+            subtitle={`إجمالي الموردين: ${Number(supplierPagination.total || suppliers.length).toLocaleString()} مورد${
+              supplierPagination.totalPages > 1 && supplierPagination.limit !== 'all'
+                ? ` (صفحة ${supplierPagination.page} من ${supplierPagination.totalPages})`
+                : ''
+            }`}
+            action={
+              <div className="flex items-center gap-2">
+                <div className="relative w-64">
+                  <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={supplierSearch}
+                    onChange={(e) => {
+                      setSupplierSearch(e.target.value);
+                      setSupplierPagination((prev) => ({ ...prev, page: 1 }));
+                    }}
+                    placeholder="ابحث باسم المورد أو الشركة..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <Button variant="outline" onClick={fetchSuppliers} icon={RotateCcw}>
+                  تحديث
+                </Button>
+              </div>
+            }
+          />
+
+          {loadingSuppliers ? (
+            <div className="py-20 text-center text-slate-400 font-bold text-sm">
+              جاري تحميل الموردين...
+            </div>
+          ) : suppliers.length === 0 ? (
+            <div className="py-20 text-center text-slate-400 font-bold text-sm">
+              لا يوجد موردين مسجلين
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
+                    <th className="pb-3 pr-4">اسم المورد والكود</th>
+                    <th className="pb-3">الشركة / المصنع</th>
+                    <th className="pb-3">الهاتف</th>
+                    <th className="pb-3">العنوان</th>
+                    <th className="pb-3">إجمالي المشتريات</th>
+                    <th className="pb-3">الرصيد المستحق له</th>
+                    <th className="pb-3 pl-4 text-center">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {suppliers.map((s) => (
+                    <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3.5 pr-4">
+                        <div className="font-bold text-slate-900">{s.name}</div>
+                        <div className="text-[10px] font-mono text-slate-400 font-bold">كود: #{s.code || s.id}</div>
+                      </td>
+                      <td className="py-3.5 text-slate-600 font-bold text-xs">{s.company_name || s.company || '-'}</td>
+                      <td className="py-3.5 text-slate-500 font-mono text-xs" dir="ltr">
+                        {s.phone || '-'}
+                      </td>
+                      <td className="py-3.5 text-slate-500 text-xs">{s.address || '-'}</td>
+                      <td className="py-3.5 font-bold text-slate-800">
+                        {Number(s.total_purchases || 0).toLocaleString()} ج.م
+                      </td>
+                      <td className="py-3.5 font-black text-rose-600">
+                        {Number(s.balance || 0).toLocaleString()} ج.م
+                      </td>
+                      <td className="py-3.5 pl-4 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {/* Statement / Ledger */}
+                          <button
+                            onClick={() => openStatement(s)}
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="كشف حساب المورد"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </button>
+
+                          {/* Pay Supplier */}
+                          <button
+                            onClick={() => {
+                              setSelectedSupplier(s);
+                              setPaymentAmount(s.balance ? s.balance.toString() : '');
+                              setShowPaymentModal(true);
+                            }}
+                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="سداد دفعة للمورد"
+                          >
+                            <DollarSign className="w-4 h-4" />
+                          </button>
+
+                          {/* Purchase Return */}
+                          <button
+                            onClick={() => {
+                              setReturnSupplierId(s.id.toString());
+                              setShowReturnModal(true);
+                            }}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="مرتجع مشتريات للمورد"
+                          >
+                            <Undo2 className="w-4 h-4" />
+                          </button>
+
+                          {/* Edit Supplier */}
+                          <button
+                            onClick={() => openEditSupplier(s)}
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="تعديل بيانات المورد"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+
+                          {/* Delete Supplier */}
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDeleteSupplier(s.id)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              title="حذف المورد"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* ADD / EDIT PRODUCT MODAL */}
+      <Modal
+        isOpen={showProductModal}
+        onClose={() => setShowProductModal(false)}
+        title={editingProduct ? 'تعديل بيانات المنتج ✏️' : 'إضافة منتج جديد للمخزون 📦'}
+        maxWidth="max-w-2xl"
+      >
+        <form onSubmit={handleSaveProduct} className="space-y-4">
+          {editingProduct && (
+            <div className="text-xs font-mono font-bold text-indigo-700 bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex items-center justify-between">
+              <span>كود الصنف الداخلي: #{editingProduct.id}</span>
+              <span>الباركود: {editingProduct.barcode || 'غير محدد'}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="اسم المنتج *"
+              value={pName}
+              onChange={(e) => setPName(e.target.value)}
+              placeholder="مثال: بنطه عاليه، بيكا بنطه عاليه، كباسيل، بدلة كلاسيك كحلي..."
+              required
+            />
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">المورد التابع له</label>
+              <select
+                value={pSupplierId}
+                onChange={(e) => setPSupplierId(e.target.value)}
+                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+              >
+                {suppliers.length === 0 ? (
+                  <option value="">لا يوجد موردين مسجلين</option>
+                ) : (
+                  suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} {s.company ? `(${s.company})` : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">القسم / التصنيف</label>
+              <select
+                value={pCategory}
+                onChange={(e) => setPCategory(e.target.value)}
+                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+              >
+                {categoriesList.filter((c) => c !== 'الكل').map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <Input
+              label="اللون"
+              value={pColor}
+              onChange={(e) => setPColor(e.target.value)}
+              placeholder="مثال: أسود، كحلي..."
+            />
+
+            <Input
+              label="المقاس"
+              value={pSize}
+              onChange={(e) => setPSize(e.target.value)}
+              placeholder="مثال: L, XL, 42..."
+            />
+
+            <Input
+              label="سعر البيع (ج.م) *"
+              type="number"
+              value={pPrice}
+              onChange={(e) => setPPrice(e.target.value)}
+              required
+            />
+
+            <Input
+              label="سعر التكلفة (ج.م)"
+              type="number"
+              value={pCost}
+              onChange={(e) => setPCost(e.target.value)}
+            />
+
+            <Input
+              label="الباركود (Barcode)"
+              value={pBarcode}
+              onChange={(e) => setPBarcode(e.target.value)}
+              placeholder="امسح أو اترك فارغاً للإنشاء التلقائي"
+            />
+
+            <Input
+              label="الكمية الابتدائية *"
+              type="number"
+              value={pStock}
+              onChange={(e) => setPStock(e.target.value)}
+              required
+            />
+          </div>
+
+          <Input
+            label="رابط الصورة (Image URL)"
+            value={pImage}
+            onChange={(e) => setPImage(e.target.value)}
+            placeholder="https://..."
+          />
+
+          <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={productSubmitting}
+              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+            >
+              {editingProduct ? 'حفظ التعديلات' : 'إضافة المنتج'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowProductModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* TRANSFER TO RENTAL MODAL */}
+      <Modal
+        isOpen={showRentalTransferModal}
+        onClose={() => setShowRentalTransferModal(false)}
+        title="تحويل المنتج إلى مخزون التأجير ✨"
+        subtitle={`الصنف: ${rentalProduct?.name} (${rentalProduct?.color || ''} ${rentalProduct?.size_cut || ''})`}
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleRentalTransferSubmit} className="space-y-4">
+          <Input
+            label="سعر التأجير لليوم/الحجز (ج.م) *"
+            type="number"
+            required
+            value={rentalPrice}
+            onChange={(e) => setRentalPrice(e.target.value)}
+          />
+
+          <Input
+            label="مبلغ التأمين المطلوب (ج.م) *"
+            type="number"
+            required
+            value={rentalDeposit}
+            onChange={(e) => setRentalDeposit(e.target.value)}
+          />
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">حالة القطعة</label>
+            <select
+              value={rentalCondition}
+              onChange={(e) => setRentalCondition(e.target.value)}
+              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+            >
+              <option value="جديد">جديد تماماً (زيرو)</option>
+              <option value="ممتاز">ممتاز</option>
+              <option value="جيد جداً">جيد جداً</option>
+              <option value="جيد">جيد</option>
+            </select>
+          </div>
+
+          <Input
+            label="ملاحظات إضافية"
+            value={rentalNotes}
+            onChange={(e) => setRentalNotes(e.target.value)}
+            placeholder="ملاحظات حول القطعة..."
+          />
+
+          <div className="flex items-center gap-2 pt-3">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={rentalSubmitting}
+              className="flex-1 !rounded-2xl"
+            >
+              تأكيد التحويل للتأجير
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowRentalTransferModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* DUPLICATE PRODUCT MODAL */}
+      <Modal
+        isOpen={showDuplicateModal}
+        onClose={() => setShowDuplicateModal(false)}
+        title="تكرار المنتج (نسخ بمقاس أو لون جديد) 📋"
+        subtitle={`الصنف الأصلي: ${dupSourceProduct?.name}`}
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleDuplicateSubmit} className="space-y-4">
+          <Input
+            label="اللون الجديد"
+            value={dupColor}
+            onChange={(e) => setDupColor(e.target.value)}
+          />
+
+          <Input
+            label="المقاس الجديد"
+            value={dupSize}
+            onChange={(e) => setDupSize(e.target.value)}
+          />
+
+          <Input
+            label="الباركود الجديد"
+            value={dupBarcode}
+            onChange={(e) => setDupBarcode(e.target.value)}
+            placeholder="اتركه فارغاً للتوليد التلقائي"
+          />
+
+          <Input
+            label="الكمية الابتدائية *"
+            type="number"
+            required
+            value={dupStock}
+            onChange={(e) => setDupStock(e.target.value)}
+          />
+
+          <div className="flex items-center gap-2 pt-3">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={dupSubmitting}
+              className="flex-1 !rounded-2xl"
+            >
+              إنشاء النسخة
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowDuplicateModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* STOCK TRANSFER TO ANOTHER BRANCH MODAL */}
+      <Modal
+        isOpen={showTransferModal}
+        onClose={() => setShowTransferModal(false)}
+        title="تحويل مخزون لفرع آخر 🚚"
+        subtitle={`الصنف: ${transferProduct?.name}`}
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleTransferSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">الفرع المحول إليه *</label>
+            <select
+              value={toBranchId}
+              onChange={(e) => setToBranchId(e.target.value)}
+              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+              required
+            >
+              {branches
+                .filter((b) => b.id.toString() !== activeBranchId?.toString())
+                .map((b) => (
+                  <option key={b.id} value={b.id.toString()}>
+                    {b.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <Input
+            label="الكمية المحولة *"
+            type="number"
+            min="1"
+            value={transferQty}
+            onChange={(e) => setTransferQty(e.target.value)}
+            required
+          />
+
+          <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={transferSubmitting}
+              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+            >
+              تأكيد النقل
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowTransferModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ADD / EDIT SUPPLIER MODAL */}
+      <Modal
+        isOpen={showSupplierModal}
+        onClose={() => setShowSupplierModal(false)}
+        title={editingSupplier ? 'تعديل بيانات المورد 🏭' : 'إضافة مورد جديد 🏭'}
+        maxWidth="max-w-lg"
+      >
+        <form onSubmit={handleSaveSupplier} className="space-y-4">
+          {editingSupplier && (
+            <div className="text-xs font-mono font-bold text-indigo-700 bg-indigo-50 p-2.5 rounded-xl border border-indigo-100 flex items-center justify-between">
+              <span>كود المورد الداخلي: #{editingSupplier.id}</span>
+              {editingSupplier.code && <span>كود المورد: {editingSupplier.code}</span>}
+            </div>
+          )}
+
+          <Input
+            label="اسم المورد / جهة الاتصال *"
+            value={sName}
+            onChange={(e) => setSName(e.target.value)}
+            placeholder="مثال: أحمد محمود"
+            required
+          />
+
+          <Input
+            label="اسم الشركة / المصنع"
+            value={sCompany}
+            onChange={(e) => setSCompany(e.target.value)}
+            placeholder="مثال: مصنع النور للملابس"
+          />
+
+          <Input
+            label="رقم الهاتف"
+            value={sPhone}
+            onChange={(e) => setSPhone(e.target.value)}
+            placeholder="01XXXXXXXXX"
+          />
+
+          <Input
+            label="العنوان"
+            value={sAddress}
+            onChange={(e) => setSAddress(e.target.value)}
+            placeholder="العنوان أو المحافظة..."
+          />
+
+          <Input
+            label="ملاحظات"
+            value={sNotes}
+            onChange={(e) => setSNotes(e.target.value)}
+            placeholder="ملاحظات عامة حول المورد..."
+          />
+
+          <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={supplierSubmitting}
+              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+            >
+              {editingSupplier ? 'حفظ التعديلات' : 'إضافة المورد'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowSupplierModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* SUPPLIER PAYMENT MODAL */}
+      <Modal
+        isOpen={showPaymentModal}
+        onClose={() => setShowPaymentModal(false)}
+        title={`تسجيل دفعة سداد للمورد: ${selectedSupplier?.name || ''} 💵`}
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handlePaymentSubmit} className="space-y-4">
+          <Input
+            label="المبلغ المسدد (ج.م) *"
+            type="number"
+            value={paymentAmount}
+            onChange={(e) => setPaymentAmount(e.target.value)}
+            required
+          />
+
+          <Input
+            label="ملاحظات السداد (رقم الشيك أو الحوالة)"
+            value={paymentNotes}
+            onChange={(e) => setPaymentNotes(e.target.value)}
+            placeholder="نقداً، تحويل بنكي..."
+          />
+
+          <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={paymentSubmitting}
+              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+            >
+              تسجيل السداد
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowPaymentModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* PURCHASE RETURN TO SUPPLIER MODAL */}
+      <Modal
+        isOpen={showReturnModal}
+        onClose={() => setShowReturnModal(false)}
+        title="مرتجع مشتريات لمورد 🔄"
+        subtitle="إرجاع بضاعة لمورد وتخفيض رصيده المسجل"
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handlePurchaseReturnSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">المورد *</label>
+            <select
+              value={returnSupplierId}
+              onChange={(e) => setReturnSupplierId(e.target.value)}
+              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+              required
+            >
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id.toString()}>
+                  {s.name} ({s.company || 'مورد'})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <Input
+            label="اسم الصنف المرتجع *"
+            required
+            value={returnProductName}
+            onChange={(e) => setReturnProductName(e.target.value)}
+            placeholder="اسم الصنف المرتجع..."
+          />
+
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="الكمية المرتجعة *"
+              type="number"
+              min="1"
+              required
+              value={returnQuantity}
+              onChange={(e) => setReturnQuantity(e.target.value)}
+            />
+
+            <Input
+              label="سعر التكلفة للقطعة (ج.م) *"
+              type="number"
+              required
+              value={returnUnitPrice}
+              onChange={(e) => setReturnUnitPrice(e.target.value)}
+            />
+          </div>
+
+          <Input
+            label="ملاحظات وسبب الإرجاع"
+            value={returnNotes}
+            onChange={(e) => setReturnNotes(e.target.value)}
+            placeholder="تلف، عيب صناعة، غير مطابق..."
+          />
+
+          <div className="flex items-center gap-2 pt-3">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={returnSubmitting}
+              className="flex-1 !rounded-2xl !bg-rose-600 hover:!bg-rose-700 text-white"
+            >
+              تأكيد المرتجع للمورد
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowReturnModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* SUPPLY BATCH / RESTOCK MODAL */}
+      <Modal
+        isOpen={showSupplyModal}
+        onClose={() => setShowSupplyModal(false)}
+        title="تسجيل توريدة مشتريات جديدة 📥"
+        subtitle="إضافة شحنة منتجات من مورد مع حساب التكاليف والرصيد"
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleSupplySubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">المورد *</label>
+            <select
+              value={supplySupplierId}
+              onChange={(e) => setSupplySupplierId(e.target.value)}
+              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+              required
+            >
+              <option value="">اختر المورد...</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id.toString()}>
+                  {s.name} ({s.company || 'مورد'})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700">المنتج المراد تزويده *</label>
+              {loadingSupplyProducts && (
+                <span className="text-[11px] text-indigo-600 font-bold animate-pulse">جاري تحميل الأصناف...</span>
+              )}
+            </div>
+            <input
+              type="text"
+              value={supplyProductSearch}
+              onChange={(e) => setSupplyProductSearch(e.target.value)}
+              placeholder="تصفية سريعة بالاسم، الباركود أو الكود..."
+              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold outline-none focus:border-indigo-600"
+            />
+            <select
+              value={supplyProductId}
+              onChange={(e) => {
+                setSupplyProductId(e.target.value);
+                const list = supplyProductsList.length > 0 ? supplyProductsList : products;
+                const found = list.find((p) => p.id.toString() === e.target.value);
+                if (found && found.cost_price) {
+                  setSupplyCostPrice(found.cost_price.toString());
+                }
+              }}
+              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+              required
+            >
+              <option value="">اختر الصنف من المخزون ({activeSupplyProducts.length} صنف متاح)...</option>
+              {activeSupplyProducts.map((p) => (
+                <option key={p.id} value={p.id.toString()}>
+                  #{p.id} - {p.name} {p.category ? `(${p.category})` : ''} {p.color ? `(${p.color})` : ''} {p.size_cut ? `[${p.size_cut}]` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="الكمية الموردة *"
+              type="number"
+              min="1"
+              required
+              value={supplyQuantity}
+              onChange={(e) => setSupplyQuantity(e.target.value)}
+            />
+
+            <Input
+              label="سعر التكلفة للقطعة (ج.م) *"
+              type="number"
+              required
+              value={supplyCostPrice}
+              onChange={(e) => setSupplyCostPrice(e.target.value)}
+            />
+          </div>
+
+          <Input
+            label="المبلغ المسدد نقداً الآن من الفاتورة (ج.م)"
+            type="number"
+            value={supplyPaidAmount}
+            onChange={(e) => setSupplyPaidAmount(e.target.value)}
+          />
+
+          <Input
+            label="ملاحظات"
+            value={supplyNotes}
+            onChange={(e) => setSupplyNotes(e.target.value)}
+            placeholder="رقم الفاتورة الورقية أو الشحنة..."
+          />
+
+          <div className="flex items-center gap-2 pt-3">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={supplySubmitting}
+              className="flex-1 !rounded-2xl"
+            >
+              تسجيل التوريدة وإضافة المخزون
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowSupplyModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* SUPPLIER STATEMENT MODAL (WITH PRINTING) */}
+      <Modal
+        isOpen={showStatementModal}
+        onClose={() => setShowStatementModal(false)}
+        title={`كشف حساب المورد: ${selectedSupplier?.name || ''}`}
+        subtitle={`الرصيد المستحق له: ${Number(selectedSupplier?.balance || 0).toLocaleString()} ج.م`}
+        maxWidth="max-w-3xl"
+      >
+        {loadingStatement ? (
+          <div className="py-20 text-center text-slate-400 font-bold text-sm">
+            جاري تحميل كشف الحساب...
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <div>
+                <span className="text-xs text-slate-500 font-bold block">إجمالي التوريدات</span>
+                <span className="text-lg font-black text-slate-900">
+                  {Number(selectedSupplier?.total_purchases || 0).toLocaleString()} ج.م
+                </span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-500 font-bold block">المتبقي له في ذمة المتجر</span>
+                <span className="text-lg font-black text-rose-600">
+                  {Number(selectedSupplier?.balance || 0).toLocaleString()} ج.م
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={Printer}
+                  onClick={() => window.print()}
+                >
+                  طباعة الكشف
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    setPaymentAmount(selectedSupplier?.balance ? selectedSupplier.balance.toString() : '');
+                    setShowPaymentModal(true);
+                  }}
+                >
+                  سداد دفعة
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+              <table className="w-full text-right text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500">
+                  <tr>
+                    <th className="p-3">التاريخ</th>
+                    <th className="p-3">نوع الحركة</th>
+                    <th className="p-3">المبلغ</th>
+                    <th className="p-3">ملاحظات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {statementData?.transactions && statementData.transactions.length > 0 ? (
+                    statementData.transactions.map((t) => (
+                      <tr key={t.id}>
+                        <td className="p-3" dir="ltr">
+                          {new Date(t.created_at || t.date).toLocaleDateString('ar-EG')}
+                        </td>
+                        <td className="p-3">
+                          <Badge
+                            variant={
+                              t.type === 'supply'
+                                ? 'info'
+                                : t.type === 'return'
+                                ? 'danger'
+                                : 'success'
+                            }
+                          >
+                            {t.type === 'supply'
+                              ? 'فاتورة توريد'
+                              : t.type === 'return'
+                              ? 'مرتجع مشتريات'
+                              : 'سداد دفعة'}
+                          </Badge>
+                        </td>
+                        <td className="p-3 font-black">
+                          {Number(t.amount || 0).toLocaleString()} ج.م
+                        </td>
+                        <td className="p-3 text-slate-500">{t.notes || '-'}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className="p-8 text-center text-slate-400 font-bold">
+                        لا توجد حركات مسجلة
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+export default Suppliers;
