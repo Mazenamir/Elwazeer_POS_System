@@ -28,9 +28,21 @@ function clampInt(value, fallback, min, max) {
   return Math.min(Math.max(normalized, min), max);
 }
 
+/**
+ * Safely rounds a numeric value to 2 decimal places (standard currency precision)
+ * avoiding floating-point drift (e.g. 0.1 + 0.2 = 0.30000000000000004).
+ */
+function roundCurrency(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  const sign = num < 0 ? -1 : 1;
+  return sign * (Math.round((Math.abs(num) + Number.EPSILON) * 100) / 100);
+}
+
 module.exports = {
   parsePositiveInt,
   parseNonNegativeInt,
   clampInt,
+  roundCurrency,
 };
 

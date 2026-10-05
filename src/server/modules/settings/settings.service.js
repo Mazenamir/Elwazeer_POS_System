@@ -17,15 +17,45 @@ const {
   resetTableSequence,
 } = require('./backup.helpers');
 
+const PUBLIC_SETTINGS_KEYS = new Set([
+  'store_name',
+  'tax_rate',
+  'store_email',
+  'store_phone',
+  'store_address',
+  'show_email',
+  'show_phone',
+  'show_address',
+  'cashier_footer',
+  'rental_footer',
+  'rental_fine_per_day',
+  'currency',
+  'logo',
+  'system_logo',
+]);
+
 async function getPublicSettings() {
-  const result = { ...DEFAULT_SETTINGS };
+  const result = {};
+  for (const key of PUBLIC_SETTINGS_KEYS) {
+    if (DEFAULT_SETTINGS[key] !== undefined) {
+      result[key] = DEFAULT_SETTINGS[key];
+    }
+  }
   if (config.IS_BRANCH_MODE) {
     const rows = db.sqlite.prepare('SELECT key, value FROM settings').all();
-    for (const r of rows) result[r.key] = r.value;
+    for (const r of rows) {
+      if (PUBLIC_SETTINGS_KEYS.has(r.key)) {
+        result[r.key] = r.value;
+      }
+    }
     return result;
   }
   const { rows } = await db.query('SELECT key, value FROM settings');
-  for (const r of rows) result[r.key] = r.value;
+  for (const r of rows) {
+    if (PUBLIC_SETTINGS_KEYS.has(r.key)) {
+      result[r.key] = r.value;
+    }
+  }
   return result;
 }
 

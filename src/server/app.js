@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
@@ -23,6 +24,7 @@ const employeesRoutes = require('./modules/hr/employees.routes');
 const expensesRoutes = require('./modules/expenses/expenses.routes');
 const reportsRoutes = require('./modules/reports/reports.routes');
 const syncRoutes = require('./modules/sync/sync.routes');
+const wornRoutes = require('./modules/worn/worn.routes');
 
 const app = express();
 
@@ -33,11 +35,18 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-// CORS configuration
+// CORS configuration - strict local and LAN origin verification
+const LOCAL_ORIGIN_REGEX = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i;
+
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow local desktop app, null origin, and local addresses
-    callback(null, true);
+    if (!origin || origin === 'null') {
+      return callback(null, true);
+    }
+    if (LOCAL_ORIGIN_REGEX.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Blocked by CORS policy: Untrusted origin'));
   },
   credentials: true,
 }));
@@ -53,8 +62,14 @@ app.use(duplicateMutationGuard);
 // Global Authentication & Authorization Middleware
 app.use(authMiddleware);
 
-// Static file protection & serving (serves src/renderer)
+// Static file protection & serving (serves React SPA dist first, then renderer fallback)
 const rendererPath = path.join(__dirname, '../renderer');
+const distPath = fs.existsSync(path.join(__dirname, '../../dist/renderer'))
+  ? path.join(__dirname, '../../dist/renderer')
+  : (fs.existsSync(path.join(__dirname, '../../dist')) && fs.existsSync(path.join(__dirname, '../../dist/index.html')))
+  ? path.join(__dirname, '../../dist')
+  : path.join(__dirname, '../renderer/dist');
+
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
   if (req.path.includes('..') || req.path.startsWith('/node_modules/') || req.path.startsWith('/scratch/')) {
@@ -63,9 +78,37 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/.') || req.path.endsWith('.json') || req.path.endsWith('.lock')) {
     return res.sendStatus(404);
   }
-  // Allow library JS files in assets/js/
-  if (req.path.endsWith('.js') && !PUBLIC_STATIC_FILES.has(req.path) && !req.path.startsWith('/assets/js/')) {
+  // Allow library JS files in assets/js/ or compiled Vite assets in /assets/
+  if (req.path.endsWith('.js') && !PUBLIC_STATIC_FILES.has(req.path) && !req.path.startsWith('/assets/')) {
     return res.sendStatus(404);
+  }
+  next();
+});
+
+// Legacy .html redirects to React SPA routes
+const LEGACY_ROUTE_MAP = {
+  '/index.html': '/pos',
+  '/dashboard.html': '/dashboard',
+  '/rentals.html': '/rentals',
+  '/rentalinventory.html': '/rental-inventory',
+  '/alterations.html': '/alterations',
+  '/tailoring.html': '/tailoring',
+  '/customers.html': '/customers',
+  '/suppliers.html': '/suppliers',
+  '/employees.html': '/employees',
+  '/expenses.html': '/expenses',
+  '/reports.html': '/reports',
+  '/barcodes.html': '/barcodes',
+  '/settings.html': '/settings',
+  '/wornproducts.html': '/worn-products',
+  '/login.html': '/login',
+  '/setup.html': '/setup',
+};
+
+app.use((req, res, next) => {
+  const lowerPath = req.path.toLowerCase();
+  if (LEGACY_ROUTE_MAP[lowerPath]) {
+    return res.redirect(LEGACY_ROUTE_MAP[lowerPath]);
   }
   next();
 });
@@ -73,10 +116,14 @@ app.use((req, res, next) => {
 // Shortcut GET /logout
 app.get('/logout', (req, res) => {
   res.clearCookie('token');
-  res.redirect('/login.html');
+  const hasSpa = fs.existsSync(path.join(distPath, 'index.html'));
+  res.redirect(hasSpa ? '/login' : '/login.html');
 });
 
-// Mount Static Renderer Files
+// Mount Static Renderer Files (Serve SPA first if available)
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+}
 app.use(express.static(rendererPath));
 
 // Mount Domain API Modules
@@ -93,6 +140,18 @@ app.use('/api', employeesRoutes);
 app.use('/api', expensesRoutes);
 app.use('/api', reportsRoutes);
 app.use('/api', syncRoutes);
+app.use('/api', wornRoutes);
+
+// SPA client fallback for HTML5 History API
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if (req.path.startsWith('/api/')) return next();
+  const distIndex = path.join(distPath, 'index.html');
+  if (fs.existsSync(distIndex)) {
+    return res.sendFile(distIndex);
+  }
+  next();
+});
 
 // Central error handler
 app.use(errorHandler);

@@ -2,7 +2,20 @@ const jwt = require('jsonwebtoken');
 const config = require('../config/env');
 const db = require('../database/connection');
 
+const path = require('path');
+const fs = require('fs');
+
+const distIndexPath = fs.existsSync(path.join(__dirname, '../../../dist/renderer/index.html'))
+  ? path.join(__dirname, '../../../dist/renderer/index.html')
+  : (fs.existsSync(path.join(__dirname, '../../../dist/index.html')))
+  ? path.join(__dirname, '../../../dist/index.html')
+  : path.join(__dirname, '../../renderer/dist/index.html');
+const hasSpa = () => fs.existsSync(distIndexPath);
+
 const PUBLIC_PATHS = new Set([
+  '/',
+  '/index.html',
+  '/login',
   '/login.html',
   '/setup.html',
   '/api/login',
@@ -21,18 +34,31 @@ function isPublicRequest(req) {
   if (PUBLIC_PATHS.has(req.path)) return true;
   if (req.path.startsWith('/assets/')) return true;
   if (req.path.startsWith('/logos/')) return true;
+  // If React SPA is built, allow non-API document requests to be resolved by the client router
+  if (hasSpa() && !req.path.startsWith('/api/')) return true;
   return false;
 }
 
 async function authMiddleware(req, res, next) {
-  // Always extract token if it exists in cookies
-  const token = req.cookies?.token;
+  // AUTH-01: Extract token from cookies or Authorization: Bearer <token> header
+  let token = req.cookies?.token;
+  let isCookieToken = Boolean(token);
+  if (!token && req.headers?.authorization) {
+    const parts = req.headers.authorization.split(' ');
+    if (parts.length === 2 && /^Bearer$/i.test(parts[0])) {
+      token = parts[1];
+      isCookieToken = false;
+    }
+  }
+
   if (token) {
     try {
       const decoded = jwt.verify(token, config.JWT_SECRET);
       req.user = decoded; // { id, username, role, branch_id, permissions }
     } catch (err) {
-      res.clearCookie('token');
+      if (isCookieToken) {
+        res.clearCookie('token');
+      }
       req.user = null;
     }
   }

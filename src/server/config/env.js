@@ -42,7 +42,8 @@ const SYNC_FETCH_TIMEOUT_MS = boundedEnvInt('SYNC_FETCH_TIMEOUT_MS', 15000, 1000
 // Database Config (Postgres)
 const DB_USER = process.env.DB_USER || 'postgres';
 const DB_PASSWORD = process.env.DB_PASSWORD || '';
-const DB_HOST = process.env.DB_HOST || 'localhost';
+const rawDbHost = process.env.DB_HOST || '127.0.0.1';
+const DB_HOST = rawDbHost === 'localhost' ? '127.0.0.1' : rawDbHost;
 const DB_PORT = boundedEnvInt('DB_PORT', 5432, 1, 65535);
 const DB_NAME = process.env.DB_NAME || 'pos_db';
 

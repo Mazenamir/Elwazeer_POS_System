@@ -90,13 +90,31 @@ async function authenticateUser(username, password) {
   if (config.IS_BRANCH_MODE) {
     const stmt = db.sqlite.prepare('SELECT * FROM users WHERE username = ?');
     user = stmt.get(cleanUsername);
+    if (!user) {
+      // Fallback: normalize Arabic hamza variants (أ إ آ → ا) for comparison
+      const normalized = cleanUsername.replace(/[أإآ]/g, 'ا');
+      const all = db.sqlite.prepare('SELECT * FROM users').all();
+      user = all.find(u => u.username.replace(/[أإآ]/g, 'ا').toLowerCase() === normalized.toLowerCase()) || null;
+    }
     if (user && typeof user.permissions === 'string') {
       try {
         user.permissions = JSON.parse(user.permissions);
       } catch {}
     }
   } else {
-    const result = await db.query('SELECT * FROM users WHERE username = $1', [cleanUsername]);
+    // Try exact match first
+    let result = await db.query('SELECT * FROM users WHERE username = $1', [cleanUsername]);
+    if (!result.rows.length) {
+      // Fallback: case-insensitive + normalize Arabic hamza (أ إ آ → ا)
+      const normalized = cleanUsername
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/[ة]/g, 'ه')
+        .toLowerCase();
+      result = await db.query(
+        `SELECT * FROM users WHERE LOWER(REPLACE(REPLACE(REPLACE(username, 'أ','ا'),'إ','ا'),'آ','ا')) = $1`,
+        [normalized]
+      );
+    }
     user = result.rows[0];
   }
 
@@ -134,25 +152,29 @@ async function authenticateUser(username, password) {
 }
 
 async function verifySalaryPassword(password) {
+  if (!password) return false;
+  let globalPassword = '123';
   if (config.IS_BRANCH_MODE) {
     const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'salary_password'").get();
-    const globalPassword = row?.value || '123';
-    return password === globalPassword;
+    if (row?.value) globalPassword = row.value;
+  } else {
+    const { rows } = await db.query("SELECT value FROM settings WHERE key = 'salary_password'");
+    if (rows.length > 0 && rows[0].value) globalPassword = rows[0].value;
   }
-  const { rows } = await db.query("SELECT value FROM settings WHERE key = 'salary_password'");
-  const globalPassword = rows.length > 0 && rows[0].value ? rows[0].value : '123';
-  return password === globalPassword;
+  return String(password).trim() === String(globalPassword).trim();
 }
 
 async function verifyInvoiceEditPassword(password) {
+  if (!password) return false;
+  let invoicePassword = '123456';
   if (config.IS_BRANCH_MODE) {
     const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'invoice_edit_password'").get();
-    const invoicePassword = row?.value || '123456';
-    return password === invoicePassword;
+    if (row?.value) invoicePassword = row.value;
+  } else {
+    const { rows } = await db.query("SELECT value FROM settings WHERE key = 'invoice_edit_password'");
+    if (rows.length > 0 && rows[0].value) invoicePassword = rows[0].value;
   }
-  const { rows } = await db.query("SELECT value FROM settings WHERE key = 'invoice_edit_password'");
-  const invoicePassword = rows.length > 0 && rows[0].value ? rows[0].value : '123456';
-  return password === invoicePassword;
+  return String(password).trim() === String(invoicePassword).trim();
 }
 
 async function updateOwnAccount(userId, { username, password }) {

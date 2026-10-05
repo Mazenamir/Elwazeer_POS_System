@@ -4,14 +4,14 @@ const { CAIRO_DATE_SQL, CAIRO_NOW_SQL, DEFAULT_RENTAL_FINE_PER_DAY } = require('
 const { hasInventoryAdminAccess, hasInventoryAllBranchesAccess, isBranchScopedUser } = require('../../../shared/constants/permissions');
 const { dateOnly, daysBetween, getDatabaseCairoNow } = require('../../../shared/utils/date');
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
-const { clampInt } = require('../../../shared/utils/numbers');
+const { clampInt, roundCurrency } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { normalizeBarcodeInput, getAvailableBarcode, assertBarcodeAvailable } = require('../inventory/inventory.helpers');
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { getRentalAvailability, getRentalGroupRows, getOrCreateSalesInventoryForRental } = require('./rentals.helpers');
 
 async function listRentalInventory(query = {}, user = null, req = null) {
-  const pagination = parsePagination(req || { query }, 60, 300, true);
+  const pagination = parsePagination(req || { query }, 60, 10000, true);
   const canViewAllBranches = hasInventoryAllBranchesAccess(user);
 
   let branchJoinFilter = '';
@@ -31,6 +31,7 @@ async function listRentalInventory(query = {}, user = null, req = null) {
     where.push(`(
       ri.name ILIKE $${params.length}
       OR ri.barcode ILIKE $${params.length}
+      OR CAST(ri.id AS text) ILIKE $${params.length}
       OR ri.category ILIKE $${params.length}
       OR ri.color ILIKE $${params.length}
       OR ri.size_cut ILIKE $${params.length}
@@ -58,7 +59,7 @@ async function listRentalInventory(query = {}, user = null, req = null) {
     where.push(`ri.size_cut ILIKE $${params.length}`);
   }
 
-  if (query.branch_id && canViewAllBranches) {
+  if (query.branch_id && query.branch_id !== 'all' && canViewAllBranches) {
     params.push(query.branch_id);
     where.push(`EXISTS (
       SELECT 1 FROM rental_inventory_branches rib_filter
@@ -92,7 +93,7 @@ async function listRentalInventory(query = {}, user = null, req = null) {
   }
 
   const { rows } = await db.query(selectQuery, queryParams);
-  return rows;
+  return paginatedPayload(rows, rows.length, { page: 1, limit: rows.length, total: rows.length });
 }
 
 async function createRentalInventory(body, user) {
@@ -143,7 +144,7 @@ async function createRentalInventory(body, user) {
 }
 
 async function checkAvailability(id, branchId, pickupDate, returnDate, user) {
-  let b_id = branchId;
+  let b_id = (branchId && branchId !== 'all' && Number.isFinite(Number(branchId))) ? Number(branchId) : (user?.branch_id || 1);
   if (isBranchScopedUser(user)) {
     b_id = user.branch_id;
   }
@@ -347,7 +348,7 @@ async function getRentalsSummary(branchId, user) {
   if (user && user.role !== 'admin') {
     params.push(user.branch_id);
     where.push(`branch_id = $${params.length}`);
-  } else if (branchId) {
+  } else if (branchId && branchId !== 'all') {
     params.push(branchId);
     where.push(`branch_id = $${params.length}`);
   }
@@ -419,7 +420,7 @@ async function listRentals(query = {}, user = null, req = null) {
   if (user && user.role === 'branch_user') {
     params.push(user.branch_id);
     where.push(`r.branch_id = $${params.length}`);
-  } else if (query.branch_id) {
+  } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
     where.push(`r.branch_id = $${params.length}`);
   }
@@ -624,7 +625,11 @@ async function createRental(body, user, req) {
       requestedCounts.set(itemId, (requestedCounts.get(itemId) || 0) + 1);
     }
 
-    for (const [itemId, requestedQuantity] of requestedCounts.entries()) {
+    // Pre-sort rental item IDs ascending to strictly prevent deadlocks
+    const sortedItemIds = Array.from(requestedCounts.keys()).sort((a, b) => a - b);
+
+    for (const itemId of sortedItemIds) {
+      const requestedQuantity = requestedCounts.get(itemId);
       const availability = await getRentalAvailability(tx, itemId, b_id, pickup_date, return_date, { lockStockRow: true });
       if (availability.available < requestedQuantity) {
         const err = new Error('هذا المنتج غير متاح في الفترة المحددة. اختر تاريخ بعد رجوع الحجز السابق أو منتج آخر.');
@@ -633,10 +638,12 @@ async function createRental(body, user, req) {
       }
     }
 
-    // 1. Handle Customer
+    // 1. Handle Customer with concurrency lock
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`customer-phone:${customer_phone}`]);
+
     let customerId;
     const existingCustomer = await tx.query(
-      'SELECT id, national_id FROM customers WHERE phone = $1 AND branch_id = $2',
+      'SELECT id, national_id FROM customers WHERE phone = $1 AND branch_id = $2 FOR UPDATE',
       [customer_phone, b_id]
     );
 
@@ -648,12 +655,27 @@ async function createRental(body, user, req) {
     } else {
       const initials = getInitialsFromName(normalizedCustomerName);
       const customerOfflineUuid = newUuid();
-      const newCust = await tx.query(
-        `INSERT INTO customers (name, initials, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid) 
-         VALUES ($1, $2, $3, $4, ${CAIRO_DATE_SQL}, 0, $5, $6, $7) RETURNING id`,
-        [normalizedCustomerName, initials, customer_phone, national_id, 'نشط', b_id, customerOfflineUuid]
-      );
-      customerId = newCust.rows[0].id;
+      try {
+        const newCust = await tx.query(
+          `INSERT INTO customers (name, initials, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid) 
+           VALUES ($1, $2, $3, $4, ${CAIRO_DATE_SQL}, 0, $5, $6, $7) RETURNING id`,
+          [normalizedCustomerName, initials, customer_phone, national_id, 'نشط', b_id, customerOfflineUuid]
+        );
+        customerId = newCust.rows[0].id;
+      } catch (insertErr) {
+        const retryCust = await tx.query(
+          'SELECT id, national_id FROM customers WHERE phone = $1 AND branch_id = $2 FOR UPDATE',
+          [customer_phone, b_id]
+        );
+        if (retryCust.rows.length) {
+          customerId = retryCust.rows[0].id;
+          if (national_id && !retryCust.rows[0].national_id) {
+            await tx.query('UPDATE customers SET national_id = $1 WHERE id = $2', [national_id, customerId]);
+          }
+        } else {
+          throw insertErr;
+        }
+      }
     }
 
     // 2. Create one booked row per item. Financial totals live on the first row only
@@ -661,9 +683,9 @@ async function createRental(body, user, req) {
     for (let index = 0; index < rentalItemIds.length; index += 1) {
       const itemId = rentalItemIds[index];
       const itemOfflineUuid = index === 0 ? rentalOfflineUuid : newUuid();
-      const itemTotal = index === 0 ? Number(total_price || 0) : 0;
-      const itemDeposit = index === 0 ? Number(deposit || 0) : 0;
-      const itemRemaining = index === 0 ? Number(remaining || 0) : 0;
+      const itemTotal = index === 0 ? Math.max(0, roundCurrency(Number(total_price || 0))) : 0;
+      const itemDeposit = index === 0 ? Math.max(0, roundCurrency(Number(deposit || 0))) : 0;
+      const itemRemaining = index === 0 ? Math.max(0, roundCurrency(Number(remaining !== undefined ? remaining : (itemTotal - itemDeposit)))) : 0;
 
       const { rows } = await tx.query(
         `INSERT INTO rentals (customer_id, rental_inventory_id, branch_id, pickup_date, return_date, total_price, national_id, deposit, remaining, id_card_guarantee, notes, status, daily_fine, seller_id, payment_method, rental_group_uuid, offline_uuid)
@@ -745,7 +767,10 @@ async function pickupRental(id, user) {
       throw err;
     }
 
-    for (const rental of rentals) {
+    // Pre-sort items ascending to acquire locks in consistent order
+    const sortedRentals = [...rentals].sort((a, b) => Number(a.rental_inventory_id || 0) - Number(b.rental_inventory_id || 0));
+
+    for (const rental of sortedRentals) {
       if (!rental.rental_inventory_id) continue;
       const stockCheck = await tx.query(
         'SELECT stock_level FROM rental_inventory_branches WHERE rental_inventory_id = $1 AND branch_id = $2 FOR UPDATE',
@@ -842,7 +867,7 @@ async function returnRental(id, finePerDay, user) {
     const cairoNow = await getDatabaseCairoNow(tx);
     const delayDays = daysBetween(rentals[0].return_date, cairoNow.date);
     const perDay = Number(rentals[0].daily_fine || finePerDay || DEFAULT_RENTAL_FINE_PER_DAY);
-    calculatedFine = delayDays * perDay;
+    calculatedFine = Math.max(0, roundCurrency(delayDays * perDay));
 
     await tx.query(
       `UPDATE rentals

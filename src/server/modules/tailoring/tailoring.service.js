@@ -3,6 +3,7 @@ const { CAIRO_DATE_SQL, CAIRO_NOW_SQL } = require('../../../shared/constants/sys
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { resolveOrderId } = require('../sales/sales.helpers');
+const { roundCurrency } = require('../../../shared/utils/numbers');
 const { logActivity } = require('../../database/sync.helpers');
 
 // ==========================================
@@ -122,7 +123,7 @@ async function createAlteration(body, user) {
     }
   }
 
-  const b_id = branch_id || 1;
+  const b_id = (branch_id && branch_id !== 'all' && Number.isFinite(Number(branch_id))) ? Number(branch_id) : 1;
   let finalInventoryId = inventory_id || null;
 
   if (!finalInventoryId && order_id) {
@@ -202,7 +203,7 @@ async function listTailoringOrders(query = {}, user = null, req = null) {
   if (user && user.role === 'branch_user') {
     params.push(user.branch_id);
     where.push(`t.branch_id = $${params.length}`);
-  } else if (query.branch_id) {
+  } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
     where.push(`t.branch_id = $${params.length}`);
   }
@@ -258,8 +259,8 @@ async function createTailoringOrder(body, user) {
   const customerPhone = String(body?.customer_phone || '').trim();
   const productDescription = String(body?.product_description || '').trim();
   const measurements = String(body?.measurements || '').trim();
-  const paidAmount = Number(body?.paid_amount);
-  const remainingAmount = Number(body?.remaining_amount || 0);
+  const paidAmount = roundCurrency(Number(body?.paid_amount));
+  const remainingAmount = roundCurrency(Number(body?.remaining_amount || 0));
   const paymentMethod = String(body?.payment_method || 'cash').trim() || 'cash';
   const sellerId = Number.parseInt(body?.seller_id || 0, 10) || null;
 
@@ -288,9 +289,8 @@ async function createTailoringOrder(body, user) {
   }
 
   const offlineUuid = newUuid(body?.offline_uuid);
-  const branchId = user?.role === 'branch_user'
-    ? user.branch_id
-    : (body?.branch_id || user?.branch_id || 1);
+  const rawBranchId = user?.role === 'branch_user' ? user.branch_id : body?.branch_id;
+  const branchId = (rawBranchId && rawBranchId !== 'all' && Number.isFinite(Number(rawBranchId))) ? Number(rawBranchId) : (user?.branch_id || 1);
 
   if (!sellerId) {
     const err = new Error('الرجاء اختيار الموظف البائع');
@@ -324,6 +324,8 @@ async function createTailoringOrder(body, user) {
     );
     const invoiceNumber = String(nextRes.rows[0].next_number);
 
+    const totalAmount = roundCurrency(paidAmount + remainingAmount);
+
     const { rows } = await tx.query(
       `INSERT INTO tailoring_orders
         (invoice_number, customer_name, customer_phone, product_description, measurements, total_amount,
@@ -337,7 +339,7 @@ async function createTailoringOrder(body, user) {
         customerPhone,
         productDescription,
         measurements,
-        paidAmount + remainingAmount,
+        totalAmount,
         paidAmount,
         remainingAmount,
         paymentMethod,
@@ -351,15 +353,22 @@ async function createTailoringOrder(body, user) {
 
     const order = rows[0];
 
-    const custRes = await tx.query('SELECT id FROM customers WHERE phone = $1 LIMIT 1', [customerPhone]);
+    // Concurrency lock on customer phone
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`customer-phone:${customerPhone}`]);
+    const custRes = await tx.query('SELECT id FROM customers WHERE phone = $1 FOR UPDATE', [customerPhone]);
     if (custRes.rows.length === 0) {
       const initials = getInitialsFromName(customerName);
       const customerOfflineUuid = newUuid();
-      await tx.query(
-        `INSERT INTO customers (name, initials, phone, join_date, total_spent, status, branch_id, offline_uuid) 
-         VALUES ($1, $2, $3, ${CAIRO_DATE_SQL}, $4, $5, $6, $7)`,
-        [customerName, initials, customerPhone, 0, 'عادي', branchId, customerOfflineUuid]
-      );
+      try {
+        await tx.query(
+          `INSERT INTO customers (name, initials, phone, join_date, total_spent, status, branch_id, offline_uuid) 
+           VALUES ($1, $2, $3, ${CAIRO_DATE_SQL}, $4, $5, $6, $7)`,
+          [customerName, initials, customerPhone, 0, 'عادي', branchId, customerOfflineUuid]
+        );
+      } catch (insertErr) {
+        const retryCust = await tx.query('SELECT id FROM customers WHERE phone = $1', [customerPhone]);
+        if (!retryCust.rows.length) throw insertErr;
+      }
     }
 
     if (paidAmount > 0) {
@@ -422,7 +431,7 @@ async function deleteTailoringOrder(id, user) {
   return { message: 'تم حذف الفاتورة بنجاح' };
 }
 
-async function payRemainingTailoringOrder(id, user) {
+async function payRemainingTailoringOrder(id, user, body = {}) {
   let orderId = null;
 
   if (String(id).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
@@ -438,53 +447,73 @@ async function payRemainingTailoringOrder(id, user) {
     throw err;
   }
 
-  const { rows: orderRows } = await db.query('SELECT * FROM tailoring_orders WHERE id = $1', [orderId]);
-  if (orderRows.length === 0) {
-    const err = new Error('الفاتورة غير موجودة');
-    err.statusCode = 404;
-    throw err;
-  }
+  return await db.transaction(async (tx) => {
+    const { rows: orderRows } = await tx.query('SELECT * FROM tailoring_orders WHERE id = $1 FOR UPDATE', [orderId]);
+    if (orderRows.length === 0) {
+      const err = new Error('الفاتورة غير موجودة');
+      err.statusCode = 404;
+      throw err;
+    }
 
-  const order = orderRows[0];
-  if (user && user.role === 'branch_user' && Number(order.branch_id) !== Number(user.branch_id)) {
-    const err = new Error('غير مصرح لك بتعديل هذه الفاتورة');
-    err.statusCode = 403;
-    throw err;
-  }
+    const order = orderRows[0];
+    if (user && user.role === 'branch_user' && Number(order.branch_id) !== Number(user.branch_id)) {
+      const err = new Error('غير مصرح لك بتعديل هذه الفاتورة');
+      err.statusCode = 403;
+      throw err;
+    }
 
-  if (Number(order.remaining_amount) <= 0) {
-    const err = new Error('لا يوجد مبلغ متبقي لدفعه');
-    err.statusCode = 400;
-    throw err;
-  }
+    const remaining = roundCurrency(Number(order.remaining_amount || 0));
+    if (remaining <= 0) {
+      const err = new Error('لا يوجد مبلغ متبقي لدفعه');
+      err.statusCode = 400;
+      throw err;
+    }
 
-  const newPaidAmount = Number(order.paid_amount) + Number(order.remaining_amount);
+    let paymentToApply = remaining;
+    if (body?.amount !== undefined && body?.amount !== null && body?.amount !== '') {
+      const requestedAmount = roundCurrency(Number(body.amount));
+      if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+        const err = new Error('مبلغ السداد غير صالح');
+        err.statusCode = 400;
+        throw err;
+      }
+      if (requestedAmount > remaining) {
+        const err = new Error(`المبلغ المدفوع (${requestedAmount}) يتجاوز الباقي المستحق (${remaining})`);
+        err.statusCode = 400;
+        throw err;
+      }
+      paymentToApply = requestedAmount;
+    }
 
-  await db.transaction(async (tx) => {
+    const currentPaid = roundCurrency(Number(order.paid_amount || 0));
+    const newPaidAmount = roundCurrency(currentPaid + paymentToApply);
+    const newRemainingAmount = roundCurrency(Math.max(0, remaining - paymentToApply));
+    const isRemainder = newRemainingAmount === 0;
+
     await tx.query(
-      'UPDATE tailoring_orders SET paid_amount = $1, remaining_amount = 0 WHERE id = $2',
-      [newPaidAmount, orderId]
+      'UPDATE tailoring_orders SET paid_amount = $1, remaining_amount = $2 WHERE id = $3',
+      [newPaidAmount, newRemainingAmount, orderId]
     );
 
     await tx.query(
       `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder)
-       VALUES ($1, $2, $3, ${CAIRO_NOW_SQL}, TRUE)`,
-      [orderId, order.remaining_amount, order.branch_id]
+       VALUES ($1, $2, $3, ${CAIRO_NOW_SQL}, $4)`,
+      [orderId, paymentToApply, order.branch_id, isRemainder]
     );
+
+    if (user) {
+      await logActivity(
+        user.id,
+        user.username,
+        'دفع مبلغ تفصيل',
+        `تم دفع ${paymentToApply} ج.م لفاتورة التفصيل #${order.invoice_number} (المتبقي: ${newRemainingAmount} ج.م)`,
+        'Tailoring',
+        order.branch_id
+      );
+    }
+
+    return { message: 'تم الدفع بنجاح', newPaidAmount, remainingAmount: newRemainingAmount };
   });
-
-  if (user) {
-    await logActivity(
-      user.id,
-      user.username,
-      'دفع مبلغ تفصيل',
-      `تم دفع المبلغ المتبقي (${order.remaining_amount} ج.م) لفاتورة التفصيل #${order.invoice_number}`,
-      'Tailoring',
-      order.branch_id
-    );
-  }
-
-  return { message: 'تم الدفع بنجاح' };
 }
 
 module.exports = {

@@ -26,6 +26,7 @@ ALTER TABLE branches ADD COLUMN IF NOT EXISTS invoice_logo_filter VARCHAR(50) DE
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS invoice_logo_bg_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS invoice_logo_bg_start VARCHAR(20) DEFAULT '#ffffff';
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS invoice_logo_bg_end VARCHAR(20) DEFAULT '#ffffff';
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS allowed_gender VARCHAR(20) DEFAULT 'both';
 
 -- 3. Core Performance Indexes
 CREATE INDEX IF NOT EXISTS idx_orders_branch_date ON orders(branch_id, order_date DESC);

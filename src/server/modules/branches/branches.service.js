@@ -18,56 +18,68 @@ async function createBranch(data) {
     throw err;
   }
   const logoSettings = normalizeBranchInvoiceLogoSettings(data);
+  const branchType = type || 'men';
+  const isMain = Boolean(is_main_warehouse);
+  const allowedGender = data.allowed_gender || 'both';
 
-  if (config.IS_BRANCH_MODE) {
-    const stmt = db.sqlite.prepare(`
-      INSERT INTO branches (
+  return await db.transaction(async (tx) => {
+    if (config.IS_BRANCH_MODE) {
+      const stmt = db.sqlite.prepare(`
+        INSERT INTO branches (
+          name, location, phone, type, is_main_warehouse, logo_url,
+          invoice_logo_height, invoice_logo_spacing, invoice_logo_filter,
+          invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end,
+          allowed_gender
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const info = stmt.run(
+        name, location, phone, branchType, isMain ? 1 : 0, logo_url || null,
+        logoSettings.invoice_logo_height, logoSettings.invoice_logo_spacing, logoSettings.invoice_logo_filter,
+        logoSettings.invoice_logo_bg_enabled ? 1 : 0, logoSettings.invoice_logo_bg_start, logoSettings.invoice_logo_bg_end,
+        allowedGender
+      );
+      const newBranch = db.sqlite.prepare('SELECT * FROM branches WHERE id = ?').get(info.lastInsertRowid);
+      db.sqlite.prepare(`
+        INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
+        SELECT id, ?, 0 FROM inventory
+      `).run(newBranch.id);
+      return newBranch;
+    }
+
+    const { rows } = await tx.query(
+      `INSERT INTO branches (
         name, location, phone, type, is_main_warehouse, logo_url,
         invoice_logo_height, invoice_logo_spacing, invoice_logo_filter,
-        invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const info = stmt.run(
-      name, location, phone, type || 'men', is_main_warehouse ? 1 : 0, logo_url || null,
-      logoSettings.invoice_logo_height, logoSettings.invoice_logo_spacing, logoSettings.invoice_logo_filter,
-      logoSettings.invoice_logo_bg_enabled ? 1 : 0, logoSettings.invoice_logo_bg_start, logoSettings.invoice_logo_bg_end
+        invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end,
+        allowed_gender
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING *`,
+      [
+        name,
+        location,
+        phone,
+        branchType,
+        isMain,
+        logo_url || null,
+        logoSettings.invoice_logo_height,
+        logoSettings.invoice_logo_spacing,
+        logoSettings.invoice_logo_filter,
+        logoSettings.invoice_logo_bg_enabled,
+        logoSettings.invoice_logo_bg_start,
+        logoSettings.invoice_logo_bg_end,
+        allowedGender,
+      ]
     );
-    return db.sqlite.prepare('SELECT * FROM branches WHERE id = ?').get(info.lastInsertRowid);
-  }
+    const newBranch = rows[0];
 
-  const { rows } = await db.query(
-    `INSERT INTO branches (
-      name, location, phone, type, is_main_warehouse, logo_url,
-      invoice_logo_height, invoice_logo_spacing, invoice_logo_filter,
-      invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end,
-      allowed_gender
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-    RETURNING *`,
-    [
-      name,
-      location,
-      phone,
-      type || 'men',
-      is_main_warehouse || false,
-      logo_url || null,
-      logoSettings.invoice_logo_height,
-      logoSettings.invoice_logo_spacing,
-      logoSettings.invoice_logo_filter,
-      logoSettings.invoice_logo_bg_enabled,
-      logoSettings.invoice_logo_bg_start,
-      logoSettings.invoice_logo_bg_end,
-      data.allowed_gender || 'both',
-    ]
-  );
-  const newBranch = rows[0];
+    // Initialize stock in inventory_branches for existing items atomically
+    await tx.query(`
+      INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
+      SELECT id, $1, 0 FROM inventory
+    `, [newBranch.id]);
 
-  // Initialize stock in inventory_branches for existing items
-  await db.query(`
-    INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
-    SELECT id, $1, 0 FROM inventory
-  `, [newBranch.id]);
-
-  return newBranch;
+    return newBranch;
+  });
 }
 
 async function updateBranch(id, data) {
@@ -132,37 +144,79 @@ async function updateBranch(id, data) {
 }
 
 async function deleteBranch(id) {
-  if (config.IS_BRANCH_MODE) {
-    const branch = db.sqlite.prepare('SELECT is_main_warehouse FROM branches WHERE id = ?').get(id);
-    if (!branch) {
-      const err = new Error('الفرع غير موجود');
-      err.statusCode = 404;
-      throw err;
-    }
-    if (branch.is_main_warehouse) {
-      const err = new Error('لا يمكن حذف المخزن الرئيسي');
-      err.statusCode = 400;
-      throw err;
-    }
-    db.sqlite.prepare('DELETE FROM branches WHERE id = ?').run(id);
-    return { success: true };
-  }
-
-  const branchCheck = await db.query('SELECT is_main_warehouse FROM branches WHERE id = $1', [id]);
-  if (branchCheck.rows.length === 0) {
-    const err = new Error('الفرع غير موجود');
-    err.statusCode = 404;
-    throw err;
-  }
-  if (branchCheck.rows[0].is_main_warehouse) {
-    const err = new Error('لا يمكن حذف المخزن الرئيسي');
+  const branchId = Number(id);
+  if (!Number.isInteger(branchId) || branchId <= 0) {
+    const err = new Error('معرف الفرع غير صالح');
     err.statusCode = 400;
     throw err;
   }
 
-  await db.query('DELETE FROM inventory_branches WHERE branch_id = $1', [id]);
-  await db.query('DELETE FROM branches WHERE id = $1', [id]);
-  return { success: true };
+  return await db.transaction(async (tx) => {
+    let isMainWarehouse = false;
+    if (config.IS_BRANCH_MODE) {
+      const branch = db.sqlite.prepare('SELECT is_main_warehouse FROM branches WHERE id = ?').get(branchId);
+      if (!branch) {
+        const err = new Error('الفرع غير موجود');
+        err.statusCode = 404;
+        throw err;
+      }
+      isMainWarehouse = Boolean(branch.is_main_warehouse);
+    } else {
+      const branchCheck = await tx.query('SELECT is_main_warehouse FROM branches WHERE id = $1 FOR UPDATE', [branchId]);
+      if (branchCheck.rows.length === 0) {
+        const err = new Error('الفرع غير موجود');
+        err.statusCode = 404;
+        throw err;
+      }
+      isMainWarehouse = Boolean(branchCheck.rows[0].is_main_warehouse);
+    }
+
+    if (isMainWarehouse) {
+      const err = new Error('لا يمكن حذف المخزن الرئيسي');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Determine fallback branch (main warehouse or branch 1) for historical data unlinking
+    let fallbackBranchId = 1;
+    if (config.IS_BRANCH_MODE) {
+      const mainWarehouse = db.sqlite.prepare('SELECT id FROM branches WHERE is_main_warehouse = 1 OR id = 1 ORDER BY is_main_warehouse DESC, id ASC LIMIT 1').get();
+      fallbackBranchId = mainWarehouse?.id || 1;
+
+      // Reassign operational history to fallback branch to preserve audit records
+      db.sqlite.prepare('UPDATE orders SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+      db.sqlite.prepare('UPDATE customers SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+      db.sqlite.prepare('UPDATE rentals SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+      db.sqlite.prepare('UPDATE tailoring_orders SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+      db.sqlite.prepare('UPDATE alterations SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+      db.sqlite.prepare('UPDATE expenses SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+      db.sqlite.prepare('UPDATE employees SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+      db.sqlite.prepare('UPDATE users SET branch_id = ? WHERE branch_id = ?').run(fallbackBranchId, branchId);
+
+      db.sqlite.prepare('DELETE FROM rental_inventory_branches WHERE branch_id = ?').run(branchId);
+      db.sqlite.prepare('DELETE FROM inventory_branches WHERE branch_id = ?').run(branchId);
+      db.sqlite.prepare('DELETE FROM branches WHERE id = ?').run(branchId);
+      return { success: true };
+    }
+
+    const mainRes = await tx.query('SELECT id FROM branches WHERE is_main_warehouse = TRUE OR id = 1 ORDER BY is_main_warehouse DESC, id ASC LIMIT 1');
+    fallbackBranchId = mainRes.rows[0]?.id || 1;
+
+    // Safely reassign records referencing branches(id) to avoid foreign key violations and preserve history
+    await tx.query('UPDATE orders SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+    await tx.query('UPDATE customers SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+    await tx.query('UPDATE rentals SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+    await tx.query('UPDATE tailoring_orders SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+    await tx.query('UPDATE alterations SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+    await tx.query('UPDATE expenses SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+    await tx.query('UPDATE employees SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+    await tx.query('UPDATE users SET branch_id = $1 WHERE branch_id = $2', [fallbackBranchId, branchId]);
+
+    await tx.query('DELETE FROM rental_inventory_branches WHERE branch_id = $1', [branchId]);
+    await tx.query('DELETE FROM inventory_branches WHERE branch_id = $1', [branchId]);
+    await tx.query('DELETE FROM branches WHERE id = $1', [branchId]);
+    return { success: true };
+  });
 }
 
 module.exports = {

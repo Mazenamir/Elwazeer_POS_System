@@ -23,22 +23,55 @@ async function getMetadata() {
   const cached = getInventoryMetadataCache();
   if (cached) return cached;
 
+  const defaultCategories = ['بدل', 'بنطلون', 'قميص', 'بليزر', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'صديري', 'تيشيرت', 'جينز', 'إكسسوارات'];
+  const defaultColors = ['أبيض', 'أسود', 'كحلي', 'رمادي', 'أزرق', 'أحمر', 'أخضر', 'أصفر', 'بني', 'زيتي', 'جملي', 'نبيتي', 'بيج', 'رصاصي', 'سماوي', 'ذهبي', 'فضي', 'كافيه'];
+
   if (config.IS_BRANCH_MODE) {
-    const cats = db.sqlite.prepare("SELECT DISTINCT category FROM inventory WHERE category IS NOT NULL AND category != ''").all();
-    const colors = db.sqlite.prepare("SELECT DISTINCT color FROM inventory WHERE color IS NOT NULL AND color != ''").all();
+    const cats = db.sqlite.prepare(`
+      SELECT DISTINCT category FROM (
+        SELECT category FROM inventory WHERE category IS NOT NULL AND TRIM(category) != ''
+        UNION
+        SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
+      )
+    `).all();
+    const colors = db.sqlite.prepare(`
+      SELECT DISTINCT color FROM (
+        SELECT color FROM inventory WHERE color IS NOT NULL AND TRIM(color) != ''
+        UNION
+        SELECT color FROM rental_inventory WHERE color IS NOT NULL AND TRIM(color) != ''
+      )
+    `).all();
+    const uniqueCats = Array.from(new Set([...cats.map((r) => r.category), ...defaultCategories]));
+    const uniqueCols = Array.from(new Set([...colors.map((r) => r.color), ...defaultColors]));
     const metadata = {
-      categories: cats.map((r) => r.category),
-      colors: colors.map((r) => r.color),
+      categories: uniqueCats,
+      colors: uniqueCols,
     };
     setInventoryMetadataCache(metadata);
     return metadata;
   }
 
-  const categoriesRes = await db.query("SELECT DISTINCT category FROM inventory WHERE category IS NOT NULL AND category != ''");
-  const colorsRes = await db.query("SELECT DISTINCT color FROM inventory WHERE color IS NOT NULL AND color != ''");
+  const categoriesRes = await db.query(`
+    SELECT DISTINCT category FROM (
+      SELECT category FROM inventory WHERE category IS NOT NULL AND TRIM(category) != ''
+      UNION
+      SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
+    ) c ORDER BY category
+  `);
+  const colorsRes = await db.query(`
+    SELECT DISTINCT color FROM (
+      SELECT color FROM inventory WHERE color IS NOT NULL AND TRIM(color) != ''
+      UNION
+      SELECT color FROM rental_inventory WHERE color IS NOT NULL AND TRIM(color) != ''
+    ) cl ORDER BY color
+  `);
+
+  const uniqueCats = Array.from(new Set([...categoriesRes.rows.map((r) => r.category), ...defaultCategories]));
+  const uniqueCols = Array.from(new Set([...colorsRes.rows.map((r) => r.color), ...defaultColors]));
+
   const metadata = {
-    categories: categoriesRes.rows.map((r) => r.category),
-    colors: colorsRes.rows.map((r) => r.color),
+    categories: uniqueCats,
+    colors: uniqueCols,
   };
   setInventoryMetadataCache(metadata);
   return metadata;
@@ -156,9 +189,10 @@ async function listInventory(req, user) {
 
     if (req.query.search) {
       params.push(likePattern(req.query.search));
-      where.push('(i.name LIKE ? OR i.barcode LIKE ? OR i.category LIKE ?)');
       params.push(likePattern(req.query.search));
       params.push(likePattern(req.query.search));
+      params.push(likePattern(req.query.search));
+      where.push('(i.name LIKE ? OR i.barcode LIKE ? OR i.category LIKE ? OR CAST(i.id AS TEXT) LIKE ?)');
     }
     if (req.query.name) {
       params.push(likePattern(req.query.name));
@@ -172,15 +206,26 @@ async function listInventory(req, user) {
     const whereClause = `WHERE ${where.join(' AND ')}`;
     const total = db.sqlite.prepare(`SELECT COUNT(*) as count FROM inventory i ${whereClause}`).get(...params).count;
 
+    if (pagination.enabled) {
+      const rows = db.sqlite.prepare(`
+        SELECT i.*, i.stock_level
+        FROM inventory i
+        ${whereClause}
+        ORDER BY i.id DESC
+        LIMIT ? OFFSET ?
+      `).all(...params, pagination.limit, pagination.offset);
+
+      return paginatedPayload(rows, total, pagination);
+    }
+
     const rows = db.sqlite.prepare(`
       SELECT i.*, i.stock_level
       FROM inventory i
       ${whereClause}
       ORDER BY i.id DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, pagination.limit, pagination.offset);
+    `).all(...params);
 
-    return paginatedPayload(rows, total, pagination);
+    return paginatedPayload(rows, total, { page: 1, limit: total, total });
   }
 
   let columns = 'i.id, i.name, i.category, i.size_cut, i.color, i.barcode, i.min_stock_level, i.price, i.image_url, i.gender';
@@ -217,6 +262,7 @@ async function listInventory(req, user) {
     where.push(`(
       i.name ILIKE $${params.length}
       OR i.barcode ILIKE $${params.length}
+      OR CAST(i.id AS text) ILIKE $${params.length}
       OR i.category ILIKE $${params.length}
       OR i.color ILIKE $${params.length}
       OR i.size_cut ILIKE $${params.length}
@@ -263,22 +309,33 @@ async function listInventory(req, user) {
   }
 
   const { rows } = await db.query(query, queryParams);
-  return rows;
+  return paginatedPayload(rows, rows.length, { page: 1, limit: rows.length, total: rows.length });
 }
 
 async function createProduct(body, user) {
-  let { name, category, size_cut, color, stock_level, min_stock_level, branch_id, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, supplier_id, gender, purchase_batch_id } = body;
+  if (!hasInventoryAdminAccess(user)) {
+    const err = new Error('غير مصرح لك بإضافة منتجات للمخزون');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  let { name, category, size_cut, color, stock_level, min_stock_level, branch_id, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, supplier_id, preferred_supplier_id, gender, purchase_batch_id, stock } = body;
   barcode = normalizeBarcodeInput(barcode);
   if (isBranchScopedUser(user)) {
     branch_id = user.branch_id;
   }
   if (!supplier_id) {
-    const err = new Error('الرجاء اختيار المورد');
-    err.statusCode = 400;
-    throw err;
+    supplier_id = preferred_supplier_id;
+  }
+  if (!supplier_id) {
+    const supRes = await db.query('SELECT id FROM suppliers ORDER BY id LIMIT 1');
+    if (supRes.rows.length > 0) {
+      supplier_id = supRes.rows[0].id;
+    }
   }
 
-  const initialStock = stock_level === undefined || stock_level === '' ? 0 : parseNonNegativeInt(stock_level, 'stock_level');
+  const rawStock = stock_level !== undefined ? stock_level : (stock !== undefined ? stock : 0);
+  const initialStock = rawStock === '' ? 0 : parseNonNegativeInt(rawStock, 'stock_level');
   const minStockLevel = min_stock_level === undefined || min_stock_level === '' ? 5 : parseNonNegativeInt(min_stock_level, 'min_stock_level');
   const b_id = parseInt(branch_id, 10) || 1;
 
@@ -337,14 +394,28 @@ async function createProduct(body, user) {
 }
 
 async function updateProduct(id, body, user) {
-  let { name, category, size_cut, color, stock_level, min_stock_level, supplier_id, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, branch_id, is_correction } = body;
+  if (!hasInventoryAdminAccess(user)) {
+    const err = new Error('غير مصرح لك بتعديل بيانات هذا المنتج');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  let { name, category, size_cut, color, stock_level, min_stock_level, supplier_id, preferred_supplier_id, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, branch_id, is_correction } = body;
   barcode = normalizeBarcodeInput(barcode);
   const minStockLevel = min_stock_level === undefined || min_stock_level === '' ? 5 : parseNonNegativeInt(min_stock_level, 'min_stock_level');
 
   if (!supplier_id) {
-    const err = new Error('الرجاء اختيار المورد');
-    err.statusCode = 400;
-    throw err;
+    supplier_id = preferred_supplier_id;
+  }
+  if (!supplier_id) {
+    const cur = await db.query('SELECT preferred_supplier_id FROM inventory WHERE id = $1', [id]);
+    supplier_id = cur.rows[0]?.preferred_supplier_id;
+  }
+  if (!supplier_id) {
+    const supRes = await db.query('SELECT id FROM suppliers ORDER BY id LIMIT 1');
+    if (supRes.rows.length > 0) {
+      supplier_id = supRes.rows[0].id;
+    }
   }
 
   if (config.IS_BRANCH_MODE) {
@@ -533,7 +604,7 @@ async function listTransferRequests(user, branchIdParam) {
   `;
   const params = [];
 
-  if (branch_id) {
+  if (branch_id && branch_id !== 'all') {
     query += ' AND st.from_branch_id = $1';
     params.push(branch_id);
   } else if (user && !hasInventoryAdminAccess(user)) {
@@ -600,7 +671,7 @@ async function listIncomingTransfers(user, branchIdParam) {
   `;
   const params = [];
 
-  if (branch_id) {
+  if (branch_id && branch_id !== 'all') {
     query += ' AND st.to_branch_id = $1';
     params.push(branch_id);
   } else if (user && !hasInventoryAdminAccess(user)) {
@@ -774,7 +845,7 @@ async function searchInventory(query = {}, user = null) {
   }
 
   const searchPattern = `%${searchQuery.trim()}%`;
-  const branchIdToUse = branch_id || (user && user.branch_id) || 1;
+  const branchIdToUse = (branch_id && branch_id !== 'all' && Number.isFinite(Number(branch_id))) ? Number(branch_id) : ((user && user.branch_id) || 1);
 
   const { rows } = await db.query(`
     SELECT 

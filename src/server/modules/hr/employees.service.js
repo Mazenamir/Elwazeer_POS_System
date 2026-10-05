@@ -16,7 +16,7 @@ async function getEmployeeOptions(query = {}, user = null) {
   if (user && user.role === 'branch_user') {
     params.push(user.branch_id);
     where.push(`e.branch_id = $${params.length}`);
-  } else if (query.branch_id) {
+  } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
     where.push(`e.branch_id = $${params.length}`);
   }
@@ -63,7 +63,7 @@ async function getCheckoutReminders(branchId, user) {
   if (isBranchUser) {
     params.push(user.branch_id);
     where.push(`e.branch_id = $${params.length}`);
-  } else if (branchId) {
+  } else if (branchId && branchId !== 'all') {
     params.push(branchId);
     where.push(`e.branch_id = $${params.length}`);
   }
@@ -140,7 +140,7 @@ async function listEmployees(query = {}, user = null, req = null) {
     params.push(likePattern(query.phone));
     where.push(`e.phone ILIKE $${params.length}`);
   }
-  if (query.branch_id && (!user || user.role !== 'branch_user')) {
+  if (query.branch_id && query.branch_id !== 'all' && (!user || user.role !== 'branch_user')) {
     params.push(query.branch_id);
     where.push(`e.branch_id = $${params.length}`);
   }
@@ -217,9 +217,10 @@ async function createEmployee(body, user) {
 
   const employee = await db.transaction(async (tx) => {
     const cairoNow = await getDatabaseCairoNow(tx);
+    const cleanBranchId = (branch_id && Number(branch_id) > 0) ? Number(branch_id) : null;
     const empResult = await tx.query(
       'INSERT INTO employees (name, position, branch_id, basic_salary, phone, join_date, shift_start, shift_end) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [name, position, branch_id || null, basic_salary || 0, phone, join_date || cairoNow.date, shift_start || null, shift_end || null]
+      [name, position, cleanBranchId, basic_salary || 0, phone, join_date || cairoNow.date, shift_start || null, shift_end || null]
     );
 
     if (create_account && username && password) {
@@ -233,7 +234,7 @@ async function createEmployee(body, user) {
       const password_hash = await bcrypt.hash(password, 10);
       await tx.query(
         'INSERT INTO users (username, password_hash, role, branch_id, permissions, employee_id) VALUES ($1, $2, $3, $4, $5, $6)',
-        [username, password_hash, role || 'branch_user', branch_id || null, JSON.stringify(normalizedPerms), empResult.rows[0].id]
+        [username, password_hash, role || 'branch_user', cleanBranchId, JSON.stringify(normalizedPerms), empResult.rows[0].id]
       );
     }
 
@@ -280,9 +281,10 @@ async function updateEmployee(id, body, user) {
       branch_id = user.branch_id;
     }
 
+    const cleanBranchId = (branch_id && Number(branch_id) > 0) ? Number(branch_id) : null;
     const result = await tx.query(
-      'UPDATE employees SET name = $1, position = $2, branch_id = $3, basic_salary = $4, phone = $5, join_date = $6, shift_start = $7, shift_end = $8 WHERE id = $9 RETURNING *',
-      [name, position, branch_id || null, basic_salary || 0, phone, join_date, shift_start || null, shift_end || null, id]
+      'UPDATE employees SET name = $1, position = $2, branch_id = $3, basic_salary = $4, phone = $5, join_date = COALESCE($6, join_date), shift_start = $7, shift_end = $8 WHERE id = $9 RETURNING *',
+      [name, position, cleanBranchId, basic_salary || 0, phone, join_date || null, shift_start || null, shift_end || null, id]
     );
 
     if (result.rows.length === 0) {

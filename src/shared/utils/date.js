@@ -27,7 +27,30 @@ function getMonthKey(date) {
 }
 
 function dateOnly(value) {
-  return String(value || '').slice(0, 10);
+  if (!value) return '';
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return '';
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: CAIRO_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(value);
+  }
+  const str = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return str.slice(0, 10);
+  }
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: CAIRO_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(parsed);
+  }
+  return str.slice(0, 10);
 }
 
 function daysBetween(start, end) {

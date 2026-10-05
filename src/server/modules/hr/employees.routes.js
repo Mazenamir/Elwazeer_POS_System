@@ -23,9 +23,26 @@ router.get('/employees/:id/attendance-report', employeesController.getAttendance
 // Employee transactions (advances, deductions, salary payments, bonuses)
 router.post('/employee_transactions', employeesController.createEmployeeTransaction);
 
+const authService = require('../auth/auth.service');
+
+async function requireSalaryAccess(req, res, next) {
+  if (req.user && req.user.role === 'admin') {
+    return next();
+  }
+  const password = req.headers['x-salary-password'] || req.query.salary_password;
+  if (!password) {
+    return res.status(403).json({ error: 'كلمة سر الرواتب مطلوبة للاطلاع على هذا التقرير' });
+  }
+  const isValid = await authService.verifySalaryPassword(password);
+  if (!isValid) {
+    return res.status(403).json({ error: 'كلمة سر الرواتب غير صحيحة' });
+  }
+  next();
+}
+
 // Summary, Payslip, and Sales Report
-router.get('/employees/:id/summary', employeesController.getEmployeeSummary);
-router.get('/employees/:id/payslip', employeesController.getEmployeePayslip);
+router.get('/employees/:id/summary', requireSalaryAccess, employeesController.getEmployeeSummary);
+router.get('/employees/:id/payslip', requireSalaryAccess, employeesController.getEmployeePayslip);
 router.get('/employees/:id/sales-report', employeesController.getEmployeeSalesReport);
 
 module.exports = router;

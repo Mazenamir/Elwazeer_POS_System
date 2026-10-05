@@ -73,7 +73,25 @@ async function runBranchSqliteMigrations() {
       invoice_logo_filter TEXT DEFAULT 'black',
       invoice_logo_bg_enabled INTEGER DEFAULT 0,
       invoice_logo_bg_start TEXT DEFAULT '#ffffff',
-      invoice_logo_bg_end TEXT DEFAULT '#ffffff'
+      invoice_logo_bg_end TEXT DEFAULT '#ffffff',
+      allowed_gender TEXT DEFAULT 'both'
+    );
+
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      initials TEXT,
+      category TEXT,
+      contact_person TEXT,
+      phone TEXT,
+      supply_type TEXT,
+      last_supply_date TEXT,
+      balance REAL DEFAULT 0,
+      total_purchases REAL DEFAULT 0,
+      notes TEXT,
+      gender_category TEXT DEFAULT 'مشترك',
+      is_active INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'active'
     );
 
     CREATE TABLE IF NOT EXISTS customers (
@@ -87,6 +105,7 @@ async function runBranchSqliteMigrations() {
       total_spent REAL DEFAULT 0,
       status TEXT DEFAULT 'نشط',
       branch_id INTEGER DEFAULT 1,
+      is_active INTEGER DEFAULT 1,
       offline_uuid TEXT UNIQUE,
       pending_sync INTEGER DEFAULT 1
     );
@@ -290,10 +309,71 @@ async function runBranchSqliteMigrations() {
       reason TEXT,
       estimated_loss REAL DEFAULT 0,
       notes TEXT,
+      reported_by INTEGER,
+      occurred_at TEXT DEFAULT CURRENT_DATE,
+      status TEXT DEFAULT 'reported',
       created_by INTEGER,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       offline_uuid TEXT UNIQUE,
       pending_sync INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_branches (
+      inventory_id INTEGER,
+      branch_id INTEGER,
+      stock_level INTEGER DEFAULT 0,
+      PRIMARY KEY (inventory_id, branch_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS rental_inventory_branches (
+      rental_inventory_id INTEGER,
+      branch_id INTEGER,
+      stock_level INTEGER DEFAULT 0,
+      PRIMARY KEY (rental_inventory_id, branch_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS stock_transfers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      inventory_id INTEGER,
+      from_branch_id INTEGER,
+      to_branch_id INTEGER,
+      quantity INTEGER NOT NULL,
+      transfer_date TEXT DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'completed'
+    );
+
+    CREATE TABLE IF NOT EXISTS supply_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_id INTEGER,
+      inventory_id INTEGER,
+      branch_id INTEGER DEFAULT 1,
+      quantity INTEGER NOT NULL,
+      supply_date TEXT DEFAULT CURRENT_DATE,
+      cost_price REAL NOT NULL,
+      notes TEXT,
+      purchase_batch_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_id INTEGER,
+      transaction_type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      transaction_date TEXT DEFAULT CURRENT_TIMESTAMP,
+      notes TEXT,
+      purchase_batch_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS alterations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER,
+      customer_id INTEGER,
+      branch_id INTEGER,
+      description TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      due_date TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      inventory_id INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS users (
@@ -311,6 +391,16 @@ async function runBranchSqliteMigrations() {
       value TEXT
     );
   `);
+
+  // Seed default system settings into SQLite
+  const insertSetting = sqlite.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+    insertSetting.run(key, value);
+  }
+
+  try {
+    sqlite.exec("ALTER TABLE branches ADD COLUMN allowed_gender TEXT DEFAULT 'both'");
+  } catch {}
 
   console.log('✨ Branch SQLite schema initialized successfully.');
 }

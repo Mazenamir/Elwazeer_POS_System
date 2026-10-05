@@ -15,7 +15,7 @@ async function getExpensesSummary(query = {}, user = null) {
   if (user && user.role !== 'admin') {
     params.push(user.branch_id);
     where.push(`branch_id = $${params.length}`);
-  } else if (query.branch_id) {
+  } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
     where.push(`branch_id = $${params.length}`);
   }
@@ -87,7 +87,7 @@ async function listExpenses(query = {}, user = null) {
     where.push(`e.branch_id = $${params.length}`);
   }
 
-  if (query.branch_id && (!user || user.role === 'admin')) {
+  if (query.branch_id && query.branch_id !== 'all' && (!user || user.role === 'admin')) {
     params.push(query.branch_id);
     where.push(`e.branch_id = $${params.length}`);
   }

@@ -3,12 +3,10 @@ const db = require('../../database/connection');
 const config = require('../../config/env');
 const { getInitialsFromName, newUuid } = require('../../../shared/utils/string');
 const { parsePositiveInt } = require('../../../shared/utils/numbers');
+const { logActivity } = require('../../database/sync.helpers');
 const offlineStore = require('./offline.store');
 
-// Allow self-signed certificates for sync if connecting over https
-if (config.SYNC_SERVER_URL && config.SYNC_SERVER_URL.startsWith('https://')) {
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-}
+// Safe SSL configuration: process.env.NODE_TLS_REJECT_UNAUTHORIZED is not disabled globally
 
 function timeoutError(timeoutMs) {
   const err = new Error(`Sync request timed out after ${timeoutMs}ms`);
@@ -223,13 +221,70 @@ async function applyOperation(operation) {
 
       if (payload.deduct_stock !== false) {
         if (productType === 'sales') {
+          // Lock global inventory and branch stock rows in order
+          const globalStockRes = await tx.query(
+            'SELECT stock_level FROM inventory WHERE id = $1 FOR UPDATE',
+            [inventoryId]
+          );
+          const currentGlobalStock = Number(globalStockRes.rows[0]?.stock_level || 0);
+          if (currentGlobalStock < qty) {
+            const deficit = qty - currentGlobalStock;
+            console.warn(`[Sync Conflict] Deficit detected during offline worn product replay for global inventory #${inventoryId}: required ${qty}, available ${currentGlobalStock}, deficit ${deficit}`);
+            await logActivity(
+              null,
+              'SyncService',
+              'تعارض مزامنة مخزون عام',
+              `عجز في المخزون العام للمنتج التالف #${inventoryId} (المطلوب: ${qty}، المتاح: ${currentGlobalStock}، العجز: ${deficit})`,
+              'Sync',
+              branchId
+            );
+          }
+
+          const branchStockRes = await tx.query(
+            'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+            [inventoryId, branchId]
+          );
+          const currentBranchStock = Number(branchStockRes.rows[0]?.stock_level || 0);
+          if (currentBranchStock < qty) {
+            const deficit = qty - currentBranchStock;
+            console.warn(`[Sync Conflict] Deficit detected during offline worn product replay for inventory #${inventoryId} at branch #${branchId}: required ${qty}, available ${currentBranchStock}, deficit ${deficit}`);
+            await logActivity(
+              null,
+              'SyncService',
+              'تعارض مزامنة مخزون فرع',
+              `عجز في مخزون الفرع #${branchId} للمنتج التالف #${inventoryId} (المطلوب: ${qty}، المتاح: ${currentBranchStock}، العجز: ${deficit})`,
+              'Sync',
+              branchId
+            );
+          }
+
           await tx.query(
             'UPDATE inventory_branches SET stock_level = GREATEST(stock_level - $1, 0) WHERE inventory_id = $2 AND branch_id = $3',
             [qty, inventoryId, branchId]
           );
-          const totalStock = await tx.query('SELECT COALESCE(SUM(stock_level), 0) AS total FROM inventory_branches WHERE inventory_id = $1', [inventoryId]);
-          await tx.query('UPDATE inventory SET stock_level = $1 WHERE id = $2', [Number(totalStock.rows[0]?.total || 0), inventoryId]);
+          await tx.query(
+            'UPDATE inventory SET stock_level = GREATEST(stock_level - $1, 0) WHERE id = $2',
+            [qty, inventoryId]
+          );
         } else {
+          const rentalStockRes = await tx.query(
+            'SELECT stock_level FROM rental_inventory_branches WHERE rental_inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+            [rentalInventoryId, branchId]
+          );
+          const currentRentalStock = Number(rentalStockRes.rows[0]?.stock_level || 0);
+          if (currentRentalStock < qty) {
+            const deficit = qty - currentRentalStock;
+            console.warn(`[Sync Conflict] Deficit detected during offline worn rental product replay for rental inventory #${rentalInventoryId} at branch #${branchId}: required ${qty}, available ${currentRentalStock}, deficit ${deficit}`);
+            await logActivity(
+              null,
+              'SyncService',
+              'تعارض مزامنة مخزون إيجار',
+              `عجز في مخزون إيجار الفرع #${branchId} للمنتج التالف #${rentalInventoryId} (المطلوب: ${qty}، المتاح: ${currentRentalStock}، العجز: ${deficit})`,
+              'Sync',
+              branchId
+            );
+          }
+
           await tx.query(
             'UPDATE rental_inventory_branches SET stock_level = GREATEST(stock_level - $1, 0) WHERE rental_inventory_id = $2 AND branch_id = $3',
             [qty, rentalInventoryId, branchId]
@@ -325,8 +380,11 @@ async function applyOperation(operation) {
       if (exists.rows.length) return;
       const branchId = payload.order?.branch_id || operation.branch_id || 1;
       const customer = payload.customer || {};
+      if (customer.phone) {
+        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`customer-phone:${customer.phone}`]);
+      }
       let customerId;
-      const existingCustomer = await tx.query('SELECT id FROM customers WHERE phone = $1 AND branch_id = $2', [customer.phone || '', branchId]);
+      const existingCustomer = await tx.query('SELECT id FROM customers WHERE phone = $1 AND branch_id = $2 FOR UPDATE', [customer.phone || '', branchId]);
       if (existingCustomer.rows.length) {
         customerId = existingCustomer.rows[0].id;
         await tx.query('UPDATE customers SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2', [payload.order?.total_amount || 0, customerId]);
@@ -350,12 +408,55 @@ async function applyOperation(operation) {
         [customerId, payload.order?.total_amount || 0, branchId, payload.order?.payment_method || 'cash', payload.order?.seller_id || null, payload.order?.paid_amount || 0, payload.order?.change_amount || 0, payload.order?.invoice_discount || 0, payload.order?.invoice_discount_type || 'amount', nextBranchInvoiceNumber, payload.offline_uuid, payload.order?.order_date || null]
       );
       const orderId = insertOrderRes.rows[0].id;
-      for (const item of payload.items || []) {
+
+      // Pre-sort items ascending by inventory_id to prevent deadlocks during replay
+      const sortedSyncItems = [...(payload.items || [])].sort((a, b) => Number(a.inventory_id) - Number(b.inventory_id));
+
+      for (const item of sortedSyncItems) {
         const qty = parsePositiveInt(item.quantity, 'quantity');
         await tx.query(
           'INSERT INTO order_items (order_id, inventory_id, quantity, price_at_time, discount, discount_type) VALUES ($1, $2, $3, $4, $5, $6)',
           [orderId, item.inventory_id, qty, item.price || 0, item.discount || 0, item.discount_type || 'amount']
         );
+
+        // Check & lock branch stock
+        const branchStockRes = await tx.query(
+          'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+          [item.inventory_id, branchId]
+        );
+        const currentBranchStock = Number(branchStockRes.rows[0]?.stock_level || 0);
+        if (currentBranchStock < qty) {
+          const deficit = qty - currentBranchStock;
+          console.warn(`[Sync Conflict] Deficit detected during offline order replay for inventory #${item.inventory_id} at branch #${branchId}: required ${qty}, available ${currentBranchStock}, deficit ${deficit}`);
+          await logActivity(
+            null,
+            'SyncService',
+            'تعارض مزامنة مخزون فرع',
+            `عجز في مخزون الفرع #${branchId} للمنتج #${item.inventory_id} (المطلوب: ${qty}، المتاح: ${currentBranchStock}، العجز: ${deficit}) في طلب #${orderId}`,
+            'Sync',
+            branchId
+          );
+        }
+
+        // Check & lock global stock
+        const globalStockRes = await tx.query(
+          'SELECT stock_level FROM inventory WHERE id = $1 FOR UPDATE',
+          [item.inventory_id]
+        );
+        const currentGlobalStock = Number(globalStockRes.rows[0]?.stock_level || 0);
+        if (currentGlobalStock < qty) {
+          const deficit = qty - currentGlobalStock;
+          console.warn(`[Sync Conflict] Deficit detected during offline order replay for global inventory #${item.inventory_id}: required ${qty}, available ${currentGlobalStock}, deficit ${deficit}`);
+          await logActivity(
+            null,
+            'SyncService',
+            'تعارض مزامنة مخزون عام',
+            `عجز في المخزون العام للمنتج #${item.inventory_id} (المطلوب: ${qty}، المتاح: ${currentGlobalStock}، العجز: ${deficit}) في طلب #${orderId}`,
+            'Sync',
+            branchId
+          );
+        }
+
         await tx.query('UPDATE inventory_branches SET stock_level = GREATEST(stock_level - $1, 0) WHERE inventory_id = $2 AND branch_id = $3', [qty, item.inventory_id, branchId]);
         await tx.query('UPDATE inventory SET stock_level = GREATEST(stock_level - $1, 0) WHERE id = $2', [qty, item.inventory_id]);
       }
@@ -412,16 +513,30 @@ async function applyOperation(operation) {
       const branchId = payload.rental?.branch_id || operation.branch_id || 1;
       const customer = payload.customer || {};
       let customerId;
-      const existingCustomer = await tx.query('SELECT id FROM customers WHERE phone = $1 AND branch_id = $2', [customer.phone || '', branchId]);
+      if (customer.phone) {
+        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`customer-phone:${customer.phone}`]);
+      }
+      const existingCustomer = await tx.query('SELECT id FROM customers WHERE phone = $1 AND branch_id = $2 FOR UPDATE', [customer.phone || '', branchId]);
       if (existingCustomer.rows.length) {
         customerId = existingCustomer.rows[0].id;
       } else {
-        const customerRes = await tx.query(
-          `INSERT INTO customers (name, initials, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid)
-           VALUES ($1, $2, $3, $4, CURRENT_DATE, 0, 'نشط', $5, $6) RETURNING id`,
-          [customer.name || 'عميل', getInitialsFromName(customer.name || 'عميل'), customer.phone || null, customer.national_id || null, branchId, newUuid()]
-        );
-        customerId = customerRes.rows[0].id;
+        const initials = getInitialsFromName(customer.name || 'عميل');
+        const customerOfflineUuid = newUuid();
+        try {
+          const customerRes = await tx.query(
+            `INSERT INTO customers (name, initials, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid)
+             VALUES ($1, $2, $3, $4, CURRENT_DATE, 0, 'نشط', $5, $6) RETURNING id`,
+            [customer.name || 'عميل', initials, customer.phone || null, customer.national_id || null, branchId, customerOfflineUuid]
+          );
+          customerId = customerRes.rows[0].id;
+        } catch (insertErr) {
+          const retryCust = await tx.query('SELECT id FROM customers WHERE phone = $1 AND branch_id = $2 FOR UPDATE', [customer.phone || '', branchId]);
+          if (retryCust.rows.length) {
+            customerId = retryCust.rows[0].id;
+          } else {
+            throw insertErr;
+          }
+        }
       }
       await tx.query(
         `INSERT INTO rentals (customer_id, rental_inventory_id, branch_id, pickup_date, return_date, total_price, national_id, deposit, remaining, id_card_guarantee, notes, status, daily_fine, seller_id, payment_method, rental_group_uuid, offline_uuid)
@@ -440,6 +555,22 @@ async function applyOperation(operation) {
       if (operation.action === 'pickup') {
         await tx.query("UPDATE rentals SET status = 'active' WHERE id = $1", [rental.id]);
         if (rental.rental_inventory_id) {
+          const rentalStockRes = await tx.query(
+            'SELECT stock_level FROM rental_inventory_branches WHERE rental_inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+            [rental.rental_inventory_id, rental.branch_id]
+          );
+          const currentStock = Number(rentalStockRes.rows[0]?.stock_level || 0);
+          if (currentStock < 1) {
+            console.warn(`[Sync Conflict] Deficit detected during offline rental pickup replay for rental #${rental.rental_inventory_id} at branch #${rental.branch_id}`);
+            await logActivity(
+              null,
+              'SyncService',
+              'تعارض مزامنة تسليم إيجار',
+              `عجز في مخزون الفرع #${rental.branch_id} لمنتج الإيجار #${rental.rental_inventory_id} عند تسليم الحجز #${rental.id}`,
+              'Sync',
+              rental.branch_id
+            );
+          }
           await tx.query(
             'UPDATE rental_inventory_branches SET stock_level = GREATEST(stock_level - 1, 0) WHERE rental_inventory_id = $1 AND branch_id = $2',
             [rental.rental_inventory_id, rental.branch_id]

@@ -79,11 +79,11 @@ async function getMe(req, res, next) {
 async function verifySalaryPassword(req, res, next) {
   try {
     const { password } = req.body;
-    if (!password) return res.status(400).json({ error: 'كلمة المرور مطلوبة' });
+    if (!password) return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
 
     const ok = await authService.verifySalaryPassword(password);
     if (!ok) {
-      return res.status(401).json({ error: 'كلمة المرور غير صحيحة' });
+      return res.status(400).json({ ok: false, error: 'كلمة المرور غير صحيحة' });
     }
     res.json({ ok: true });
   } catch (err) {
@@ -94,11 +94,11 @@ async function verifySalaryPassword(req, res, next) {
 async function verifyInvoiceEditPassword(req, res, next) {
   try {
     const { password } = req.body;
-    if (!password) return res.status(400).json({ error: 'كلمة المرور مطلوبة' });
+    if (!password) return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
 
     const ok = await authService.verifyInvoiceEditPassword(password);
     if (!ok) {
-      return res.status(401).json({ error: 'كلمة المرور غير صحيحة' });
+      return res.status(400).json({ ok: false, error: 'كلمة المرور غير صحيحة' });
     }
     res.json({ ok: true });
   } catch (err) {

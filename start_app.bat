@@ -1,6 +1,8 @@
 @echo off
-chcp 65001 >nul
+setlocal
+cd /d "%~dp0"
 title Bebyoon POS System - تشغيل النظام الجديد
+
 echo ========================================================
 echo        نظام بيبيون / الوزير لإدارة نقاط البيع والتجزئة
 echo                 النسخة المعمارية المطورة
@@ -10,6 +12,13 @@ echo.
 call "%~dp0start_postgres.bat"
 
 echo.
-echo [INFO] جاري تشغيل تطبيق سطح المكتب (Electron)...
-cd /d "%~dp0"
-npm start
+echo [INFO] Starting Bebyoon Desktop Application (Electron)...
+call npm start
+
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo [ERROR] Application exited with code %ERRORLEVEL%.
+    pause
+)
+
+endlocal

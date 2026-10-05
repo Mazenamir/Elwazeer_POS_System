@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-const { spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const app = require('./app');
 const config = require('./config/env');
 const db = require('./database/connection');
@@ -40,20 +40,38 @@ async function ensurePostgresRunning() {
       const pgData = path.resolve(__dirname, '../../programs/data');
 
       if (fs.existsSync(pgCtl) && fs.existsSync(pgData)) {
+        // Clean up stale postmaster.pid if postgres.exe is not actually running
+        const pidPath = path.join(pgData, 'postmaster.pid');
+        if (fs.existsSync(pidPath)) {
+          try {
+            fs.unlinkSync(pidPath);
+            console.log('[Database] Cleaned up stale postmaster.pid lock file.');
+          } catch {}
+        }
+
         console.log(`[Database] Starting local PostgreSQL from: ${pgData}`);
-        spawnSync(pgCtl, ['start', '-D', pgData, '-l', path.join(pgData, 'pg_server.log')], {
+        const p = spawn(pgCtl, ['start', '-D', pgData], {
+          detached: true,
+          stdio: 'ignore',
           windowsHide: true,
         });
+        p.unref();
 
-        // Wait up to 15 seconds for PostgreSQL port to open
-        for (let i = 0; i < 30; i++) {
+        // Wait up to 25 seconds for PostgreSQL to be fully ready and accepting queries
+        for (let i = 0; i < 50; i++) {
           await new Promise((r) => setTimeout(r, 500));
-          if (await isPortOpen(dbPort, '127.0.0.1')) {
-            console.log(`[Database] PostgreSQL started successfully on port ${dbPort}.`);
+          if (await db.isPrimaryDbAvailable()) {
+            console.log(`[Database] PostgreSQL started and ready on port ${dbPort}.`);
             return;
           }
         }
         console.warn(`[Database] PostgreSQL startup timed out. Proceeding anyway...`);
+      }
+    } else {
+      // Port is already open, verify it's ready for queries (wait if recovering)
+      for (let i = 0; i < 40; i++) {
+        if (await db.isPrimaryDbAvailable()) break;
+        await new Promise((r) => setTimeout(r, 500));
       }
     }
   }

@@ -67,7 +67,7 @@ async function deleteTailoringOrder(req, res, next) {
 
 async function payRemainingTailoringOrder(req, res, next) {
   try {
-    const result = await service.payRemainingTailoringOrder(req.params.id, req.user);
+    const result = await service.payRemainingTailoringOrder(req.params.id, req.user, req.body);
     res.json(result);
   } catch (err) {
     next(err);

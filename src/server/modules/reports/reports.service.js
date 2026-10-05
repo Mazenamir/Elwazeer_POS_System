@@ -20,11 +20,18 @@ async function getDashboard(query = {}, user = null) {
     throw err;
   }
 
-  let branchFilter = '';
+  let branchId = null;
   const params = [];
   if (user && user.role === 'branch_user') {
+    branchId = user.branch_id;
+  } else if (query.branch_id && query.branch_id !== 'all') {
+    branchId = query.branch_id;
+  }
+
+  let branchFilter = '';
+  if (branchId) {
+    params.push(branchId);
     branchFilter = 'WHERE branch_id = $1';
-    params.push(user.branch_id);
   }
   const whereAnd = branchFilter ? branchFilter + ' AND' : 'WHERE';
   const dayEndSql = `(${CAIRO_DATE_SQL} + INTERVAL '1 day')`;
@@ -46,11 +53,11 @@ async function getDashboard(query = {}, user = null) {
     db.query(`SELECT SUM(total_price) as total FROM rentals ${whereAnd} booking_date >= ${CAIRO_DATE_SQL} AND booking_date < ${dayEndSql}`, params),
     db.query(`SELECT SUM(fine_amount) as total FROM rentals ${whereAnd} actual_return_date >= ${CAIRO_DATE_SQL} AND actual_return_date < ${dayEndSql} AND status = 'returned'`, params),
     db.query(`SELECT SUM(amount) as total FROM tailoring_payments ${whereAnd} payment_date >= ${CAIRO_DATE_SQL} AND payment_date < ${dayEndSql}`, params),
-    db.query(`SELECT COALESCE(SUM(oi.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM order_items oi JOIN orders o ON oi.order_id = o.id LEFT JOIN inventory i ON oi.inventory_id = i.id ${whereAnd} o.order_date >= ${CAIRO_DATE_SQL} AND o.order_date < ${dayEndSql}`, params),
-    db.query(`SELECT COALESCE(SUM(ri.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM return_items ri JOIN returns r ON ri.return_id = r.id LEFT JOIN inventory i ON ri.inventory_id = i.id ${whereAnd} r.return_date >= ${CAIRO_DATE_SQL} AND r.return_date < ${dayEndSql}`, params),
+    db.query(`SELECT COALESCE(SUM(oi.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM order_items oi JOIN orders o ON oi.order_id = o.id LEFT JOIN inventory i ON oi.inventory_id = i.id ${branchId ? 'WHERE o.branch_id = $1 AND' : 'WHERE'} o.order_date >= ${CAIRO_DATE_SQL} AND o.order_date < ${dayEndSql}`, params),
+    db.query(`SELECT COALESCE(SUM(ri.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM return_items ri JOIN returns r ON ri.return_id = r.id LEFT JOIN inventory i ON ri.inventory_id = i.id ${branchId ? 'WHERE r.branch_id = $1 AND' : 'WHERE'} r.return_date >= ${CAIRO_DATE_SQL} AND r.return_date < ${dayEndSql}`, params),
     db.query(`SELECT SUM(amount) as total FROM expenses ${whereAnd} expense_date = ${CAIRO_DATE_SQL}`, params),
     db.query(`SELECT COUNT(*) as count FROM orders ${whereAnd} order_date >= ${CAIRO_DATE_SQL} AND order_date < ${dayEndSql}`, params),
-    db.query(`SELECT COUNT(*) as count FROM customers WHERE join_date = ${CAIRO_DATE_SQL}`),
+    db.query(`SELECT COUNT(*) as count FROM customers ${whereAnd} join_date = ${CAIRO_DATE_SQL}`, params),
   ]);
 
   const dailyReturns = Number(dailyReturnsRes.rows[0]?.total) || 0;
@@ -76,15 +83,15 @@ async function getDashboard(query = {}, user = null) {
     SELECT o.id, c.name as customer_name, o.order_date, o.status, o.total_amount
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
-    ${branchFilter}
+    ${branchId ? 'WHERE o.branch_id = $1' : ''}
     ORDER BY o.order_date DESC
     LIMIT 5
   `, params);
 
   const topProductsParams = [...params, config.TOP_PRODUCTS_LOOKBACK_DAYS];
   const topProductsDateParam = topProductsParams.length;
-  const topProductsWhere = branchFilter
-    ? `${branchFilter} AND o.order_date >= ${CAIRO_DATE_SQL} - ($${topProductsDateParam}::int * INTERVAL '1 day')`
+  const topProductsWhere = branchId
+    ? `WHERE o.branch_id = $1 AND o.order_date >= ${CAIRO_DATE_SQL} - ($${topProductsDateParam}::int * INTERVAL '1 day')`
     : `WHERE o.order_date >= ${CAIRO_DATE_SQL} - ($${topProductsDateParam}::int * INTERVAL '1 day')`;
 
   const topProductsRes = await db.query(`

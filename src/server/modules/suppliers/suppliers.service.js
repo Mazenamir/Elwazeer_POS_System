@@ -14,6 +14,9 @@ async function getSupplierOptions(query = {}) {
     params.push(likePattern(query.search));
     where.push(`(s.name ILIKE $${params.length} OR s.phone ILIKE $${params.length} OR s.code ILIKE $${params.length})`);
   }
+  if (query.include_archived !== 'true') {
+    where.push('COALESCE(s.is_active, TRUE) = TRUE');
+  }
 
   const limit = clampInt(query.limit, 50, 10, 100);
   params.push(limit);
@@ -59,6 +62,9 @@ async function listSuppliers(query = {}, user = null, req = null) {
   if (query.gender_category) {
     params.push(query.gender_category);
     where.push(`s.gender_category = $${params.length}`);
+  }
+  if (query.include_archived !== 'true') {
+    where.push('COALESCE(s.is_active, TRUE) = TRUE');
   }
 
   const whereClause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
@@ -211,11 +217,9 @@ async function updateSupplier(id, payload) {
 
 async function deleteSupplier(id) {
   await db.transaction(async (tx) => {
-    // Remove related records first to avoid FK violations
-    await tx.query('DELETE FROM supplier_transactions WHERE supplier_id = $1', [id]);
-    await tx.query('DELETE FROM supply_records WHERE supplier_id = $1', [id]);
+    // Soft delete / archive supplier to preserve accounting history (supply_records, supplier_transactions)
     await tx.query('UPDATE inventory SET preferred_supplier_id = NULL WHERE preferred_supplier_id = $1', [id]);
-    await tx.query('DELETE FROM suppliers WHERE id = $1', [id]);
+    await tx.query("UPDATE suppliers SET is_active = FALSE, status = 'inactive' WHERE id = $1", [id]);
   });
   return { success: true };
 }
