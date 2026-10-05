@@ -1,6 +1,27 @@
 const { fork } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
+
+function isPortOpen(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(800);
+    socket.on('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.connect(port, host);
+  });
+}
 
 class ServerSupervisor {
   constructor(options = {}) {
@@ -10,6 +31,7 @@ class ServerSupervisor {
     this.logFile = options.logFile || null;
     this.process = null;
     this.readyCallback = null;
+    this.isExternal = false;
   }
 
   log(message) {
@@ -22,11 +44,22 @@ class ServerSupervisor {
     }
   }
 
-  start(onReady) {
+  async start(onReady) {
     this.readyCallback = onReady;
     this.log(`Checking server path: ${this.serverScript}`);
     this.log(`Server root: ${this.appRoot}`);
     this.log(`Configured port: ${this.port}`);
+
+    // If server is already running on this port, attach to it instead of double-spawning
+    const running = await isPortOpen(Number(this.port));
+    if (running) {
+      this.log(`[Supervisor] Server is already active on port ${this.port}. Attaching to existing instance.`);
+      this.isExternal = true;
+      if (typeof this.readyCallback === 'function') {
+        setTimeout(() => this.readyCallback(), 50);
+      }
+      return null;
+    }
 
     if (!fs.existsSync(this.serverScript)) {
       this.log(`CRITICAL: Server script NOT FOUND at ${this.serverScript}`);
@@ -45,15 +78,21 @@ class ServerSupervisor {
       stdio: ['inherit', 'pipe', 'pipe', 'ipc'],
     };
 
-    try {
-      const { execSync } = require('child_process');
-      const nodePath = execSync('where.exe node', { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
-      if (nodePath && fs.existsSync(nodePath)) {
-        forkOptions.execPath = nodePath;
-        this.log(`[Supervisor] Using system Node: ${nodePath}`);
+    const localNodePath = path.join(this.appRoot, 'programs', 'node', 'node.exe');
+    if (fs.existsSync(localNodePath)) {
+      forkOptions.execPath = localNodePath;
+      this.log(`[Supervisor] Using local portable Node: ${localNodePath}`);
+    } else {
+      try {
+        const { execSync } = require('child_process');
+        const nodePath = execSync('where.exe node', { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
+        if (nodePath && fs.existsSync(nodePath)) {
+          forkOptions.execPath = nodePath;
+          this.log(`[Supervisor] Using system Node: ${nodePath}`);
+        }
+      } catch (e) {
+        this.log(`[Supervisor] Could not detect system node path: ${e.message}`);
       }
-    } catch (e) {
-      this.log(`[Supervisor] Could not detect system node path: ${e.message}`);
     }
 
     this.process = fork(this.serverScript, [], forkOptions);
