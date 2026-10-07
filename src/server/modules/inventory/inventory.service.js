@@ -17,14 +17,145 @@ const {
   getAvailableBarcode,
 } = require('./inventory.helpers');
 
+const { removeUploadedFile } = require('../../middleware/upload.middleware');
+
 const TRANSFER_LIST_LIMIT = 200;
+
+async function listColors() {
+  if (config.IS_BRANCH_MODE) {
+    return db.sqlite.prepare('SELECT id, name FROM colors ORDER BY name COLLATE NOCASE ASC').all();
+  }
+  const { rows } = await db.query('SELECT id, name FROM colors ORDER BY name ASC');
+  return rows;
+}
+
+async function createOrGetColor(colorName, tx = db) {
+  const clean = String(colorName || '').trim();
+  if (!clean) return null;
+
+  if (config.IS_BRANCH_MODE) {
+    const existing = db.sqlite.prepare('SELECT id, name FROM colors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1').get(clean);
+    if (existing) return existing;
+    const info = db.sqlite.prepare('INSERT INTO colors (name) VALUES (?)').run(clean);
+    invalidateInventoryMetadata();
+    return { id: info.lastInsertRowid, name: clean };
+  }
+
+  const existingRes = await tx.query(
+    'SELECT id, name FROM colors WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+    [clean]
+  );
+  if (existingRes.rows.length > 0) {
+    return existingRes.rows[0];
+  }
+
+  const insertRes = await tx.query(
+    'INSERT INTO colors (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id, name',
+    [clean]
+  );
+  invalidateInventoryMetadata();
+  if (insertRes.rows.length > 0) {
+    return insertRes.rows[0];
+  }
+
+  const refetch = await tx.query(
+    'SELECT id, name FROM colors WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+    [clean]
+  );
+  return refetch.rows[0] || null;
+}
+
+async function listSizes() {
+  if (config.IS_BRANCH_MODE) {
+    return db.sqlite.prepare('SELECT id, name FROM sizes ORDER BY name COLLATE NOCASE ASC').all();
+  }
+  const { rows } = await db.query('SELECT id, name FROM sizes ORDER BY name ASC');
+  return rows;
+}
+
+async function createOrGetSize(sizeName, tx = db) {
+  const clean = String(sizeName || '').trim();
+  if (!clean) return null;
+
+  if (config.IS_BRANCH_MODE) {
+    const existing = db.sqlite.prepare('SELECT id, name FROM sizes WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1').get(clean);
+    if (existing) return existing;
+    const info = db.sqlite.prepare('INSERT INTO sizes (name) VALUES (?)').run(clean);
+    invalidateInventoryMetadata();
+    return { id: info.lastInsertRowid, name: clean };
+  }
+
+  const existingRes = await tx.query(
+    'SELECT id, name FROM sizes WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+    [clean]
+  );
+  if (existingRes.rows.length > 0) {
+    return existingRes.rows[0];
+  }
+
+  const insertRes = await tx.query(
+    'INSERT INTO sizes (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id, name',
+    [clean]
+  );
+  invalidateInventoryMetadata();
+  if (insertRes.rows.length > 0) {
+    return insertRes.rows[0];
+  }
+
+  const refetch = await tx.query(
+    'SELECT id, name FROM sizes WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+    [clean]
+  );
+  return refetch.rows[0] || null;
+}
+
+async function listProductNames(search = '') {
+  const cleanSearch = String(search || '').trim();
+  if (config.IS_BRANCH_MODE) {
+    if (cleanSearch) {
+      return db.sqlite.prepare(`
+        SELECT DISTINCT TRIM(name) as name
+        FROM inventory
+        WHERE is_deleted = 0 AND name IS NOT NULL AND TRIM(name) != '' AND name LIKE ?
+        ORDER BY TRIM(name) COLLATE NOCASE ASC
+        LIMIT 500
+      `).all(`%${cleanSearch}%`).map((r) => r.name);
+    }
+    return db.sqlite.prepare(`
+      SELECT DISTINCT TRIM(name) as name
+      FROM inventory
+      WHERE is_deleted = 0 AND name IS NOT NULL AND TRIM(name) != ''
+      ORDER BY TRIM(name) COLLATE NOCASE ASC
+      LIMIT 1000
+    `).all().map((r) => r.name);
+  }
+
+  if (cleanSearch) {
+    const { rows } = await db.query(`
+      SELECT DISTINCT TRIM(name) as name
+      FROM inventory
+      WHERE is_deleted = FALSE AND name IS NOT NULL AND TRIM(name) != '' AND name ILIKE $1
+      ORDER BY TRIM(name) ASC
+      LIMIT 500
+    `, [`%${cleanSearch}%`]);
+    return rows.map((r) => r.name);
+  }
+
+  const { rows } = await db.query(`
+    SELECT DISTINCT TRIM(name) as name
+    FROM inventory
+    WHERE is_deleted = FALSE AND name IS NOT NULL AND TRIM(name) != ''
+    ORDER BY TRIM(name) ASC
+    LIMIT 1000
+  `);
+  return rows.map((r) => r.name);
+}
 
 async function getMetadata() {
   const cached = getInventoryMetadataCache();
   if (cached) return cached;
 
   const defaultCategories = ['بدل', 'بنطلون', 'قميص', 'بليزر', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'صديري', 'تيشيرت', 'جينز', 'إكسسوارات'];
-  const defaultColors = ['أبيض', 'أسود', 'كحلي', 'رمادي', 'أزرق', 'أحمر', 'أخضر', 'أصفر', 'بني', 'زيتي', 'جملي', 'نبيتي', 'بيج', 'رصاصي', 'سماوي', 'ذهبي', 'فضي', 'كافيه'];
 
   if (config.IS_BRANCH_MODE) {
     const cats = db.sqlite.prepare(`
@@ -34,18 +165,13 @@ async function getMetadata() {
         SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
       )
     `).all();
-    const colors = db.sqlite.prepare(`
-      SELECT DISTINCT color FROM (
-        SELECT color FROM inventory WHERE color IS NOT NULL AND TRIM(color) != ''
-        UNION
-        SELECT color FROM rental_inventory WHERE color IS NOT NULL AND TRIM(color) != ''
-      )
-    `).all();
+    const colors = db.sqlite.prepare('SELECT name FROM colors ORDER BY name COLLATE NOCASE ASC').all();
+    const sizes = db.sqlite.prepare('SELECT name FROM sizes ORDER BY name COLLATE NOCASE ASC').all();
     const uniqueCats = Array.from(new Set([...cats.map((r) => r.category), ...defaultCategories]));
-    const uniqueCols = Array.from(new Set([...colors.map((r) => r.color), ...defaultColors]));
     const metadata = {
       categories: uniqueCats,
-      colors: uniqueCols,
+      colors: colors.map((r) => r.name),
+      sizes: sizes.map((r) => r.name),
     };
     setInventoryMetadataCache(metadata);
     return metadata;
@@ -58,20 +184,17 @@ async function getMetadata() {
       SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
     ) c ORDER BY category
   `);
-  const colorsRes = await db.query(`
-    SELECT DISTINCT color FROM (
-      SELECT color FROM inventory WHERE color IS NOT NULL AND TRIM(color) != ''
-      UNION
-      SELECT color FROM rental_inventory WHERE color IS NOT NULL AND TRIM(color) != ''
-    ) cl ORDER BY color
-  `);
+  const colorsRes = await db.query('SELECT name FROM colors ORDER BY name ASC');
+  const sizesRes = await db.query('SELECT name FROM sizes ORDER BY name ASC');
 
   const uniqueCats = Array.from(new Set([...categoriesRes.rows.map((r) => r.category), ...defaultCategories]));
-  const uniqueCols = Array.from(new Set([...colorsRes.rows.map((r) => r.color), ...defaultColors]));
+  const uniqueCols = colorsRes.rows.map((r) => r.name);
+  const uniqueSizes = sizesRes.rows.map((r) => r.name);
 
   const metadata = {
     categories: uniqueCats,
     colors: uniqueCols,
+    sizes: uniqueSizes,
   };
   setInventoryMetadataCache(metadata);
   return metadata;
@@ -312,14 +435,41 @@ async function listInventory(req, user) {
   return paginatedPayload(rows, rows.length, { page: 1, limit: rows.length, total: rows.length });
 }
 
-async function createProduct(body, user) {
+async function createProduct(body, user, file = null) {
   if (!hasInventoryAdminAccess(user)) {
+    if (file) removeUploadedFile(file.path);
     const err = new Error('غير مصرح لك بإضافة منتجات للمخزون');
     err.statusCode = 403;
     throw err;
   }
 
-  let { name, category, size_cut, color, stock_level, min_stock_level, branch_id, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, supplier_id, preferred_supplier_id, gender, purchase_batch_id, stock } = body;
+  let {
+    name, category, size_cut, color, new_size, new_color,
+    stock_level, min_stock_level, branch_id, price, wholesale_price,
+    semi_wholesale_price, cost_price, image_url, barcode, supplier_id,
+    preferred_supplier_id, gender, purchase_batch_id, stock
+  } = body || {};
+
+  name = String(name || '').trim();
+  if (!name) {
+    if (file) removeUploadedFile(file.path);
+    const err = new Error('يرجى إدخال اسم المنتج');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Image precedence:
+  // 1. Uploaded file via Multer
+  // 2. Existing valid URL
+  // 3. null
+  if (file && file.filename) {
+    image_url = `/uploads/products/${file.filename}`;
+  } else if (image_url && typeof image_url === 'string') {
+    image_url = image_url.trim();
+  } else {
+    image_url = null;
+  }
+
   barcode = normalizeBarcodeInput(barcode);
   if (isBranchScopedUser(user)) {
     branch_id = user.branch_id;
@@ -339,70 +489,141 @@ async function createProduct(body, user) {
   const minStockLevel = min_stock_level === undefined || min_stock_level === '' ? 5 : parseNonNegativeInt(min_stock_level, 'min_stock_level');
   const b_id = parseInt(branch_id, 10) || 1;
 
-  if (config.IS_BRANCH_MODE) {
-    const stmt = db.sqlite.prepare(`
-      INSERT INTO inventory (name, category, size_cut, color, stock_level, min_stock_level, price, cost_price, image_url, barcode, preferred_supplier_id, is_deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `);
-    const info = stmt.run(name, category, size_cut, color, initialStock, minStockLevel, price, cost_price, image_url, barcode, supplier_id);
-    return db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(info.lastInsertRowid);
+  const numPrice = Number(price) || 0;
+  const numCost = Number(cost_price) || 0;
+  if (numPrice < 0 || numCost < 0) {
+    if (file) removeUploadedFile(file.path);
+    const err = new Error('لا يمكن أن تكون الأسعار أقل من الصفر');
+    err.statusCode = 400;
+    throw err;
   }
 
-  const item = await db.transaction(async (tx) => {
-    barcode = await getAvailableBarcode(tx, barcode);
-    await assertBarcodeAvailable(tx, barcode);
+  const targetColorStr = String(new_color || color || '').trim();
+  const targetSizeStr = String(new_size || size_cut || body.size || '').trim();
 
-    const { rows } = await tx.query(
-      `INSERT INTO inventory (
-        name, category, size_cut, color, stock_level, min_stock_level, price,
-        wholesale_price, semi_wholesale_price, cost_price, image_url, barcode,
-        preferred_supplier_id, gender
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-      RETURNING *`,
-      [name, category, size_cut, color, initialStock, minStockLevel, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, supplier_id, gender || 'both']
-    );
-    const newId = rows[0].id;
+  try {
+    if (config.IS_BRANCH_MODE) {
+      const resolvedColor = await createOrGetColor(targetColorStr);
+      const resolvedSize = await createOrGetSize(targetSizeStr);
+      const colorName = resolvedColor?.name || (targetColorStr || null);
+      const colorId = resolvedColor?.id || null;
+      const sizeName = resolvedSize?.name || (targetSizeStr || null);
+      const sizeId = resolvedSize?.id || null;
 
-    // Initialize stock for all branches
-    await tx.query(`
-      INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) 
-      SELECT $1, id, CASE WHEN id = $2 THEN $3 ELSE 0 END FROM branches
-    `, [newId, b_id, initialStock]);
-
-    if (initialStock > 0) {
-      const batchId = purchase_batch_id || crypto.randomUUID();
-      await tx.query(
-        'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        [supplier_id, newId, initialStock, cost_price, 'إضافة منتج جديد برصيد', b_id, batchId]
+      const stmt = db.sqlite.prepare(`
+        INSERT INTO inventory (
+          name, category, size_cut, color, stock_level, min_stock_level, price,
+          cost_price, image_url, barcode, preferred_supplier_id, is_deleted,
+          color_id, size_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      `);
+      const info = stmt.run(
+        name, category, sizeName, colorName, initialStock, minStockLevel,
+        numPrice, numCost, image_url, barcode, supplier_id, colorId, sizeId
       );
-      const total_cost = initialStock * cost_price;
-      await tx.query(
-        'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, $5)',
-        [supplier_id, 'purchase', total_cost, `فاتورة مشتريات (منتج جديد: ${name})`, batchId]
-      );
-      await tx.query(
-        `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
-        [total_cost, supplier_id]
-      );
+      invalidateInventoryMetadata();
+      return db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(info.lastInsertRowid);
     }
 
-    return rows[0];
-  });
+    const item = await db.transaction(async (tx) => {
+      // Resolve color within transaction
+      let resolvedColorId = null;
+      let resolvedColorName = null;
+      if (targetColorStr) {
+        const resolvedColor = await createOrGetColor(targetColorStr, tx);
+        if (resolvedColor) {
+          resolvedColorId = resolvedColor.id;
+          resolvedColorName = resolvedColor.name;
+        }
+      }
 
-  invalidateInventoryMetadata();
-  return item;
+      // Resolve size within transaction
+      let resolvedSizeId = null;
+      let resolvedSizeName = null;
+      if (targetSizeStr) {
+        const resolvedSize = await createOrGetSize(targetSizeStr, tx);
+        if (resolvedSize) {
+          resolvedSizeId = resolvedSize.id;
+          resolvedSizeName = resolvedSize.name;
+        }
+      }
+
+      barcode = await getAvailableBarcode(tx, barcode);
+      await assertBarcodeAvailable(tx, barcode);
+
+      const { rows } = await tx.query(
+        `INSERT INTO inventory (
+          name, category, size_cut, color, stock_level, min_stock_level, price,
+          wholesale_price, semi_wholesale_price, cost_price, image_url, barcode,
+          preferred_supplier_id, gender, color_id, size_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        RETURNING *`,
+        [
+          name, category, resolvedSizeName, resolvedColorName, initialStock, minStockLevel,
+          numPrice, wholesale_price || 0, semi_wholesale_price || 0, numCost, image_url,
+          barcode, supplier_id, gender || 'both', resolvedColorId, resolvedSizeId
+        ]
+      );
+      const newId = rows[0].id;
+
+      // Initialize stock for all branches
+      await tx.query(`
+        INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) 
+        SELECT $1, id, CASE WHEN id = $2 THEN $3 ELSE 0 END FROM branches
+      `, [newId, b_id, initialStock]);
+
+      if (initialStock > 0) {
+        const batchId = purchase_batch_id || crypto.randomUUID();
+        await tx.query(
+          'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [supplier_id, newId, initialStock, numCost, 'إضافة منتج جديد برصيد', b_id, batchId]
+        );
+        const total_cost = initialStock * numCost;
+        await tx.query(
+          'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, $5)',
+          [supplier_id, 'purchase', total_cost, `فاتورة مشتريات (منتج جديد: ${name})`, batchId]
+        );
+        await tx.query(
+          `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
+          [total_cost, supplier_id]
+        );
+      }
+
+      return rows[0];
+    });
+
+    invalidateInventoryMetadata();
+    return item;
+  } catch (err) {
+    if (file) removeUploadedFile(file.path);
+    throw err;
+  }
 }
 
-async function updateProduct(id, body, user) {
+async function updateProduct(id, body, user, file = null) {
   if (!hasInventoryAdminAccess(user)) {
+    if (file) removeUploadedFile(file.path);
     const err = new Error('غير مصرح لك بتعديل بيانات هذا المنتج');
     err.statusCode = 403;
     throw err;
   }
 
-  let { name, category, size_cut, color, stock_level, min_stock_level, supplier_id, preferred_supplier_id, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, branch_id, is_correction } = body;
+  let {
+    name, category, size_cut, color, new_size, new_color,
+    stock_level, min_stock_level, supplier_id, preferred_supplier_id,
+    price, wholesale_price, semi_wholesale_price, cost_price, image_url,
+    barcode, branch_id, is_correction
+  } = body || {};
+
+  name = String(name || '').trim();
   barcode = normalizeBarcodeInput(barcode);
   const minStockLevel = min_stock_level === undefined || min_stock_level === '' ? 5 : parseNonNegativeInt(min_stock_level, 'min_stock_level');
+
+  if (file && file.filename) {
+    image_url = `/uploads/products/${file.filename}`;
+  } else if (image_url !== undefined && typeof image_url === 'string') {
+    image_url = image_url.trim();
+  }
 
   if (!supplier_id) {
     supplier_id = preferred_supplier_id;
@@ -418,99 +639,147 @@ async function updateProduct(id, body, user) {
     }
   }
 
-  if (config.IS_BRANCH_MODE) {
-    db.sqlite.prepare(`
-      UPDATE inventory
-      SET name = ?, category = ?, size_cut = ?, color = ?, min_stock_level = ?, preferred_supplier_id = ?, price = ?, cost_price = ?, image_url = ?, barcode = ?
-      WHERE id = ?
-    `).run(name, category, size_cut, color, minStockLevel, supplier_id, price, cost_price, image_url, barcode, id);
-    return db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(id);
-  }
+  const numPrice = Number(price) || 0;
+  const numCost = Number(cost_price) || 0;
+  const targetColorStr = String(new_color || color || '').trim();
+  const targetSizeStr = String(new_size || size_cut || body.size || '').trim();
 
-  if (barcode) {
-    const existing = await db.query('SELECT id FROM inventory WHERE barcode = $1 AND id != $2 AND is_deleted = FALSE', [barcode, id]);
-    if (existing.rows.length > 0) {
-      const err = new Error('هذا الباركود مستخدم بالفعل لمنتج آخر');
-      err.statusCode = 400;
-      throw err;
-    }
-    const existingRental = await db.query('SELECT id FROM rental_inventory WHERE barcode = $1 AND is_deleted = FALSE', [barcode]);
-    if (existingRental.rows.length > 0) {
-      const err = new Error('هذا الباركود مستخدم بالفعل في مخزون التأجير');
-      err.statusCode = 400;
-      throw err;
-    }
-  }
-
-  const item = await db.transaction(async (tx) => {
-    await assertBarcodeAvailable(tx, barcode, { inventoryId: id });
-
-    if (hasInventoryAdminAccess(user)) {
-      await tx.query(
-        'UPDATE inventory SET name = $1, category = $2, size_cut = $3, color = $4, min_stock_level = $5, preferred_supplier_id = $6, price = $7, wholesale_price = $8, semi_wholesale_price = $9, cost_price = $10, image_url = $11, barcode = $12, gender = $13 WHERE id = $14',
-        [name, category, size_cut, color, minStockLevel, supplier_id, price, wholesale_price, semi_wholesale_price, cost_price, image_url, barcode, body.gender || 'both', id]
-      );
-    }
-
-    if (user && branch_id && stock_level !== undefined) {
-      if (!hasInventoryAllBranchesAccess(user) && Number(branch_id) !== Number(user.branch_id)) {
-        throw new Error('Unauthorized branch stock update');
+  try {
+    if (barcode) {
+      const existing = await db.query('SELECT id FROM inventory WHERE barcode = $1 AND id != $2 AND is_deleted = FALSE', [barcode, id]);
+      if (existing.rows.length > 0) {
+        const err = new Error('هذا الباركود مستخدم بالفعل لمنتج آخر');
+        err.statusCode = 400;
+        throw err;
       }
+      const existingRental = await db.query('SELECT id FROM rental_inventory WHERE barcode = $1 AND is_deleted = FALSE', [barcode]);
+      if (existingRental.rows.length > 0) {
+        const err = new Error('هذا الباركود مستخدم بالفعل في مخزون التأجير');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
 
-      const currentStockRes = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2', [id, branch_id]);
-      const oldStock = currentStockRes.rows.length ? Number(currentStockRes.rows[0].stock_level) : 0;
-      const diff = Number(stock_level) - oldStock;
+    if (config.IS_BRANCH_MODE) {
+      const resolvedColor = await createOrGetColor(targetColorStr);
+      const resolvedSize = await createOrGetSize(targetSizeStr);
+      const colorName = resolvedColor?.name || (targetColorStr || null);
+      const colorId = resolvedColor?.id || null;
+      const sizeName = resolvedSize?.name || (targetSizeStr || null);
+      const sizeId = resolvedSize?.id || null;
 
-      await tx.query(
-        'INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) VALUES ($1, $2, $3) ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = EXCLUDED.stock_level',
-        [id, branch_id, stock_level]
-      );
+      db.sqlite.prepare(`
+        UPDATE inventory
+        SET name = ?, category = ?, size_cut = ?, color = ?, min_stock_level = ?, preferred_supplier_id = ?, price = ?, cost_price = ?, image_url = COALESCE(?, image_url), barcode = ?, color_id = ?, size_id = ?
+        WHERE id = ?
+      `).run(name, category, sizeName, colorName, minStockLevel, supplier_id, numPrice, numCost, image_url, barcode, colorId, sizeId, id);
+      invalidateInventoryMetadata();
+      return db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(id);
+    }
 
-      if (diff !== 0 && !is_correction) {
-        const absDiff = Math.abs(diff);
-        const total_cost = absDiff * cost_price;
-        const note = diff > 0 ? 'تعديل كمية (زيادة رصيد)' : 'تعديل كمية (نقص رصيد)';
-        const transType = diff > 0 ? 'purchase' : 'return';
-        const transNote = diff > 0 ? `تعديل رصيد بالزيادة (${name})` : `تعديل رصيد بالنقصان (${name})`;
-        const batchId = crypto.randomUUID();
+    const item = await db.transaction(async (tx) => {
+      await assertBarcodeAvailable(tx, barcode, { inventoryId: id });
 
-        await tx.query(
-          'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-          [supplier_id, id, diff, cost_price, note, branch_id, batchId]
-        );
-
-        await tx.query(
-          'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, $5)',
-          [supplier_id, transType, total_cost, transNote, batchId]
-        );
-
-        if (diff > 0) {
-          await tx.query(
-            `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
-            [total_cost, supplier_id]
-          );
-        } else {
-          await tx.query('UPDATE suppliers SET balance = balance + $1 WHERE id = $2', [total_cost, supplier_id]);
+      let resolvedColorId = null;
+      let resolvedColorName = null;
+      if (targetColorStr) {
+        const resolvedColor = await createOrGetColor(targetColorStr, tx);
+        if (resolvedColor) {
+          resolvedColorId = resolvedColor.id;
+          resolvedColorName = resolvedColor.name;
         }
       }
 
-      const totalStockRes = await tx.query('SELECT SUM(stock_level) as total FROM inventory_branches WHERE inventory_id = $1', [id]);
-      const newTotal = totalStockRes.rows[0]?.total || 0;
-      await tx.query('UPDATE inventory SET stock_level = $1 WHERE id = $2', [newTotal, id]);
-    }
+      let resolvedSizeId = null;
+      let resolvedSizeName = null;
+      if (targetSizeStr) {
+        const resolvedSize = await createOrGetSize(targetSizeStr, tx);
+        if (resolvedSize) {
+          resolvedSizeId = resolvedSize.id;
+          resolvedSizeName = resolvedSize.name;
+        }
+      }
 
-    const { rows } = await db.query(`
-      SELECT i.*, s.name as supplier_name,
-             (SELECT json_agg(json_build_object('branch_id', branch_id, 'stock_level', stock_level)) FROM inventory_branches WHERE inventory_id = i.id) as branch_stocks
-      FROM inventory i 
-      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id 
-      WHERE i.id = $1
-    `, [id]);
-    return rows[0];
-  });
+      if (hasInventoryAdminAccess(user)) {
+        await tx.query(
+          `UPDATE inventory 
+           SET name = $1, category = $2, size_cut = $3, color = $4, min_stock_level = $5,
+               preferred_supplier_id = $6, price = $7, wholesale_price = $8,
+               semi_wholesale_price = $9, cost_price = $10,
+               image_url = CASE WHEN $11::text IS NOT NULL THEN $11 ELSE image_url END,
+               barcode = $12, gender = $13, color_id = $14, size_id = $15
+           WHERE id = $16`,
+          [
+            name, category, resolvedSizeName, resolvedColorName, minStockLevel,
+            supplier_id, numPrice, wholesale_price || 0, semi_wholesale_price || 0, numCost,
+            image_url, barcode, body.gender || 'both', resolvedColorId, resolvedSizeId, id
+          ]
+        );
+      }
 
-  invalidateInventoryMetadata();
-  return item;
+      if (user && branch_id && stock_level !== undefined) {
+        if (!hasInventoryAllBranchesAccess(user) && Number(branch_id) !== Number(user.branch_id)) {
+          throw new Error('Unauthorized branch stock update');
+        }
+
+        const currentStockRes = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2', [id, branch_id]);
+        const oldStock = currentStockRes.rows.length ? Number(currentStockRes.rows[0].stock_level) : 0;
+        const diff = Number(stock_level) - oldStock;
+
+        await tx.query(
+          'INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) VALUES ($1, $2, $3) ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = EXCLUDED.stock_level',
+          [id, branch_id, stock_level]
+        );
+
+        if (diff !== 0 && !is_correction) {
+          const absDiff = Math.abs(diff);
+          const total_cost = absDiff * numCost;
+          const note = diff > 0 ? 'تعديل كمية (زيادة رصيد)' : 'تعديل كمية (نقص رصيد)';
+          const transType = diff > 0 ? 'purchase' : 'return';
+          const transNote = diff > 0 ? `تعديل رصيد بالزيادة (${name})` : `تعديل رصيد بالنقصان (${name})`;
+          const batchId = crypto.randomUUID();
+
+          await tx.query(
+            'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [supplier_id, id, diff, numCost, note, branch_id, batchId]
+          );
+
+          await tx.query(
+            'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, $5)',
+            [supplier_id, transType, total_cost, transNote, batchId]
+          );
+
+          if (diff > 0) {
+            await tx.query(
+              `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
+              [total_cost, supplier_id]
+            );
+          } else {
+            await tx.query('UPDATE suppliers SET balance = balance + $1 WHERE id = $2', [total_cost, supplier_id]);
+          }
+        }
+
+        const totalStockRes = await tx.query('SELECT SUM(stock_level) as total FROM inventory_branches WHERE inventory_id = $1', [id]);
+        const newTotal = totalStockRes.rows[0]?.total || 0;
+        await tx.query('UPDATE inventory SET stock_level = $1 WHERE id = $2', [newTotal, id]);
+      }
+
+      const { rows } = await db.query(`
+        SELECT i.*, s.name as supplier_name,
+               (SELECT json_agg(json_build_object('branch_id', branch_id, 'stock_level', stock_level)) FROM inventory_branches WHERE inventory_id = i.id) as branch_stocks
+        FROM inventory i 
+        LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id 
+        WHERE i.id = $1
+      `, [id]);
+      return rows[0];
+    });
+
+    invalidateInventoryMetadata();
+    return item;
+  } catch (err) {
+    if (file) removeUploadedFile(file.path);
+    throw err;
+  }
 }
 
 async function deleteProduct(id, user) {
@@ -897,4 +1166,9 @@ module.exports = {
   checkDuplicatesBatch,
   checkDuplicateSingle,
   searchInventory,
+  listColors,
+  createOrGetColor,
+  listSizes,
+  createOrGetSize,
+  listProductNames,
 };

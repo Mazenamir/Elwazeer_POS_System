@@ -51,7 +51,27 @@ async function request(endpoint, options = {}) {
   }
 
   try {
-    const response = await fetch(url, config);
+    let response;
+    let attempts = 0;
+    const maxAttempts = method === 'GET' ? 2 : 1;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        response = await fetch(url, config);
+        if ((response.status === 502 || response.status === 503) && attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 600));
+          continue;
+        }
+        break;
+      } catch (networkErr) {
+        if (attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 600));
+          continue;
+        }
+        throw networkErr;
+      }
+    }
 
     const isVerificationEndpoint = url.includes('/verify-password') || 
                                    url.includes('/verify-invoice-edit-password') || 

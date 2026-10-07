@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Package,
   Plus,
@@ -29,16 +29,19 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Upload,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
-import api from '../../api/client';
+import api from '../../services/api/client';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
+import SearchableCombobox from '../../components/forms/SearchableCombobox';
 
 const BASE_CATEGORIES = ['الكل', 'FORMAL SUIT', 'TUXEDO SUIT', 'SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'صديري', 'تيشيرت', 'جينز', 'KIDS', 'ترنج', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'إكسسوارات', 'WALLET', 'أخرى'];
 
@@ -74,14 +77,75 @@ export function Suppliers() {
       .catch(() => {});
   }, []);
 
+  // Fetch dynamic Product Names, Colors, and Sizes from PostgreSQL
+  const fetchDropdownOptions = useCallback(async () => {
+    try {
+      setLoadingDropdowns(true);
+      const [namesRes, colorsRes, sizesRes] = await Promise.all([
+        api.get('/inventory/names').catch(() => []),
+        api.get('/colors').catch(() => []),
+        api.get('/sizes').catch(() => []),
+      ]);
+      if (Array.isArray(namesRes)) {
+        setProductNamesList(namesRes);
+      }
+      if (Array.isArray(colorsRes)) {
+        setColorsList(colorsRes.map((c) => (typeof c === 'object' ? c.name : c)));
+      }
+      if (Array.isArray(sizesRes)) {
+        setSizesList(sizesRes.map((s) => (typeof s === 'object' ? s.name : s)));
+      }
+    } catch (err) {
+      console.error('Failed to load dropdown options:', err);
+    } finally {
+      setLoadingDropdowns(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDropdownOptions();
+  }, [fetchDropdownOptions]);
+
+  // Image Upload Handlers
+  const handleImageFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('صيغة الصورة غير مدعومة. يرجى اختيار صورة JPG أو PNG أو WEBP.');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('حجم الصورة كبير جداً (أكثر من 10 ميجابايت).');
+      return;
+    }
+
+    setSelectedImageFile(file);
+    const objectUrl = URL.createObjectURL(file);
+    setImagePreviewUrl(objectUrl);
+  };
+
+  const handleRemoveImageFile = () => {
+    setSelectedImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    setImagePreviewUrl(pImage.trim() || null);
+  };
+
   // Add / Edit Product Modal
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [productSubmitting, setProductSubmitting] = useState(false);
   const [pName, setPName] = useState('');
+  const [isNewProductName, setIsNewProductName] = useState(false);
   const [pCategory, setPCategory] = useState('FORMAL SUIT');
   const [pColor, setPColor] = useState('');
+  const [pNewColor, setPNewColor] = useState('');
   const [pSize, setPSize] = useState('');
+  const [pNewSize, setPNewSize] = useState('');
   const [pPrice, setPPrice] = useState('');
   const [pCost, setPCost] = useState('');
   const [pBarcode, setPBarcode] = useState('');
@@ -89,6 +153,17 @@ export function Suppliers() {
   const [pMinStock, setPMinStock] = useState('5');
   const [pImage, setPImage] = useState('');
   const [pSupplierId, setPSupplierId] = useState('');
+
+  // Dynamic Combobox data loaded from PostgreSQL
+  const [productNamesList, setProductNamesList] = useState([]);
+  const [colorsList, setColorsList] = useState([]);
+  const [sizesList, setSizesList] = useState([]);
+  const [loadingDropdowns, setLoadingDropdowns] = useState(false);
+
+  // Local image upload state
+  const fileInputRef = useRef(null);
+  const [selectedImageFile, setSelectedImageFile] = useState(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
 
   // Stock Transfer Modal
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -356,16 +431,23 @@ export function Suppliers() {
   const openCreateProduct = () => {
     setEditingProduct(null);
     setPName('');
+    setIsNewProductName(false);
     setPCategory('FORMAL SUIT');
     setPColor('');
+    setPNewColor('');
     setPSize('');
+    setPNewSize('');
     setPPrice('');
     setPCost('');
     setPBarcode('');
     setPStock('10');
     setPMinStock('5');
     setPImage('');
+    setSelectedImageFile(null);
+    setImagePreviewUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setPSupplierId(suppliers[0]?.id ? String(suppliers[0].id) : '');
+    fetchDropdownOptions();
     setShowProductModal(true);
   };
 
@@ -373,57 +455,112 @@ export function Suppliers() {
   const openEditProduct = (p) => {
     setEditingProduct(p);
     setPName(p.name || '');
+    setIsNewProductName(false);
     setPCategory(p.category || 'FORMAL SUIT');
     setPColor(p.color || '');
+    setPNewColor('');
     setPSize(p.size_cut || p.size || '');
+    setPNewSize('');
     setPPrice(p.price ? p.price.toString() : '');
     setPCost(p.cost_price ? p.cost_price.toString() : '');
     setPBarcode(p.barcode || '');
     setPStock(p.stock_level ?? p.stock ?? '0');
     setPMinStock(p.min_stock_level ?? '5');
     setPImage(p.image_url || '');
+    setSelectedImageFile(null);
+    setImagePreviewUrl(p.image_url || null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setPSupplierId(p.preferred_supplier_id ? String(p.preferred_supplier_id) : (suppliers[0]?.id ? String(suppliers[0].id) : ''));
+    fetchDropdownOptions();
     setShowProductModal(true);
   };
 
   // Submit Save Product (Create / Update)
   const handleSaveProduct = async (e) => {
     e.preventDefault();
-    if (!pName.trim()) {
-      toast.error('يرجى إدخال اسم المنتج');
+    const finalName = pName.trim();
+    if (!finalName) {
+      toast.error('يرجى إدخال اسم المنتج أو اختياره');
+      return;
+    }
+
+    if (pColor === '__OTHER__' && !pNewColor.trim()) {
+      toast.error('يرجى إدخال اسم اللون الجديد');
+      return;
+    }
+
+    if (pSize === '__OTHER__' && !pNewSize.trim()) {
+      toast.error('يرجى إدخال اسم المقاس الجديد');
       return;
     }
 
     setProductSubmitting(true);
     try {
       const selectedSupId = Number(pSupplierId) || suppliers[0]?.id || 1;
-      const payload = {
-        name: pName.trim(),
-        category: pCategory,
-        color: pColor.trim(),
-        size_cut: pSize.trim(),
-        price: Number(pPrice) || 0,
-        cost_price: Number(pCost) || 0,
-        barcode: pBarcode.trim(),
-        stock: Number(pStock) || 0,
-        stock_level: Number(pStock) || 0,
-        min_stock_level: Number(pMinStock) || 5,
-        supplier_id: selectedSupId,
-        preferred_supplier_id: selectedSupId,
-        image_url: pImage.trim(),
-        branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
-      };
+      const targetBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1;
+      const finalColor = pColor === '__OTHER__' ? pNewColor.trim() : pColor.trim();
+      const finalSize = pSize === '__OTHER__' ? pNewSize.trim() : pSize.trim();
 
-      if (editingProduct) {
-        await api.put(`/inventory/${editingProduct.id}`, payload);
-        toast.success('تم تحديث بيانات المنتج بنجاح! 📦');
+      if (selectedImageFile) {
+        // Method 2: Local Upload via Multipart FormData
+        const formData = new FormData();
+        formData.append('image', selectedImageFile);
+        formData.append('name', finalName);
+        formData.append('category', pCategory);
+        formData.append('color', finalColor);
+        if (pColor === '__OTHER__') formData.append('new_color', pNewColor.trim());
+        formData.append('size_cut', finalSize);
+        if (pSize === '__OTHER__') formData.append('new_size', pNewSize.trim());
+        formData.append('price', Number(pPrice) || 0);
+        formData.append('cost_price', Number(pCost) || 0);
+        formData.append('barcode', pBarcode.trim());
+        formData.append('stock', Number(pStock) || 0);
+        formData.append('stock_level', Number(pStock) || 0);
+        formData.append('min_stock_level', Number(pMinStock) || 5);
+        formData.append('supplier_id', selectedSupId);
+        formData.append('preferred_supplier_id', selectedSupId);
+        formData.append('branch_id', targetBranchId);
+
+        if (editingProduct) {
+          await api.put(`/inventory/${editingProduct.id}`, formData);
+          toast.success('تم تحديث بيانات المنتج بنجاح! 📦');
+        } else {
+          await api.post('/inventory', formData);
+          toast.success('تمت إضافة المنتج للمخزون بنجاح! 📦');
+        }
       } else {
-        await api.post('/inventory', payload);
-        toast.success('تمت إضافة المنتج للمخزون بنجاح! 📦');
+        // Method 1 / URL or Text payload
+        const payload = {
+          name: finalName,
+          category: pCategory,
+          color: finalColor,
+          new_color: pColor === '__OTHER__' ? pNewColor.trim() : '',
+          size_cut: finalSize,
+          new_size: pSize === '__OTHER__' ? pNewSize.trim() : '',
+          price: Number(pPrice) || 0,
+          cost_price: Number(pCost) || 0,
+          barcode: pBarcode.trim(),
+          stock: Number(pStock) || 0,
+          stock_level: Number(pStock) || 0,
+          min_stock_level: Number(pMinStock) || 5,
+          supplier_id: selectedSupId,
+          preferred_supplier_id: selectedSupId,
+          image_url: pImage.trim(),
+          branch_id: targetBranchId,
+        };
+
+        if (editingProduct) {
+          await api.put(`/inventory/${editingProduct.id}`, payload);
+          toast.success('تم تحديث بيانات المنتج بنجاح! 📦');
+        } else {
+          await api.post('/inventory', payload);
+          toast.success('تمت إضافة المنتج للمخزون بنجاح! 📦');
+        }
       }
 
       setShowProductModal(false);
       fetchProducts();
+      fetchDropdownOptions();
     } catch (err) {
       toast.error(err.message || 'فشل حفظ المنتج');
     } finally {
@@ -1516,20 +1653,73 @@ export function Suppliers() {
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input
-              label="اسم المنتج *"
-              value={pName}
-              onChange={(e) => setPName(e.target.value)}
-              placeholder="مثال: بنطه عاليه، بيكا بنطه عاليه، كباسيل، بدلة كلاسيك كحلي..."
-              required
-            />
+            {/* 1. PRODUCT NAME: SEARCHABLE COMBOBOX OR NEW PRODUCT INPUT */}
+            <div className="space-y-1 sm:col-span-1">
+              {!isNewProductName ? (
+                <div>
+                  <SearchableCombobox
+                    label="اسم المنتج *"
+                    value={pName}
+                    onChange={(val) => {
+                      if (val === '__NEW_PRODUCT__') {
+                        setIsNewProductName(true);
+                        setPName('');
+                      } else {
+                        setPName(val);
+                      }
+                    }}
+                    options={productNamesList}
+                    placeholder="اختر أو ابحث عن صنف مسجل..."
+                    searchPlaceholder="ابحث في أسماء الأصناف..."
+                    isLoading={loadingDropdowns}
+                    customOptionLabel="منتج جديد ➕"
+                    customOptionValue="__NEW_PRODUCT__"
+                    required
+                  />
+                  {pName && productNamesList.includes(pName) && (
+                    <p className="text-[11px] text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg mt-1 border border-indigo-100 flex items-center gap-1 font-semibold">
+                      <span>ℹ️ صنف مسجل مسبقاً (سيتم إضافة مقاس أو لون جديد له دون تعديل بقية الأصناف)</span>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700">اسم المنتج الجديد *</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsNewProductName(false);
+                        setPName('');
+                      }}
+                      className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                    >
+                      اختيار من الأصناف المسجلة 📋
+                    </button>
+                  </div>
+                  <Input
+                    value={pName}
+                    onChange={(e) => setPName(e.target.value)}
+                    placeholder="أدخل اسم المنتج الجديد..."
+                    autoFocus
+                    required
+                  />
+                  {pName.trim() && productNamesList.some((n) => n.trim().toLowerCase() === pName.trim().toLowerCase()) && (
+                    <p className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded-lg mt-1 border border-amber-200 font-semibold">
+                      ⚠️ تنبيه: يوجد صنف مسجل مسبقاً بهذا الاسم في قاعدة البيانات.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
 
-            <div className="space-y-1.5">
+            {/* SUPPLIER */}
+            <div className="space-y-1.5 sm:col-span-1">
               <label className="text-xs font-bold text-slate-700">المورد التابع له</label>
               <select
                 value={pSupplierId}
                 onChange={(e) => setPSupplierId(e.target.value)}
-                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 min-h-[42px]"
               >
                 {suppliers.length === 0 ? (
                   <option value="">لا يوجد موردين مسجلين</option>
@@ -1543,12 +1733,13 @@ export function Suppliers() {
               </select>
             </div>
 
-            <div className="space-y-1.5">
+            {/* CATEGORY */}
+            <div className="space-y-1.5 sm:col-span-1">
               <label className="text-xs font-bold text-slate-700">القسم / التصنيف</label>
               <select
                 value={pCategory}
                 onChange={(e) => setPCategory(e.target.value)}
-                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 min-h-[42px]"
               >
                 {categoriesList.filter((c) => c !== 'الكل').map((c) => (
                   <option key={c} value={c}>
@@ -1558,20 +1749,67 @@ export function Suppliers() {
               </select>
             </div>
 
-            <Input
-              label="اللون"
-              value={pColor}
-              onChange={(e) => setPColor(e.target.value)}
-              placeholder="مثال: أسود، كحلي..."
-            />
+            {/* 2. COLOR: DYNAMIC SEARCHABLE DROPDOWN WITH 'OTHER' OPTION */}
+            <div className="space-y-2 sm:col-span-1">
+              <SearchableCombobox
+                label="اللون"
+                value={pColor}
+                onChange={(val) => {
+                  setPColor(val);
+                  if (val !== '__OTHER__') setPNewColor('');
+                }}
+                options={colorsList}
+                placeholder="اختر أو ابحث عن لون..."
+                searchPlaceholder="ابحث في الألوان المسجلة..."
+                isLoading={loadingDropdowns}
+                customOptionLabel="أخرى (إضافة لون جديد) ➕"
+                customOptionValue="__OTHER__"
+              />
+              {pColor === '__OTHER__' && (
+                <div className="animate-in fade-in slide-in-from-top-1 duration-150">
+                  <Input
+                    label="اللون الجديد *"
+                    value={pNewColor}
+                    onChange={(e) => setPNewColor(e.target.value)}
+                    placeholder="مثال: بيج فاتح، كشمير، زيتي غامق..."
+                    required
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
 
-            <Input
-              label="المقاس"
-              value={pSize}
-              onChange={(e) => setPSize(e.target.value)}
-              placeholder="مثال: L, XL, 42..."
-            />
+            {/* 3. SIZE: DYNAMIC SEARCHABLE DROPDOWN WITH 'OTHER' OPTION */}
+            <div className="space-y-2 sm:col-span-1">
+              <SearchableCombobox
+                label="المقاس"
+                value={pSize}
+                onChange={(val) => {
+                  setPSize(val);
+                  if (val !== '__OTHER__') setPNewSize('');
+                }}
+                options={sizesList}
+                placeholder="اختر أو ابحث عن مقاس..."
+                searchPlaceholder="ابحث في المقاسات المسجلة..."
+                isLoading={loadingDropdowns}
+                customOptionLabel="أخرى (إضافة مقاس جديد) ➕"
+                customOptionValue="__OTHER__"
+              />
+              {pSize === '__OTHER__' && (
+                <div className="animate-in fade-in slide-in-from-top-1 duration-150">
+                  <Input
+                    label="المقاس الجديد *"
+                    value={pNewSize}
+                    onChange={(e) => setPNewSize(e.target.value)}
+                    placeholder="مثال: 3XL، 46، Free Size..."
+                    required
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
 
+            {/* SELLING PRICE */}
             <Input
               label="سعر البيع (ج.م) *"
               type="number"
@@ -1580,6 +1818,7 @@ export function Suppliers() {
               required
             />
 
+            {/* COST PRICE */}
             <Input
               label="سعر التكلفة (ج.م)"
               type="number"
@@ -1587,6 +1826,7 @@ export function Suppliers() {
               onChange={(e) => setPCost(e.target.value)}
             />
 
+            {/* BARCODE */}
             <Input
               label="الباركود (Barcode)"
               value={pBarcode}
@@ -1594,6 +1834,7 @@ export function Suppliers() {
               placeholder="امسح أو اترك فارغاً للإنشاء التلقائي"
             />
 
+            {/* INITIAL QUANTITY */}
             <Input
               label="الكمية الابتدائية *"
               type="number"
@@ -1603,12 +1844,105 @@ export function Suppliers() {
             />
           </div>
 
-          <Input
-            label="رابط الصورة (Image URL)"
-            value={pImage}
-            onChange={(e) => setPImage(e.target.value)}
-            placeholder="https://..."
-          />
+          {/* 4. PRODUCT IMAGE: URL OR LOCAL UPLOAD */}
+          <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800">صورة المنتج (رابط إنترنت أو رفع من الكمبيوتر)</span>
+              <span className="text-[11px] text-slate-400 font-semibold">اختياري</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+              {/* Method 1: URL */}
+              <div className="space-y-1">
+                <Input
+                  label="طريقة 1: رابط الصورة (Image URL)"
+                  value={pImage}
+                  onChange={(e) => {
+                    setPImage(e.target.value);
+                    if (!selectedImageFile) {
+                      setImagePreviewUrl(e.target.value.trim() || null);
+                    }
+                  }}
+                  placeholder="https://example.com/image.jpg"
+                  disabled={!!selectedImageFile}
+                />
+                {selectedImageFile && (
+                  <p className="text-[10px] text-amber-700 font-bold">
+                    * تم تعطيل الرابط لأنك قمت باختيار صورة محلية من الكمبيوتر
+                  </p>
+                )}
+              </div>
+
+              {/* Method 2: Local upload from computer */}
+              <div className="space-y-1.5 flex flex-col justify-start">
+                <label className="text-xs font-bold text-slate-700">طريقة 2: رفع صورة من الكمبيوتر</label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={handleImageFileSelect}
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    icon={Upload}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-white border-dashed border-2 hover:border-indigo-500 hover:text-indigo-600 font-bold text-xs"
+                  >
+                    {selectedImageFile ? 'تغيير الصورة المحددة' : 'اختيار صورة من الجهاز 📁'}
+                  </Button>
+                  {selectedImageFile && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveImageFile}
+                      className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 text-xs font-bold"
+                    >
+                      إلغاء الملف
+                    </Button>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 font-medium">
+                  الصيغ المسموحة: JPG, PNG, WEBP (بحد أقصى 10 ميجابايت)
+                </p>
+              </div>
+            </div>
+
+            {/* Image Preview */}
+            {imagePreviewUrl && (
+              <div className="flex items-center gap-3 p-2 bg-white rounded-xl border border-slate-200 animate-in fade-in duration-150">
+                <img
+                  src={imagePreviewUrl}
+                  alt="معاينة الصورة"
+                  className="w-14 h-14 object-cover rounded-lg border border-slate-200 shrink-0 bg-slate-50"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="%2394a3b8" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
+                  }}
+                />
+                <div className="flex-1 min-w-0 text-xs">
+                  {selectedImageFile ? (
+                    <>
+                      <p className="font-bold text-slate-800 truncate">{selectedImageFile.name}</p>
+                      <p className="text-slate-500 font-mono text-[10px]">
+                        {(selectedImageFile.size / 1024).toFixed(1)} KB • {selectedImageFile.type}
+                      </p>
+                      <p className="text-emerald-700 font-bold text-[10px]">جاهز للرفع والتخزين بالخادم ✅</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-bold text-slate-800 truncate">معاينة رابط الصورة</p>
+                      <p className="text-slate-500 text-[10px] truncate font-mono">{pImage}</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
             <Button

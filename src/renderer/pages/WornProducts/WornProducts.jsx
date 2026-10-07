@@ -8,7 +8,7 @@ import StatCard from '../../components/ui/StatCard';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
-import client from '../../api/client';
+import client from '../../services/api/client';
 import {
   AlertTriangle,
   Plus,

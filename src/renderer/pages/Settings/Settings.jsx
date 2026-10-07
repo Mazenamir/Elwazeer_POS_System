@@ -7,7 +7,7 @@ import Badge from '../../components/ui/Badge';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
-import client from '../../api/client';
+import client from '../../services/api/client';
 import {
   Settings as SettingsIcon,
   Save,

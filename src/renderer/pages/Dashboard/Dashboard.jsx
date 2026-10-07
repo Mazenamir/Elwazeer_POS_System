@@ -15,14 +15,23 @@ import {
   Building2,
   ArrowUpRight,
   TrendingDown,
+  ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
-import api from '../../api/client';
+import api from '../../services/api/client';
 import StatCard from '../../components/ui/StatCard';
 import { Card, CardHeader } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
+
+const RANGE_OPTIONS = [
+  { value: 'today', label: 'اليوم فقط' },
+  { value: 'yesterday', label: 'أمس' },
+  { value: '7days', label: 'آخر 7 أيام' },
+  { value: 'this_month', label: 'هذا الشهر' },
+  { value: '30days', label: 'آخر 30 يوماً' },
+];
 
 const STATUS_MAP = {
   completed: { label: 'مكتمل', variant: 'success' },
@@ -88,29 +97,43 @@ export function Dashboard() {
     fetchDashboard();
   }, [fetchDashboard]);
 
+  const currentRangeOption =
+    RANGE_OPTIONS.find((r) => r.value === selectedRange) || RANGE_OPTIONS[2];
+  const currentRangeLabel = currentRangeOption.label;
+
   const kpis = [
     {
       title: 'إجمالي الإيرادات',
       value: `${dashboardData.totalSales.toLocaleString()} ج.م`,
       icon: DollarSign,
       color: 'bg-indigo-600 text-white',
-      trend: '+12%',
+      trend: currentRangeLabel,
       trendType: 'positive',
     },
     {
-      title: 'مصروفات اليوم',
+      title:
+        selectedRange === 'today'
+          ? 'مصروفات اليوم'
+          : selectedRange === 'yesterday'
+          ? 'مصروفات أمس'
+          : `المصروفات (${currentRangeLabel})`,
       value: `${dashboardData.totalExpenses.toLocaleString()} ج.م`,
       icon: Receipt,
       color: 'bg-rose-600 text-white',
-      trend: 'اليوم',
+      trend: currentRangeLabel,
       trendType: 'neutral',
     },
     {
-      title: 'مرتجعات اليوم',
+      title:
+        selectedRange === 'today'
+          ? 'مرتجعات اليوم'
+          : selectedRange === 'yesterday'
+          ? 'مرتجعات أمس'
+          : `المرتجعات (${currentRangeLabel})`,
       value: `${dashboardData.dailyReturns.toLocaleString()} ج.م`,
       icon: RotateCcw,
       color: 'bg-amber-600 text-white',
-      trend: 'اليوم',
+      trend: currentRangeLabel,
       trendType: 'negative',
     },
     {
@@ -118,11 +141,16 @@ export function Dashboard() {
       value: `${dashboardData.netProfit.toLocaleString()} ج.م`,
       icon: TrendingUp,
       color: 'bg-emerald-600 text-white',
-      trend: '+8%',
-      trendType: 'positive',
+      trend: currentRangeLabel,
+      trendType: dashboardData.netProfit >= 0 ? 'positive' : 'negative',
     },
     {
-      title: 'عملاء اليوم',
+      title:
+        selectedRange === 'today'
+          ? 'عملاء اليوم'
+          : selectedRange === 'yesterday'
+          ? 'عملاء أمس'
+          : `عملاء جدد (${currentRangeLabel})`,
       value: dashboardData.newCustomers.toString(),
       icon: UserPlus,
       color: 'bg-sky-600 text-white',
@@ -140,7 +168,7 @@ export function Dashboard() {
             أهلاً بك، {user?.name || user?.username || 'مستخدم النظام'}! 👋
           </h1>
           <p className="text-sm sm:text-base font-semibold text-slate-500 mt-1">
-            إليك نظرة سريعة وتحليلات شاملة لأداء متجرك اليوم
+            إليك نظرة سريعة وتحليلات شاملة لأداء متجرك {selectedRange === 'today' ? 'اليوم' : `خلال ${currentRangeLabel}`}
           </p>
         </div>
 
@@ -148,12 +176,21 @@ export function Dashboard() {
         <div className="flex items-center gap-3">
           {/* Branch filter if admin */}
           {isAdmin && (
-            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm">
-              <Building2 className="w-4 h-4 text-slate-400" />
+            <div className="relative flex items-center bg-white rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
+              <div className="flex items-center gap-2 px-3 py-2 pointer-events-none">
+                <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                <span className="text-xs font-bold text-slate-800">
+                  {activeBranchId === 'all'
+                    ? 'كل الفروع'
+                    : branches.find((b) => b.id.toString() === activeBranchId.toString())?.name || 'كل الفروع'}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-1" />
+              </div>
               <select
                 value={activeBranchId}
                 onChange={(e) => selectBranch(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer text-xs"
+                title="تصفية حسب الفرع"
               >
                 <option value="all">كل الفروع</option>
                 {branches.map((b) => (
@@ -166,16 +203,25 @@ export function Dashboard() {
           )}
 
           {/* Time range selector */}
-          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm">
-            <Calendar className="w-4 h-4 text-slate-400" />
+          <div className="relative flex items-center bg-white rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
+            <div className="flex items-center gap-2 px-3 py-2 pointer-events-none">
+              <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+              <span className="text-xs font-bold text-slate-800">
+                {currentRangeLabel}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-1" />
+            </div>
             <select
               value={selectedRange}
               onChange={(e) => setSelectedRange(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer text-xs"
+              title="اختر الفترة الزمنية"
             >
-              <option value="today">اليوم فقط</option>
-              <option value="7days">آخر 7 أيام</option>
-              <option value="30days">آخر 30 يوماً</option>
+              {RANGE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -257,7 +303,7 @@ export function Dashboard() {
         <Card className="lg:col-span-2">
           <CardHeader
             title="آخر العمليات والفواتير"
-            subtitle="قائمة بأحدث عمليات البيع والتأجير المسجلة"
+            subtitle={`قائمة بأحدث العمليات المسجلة ${selectedRange === 'today' ? 'اليوم' : `خلال ${currentRangeLabel}`}`}
             action={
               <Button
                 variant="outline"
@@ -318,12 +364,17 @@ export function Dashboard() {
                           </Badge>
                         </td>
                         <td className="py-3.5 pl-2 text-xs text-slate-400 font-normal" dir="ltr">
-                          {order.created_at
-                            ? new Date(order.created_at).toLocaleTimeString('ar-EG', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })
-                            : '-'}
+                          {(() => {
+                            const d = order.created_at || order.order_date;
+                            if (!d) return '-';
+                            const dateObj = new Date(d);
+                            return dateObj.toLocaleDateString('ar-EG', {
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            });
+                          })()}
                         </td>
                       </tr>
                     );
@@ -338,7 +389,7 @@ export function Dashboard() {
         <Card>
           <CardHeader
             title="الأكثر طلباً ومبيعاً"
-            subtitle="أفضل المنتجات أداءً"
+            subtitle={`أفضل المنتجات أداءً ${selectedRange === 'today' ? 'اليوم' : `خلال ${currentRangeLabel}`}`}
             action={
               <Button
                 variant="ghost"

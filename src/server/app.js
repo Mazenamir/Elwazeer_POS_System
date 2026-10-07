@@ -71,7 +71,7 @@ const distPath = fs.existsSync(path.join(__dirname, '../../dist/renderer'))
   : path.join(__dirname, '../renderer/dist');
 
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/')) return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
   if (req.path.includes('..') || req.path.startsWith('/node_modules/') || req.path.startsWith('/scratch/')) {
     return res.sendStatus(404);
   }
@@ -125,6 +125,9 @@ if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
 }
 app.use(express.static(rendererPath));
+
+// Static uploads serving
+app.use('/uploads', express.static(config.UPLOADS_DIR));
 
 // Mount Domain API Modules
 app.use('/api', authRoutes);

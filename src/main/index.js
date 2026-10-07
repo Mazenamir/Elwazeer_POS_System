@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { autoUpdater } = require('electron-updater');
 const ServerSupervisor = require('./server-supervisor');
 const { createSystemTray } = require('./tray');
 
@@ -17,13 +18,56 @@ let tray = null;
 let isQuiting = false;
 let logPath = null;
 
+function setupAutoUpdater() {
+  // Never check for updates while running in development mode
+  if (!app.isPackaged) {
+    log('[UPDATER] Skipped: application is not packaged.');
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => {
+    log('[UPDATER] Checking for updates...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    log(`[UPDATER] Update available: ${info.version}`);
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    log(`[UPDATER] No update available. Current version: ${info.version}`);
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    log(
+      `[UPDATER] Download progress: ${Math.round(progress.percent)}%`
+    );
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log(`[UPDATER] Update downloaded: ${info.version}`);
+  });
+
+  autoUpdater.on('error', (error) => {
+    log(`[UPDATER] Error: ${error.message}`);
+  });
+
+  autoUpdater.checkForUpdates().catch((error) => {
+    log(`[UPDATER] Check failed: ${error.message}`);
+  });
+}
+
+
+
 function log(msg) {
   console.log(msg);
   if (logPath) {
     try {
       const timestamp = new Date().toISOString();
       fs.appendFileSync(logPath, `[${timestamp}] ${msg}\n`);
-    } catch {}
+    } catch { }
   }
 }
 
@@ -95,6 +139,29 @@ async function waitForPort(port, timeoutMs = 25000) {
   return false;
 }
 
+function isHttpReady(url) {
+  return new Promise((resolve) => {
+    const http = require('http');
+    const req = http.get(url, (res) => {
+      resolve(res.statusCode < 500);
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(1200, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function waitForHttp(url, timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await isHttpReady(url)) return true;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
 function createWindow(targetUrl, isDevMode = false) {
   if (mainWindow) return;
 
@@ -158,7 +225,7 @@ function createWindow(targetUrl, isDevMode = false) {
       if (allowedOrigins.has(parsed.origin)) {
         return { action: 'allow' };
       }
-    } catch {}
+    } catch { }
     log(`Security: Blocked window.open to external URL: ${url}`);
     return { action: 'deny' };
   });
@@ -185,6 +252,9 @@ function createWindow(targetUrl, isDevMode = false) {
 
 app.on('ready', async () => {
   logPath = path.join(app.getPath('userData'), 'debug.log');
+
+  setupAutoUpdater();
+
   log('--- APP START (MODULAR ARCHITECTURE) ---');
   if (isDev) log('[DEV MODE] Running in Development mode');
   if (isExternalServer) log('[DEV MODE] External server mode enabled');
@@ -215,7 +285,12 @@ app.on('ready', async () => {
 
   if (isExternalServer) {
     log(`Waiting for external server on port ${port}...`);
-    await waitForPort(Number(port), 25000);
+    const serverReady = await waitForHttp(`http://127.0.0.1:${port}/api/server-time`, 60000);
+    if (serverReady) {
+      log(`External server on port ${port} is confirmed HTTP healthy.`);
+    } else {
+      log(`WARNING: External server on port ${port} did not respond to HTTP within 60s.`);
+    }
     await launchUI();
   } else {
     serverSupervisor = new ServerSupervisor({
@@ -230,13 +305,13 @@ app.on('ready', async () => {
       await launchUI();
     });
 
-    // Fallback: If server takes too long to signal 'server-ready', try to open window after 20s
+    // Fallback: If server takes too long to signal 'server-ready', try to open window after 60s
     setTimeout(async () => {
       if (!mainWindow) {
         log('Fallback: Server took too long, attempting to create window anyway...');
         await launchUI();
       }
-    }, 20000);
+    }, 60000);
   }
 });
 
@@ -254,7 +329,7 @@ app.on('before-quit', () => {
         const { execFileSync } = require('child_process');
         execFileSync(pgCtl, ['stop', '-D', pgData, '-m', 'fast'], { windowsHide: true, timeout: 3000 });
       }
-    } catch {}
+    } catch { }
   }
 });
 

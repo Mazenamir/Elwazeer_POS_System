@@ -10,14 +10,16 @@ if %ERRORLEVEL% EQU 0 (
     goto :done
 )
 
-echo [WARN] PostgreSQL is not responding. Cleaning up stale instances...
-taskkill /F /IM postgres.exe >nul 2>&1
+echo [WARN] PostgreSQL is not responding. Checking instances...
+"%~dp0postgresql\bin\pg_ctl.exe" stop -D "%~dp0programs\data" -m fast >nul 2>&1
+timeout /t 2 /nobreak >nul 2>&1
+taskkill /F /FI "SESSION ne 0" /IM postgres.exe >nul 2>&1
 if exist "%~dp0programs\data\postmaster.pid" (
     del /f "%~dp0programs\data\postmaster.pid" >nul 2>&1
 )
 
 echo [INFO] Starting local PostgreSQL from: %~dp0programs\data
-"%~dp0postgresql\bin\pg_ctl.exe" start -D "%~dp0programs\data" -w -t 20
+"%~dp0postgresql\bin\pg_ctl.exe" start -D "%~dp0programs\data" -w -t 90
 if %ERRORLEVEL% EQU 0 (
     echo [OK] PostgreSQL server started successfully!
 ) else (

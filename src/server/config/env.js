@@ -51,6 +51,16 @@ const DB_NAME = process.env.DB_NAME || 'pos_db';
 const OFFLINE_DB_PATH = process.env.OFFLINE_DB_PATH || path.join(appRoot, 'data', 'offline.sqlite');
 const BRANCH_SQLITE_PATH = process.env.BRANCH_SQLITE_PATH || path.join(appRoot, 'data', 'branch.sqlite');
 
+// Uploads Config
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(appRoot, 'data', 'uploads');
+const PRODUCT_UPLOADS_DIR = path.join(UPLOADS_DIR, 'products');
+
+try {
+  fs.mkdirSync(PRODUCT_UPLOADS_DIR, { recursive: true });
+} catch (e) {
+  console.warn('Could not create uploads directory:', e.message);
+}
+
 const SUPPLIER_STATEMENT_LIMIT = boundedEnvInt('SUPPLIER_STATEMENT_LIMIT', 500, 50, 2000);
 const EMPLOYEE_SALES_REPORT_DAYS = boundedEnvInt('EMPLOYEE_SALES_REPORT_DAYS', 180, 30, 730);
 const EMPLOYEE_SALES_REPORT_LIMIT = boundedEnvInt('EMPLOYEE_SALES_REPORT_LIMIT', 1000, 100, 5000);
@@ -78,6 +88,8 @@ module.exports = {
   DB_NAME,
   OFFLINE_DB_PATH,
   BRANCH_SQLITE_PATH,
+  UPLOADS_DIR,
+  PRODUCT_UPLOADS_DIR,
   SUPPLIER_STATEMENT_LIMIT,
   EMPLOYEE_SALES_REPORT_DAYS,
   EMPLOYEE_SALES_REPORT_LIMIT,

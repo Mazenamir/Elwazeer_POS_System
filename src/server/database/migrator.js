@@ -402,6 +402,25 @@ async function runBranchSqliteMigrations() {
     sqlite.exec("ALTER TABLE branches ADD COLUMN allowed_gender TEXT DEFAULT 'both'");
   } catch {}
 
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS colors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS sizes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    try { sqlite.exec('ALTER TABLE inventory ADD COLUMN color_id INTEGER'); } catch {}
+    try { sqlite.exec('ALTER TABLE inventory ADD COLUMN size_id INTEGER'); } catch {}
+  } catch {}
+
   console.log('✨ Branch SQLite schema initialized successfully.');
 }
 

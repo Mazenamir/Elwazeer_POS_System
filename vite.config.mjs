@@ -23,14 +23,24 @@ export default defineConfig({
         target: 'http://127.0.0.1:6253',
         changeOrigin: true,
         secure: false,
+        bypass: (req) => {
+          // Never proxy frontend JS/JSX modules or Vite internal assets
+          if (
+            req.url.endsWith('.js') ||
+            req.url.endsWith('.jsx') ||
+            req.url.endsWith('.mjs') ||
+            req.url.includes('?import') ||
+            req.url.includes('@fs') ||
+            req.url.includes('@vite')
+          ) {
+            return req.url;
+          }
+        },
       },
-      '/logos': {
+      '/uploads': {
         target: 'http://127.0.0.1:6253',
         changeOrigin: true,
-      },
-      '/assets': {
-        target: 'http://127.0.0.1:6253',
-        changeOrigin: true,
+        secure: false,
       },
     },
   },

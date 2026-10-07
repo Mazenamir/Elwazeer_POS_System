@@ -47,7 +47,7 @@ async function listInventory(req, res, next) {
 
 async function createProduct(req, res, next) {
   try {
-    const item = await inventoryService.createProduct(req.body, req.user);
+    const item = await inventoryService.createProduct(req.body, req.user, req.file);
     res.json(item);
   } catch (err) {
     next(err);
@@ -56,7 +56,7 @@ async function createProduct(req, res, next) {
 
 async function updateProduct(req, res, next) {
   try {
-    const item = await inventoryService.updateProduct(req.params.id, req.body, req.user);
+    const item = await inventoryService.updateProduct(req.params.id, req.body, req.user, req.file);
     res.json(item);
   } catch (err) {
     next(err);
@@ -153,6 +153,59 @@ async function searchInventory(req, res, next) {
   }
 }
 
+async function listColors(req, res, next) {
+  try {
+    const colors = await inventoryService.listColors();
+    res.json(colors);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function createColor(req, res, next) {
+  try {
+    const name = req.body?.name;
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'اسم اللون مطلوب' });
+    }
+    const color = await inventoryService.createOrGetColor(name);
+    res.json(color);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function listSizes(req, res, next) {
+  try {
+    const sizes = await inventoryService.listSizes();
+    res.json(sizes);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function createSize(req, res, next) {
+  try {
+    const name = req.body?.name;
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'المقاس مطلوب' });
+    }
+    const size = await inventoryService.createOrGetSize(name);
+    res.json(size);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function listProductNames(req, res, next) {
+  try {
+    const names = await inventoryService.listProductNames(req.query?.search);
+    res.json(names);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMetadata,
   getModels,
@@ -171,4 +224,9 @@ module.exports = {
   checkDuplicatesBatch,
   checkDuplicateSingle,
   searchInventory,
+  listColors,
+  createColor,
+  listSizes,
+  createSize,
+  listProductNames,
 };

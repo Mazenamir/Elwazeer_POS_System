@@ -31,9 +31,11 @@ function shouldGuardDuplicateMutation(req) {
 
 function duplicateMutationKey(req) {
   const requester = req.cookies?.token || req.headers.authorization || req.ip || 'anonymous';
+  const idempotencyKey = req.headers['x-idempotency-key'] || '';
   const bodyText = stableStringify(req.body || {});
   return hashValue([
     hashValue(requester),
+    idempotencyKey,
     req.method,
     req.originalUrl || req.url,
     bodyText,
