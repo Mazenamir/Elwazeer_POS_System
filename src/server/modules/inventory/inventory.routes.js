@@ -39,6 +39,7 @@ router.get('/inventory/duplicate-check', controller.checkDuplicateSingle);
 router.get('/inventory/search', controller.searchInventory);
 router.get('/inventory', controller.listInventory);
 router.get('/products', controller.listInventory);
+router.get('/inventory/:id', controller.getInventoryById);
 router.post('/inventory', requireInventoryAdmin, productUploadMiddleware, controller.createProduct);
 router.put('/inventory/:id', requireInventoryAdmin, productUploadMiddleware, controller.updateProduct);
 router.delete('/inventory/:id', requireInventoryAdmin, controller.deleteProduct);

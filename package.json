@@ -1,6 +1,6 @@
 {
   "name": "bebyoon-system",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Bebyoon / El-Wazeer POS & Management System",
   "main": "src/main/index.js",
   "scripts": {
@@ -14,8 +14,12 @@
     "dev": "concurrently -k -n server,client,electron -c blue,green,magenta \"npm run server\" \"npm run dev:client\" \"electron . --dev --external-server\"",
     "build:client": "vite build",
     "build:css": "tailwindcss -i ./src/renderer/assets/css/tailwind-input.css -o ./src/renderer/assets/css/tailwind.min.css --minify",
+    "prepack": "npm run build:client",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "predist": "npm run build:client",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "verify:package": "node scratch/verify_package.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -53,12 +57,103 @@
     "directories": {
       "output": "dist"
     },
+    "files": [
+      "src/main/**/*",
+      "src/preload/**/*",
+      "src/renderer/logos/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "src/server",
+        "to": "server",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/shared",
+        "to": "shared",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "dist/renderer",
+        "to": "dist/renderer",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "programs",
+        "to": "programs",
+        "filter": [
+          "**/*",
+          "!data/log/**/*",
+          "!data/current_logfiles",
+          "!data/postmaster.pid",
+          "!data/postmaster.opts",
+          "!data/*.log",
+          "!node/node_modules/**/*"
+        ]
+      },
+      {
+        "from": "postgresql",
+        "to": "postgresql",
+        "filter": [
+          "**/*",
+          "!pgAdmin 4/**/*",
+          "!doc/**/*",
+          "!include/**/*",
+          "!installer/**/*"
+        ]
+      },
+      {
+        "from": ".env",
+        "to": ".env"
+      },
+      {
+        "from": "node_modules",
+        "to": "node_modules",
+        "filter": [
+          "**/*",
+          "!electron/**/*",
+          "!electron-builder/**/*",
+          "!vite/**/*",
+          "!@vitejs/**/*",
+          "!tailwindcss/**/*",
+          "!postcss/**/*",
+          "!autoprefixer/**/*",
+          "!concurrently/**/*",
+          "!electron-winstaller/**/*",
+          "!@electron/windows-sign/**/*",
+          "!@rolldown/**/*",
+          "!lightningcss*/**/*",
+          "!rolldown/**/*",
+          "!.bin/**/*"
+        ]
+      }
+    ],
     "nsis": {
-      "perMachine": false,
-      "oneClick": true
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Bebyoon System",
+      "include": "build/installer.nsh"
     },
     "win": {
-      "target": "nsis"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "publish": {
       "provider": "github",

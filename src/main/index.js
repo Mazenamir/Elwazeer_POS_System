@@ -260,13 +260,23 @@ app.on('ready', async () => {
   if (isExternalServer) log('[DEV MODE] External server mode enabled');
 
   const appRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '../../');
-  const envPath = path.join(appRoot, '.env');
-  if (fs.existsSync(envPath)) {
-    require('dotenv').config({ path: envPath });
+  const defaultDataDir = app.isPackaged
+    ? (process.env.ProgramData ? path.join(process.env.ProgramData, 'Bebyoon System') : path.join(app.getPath('userData'), 'data'))
+    : appRoot;
+  const dataDir = process.env.DATA_DIR || defaultDataDir;
+
+  const dataEnvPath = path.join(dataDir, '.env');
+  const appEnvPath = path.join(appRoot, '.env');
+  if (fs.existsSync(dataEnvPath)) {
+    require('dotenv').config({ path: dataEnvPath });
+  } else if (fs.existsSync(appEnvPath)) {
+    require('dotenv').config({ path: appEnvPath });
   }
 
   const port = process.env.PORT || '6253';
-  const serverScript = path.join(__dirname, '../server/server.js');
+  const serverScript = app.isPackaged
+    ? path.join(process.resourcesPath, 'server', 'server.js')
+    : path.join(__dirname, '../server/server.js');
 
   const launchUI = async () => {
     if (mainWindow) return;
@@ -295,21 +305,47 @@ app.on('ready', async () => {
   } else {
     serverSupervisor = new ServerSupervisor({
       appRoot,
+      dataDir,
       serverScript,
       port,
       logFile: logPath,
     });
 
-    serverSupervisor.start(async () => {
+    let hasLaunched = false;
+    let fallbackTimer = null;
+
+    const onServerReady = async () => {
+      if (hasLaunched) return;
+      hasLaunched = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
       log('Server ready signal received, launching UI...');
       await launchUI();
-    });
+    };
 
-    // Fallback: If server takes too long to signal 'server-ready', try to open window after 60s
-    setTimeout(async () => {
-      if (!mainWindow) {
-        log('Fallback: Server took too long, attempting to create window anyway...');
-        await launchUI();
+    const onServerError = (errMsg) => {
+      if (hasLaunched) return;
+      hasLaunched = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      log(`CRITICAL SERVER ERROR: ${errMsg}`);
+      dialog.showErrorBox(
+        'خطأ في تشغيل النظام / System Startup Error',
+        `تعذر بدء تشغيل خادم قاعدة البيانات أو النظام.\nCould not start the database or backend server.\n\nالتفاصيل / Details:\n${errMsg}\n\nملف السجل / Log file:\n${logPath}`
+      );
+      app.quit();
+    };
+
+    serverSupervisor.start(onServerReady, onServerError);
+
+    // Fallback: If server takes too long to signal 'server-ready', check HTTP health before failing
+    fallbackTimer = setTimeout(async () => {
+      if (!mainWindow && !hasLaunched) {
+        log('Fallback: Checking if server is responding to HTTP...');
+        const httpOk = await isHttpReady(`http://127.0.0.1:${port}/api/server-time`);
+        if (httpOk) {
+          await onServerReady();
+        } else {
+          onServerError(`Server did not respond on port ${port} within 60 seconds.`);
+        }
       }
     }, 60000);
   }
@@ -320,16 +356,26 @@ app.on('before-quit', () => {
   if (serverSupervisor) {
     serverSupervisor.stop();
   }
-  // Only stop local postgres if Electron itself started its own internal server
+  // Secondary fallback: only stop local postgres if child supervisor did not terminate it
   if (!isExternalServer && (!serverSupervisor || !serverSupervisor.isExternal)) {
-    try {
-      const pgCtl = path.resolve(__dirname, '../../postgresql/bin/pg_ctl.exe');
-      const pgData = path.resolve(__dirname, '../../programs/data');
-      if (fs.existsSync(pgCtl) && fs.existsSync(pgData)) {
-        const { execFileSync } = require('child_process');
-        execFileSync(pgCtl, ['stop', '-D', pgData, '-m', 'fast'], { windowsHide: true, timeout: 3000 });
-      }
-    } catch { }
+    setTimeout(() => {
+      try {
+        const pgCtl = app.isPackaged
+          ? path.join(process.resourcesPath, 'postgresql/bin/pg_ctl.exe')
+          : path.resolve(__dirname, '../../postgresql/bin/pg_ctl.exe');
+        const defaultDataDir = app.isPackaged
+          ? (process.env.ProgramData ? path.join(process.env.ProgramData, 'Bebyoon System') : path.join(app.getPath('userData'), 'data'))
+          : path.resolve(__dirname, '../../');
+        const dataDir = process.env.DATA_DIR || defaultDataDir;
+        const pgData = app.isPackaged
+          ? path.join(dataDir, 'postgres_data')
+          : path.resolve(__dirname, '../../programs/data');
+        if (fs.existsSync(pgCtl) && fs.existsSync(pgData)) {
+          const { execFileSync } = require('child_process');
+          execFileSync(pgCtl, ['stop', '-D', pgData, '-m', 'fast'], { windowsHide: true, timeout: 3000, stdio: 'ignore' });
+        }
+      } catch { }
+    }, 1500);
   }
 });
 

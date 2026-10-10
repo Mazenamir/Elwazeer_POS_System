@@ -63,8 +63,12 @@ app.use(duplicateMutationGuard);
 app.use(authMiddleware);
 
 // Static file protection & serving (serves React SPA dist first, then renderer fallback)
-const rendererPath = path.join(__dirname, '../renderer');
-const distPath = fs.existsSync(path.join(__dirname, '../../dist/renderer'))
+const rendererPath = fs.existsSync(path.join(config.appRoot, 'src/renderer'))
+  ? path.join(config.appRoot, 'src/renderer')
+  : path.join(__dirname, '../renderer');
+const distPath = fs.existsSync(path.join(config.appRoot, 'dist/renderer'))
+  ? path.join(config.appRoot, 'dist/renderer')
+  : fs.existsSync(path.join(__dirname, '../../dist/renderer'))
   ? path.join(__dirname, '../../dist/renderer')
   : (fs.existsSync(path.join(__dirname, '../../dist')) && fs.existsSync(path.join(__dirname, '../../dist/index.html')))
   ? path.join(__dirname, '../../dist')

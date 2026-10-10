@@ -136,10 +136,11 @@ if (config.IS_BRANCH_MODE) {
       try {
         const res = sqliteDb.prepare('SELECT 1 AS ok').get();
         return Boolean(res?.ok);
-      } catch {
+      } catch (err) {
         return false;
       }
     },
+    getLastDbError: () => null,
     close: async () => {
       try {
         sqliteDb.close();
@@ -169,13 +170,21 @@ if (config.IS_BRANCH_MODE) {
     console.error('Unexpected error on idle PostgreSQL client:', err.message);
   });
 
+  let lastDbError = null;
+
   async function isPrimaryDbAvailable() {
     try {
       const res = await pool.query('SELECT 1 AS ok');
+      lastDbError = null;
       return Boolean(res?.rows?.[0]?.ok);
-    } catch {
+    } catch (err) {
+      lastDbError = err.message;
       return false;
     }
+  }
+
+  function getLastDbError() {
+    return lastDbError;
   }
 
   module.exports = {
@@ -199,6 +208,7 @@ if (config.IS_BRANCH_MODE) {
       }
     },
     isPrimaryDbAvailable,
+    getLastDbError,
     close: async () => {
       if (pool) {
         await pool.end();

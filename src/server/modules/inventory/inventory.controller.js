@@ -45,6 +45,15 @@ async function listInventory(req, res, next) {
   }
 }
 
+async function getInventoryById(req, res, next) {
+  try {
+    const item = await inventoryService.getInventoryById(req.params.id, req.query.branch_id, req.user);
+    res.json(item);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function createProduct(req, res, next) {
   try {
     const item = await inventoryService.createProduct(req.body, req.user, req.file);
@@ -212,6 +221,7 @@ module.exports = {
   getBarcodes,
   getVariants,
   listInventory,
+  getInventoryById,
   createProduct,
   updateProduct,
   deleteProduct,

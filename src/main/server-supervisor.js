@@ -26,12 +26,21 @@ function isPortOpen(port, host = '127.0.0.1') {
 class ServerSupervisor {
   constructor(options = {}) {
     this.appRoot = options.appRoot || path.resolve(__dirname, '../../');
-    this.serverScript = options.serverScript || path.join(this.appRoot, 'src/server/server.js');
+    this.serverScript = options.serverScript || (
+      fs.existsSync(path.join(this.appRoot, 'server', 'server.js'))
+        ? path.join(this.appRoot, 'server', 'server.js')
+        : path.join(this.appRoot, 'src/server/server.js')
+    );
     this.port = options.port || '6253';
+    this.dataDir = options.dataDir || null;
     this.logFile = options.logFile || null;
     this.process = null;
     this.readyCallback = null;
+    this.errorCallback = null;
     this.isExternal = false;
+    this.isReady = false;
+    this.isStopping = false;
+    this.recentStderr = [];
   }
 
   log(message) {
@@ -44,8 +53,12 @@ class ServerSupervisor {
     }
   }
 
-  async start(onReady) {
+  async start(onReady, onError) {
     this.readyCallback = onReady;
+    this.errorCallback = onError;
+    this.isReady = false;
+    this.isStopping = false;
+    this.recentStderr = [];
     this.log(`Checking server path: ${this.serverScript}`);
     this.log(`Server root: ${this.appRoot}`);
     this.log(`Configured port: ${this.port}`);
@@ -55,6 +68,7 @@ class ServerSupervisor {
     if (running) {
       this.log(`[Supervisor] Server is already active on port ${this.port}. Attaching to existing instance.`);
       this.isExternal = true;
+      this.isReady = true;
       if (typeof this.readyCallback === 'function') {
         setTimeout(() => this.readyCallback(), 50);
       }
@@ -65,12 +79,21 @@ class ServerSupervisor {
       this.log(`CRITICAL: Server script NOT FOUND at ${this.serverScript}`);
     }
 
+    const nodeModulesPath = path.join(this.appRoot, 'node_modules');
+    const existingNodePath = process.env.NODE_PATH || '';
+    const nodePathEnv = existingNodePath ? `${nodeModulesPath}${path.delimiter}${existingNodePath}` : nodeModulesPath;
+
     const env = {
       ...process.env,
       PORT: String(this.port),
       APP_ROOT: this.appRoot,
       ELECTRON_RUN_AS_NODE: '1',
+      NODE_PATH: nodePathEnv,
     };
+    if (this.dataDir) {
+      env.DATA_DIR = this.dataDir;
+      this.log(`[Supervisor] Configured persistent DATA_DIR: ${this.dataDir}`);
+    }
 
     const forkOptions = {
       env,
@@ -102,32 +125,61 @@ class ServerSupervisor {
     });
 
     this.process.stderr.on('data', (data) => {
-      this.log(`[Server STDERR]: ${data}`);
+      const text = data.toString();
+      this.recentStderr.push(text);
+      if (this.recentStderr.length > 20) this.recentStderr.shift();
+      this.log(`[Server STDERR]: ${text}`);
     });
 
     this.process.on('message', (msg) => {
       this.log(`[Server Message]: ${msg}`);
-      if (msg === 'server-ready' && typeof this.readyCallback === 'function') {
-        this.readyCallback();
+      if (msg === 'server-ready') {
+        this.isReady = true;
+        if (typeof this.readyCallback === 'function') {
+          this.readyCallback();
+        }
       }
     });
 
     this.process.on('error', (err) => {
       this.log(`Server process FORK ERROR: ${err.message}`);
+      if (!this.isReady && !this.isStopping && typeof this.errorCallback === 'function') {
+        this.errorCallback(`Failed to fork server process: ${err.message}`);
+      }
     });
 
     this.process.on('exit', (code, signal) => {
       this.log(`Server process exited. Code: ${code}, Signal: ${signal}`);
+      if (!this.isReady && !this.isStopping && code !== 0) {
+        const stderrSnippet = this.recentStderr.join('').trim();
+        const errDetail = stderrSnippet
+          ? stderrSnippet.split('\n').slice(-10).join('\n')
+          : `Process terminated with code ${code} (${signal || 'no signal'})`;
+        if (typeof this.errorCallback === 'function') {
+          this.errorCallback(errDetail);
+        }
+      }
     });
 
     return this.process;
   }
 
   stop() {
+    this.isStopping = true;
     if (this.process) {
-      this.log('Terminating server process...');
-      this.process.kill();
+      this.log('Signaling server process to shut down gracefully...');
+      try {
+        this.process.send({ type: 'shutdown' });
+      } catch {}
+      const proc = this.process;
       this.process = null;
+      setTimeout(() => {
+        try {
+          if (!proc.killed) {
+            proc.kill();
+          }
+        } catch {}
+      }, 4000);
     }
   }
 }

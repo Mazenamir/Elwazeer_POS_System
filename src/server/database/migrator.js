@@ -416,9 +416,21 @@ async function runBranchSqliteMigrations() {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS inventory_sizes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inventory_id INTEGER NOT NULL,
+        size_id INTEGER,
+        size_name TEXT NOT NULL,
+        stock_level INTEGER DEFAULT 0,
+        branch_id INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(inventory_id, size_name, branch_id)
+      );
     `);
     try { sqlite.exec('ALTER TABLE inventory ADD COLUMN color_id INTEGER'); } catch {}
     try { sqlite.exec('ALTER TABLE inventory ADD COLUMN size_id INTEGER'); } catch {}
+    try { sqlite.exec('ALTER TABLE order_items ADD COLUMN size TEXT'); } catch {}
   } catch {}
 
   console.log('✨ Branch SQLite schema initialized successfully.');

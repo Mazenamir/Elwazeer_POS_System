@@ -79,7 +79,8 @@ async function waitForPostgresReady(timeoutMs = 60000, pollIntervalMs = 500) {
 
     if (Date.now() - lastLogTime >= 5000) {
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-      console.log(`[Database] PostgreSQL is starting up / performing recovery... (${elapsedSec}s elapsed)`);
+      const errDetail = db.getLastDbError && db.getLastDbError() ? ` (Status: ${db.getLastDbError()})` : '';
+      console.log(`[Database] PostgreSQL is starting up / performing recovery... (${elapsedSec}s elapsed)${errDetail}`);
       lastLogTime = Date.now();
     }
 
@@ -103,8 +104,42 @@ async function ensurePostgresRunning() {
     return;
   }
 
-  const pgCtl = path.resolve(__dirname, '../../postgresql/bin/pg_ctl.exe');
-  const pgData = path.resolve(__dirname, '../../programs/data');
+  const pgCtl = fs.existsSync(path.join(config.appRoot, 'postgresql/bin/pg_ctl.exe'))
+    ? path.join(config.appRoot, 'postgresql/bin/pg_ctl.exe')
+    : path.resolve(__dirname, '../../postgresql/bin/pg_ctl.exe');
+
+  const templatePgData = fs.existsSync(path.join(config.appRoot, 'programs/data'))
+    ? path.join(config.appRoot, 'programs/data')
+    : path.resolve(__dirname, '../../programs/data');
+
+  const pgData = config.PG_DATA_DIR || templatePgData;
+
+  // First-run database initialization in persistent directory
+  if (pgData !== templatePgData && !fs.existsSync(path.join(pgData, 'PG_VERSION'))) {
+    console.log(`[Database] First launch detected. Initializing database directory: ${pgData}`);
+    try {
+      fs.mkdirSync(pgData, { recursive: true });
+      if (fs.existsSync(templatePgData)) {
+        fs.cpSync(templatePgData, pgData, { recursive: true });
+        console.log(`[Database] Bundled database template copied to: ${pgData}`);
+      }
+    } catch (e) {
+      console.error(`[Database] Error initializing persistent database: ${e.message}`);
+    }
+  }
+
+  // First-run persistent environment configuration (.env)
+  const dataEnvPath = path.join(config.dataDir, '.env');
+  const appEnvPath = path.join(config.appRoot, '.env');
+  if (config.dataDir !== config.appRoot && !fs.existsSync(dataEnvPath) && fs.existsSync(appEnvPath)) {
+    try {
+      fs.copyFileSync(appEnvPath, dataEnvPath);
+      console.log(`[Config] Initialized persistent environment configuration at: ${dataEnvPath}`);
+    } catch (e) {
+      console.warn(`[Config] Note: Could not copy template .env: ${e.message}`);
+    }
+  }
+
   const pidPath = path.join(pgData, 'postmaster.pid');
 
   if (!fs.existsSync(pgCtl) || !fs.existsSync(pgData)) {
@@ -173,12 +208,40 @@ async function ensurePostgresRunning() {
     }
   }
 
+  // Remove stale current_logfiles if it points to non-existent historical files
+  const staleCurrentLog = path.join(pgData, 'current_logfiles');
+  if (fs.existsSync(staleCurrentLog)) {
+    try {
+      fs.unlinkSync(staleCurrentLog);
+    } catch {}
+  }
+
+  // Ensure ALL required PostgreSQL internal subdirectories exist (handles packaging where empty dirs are omitted)
+  const requiredSubdirs = [
+    'base', 'global', 'log',
+    'pg_commit_ts', 'pg_dynshmem',
+    'pg_logical', 'pg_logical/snapshots', 'pg_logical/mappings',
+    'pg_multixact', 'pg_multixact/members', 'pg_multixact/offsets',
+    'pg_notify', 'pg_replslot', 'pg_serial', 'pg_snapshots',
+    'pg_stat', 'pg_stat_tmp', 'pg_subtrans', 'pg_tblspc',
+    'pg_twophase', 'pg_wal', 'pg_wal/archive_status', 'pg_wal/summaries',
+    'pg_xact'
+  ];
+  for (const dir of requiredSubdirs) {
+    const fullDir = path.join(pgData, dir);
+    if (!fs.existsSync(fullDir)) {
+      try {
+        fs.mkdirSync(fullDir, { recursive: true });
+      } catch {}
+    }
+  }
+
   // Allow Windows kernel a brief moment to release bound sockets and file handles
   await new Promise((r) => setTimeout(r, 800));
 
-  // 3. Start local PostgreSQL engine
-  console.log(`[Database] Starting local PostgreSQL from: ${pgData}`);
-  const p = spawn(pgCtl, ['start', '-D', pgData], {
+  // 3. Start local PostgreSQL engine on the configured port
+  console.log(`[Database] Starting local PostgreSQL from: ${pgData} on port ${dbPort}`);
+  const p = spawn(pgCtl, ['start', '-D', pgData, '-o', `-p ${dbPort}`], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -186,11 +249,24 @@ async function ensurePostgresRunning() {
   p.unref();
 
   // 4. Wait for PostgreSQL to complete WAL crash recovery and become fully ready
-  const isReady = await waitForPostgresReady(60000, 500);
+  const isReady = await waitForPostgresReady(45000, 500);
   if (isReady) {
     console.log(`[Database] PostgreSQL is ready and accepting queries on port ${dbPort}.`);
   } else {
-    throw new Error(`[Database] PostgreSQL failed to accept connections on port ${dbPort} within 60 seconds. Please check logs in programs/data/log.`);
+    let recentLogs = '';
+    try {
+      const logDir = path.join(pgData, 'log');
+      if (fs.existsSync(logDir)) {
+        const files = fs.readdirSync(logDir).filter((f) => f.endsWith('.log')).sort();
+        if (files.length > 0) {
+          const latestLog = path.join(logDir, files[files.length - 1]);
+          const lines = fs.readFileSync(latestLog, 'utf8').trim().split('\n');
+          recentLogs = '\nRecent log from ' + path.basename(latestLog) + ':\n' + lines.slice(-25).join('\n');
+        }
+      }
+    } catch {}
+    const errDetail = db.getLastDbError && db.getLastDbError() ? ` (${db.getLastDbError()})` : '';
+    throw new Error(`[Database] PostgreSQL failed to accept connections on port ${dbPort} within 45 seconds${errDetail}.${recentLogs}`);
   }
 }
 
@@ -229,8 +305,13 @@ async function startServer() {
         // Gracefully stop local PostgreSQL engine so WAL is cleanly checkpointed and postmaster.pid is removed
         if (!config.IS_BRANCH_MODE && (config.DB_HOST === 'localhost' || config.DB_HOST === '127.0.0.1')) {
           try {
-            const pgCtl = path.resolve(__dirname, '../../postgresql/bin/pg_ctl.exe');
-            const pgData = path.resolve(__dirname, '../../programs/data');
+            const pgCtl = fs.existsSync(path.join(config.appRoot, 'postgresql/bin/pg_ctl.exe'))
+              ? path.join(config.appRoot, 'postgresql/bin/pg_ctl.exe')
+              : path.resolve(__dirname, '../../postgresql/bin/pg_ctl.exe');
+            const templatePgData = fs.existsSync(path.join(config.appRoot, 'programs/data'))
+              ? path.join(config.appRoot, 'programs/data')
+              : path.resolve(__dirname, '../../programs/data');
+            const pgData = config.PG_DATA_DIR || templatePgData;
             if (fs.existsSync(pgCtl) && fs.existsSync(pgData)) {
               const { execFileSync } = require('child_process');
               execFileSync(pgCtl, ['stop', '-D', pgData, '-m', 'fast'], {
@@ -240,7 +321,9 @@ async function startServer() {
               });
               console.log('[Database] Local PostgreSQL stopped gracefully.');
             }
-          } catch {}
+          } catch (e) {
+            console.warn(`[Database] Note: Graceful PostgreSQL stop: ${e.message}`);
+          }
         }
 
         console.log('Server and database connections closed. Bye.');
@@ -250,6 +333,11 @@ async function startServer() {
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('message', (msg) => {
+      if (msg === 'shutdown' || msg?.type === 'shutdown') {
+        shutdown('IPC_SHUTDOWN');
+      }
+    });
 
   } catch (err) {
     console.error('❌ Failed to start server:', err);

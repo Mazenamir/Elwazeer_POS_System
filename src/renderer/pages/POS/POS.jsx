@@ -137,6 +137,10 @@ export function POS() {
     return d.toISOString().split('T')[0];
   });
 
+  // Size selection modal state for products with multiple sizes
+  const [showSizeModal, setShowSizeModal] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState(null);
+
   // Customer suggestions
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -332,20 +336,38 @@ export function POS() {
       );
 
       if (matched) {
-        addToCart(matched);
-        setSearchQuery('');
-        playBeep();
+        if (matched.sizes && Array.isArray(matched.sizes) && matched.sizes.length > 1) {
+          setPendingProduct(matched);
+          setShowSizeModal(true);
+          setSearchQuery('');
+        } else {
+          addToCart(matched);
+          setSearchQuery('');
+        }
       } else {
         toast.warning(`لم يتم العثور على منتج بهذا الباركود: ${code}`);
       }
     }
   };
 
-  // Add Item to Current Cart
-  const addToCart = (product) => {
+  // Add Item to Current Cart with optional selectedSize
+  const addToCart = (product, selectedSize = null) => {
+    let itemSize = selectedSize;
+    if (!itemSize) {
+      if (product.sizes && Array.isArray(product.sizes) && product.sizes.length === 1) {
+        itemSize = product.sizes[0].size_name;
+      } else {
+        itemSize = product.size_cut || product.size || '';
+      }
+    }
+
+    const cartItemId = `${product.id}_${itemSize || 'default'}`;
+
     setCarts((prev) => {
       const items = prev[activeCartId] || [];
-      const existingIndex = items.findIndex((i) => i.id === product.id);
+      const existingIndex = items.findIndex((i) =>
+        i.cartItemId ? i.cartItemId === cartItemId : (i.id === product.id && (i.size || '') === (itemSize || ''))
+      );
 
       if (existingIndex > -1) {
         const updated = [...items];
@@ -356,12 +378,13 @@ export function POS() {
         return { ...prev, [activeCartId]: updated };
       } else {
         const newItem = {
+          cartItemId,
           id: product.id,
           name: product.name,
           barcode: product.barcode,
           price: Number(product.price || 0),
           color: product.color || '',
-          size: product.size_cut || product.size || '',
+          size: itemSize,
           image_url: product.image_url || '',
           quantity: 1,
           discount: 0,
@@ -373,12 +396,23 @@ export function POS() {
     playBeep();
   };
 
-  const updateQuantity = (itemId, delta) => {
+  // Handler when clicking a product card in POS
+  const handleProductCardClick = (product) => {
+    if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 1) {
+      setPendingProduct(product);
+      setShowSizeModal(true);
+    } else {
+      addToCart(product);
+    }
+  };
+
+  const updateQuantity = (cartKey, delta) => {
     setCarts((prev) => {
       const items = prev[activeCartId] || [];
       const updated = items
         .map((item) => {
-          if (item.id === itemId) {
+          const matches = (item.cartItemId && item.cartItemId === cartKey) || (!item.cartItemId && item.id === cartKey);
+          if (matches) {
             const newQty = item.quantity + delta;
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
@@ -389,18 +423,21 @@ export function POS() {
     });
   };
 
-  const removeFromCart = (itemId) => {
+  const removeFromCart = (cartKey) => {
     setCarts((prev) => ({
       ...prev,
-      [activeCartId]: (prev[activeCartId] || []).filter((i) => i.id !== itemId),
+      [activeCartId]: (prev[activeCartId] || []).filter(
+        (i) => !((i.cartItemId && i.cartItemId === cartKey) || (!i.cartItemId && i.id === cartKey))
+      ),
     }));
   };
 
-  const updateItemDiscount = (itemId, discountVal, discountType = 'amount') => {
+  const updateItemDiscount = (cartKey, discountVal, discountType = 'amount') => {
     setCarts((prev) => {
       const items = prev[activeCartId] || [];
       const updated = items.map((item) => {
-        if (item.id === itemId) {
+        const matches = (item.cartItemId && item.cartItemId === cartKey) || (!item.cartItemId && item.id === cartKey);
+        if (matches) {
           const val = Math.max(0, Number(discountVal) || 0);
           return { ...item, discount: val, discount_type: discountType };
         }
@@ -527,6 +564,7 @@ export function POS() {
         invoice_discount_type: currentDiscount.type,
         items: currentCart.map((i) => ({
           id: i.id,
+          size: i.size || null,
           quantity: i.quantity,
           price: i.price,
           discount: i.discount || 0,
@@ -1180,7 +1218,7 @@ export function POS() {
                     return (
                       <div
                         key={product.id}
-                        onClick={() => addToCart(product)}
+                        onClick={() => handleProductCardClick(product)}
                         className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md hover:border-indigo-400 transition-all cursor-pointer group flex flex-col justify-between"
                       >
                         {/* Thumbnail */}
@@ -1209,16 +1247,22 @@ export function POS() {
                               #{product.id}
                             </span>
                           </div>
-                          <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-slate-500 font-bold">
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px] font-bold">
                             {product.color && (
                               <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
                                 {product.color}
                               </span>
                             )}
-                            {(product.size_cut || product.size) && (
-                              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                                {product.size_cut || product.size}
+                            {Array.isArray(product.sizes) && product.sizes.length > 0 ? (
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                {product.sizes.length} مقاسات
                               </span>
+                            ) : (
+                              (product.size_cut || product.size) && (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                                  {product.size_cut || product.size}
+                                </span>
+                              )
                             )}
                           </div>
                         </div>
@@ -1235,7 +1279,7 @@ export function POS() {
                                 e.stopPropagation();
                                 openStockRequestModal(product);
                               }}
-                              className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded transition-colors"
+                              className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
                               title="طلب بضاعة من الفروع الأخرى"
                             >
                               طلب من فرع 🚚
@@ -1250,7 +1294,11 @@ export function POS() {
                           </span>
                           <button
                             type="button"
-                            className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white flex items-center justify-center transition-all shadow-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleProductCardClick(product);
+                            }}
+                            className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white flex items-center justify-center transition-all shadow-sm cursor-pointer"
                           >
                             <Plus className="w-4 h-4" />
                           </button>
@@ -1332,11 +1380,12 @@ export function POS() {
                   const isPerc = item.discount_type === 'percent';
                   const itemDiscAmt = itemDisc > 0 ? (isPerc ? (item.price * item.quantity * itemDisc) / 100 : Math.min(item.price * item.quantity, itemDisc)) : 0;
                   const lineNet = Math.max(0, (item.price * item.quantity) - itemDiscAmt);
-                  const isEditingDisc = activeDiscountItemId === item.id;
+                  const itemKey = item.cartItemId || `${item.id}_${item.size || ''}`;
+                  const isEditingDisc = activeDiscountItemId === itemKey;
                   const unitNet = Math.max(0, item.price - (itemDiscAmt / item.quantity));
 
                   return (
-                    <div key={item.id} className="pt-2.5 first:pt-0 pb-2.5 border-b border-slate-100 last:border-b-0 space-y-2">
+                    <div key={itemKey} className="pt-2.5 first:pt-0 pb-2.5 border-b border-slate-100 last:border-b-0 space-y-2">
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
@@ -1360,11 +1409,15 @@ export function POS() {
                               <span>{item.price.toLocaleString()} ج.م</span>
                             )}
                             {item.color && <span>• {item.color}</span>}
-                            {item.size && <span>• {item.size}</span>}
+                            {item.size && (
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-extrabold border border-indigo-100">
+                                مقاس: {item.size}
+                              </span>
+                            )}
                             {!isEditingDisc && itemDisc === 0 && (
                               <button
                                 type="button"
-                                onClick={() => setActiveDiscountItemId(item.id)}
+                                onClick={() => setActiveDiscountItemId(itemKey)}
                                 className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold underline decoration-dotted"
                               >
                                 + خصم على القطعة
@@ -1377,7 +1430,7 @@ export function POS() {
                         <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
                           <button
                             type="button"
-                            onClick={() => updateQuantity(item.id, -1)}
+                            onClick={() => updateQuantity(itemKey, -1)}
                             className="w-6 h-6 rounded-lg bg-white flex items-center justify-center text-slate-700 hover:bg-slate-200 shadow-sm"
                           >
                             <Minus className="w-3 h-3" />
@@ -1387,7 +1440,7 @@ export function POS() {
                           </span>
                           <button
                             type="button"
-                            onClick={() => updateQuantity(item.id, 1)}
+                            onClick={() => updateQuantity(itemKey, 1)}
                             className="w-6 h-6 rounded-lg bg-white flex items-center justify-center text-slate-700 hover:bg-slate-200 shadow-sm"
                           >
                             <Plus className="w-3 h-3" />
@@ -1401,7 +1454,7 @@ export function POS() {
                           </span>
                           <button
                             type="button"
-                            onClick={() => removeFromCart(item.id)}
+                            onClick={() => removeFromCart(itemKey)}
                             className="text-slate-300 hover:text-rose-500 transition-colors p-1"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1418,12 +1471,12 @@ export function POS() {
                             min="0"
                             placeholder="0"
                             value={item.discount || ''}
-                            onChange={(e) => updateItemDiscount(item.id, e.target.value, item.discount_type || 'amount')}
+                            onChange={(e) => updateItemDiscount(itemKey, e.target.value, item.discount_type || 'amount')}
                             className="w-20 bg-white border border-slate-300 rounded-lg px-2 py-0.5 text-center font-bold text-xs outline-none focus:border-indigo-600"
                           />
                           <select
                             value={item.discount_type || 'amount'}
-                            onChange={(e) => updateItemDiscount(item.id, item.discount, e.target.value)}
+                            onChange={(e) => updateItemDiscount(itemKey, item.discount, e.target.value)}
                             className="bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none cursor-pointer"
                           >
                             <option value="amount">ج.م</option>
@@ -1437,7 +1490,7 @@ export function POS() {
                           <button
                             type="button"
                             onClick={() => {
-                              updateItemDiscount(item.id, 0, 'amount');
+                              updateItemDiscount(itemKey, 0, 'amount');
                               setActiveDiscountItemId(null);
                             }}
                             className="text-slate-400 hover:text-rose-600 text-xs font-bold px-1.5 py-0.5 rounded mr-auto"
@@ -2589,6 +2642,108 @@ export function POS() {
                 onClick={() => setShowReturnReceiptModal(false)}
               >
                 إغلاق
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* SIZE SELECTION MODAL */}
+      <Modal
+        isOpen={showSizeModal}
+        onClose={() => {
+          setShowSizeModal(false);
+          setPendingProduct(null);
+        }}
+        title="اختر مقاس المنتج للفاتورة 👔"
+        maxWidth="max-w-md"
+      >
+        {pendingProduct && (
+          <div className="space-y-4">
+            {/* Product preview */}
+            <div className="flex items-center gap-3.5 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+              <div className="w-14 h-14 rounded-xl bg-white border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                {pendingProduct.image_url ? (
+                  <img
+                    src={pendingProduct.image_url}
+                    alt={pendingProduct.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <Tag className="w-6 h-6 text-slate-300" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="font-black text-slate-900 text-sm truncate">{pendingProduct.name}</h4>
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-500 mt-0.5">
+                  {pendingProduct.color && (
+                    <span className="text-slate-700 bg-white px-2 py-0.5 rounded border border-slate-200">
+                      {pendingProduct.color}
+                    </span>
+                  )}
+                  <span className="font-mono text-indigo-600 font-bold" dir="ltr">
+                    {pendingProduct.barcode || `#${pendingProduct.id}`}
+                  </span>
+                </div>
+                <p className="text-indigo-600 font-black text-xs mt-1">
+                  {Number(pendingProduct.price || 0).toLocaleString()} ج.م
+                </p>
+              </div>
+            </div>
+
+            {/* Sizes selection */}
+            <div className="space-y-2">
+              <label className="text-xs font-black text-slate-700 block">
+                المقاسات المتوفرة لهذا الصنف (اضغط لاختيار المقاس):
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto p-1">
+                {(pendingProduct.sizes || []).map((s, idx) => {
+                  const qty = Number(s.stock_level ?? 0);
+                  const isOutOfStock = qty <= 0;
+
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      disabled={isOutOfStock}
+                      onClick={() => {
+                        addToCart(pendingProduct, s.size_name);
+                        setShowSizeModal(false);
+                        setPendingProduct(null);
+                      }}
+                      className={`p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                        isOutOfStock
+                          ? 'bg-slate-50 border-slate-200 opacity-50 cursor-not-allowed'
+                          : 'bg-white border-slate-200 hover:border-indigo-600 hover:bg-indigo-50/50 hover:shadow-sm'
+                      }`}
+                    >
+                      <span className="text-base font-black text-slate-900">{s.size_name}</span>
+                      <span
+                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                          isOutOfStock
+                            ? 'bg-rose-50 text-rose-600 border border-rose-200'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}
+                      >
+                        {isOutOfStock ? 'نفذت الكمية' : `${qty} قطعة بالمخزن`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowSizeModal(false);
+                  setPendingProduct(null);
+                }}
+              >
+                إلغاء
               </Button>
             </div>
           </div>

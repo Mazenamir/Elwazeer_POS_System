@@ -282,6 +282,8 @@ async function createOrder(body, user, req) {
       const lineNet = Math.max(0, roundCurrency((canonicalPrice * itemQty) - itemDiscountAmount));
       calculatedSubtotal = roundCurrency(calculatedSubtotal + lineNet);
 
+      const itemSize = String(item.size || item.size_cut || '').trim() || null;
+
       processedOrderItems.push({
         inventory_id: itemId,
         quantity: itemQty,
@@ -289,6 +291,7 @@ async function createOrder(body, user, req) {
         discount: discountVal,
         discount_type: discountType,
         line_net: lineNet,
+        size: itemSize,
       });
     }
 
@@ -364,8 +367,8 @@ async function createOrder(body, user, req) {
     // 6. Add Items & Update Inventory atomically
     for (const item of processedOrderItems) {
       await tx.query(
-        'INSERT INTO order_items (order_id, inventory_id, quantity, price_at_time, discount, discount_type) VALUES ($1, $2, $3, $4, $5, $6)',
-        [newOrderId, item.inventory_id, item.quantity, item.price_at_time, item.discount, item.discount_type]
+        'INSERT INTO order_items (order_id, inventory_id, quantity, price_at_time, discount, discount_type, size) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        [newOrderId, item.inventory_id, item.quantity, item.price_at_time, item.discount, item.discount_type, item.size]
       );
 
       // Decrement branch stock
@@ -373,6 +376,16 @@ async function createOrder(body, user, req) {
         'UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3',
         [item.quantity, item.inventory_id, b_id]
       );
+
+      // Decrement specific size stock if size was specified
+      if (item.size) {
+        await tx.query(
+          `UPDATE inventory_sizes 
+           SET stock_level = GREATEST(stock_level - $1, 0), updated_at = CURRENT_TIMESTAMP
+           WHERE inventory_id = $2 AND branch_id = $3 AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))`,
+          [item.quantity, item.inventory_id, b_id, item.size]
+        );
+      }
 
       // Decrement global stock atomically
       await tx.query(
@@ -1006,7 +1019,7 @@ async function createReturn(body, user, req) {
 
     // 2. Fetch original order items to validate return quantities and prices
     const { rows: originalOrderItems } = await tx.query(
-      'SELECT inventory_id, quantity, price_at_time, discount, discount_type FROM order_items WHERE order_id = $1',
+      'SELECT inventory_id, quantity, price_at_time, discount, discount_type, size FROM order_items WHERE order_id = $1',
       [order_id]
     );
     const origItemMap = new Map();
@@ -1125,6 +1138,7 @@ async function createReturn(body, user, req) {
         id: itemId,
         quantity: qty,
         price: effectiveUnitPrice,
+        size: item.size || origItem.size || null,
       });
 
       // Lock global inventory and branch stock rows in ascending order
@@ -1164,6 +1178,16 @@ async function createReturn(body, user, req) {
         'UPDATE inventory_branches SET stock_level = stock_level + $1 WHERE inventory_id = $2 AND branch_id = $3',
         [item.quantity, item.id, branch_id]
       );
+
+      // Return stock to size
+      if (item.size) {
+        await tx.query(
+          `UPDATE inventory_sizes 
+           SET stock_level = stock_level + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE inventory_id = $2 AND branch_id = $3 AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))`,
+          [item.quantity, item.id, branch_id, item.size]
+        );
+      }
 
       // Return stock to global inventory
       await tx.query(

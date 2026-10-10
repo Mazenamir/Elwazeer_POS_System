@@ -154,6 +154,56 @@ export function Suppliers() {
   const [pImage, setPImage] = useState('');
   const [pSupplierId, setPSupplierId] = useState('');
 
+  // Multi-Size Inventory Management (same barcode, multiple sizes with individual quantities)
+  const [productSizes, setProductSizes] = useState([
+    { id: 1, size_name: '48', stock_level: '5' },
+    { id: 2, size_name: '50', stock_level: '5' },
+    { id: 3, size_name: '52', stock_level: '5' },
+    { id: 4, size_name: '54', stock_level: '5' },
+  ]);
+
+  const addSizeRow = (defaultName = '', defaultStock = '0') => {
+    setProductSizes((prev) => [
+      ...prev,
+      { id: Date.now() + Math.random(), size_name: defaultName, stock_level: defaultStock },
+    ]);
+  };
+
+  const removeSizeRow = (id) => {
+    setProductSizes((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((s) => s.id !== id);
+    });
+  };
+
+  const updateSizeRow = (id, field, value) => {
+    setProductSizes((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, [field]: value } : s))
+    );
+  };
+
+  const applySizesPreset = (type) => {
+    let sizes = [];
+    if (type === 'suits_men') {
+      sizes = ['46', '48', '50', '52', '54', '56', '58'];
+    } else if (type === 'suits_slim') {
+      sizes = ['48', '50', '52', '54'];
+    } else if (type === 'standard') {
+      sizes = ['S', 'M', 'L', 'XL', '2XL', '3XL'];
+    } else if (type === 'shoes') {
+      sizes = ['40', '41', '42', '43', '44', '45'];
+    } else if (type === 'single') {
+      sizes = ['حر'];
+    }
+    setProductSizes(
+      sizes.map((s, idx) => ({ id: Date.now() + idx, size_name: s, stock_level: '5' }))
+    );
+  };
+
+  const calculatedTotalStock = useMemo(() => {
+    return productSizes.reduce((sum, s) => sum + (Number(s.stock_level) || 0), 0);
+  }, [productSizes]);
+
   // Dynamic Combobox data loaded from PostgreSQL
   const [productNamesList, setProductNamesList] = useState([]);
   const [colorsList, setColorsList] = useState([]);
@@ -440,9 +490,15 @@ export function Suppliers() {
     setPPrice('');
     setPCost('');
     setPBarcode('');
-    setPStock('10');
+    setPStock('20');
     setPMinStock('5');
     setPImage('');
+    setProductSizes([
+      { id: 1, size_name: '48', stock_level: '5' },
+      { id: 2, size_name: '50', stock_level: '5' },
+      { id: 3, size_name: '52', stock_level: '5' },
+      { id: 4, size_name: '54', stock_level: '5' },
+    ]);
     setSelectedImageFile(null);
     setImagePreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -467,6 +523,35 @@ export function Suppliers() {
     setPStock(p.stock_level ?? p.stock ?? '0');
     setPMinStock(p.min_stock_level ?? '5');
     setPImage(p.image_url || '');
+
+    if (p.sizes && Array.isArray(p.sizes) && p.sizes.length > 0) {
+      setProductSizes(
+        p.sizes.map((s, idx) => ({
+          id: s.id || idx + 1,
+          size_name: s.size_name || '',
+          stock_level: String(s.stock_level ?? 0),
+        }))
+      );
+    } else if (p.size_cut || p.size) {
+      const raw = (p.size_cut || p.size).toString();
+      const parts = raw.split(/[,/]+/).map((s) => s.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        const total = Number(p.stock_level ?? p.stock ?? 0);
+        const perSize = Math.max(0, Math.floor(total / parts.length));
+        setProductSizes(
+          parts.map((s, idx) => ({
+            id: idx + 1,
+            size_name: s,
+            stock_level: String(perSize),
+          }))
+        );
+      } else {
+        setProductSizes([{ id: 1, size_name: raw, stock_level: String(p.stock_level ?? p.stock ?? 0) }]);
+      }
+    } else {
+      setProductSizes([{ id: 1, size_name: 'حر', stock_level: String(p.stock_level ?? p.stock ?? 0) }]);
+    }
+
     setSelectedImageFile(null);
     setImagePreviewUrl(p.image_url || null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -489,17 +574,26 @@ export function Suppliers() {
       return;
     }
 
-    if (pSize === '__OTHER__' && !pNewSize.trim()) {
-      toast.error('يرجى إدخال اسم المقاس الجديد');
+    const cleanedSizes = productSizes
+      .filter((s) => s.size_name && s.size_name.trim())
+      .map((s) => ({
+        size_name: s.size_name.trim(),
+        stock_level: Math.max(0, Number(s.stock_level) || 0),
+      }));
+
+    if (cleanedSizes.length === 0) {
+      toast.error('يرجى تحديد مقاس واحد على الأقل مع إدخال الكمية');
       return;
     }
+
+    const finalStock = cleanedSizes.reduce((sum, s) => sum + s.stock_level, 0);
+    const finalSizeCut = cleanedSizes.map((s) => s.size_name).join(', ');
 
     setProductSubmitting(true);
     try {
       const selectedSupId = Number(pSupplierId) || suppliers[0]?.id || 1;
       const targetBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1;
       const finalColor = pColor === '__OTHER__' ? pNewColor.trim() : pColor.trim();
-      const finalSize = pSize === '__OTHER__' ? pNewSize.trim() : pSize.trim();
 
       if (selectedImageFile) {
         // Method 2: Local Upload via Multipart FormData
@@ -509,13 +603,13 @@ export function Suppliers() {
         formData.append('category', pCategory);
         formData.append('color', finalColor);
         if (pColor === '__OTHER__') formData.append('new_color', pNewColor.trim());
-        formData.append('size_cut', finalSize);
-        if (pSize === '__OTHER__') formData.append('new_size', pNewSize.trim());
+        formData.append('size_cut', finalSizeCut);
+        formData.append('sizes', JSON.stringify(cleanedSizes));
         formData.append('price', Number(pPrice) || 0);
         formData.append('cost_price', Number(pCost) || 0);
         formData.append('barcode', pBarcode.trim());
-        formData.append('stock', Number(pStock) || 0);
-        formData.append('stock_level', Number(pStock) || 0);
+        formData.append('stock', finalStock);
+        formData.append('stock_level', finalStock);
         formData.append('min_stock_level', Number(pMinStock) || 5);
         formData.append('supplier_id', selectedSupId);
         formData.append('preferred_supplier_id', selectedSupId);
@@ -523,10 +617,10 @@ export function Suppliers() {
 
         if (editingProduct) {
           await api.put(`/inventory/${editingProduct.id}`, formData);
-          toast.success('تم تحديث بيانات المنتج بنجاح! 📦');
+          toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
         } else {
           await api.post('/inventory', formData);
-          toast.success('تمت إضافة المنتج للمخزون بنجاح! 📦');
+          toast.success('تمت إضافة المنتج ومقاساته للمخزون بنجاح! 📦');
         }
       } else {
         // Method 1 / URL or Text payload
@@ -535,13 +629,13 @@ export function Suppliers() {
           category: pCategory,
           color: finalColor,
           new_color: pColor === '__OTHER__' ? pNewColor.trim() : '',
-          size_cut: finalSize,
-          new_size: pSize === '__OTHER__' ? pNewSize.trim() : '',
+          size_cut: finalSizeCut,
+          sizes: cleanedSizes,
           price: Number(pPrice) || 0,
           cost_price: Number(pCost) || 0,
           barcode: pBarcode.trim(),
-          stock: Number(pStock) || 0,
-          stock_level: Number(pStock) || 0,
+          stock: finalStock,
+          stock_level: finalStock,
           min_stock_level: Number(pMinStock) || 5,
           supplier_id: selectedSupId,
           preferred_supplier_id: selectedSupId,
@@ -551,10 +645,10 @@ export function Suppliers() {
 
         if (editingProduct) {
           await api.put(`/inventory/${editingProduct.id}`, payload);
-          toast.success('تم تحديث بيانات المنتج بنجاح! 📦');
+          toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
         } else {
           await api.post('/inventory', payload);
-          toast.success('تمت إضافة المنتج للمخزون بنجاح! 📦');
+          toast.success('تمت إضافة المنتج ومقاساته للمخزون بنجاح! 📦');
         }
       }
 
@@ -1210,16 +1304,46 @@ export function Suppliers() {
                             <Badge variant="neutral">{p.category || 'عام'}</Badge>
                           </td>
                           <td className="py-3">
-                            <div className="flex items-center gap-1 text-xs font-bold">
+                            <div className="flex flex-col gap-1.5">
                               {p.color && (
-                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                                  {p.color}
-                                </span>
+                                <div className="flex items-center gap-1">
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200">
+                                    {p.color}
+                                  </span>
+                                </div>
                               )}
-                              {(p.size_cut || p.size) && (
-                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                                  {p.size_cut || p.size}
-                                </span>
+                              {Array.isArray(p.sizes) && p.sizes.length > 0 ? (
+                                <div className="flex flex-wrap items-center gap-1 max-w-xs">
+                                  {p.sizes.map((s, sIdx) => {
+                                    const qty = Number(s.stock_level ?? 0);
+                                    return (
+                                      <span
+                                        key={sIdx}
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${
+                                          qty > 0
+                                            ? 'bg-slate-50 text-slate-800 border-slate-200'
+                                            : 'bg-rose-50 text-rose-500 border-rose-200 line-through opacity-70'
+                                        }`}
+                                        title={`المقاس: ${s.size_name} | الكمية بالمخزن: ${qty} قطعة`}
+                                      >
+                                        <span className="font-extrabold">{s.size_name}</span>
+                                        <span
+                                          className={`px-1 py-0.2 rounded text-[10px] font-black ${
+                                            qty > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-rose-100 text-rose-700'
+                                          }`}
+                                        >
+                                          {qty}
+                                        </span>
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                (p.size_cut || p.size) && (
+                                  <span className="text-xs text-slate-500 font-bold">
+                                    {p.size_cut || p.size}
+                                  </span>
+                                )
                               )}
                             </div>
                           </td>
@@ -1241,7 +1365,7 @@ export function Suppliers() {
                           )}
                           <td className="py-3">
                             <span
-                              className={`px-2.5 py-1 rounded-full text-xs font-black border ${
+                              className={`px-2.5 py-1 rounded-full text-xs font-black border inline-flex items-center gap-1 ${
                                 isLow
                                   ? 'bg-rose-50 text-rose-700 border-rose-200'
                                   : 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -1249,6 +1373,11 @@ export function Suppliers() {
                             >
                               {stock} قطعة
                             </span>
+                            {Array.isArray(p.sizes) && p.sizes.length > 1 && (
+                              <div className="text-[10px] text-slate-400 font-bold mt-1">
+                                {p.sizes.length} مقاسات
+                              </div>
+                            )}
                           </td>
                           <td className="py-3 pl-4 text-center">
                             <div className="flex items-center justify-center gap-1.5">
@@ -1779,36 +1908,6 @@ export function Suppliers() {
               )}
             </div>
 
-            {/* 3. SIZE: DYNAMIC SEARCHABLE DROPDOWN WITH 'OTHER' OPTION */}
-            <div className="space-y-2 sm:col-span-1">
-              <SearchableCombobox
-                label="المقاس"
-                value={pSize}
-                onChange={(val) => {
-                  setPSize(val);
-                  if (val !== '__OTHER__') setPNewSize('');
-                }}
-                options={sizesList}
-                placeholder="اختر أو ابحث عن مقاس..."
-                searchPlaceholder="ابحث في المقاسات المسجلة..."
-                isLoading={loadingDropdowns}
-                customOptionLabel="أخرى (إضافة مقاس جديد) ➕"
-                customOptionValue="__OTHER__"
-              />
-              {pSize === '__OTHER__' && (
-                <div className="animate-in fade-in slide-in-from-top-1 duration-150">
-                  <Input
-                    label="المقاس الجديد *"
-                    value={pNewSize}
-                    onChange={(e) => setPNewSize(e.target.value)}
-                    placeholder="مثال: 3XL، 46، Free Size..."
-                    required
-                    autoFocus
-                  />
-                </div>
-              )}
-            </div>
-
             {/* SELLING PRICE */}
             <Input
               label="سعر البيع (ج.م) *"
@@ -1828,20 +1927,163 @@ export function Suppliers() {
 
             {/* BARCODE */}
             <Input
-              label="الباركود (Barcode)"
+              label="الباركود الموحد للصنف (Barcode)"
               value={pBarcode}
               onChange={(e) => setPBarcode(e.target.value)}
-              placeholder="امسح أو اترك فارغاً للإنشاء التلقائي"
+              placeholder="امسح أو اترك فارغاً للإنشاء التلقائي (نفس الباركود لكل المقاسات)"
             />
 
-            {/* INITIAL QUANTITY */}
+            {/* MIN STOCK LEVEL */}
             <Input
-              label="الكمية الابتدائية *"
+              label="حد التنبيه الأدنى للمخزون"
               type="number"
-              value={pStock}
-              onChange={(e) => setPStock(e.target.value)}
-              required
+              value={pMinStock}
+              onChange={(e) => setPMinStock(e.target.value)}
+              placeholder="5"
             />
+
+            {/* MULTI-SIZE INVENTORY MANAGER (FULL WIDTH) */}
+            <div className="sm:col-span-2 bg-gradient-to-br from-slate-50 to-indigo-50/40 p-4 rounded-2xl border-2 border-indigo-100 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100/80 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-sm">
+                    📐
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-900">
+                      مقاسات المنتج ورصيد كل مقاس بالمخزن
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      جميع المقاسات تتبع نفس الباركود الواحد مع تتبع مستقل لكمية كل مقاس
+                    </p>
+                  </div>
+                </div>
+
+                {/* Live Total Stock Badge */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-slate-600">إجمالي المخزون:</span>
+                  <span className="px-3 py-1 rounded-xl bg-indigo-600 text-white font-black text-xs shadow-sm">
+                    {calculatedTotalStock} قطعة
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Size Presets */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-[11px] font-bold text-slate-500 ml-1">قوالب مقاسات سريعة:</span>
+                <button
+                  type="button"
+                  onClick={() => applySizesPreset('suits_men')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  بدل رجالي (46-58)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applySizesPreset('suits_slim')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  بدل سليم (48-54)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applySizesPreset('standard')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  قمصان/كاجوال (S-3XL)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applySizesPreset('shoes')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  أحذية (40-45)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applySizesPreset('single')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-slate-700 font-bold text-[11px] border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  مقاس موحد (حر)
+                </button>
+              </div>
+
+              {/* Datalist for fast auto-complete of size names */}
+              <datalist id="sizes-autocomplete-list">
+                {sizesList.map((s, idx) => (
+                  <option key={idx} value={s} />
+                ))}
+              </datalist>
+
+              {/* Size Rows Table */}
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
+                    <tr>
+                      <th className="py-2 px-3 w-1/2">المقاس (Size)</th>
+                      <th className="py-2 px-3 w-1/3">الكمية بالمخزن (قطعة)</th>
+                      <th className="py-2 px-3 text-center w-16">إجراء</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {productSizes.map((row) => (
+                      <tr key={row.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            list="sizes-autocomplete-list"
+                            value={row.size_name}
+                            onChange={(e) => updateSizeRow(row.id, 'size_name', e.target.value)}
+                            placeholder="مثال: 48، 50، L..."
+                            className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition-all"
+                            required
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            min="0"
+                            value={row.stock_level}
+                            onChange={(e) => updateSizeRow(row.id, 'stock_level', e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition-all"
+                            required
+                          />
+                        </td>
+                        <td className="p-2 text-center">
+                          {productSizes.length > 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => removeSizeRow(row.id)}
+                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="حذف هذا المقاس"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Add Size Row Button */}
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => addSizeRow('', '5')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-50 border border-indigo-200 text-indigo-700 font-black text-xs transition-colors shadow-2xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>إضافة مقاس آخر للبدلة</span>
+                </button>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  {productSizes.length} مقاسات محددة
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* 4. PRODUCT IMAGE: URL OR LOCAL UPLOAD */}

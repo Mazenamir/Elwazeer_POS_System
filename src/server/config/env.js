@@ -1,11 +1,20 @@
 const path = require('path');
 const fs = require('fs');
 
-// Determine env file path
+// Determine env file path & persistent data directory
 const appRoot = process.env.APP_ROOT || path.resolve(__dirname, '../../../');
-const envPath = path.join(appRoot, '.env');
-if (fs.existsSync(envPath)) {
-  require('dotenv').config({ path: envPath });
+const isPackaged = process.env.ELECTRON_RUN_AS_NODE === '1' && !fs.existsSync(path.join(appRoot, 'src'));
+const defaultDataDir = isPackaged
+  ? (process.env.ProgramData ? path.join(process.env.ProgramData, 'Bebyoon System') : path.join(appRoot, 'data'))
+  : appRoot;
+const dataDir = process.env.DATA_DIR || defaultDataDir;
+
+const dataEnvPath = path.join(dataDir, '.env');
+const appEnvPath = path.join(appRoot, '.env');
+if (fs.existsSync(dataEnvPath)) {
+  require('dotenv').config({ path: dataEnvPath });
+} else if (fs.existsSync(appEnvPath)) {
+  require('dotenv').config({ path: appEnvPath });
 } else {
   require('dotenv').config();
 }
@@ -40,19 +49,24 @@ const SYNC_QUEUE_RETENTION_DAYS = boundedEnvInt('SYNC_QUEUE_RETENTION_DAYS', 30,
 const SYNC_FETCH_TIMEOUT_MS = boundedEnvInt('SYNC_FETCH_TIMEOUT_MS', 15000, 1000, 120000);
 
 // Database Config (Postgres)
-const DB_USER = process.env.DB_USER || 'postgres';
-const DB_PASSWORD = process.env.DB_PASSWORD || '';
 const rawDbHost = process.env.DB_HOST || '127.0.0.1';
 const DB_HOST = rawDbHost === 'localhost' ? '127.0.0.1' : rawDbHost;
+const DB_USER = process.env.DB_USER || 'postgres';
+const DB_PASSWORD = process.env.DB_PASSWORD || (DB_HOST === '127.0.0.1' ? 'ahmed1@' : '');
 const DB_PORT = boundedEnvInt('DB_PORT', 5432, 1, 65535);
 const DB_NAME = process.env.DB_NAME || 'pos_db';
+const PG_DATA_DIR = process.env.PG_DATA_DIR || (
+  dataDir === appRoot
+    ? path.join(appRoot, 'programs', 'data')
+    : path.join(dataDir, 'postgres_data')
+);
 
 // Database Config (SQLite)
-const OFFLINE_DB_PATH = process.env.OFFLINE_DB_PATH || path.join(appRoot, 'data', 'offline.sqlite');
-const BRANCH_SQLITE_PATH = process.env.BRANCH_SQLITE_PATH || path.join(appRoot, 'data', 'branch.sqlite');
+const OFFLINE_DB_PATH = process.env.OFFLINE_DB_PATH || path.join(dataDir, 'data', 'offline.sqlite');
+const BRANCH_SQLITE_PATH = process.env.BRANCH_SQLITE_PATH || path.join(dataDir, 'data', 'branch.sqlite');
 
 // Uploads Config
-const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(appRoot, 'data', 'uploads');
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(dataDir, 'data', 'uploads');
 const PRODUCT_UPLOADS_DIR = path.join(UPLOADS_DIR, 'products');
 
 try {
@@ -68,6 +82,8 @@ const TOP_PRODUCTS_LOOKBACK_DAYS = boundedEnvInt('TOP_PRODUCTS_LOOKBACK_DAYS', 9
 
 module.exports = {
   appRoot,
+  dataDir,
+  PG_DATA_DIR,
   IS_BRANCH_MODE,
   IS_SYNC_TARGET,
   PORT,

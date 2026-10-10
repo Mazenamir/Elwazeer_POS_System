@@ -5,7 +5,9 @@ const db = require('../database/connection');
 const path = require('path');
 const fs = require('fs');
 
-const distIndexPath = fs.existsSync(path.join(__dirname, '../../../dist/renderer/index.html'))
+const distIndexPath = fs.existsSync(path.join(config.appRoot, 'dist/renderer/index.html'))
+  ? path.join(config.appRoot, 'dist/renderer/index.html')
+  : fs.existsSync(path.join(__dirname, '../../../dist/renderer/index.html'))
   ? path.join(__dirname, '../../../dist/renderer/index.html')
   : (fs.existsSync(path.join(__dirname, '../../../dist/index.html')))
   ? path.join(__dirname, '../../../dist/index.html')
