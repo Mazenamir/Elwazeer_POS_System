@@ -33,22 +33,48 @@ const app = express();
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false,
 }));
 
-// CORS configuration - strict local and LAN origin verification
+// CORS configuration - strict local, LAN, and same-host origin verification
 const LOCAL_ORIGIN_REGEX = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i;
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || origin === 'null') {
-      return callback(null, true);
+function isAllowedOrigin(origin, req) {
+  if (!origin || origin === 'null') return true;
+  if (LOCAL_ORIGIN_REGEX.test(origin)) return true;
+
+  // Allow requests where origin host matches the server host being accessed (Same-Host / Same-Origin)
+  const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
+  if (host) {
+    if (origin === `http://${host}` || origin === `https://${host}`) {
+      return true;
     }
-    if (LOCAL_ORIGIN_REGEX.test(origin)) {
-      return callback(null, true);
+    try {
+      const parsedOrigin = new URL(origin);
+      if (parsedOrigin.host.toLowerCase() === host.toLowerCase()) {
+        return true;
+      }
+    } catch {}
+  }
+
+  // Allow explicitly configured CORS origins in .env
+  if (config.CORS_ORIGIN) {
+    const allowed = config.CORS_ORIGIN.split(',').map((s) => s.trim().toLowerCase());
+    if (allowed.includes('*') || allowed.includes(origin.toLowerCase())) {
+      return true;
     }
-    return callback(new Error('Blocked by CORS policy: Untrusted origin'));
-  },
-  credentials: true,
+  }
+
+  return false;
+}
+
+app.use(cors((req, callback) => {
+  const origin = req.header('Origin');
+  if (isAllowedOrigin(origin, req)) {
+    callback(null, { origin: true, credentials: true });
+  } else {
+    callback(null, { origin: false });
+  }
 }));
 
 // Body parsers with large limit for image upload compatibility

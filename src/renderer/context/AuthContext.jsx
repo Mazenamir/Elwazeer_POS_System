@@ -34,12 +34,20 @@ export function AuthProvider({ children }) {
 
     // Hook API unauthorized interceptor
     registerUnauthorizedHandler(() => {
+      try {
+        sessionStorage.removeItem('auth_token');
+      } catch {}
       setUser(null);
     });
   }, [checkAuth]);
 
   const login = async (username, password) => {
     const res = await api.post('/login', { username, password });
+    if (res?.token) {
+      try {
+        sessionStorage.setItem('auth_token', res.token);
+      } catch {}
+    }
     if (res?.user) {
       setUser(res.user);
     } else {
@@ -51,6 +59,9 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async () => {
+    try {
+      sessionStorage.removeItem('auth_token');
+    } catch {}
     try {
       await api.post('/logout');
     } catch {}

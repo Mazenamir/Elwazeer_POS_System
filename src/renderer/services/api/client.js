@@ -29,6 +29,13 @@ async function request(endpoint, options = {}) {
     ...(options.headers || {}),
   };
 
+  try {
+    const token = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('auth_token') : null;
+    if (token && !headers['Authorization'] && !headers['authorization']) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {}
+
   // Automatically attach JSON content type if sending body
   if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';

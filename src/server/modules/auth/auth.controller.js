@@ -26,15 +26,18 @@ async function login(req, res, next) {
     const { username, password } = req.body;
     const { token, user } = await authService.authenticateUser(username, password);
 
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
     res.cookie('token', token, {
       httpOnly: true,
-      secure: config.IS_PRODUCTION,
-      sameSite: 'strict',
+      secure: isHttps,
+      sameSite: 'lax',
       maxAge: 12 * 60 * 60 * 1000,
     });
 
     res.json({
       success: true,
+      token,
+      user,
       role: user.role,
       branch_id: user.branch_id,
     });
@@ -111,10 +114,11 @@ async function updateOwnAccount(req, res, next) {
     const userId = req.user.id;
     const { token } = await authService.updateOwnAccount(userId, req.body);
 
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
     res.cookie('token', token, {
       httpOnly: true,
-      secure: config.IS_PRODUCTION,
-      sameSite: 'strict',
+      secure: isHttps,
+      sameSite: 'lax',
       maxAge: 12 * 60 * 60 * 1000,
     });
 
