@@ -24,6 +24,9 @@ import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
+import { printElement } from '../../utils/print';
+import { ThermalReceipt } from '../../components/receipts';
+
 
 export function Tailoring() {
   const { user, isAdmin } = useAuth();
@@ -506,78 +509,43 @@ export function Tailoring() {
       </Modal>
 
       {/* RECEIPT MODAL */}
+      {/* 80mm TAILORING RECEIPT MODAL */}
       <Modal
         isOpen={showReceiptModal}
         onClose={() => setShowReceiptModal(false)}
-        title="إيصال أمر تفصيل 🧾"
-        subtitle="معاينة إيصال التفصيل والمقاسات للطباعة"
-        maxWidth="max-w-md"
+        maxWidth="max-w-sm"
+        hideHeader={true}
+        plain={true}
+        bodyClassName="p-2 sm:p-4 flex justify-center overflow-visible"
       >
         {selectedReceiptOrder && (
-          <div className="space-y-4">
-            <div
-              className="bg-white p-5 rounded-2xl border border-slate-200 text-black text-xs leading-relaxed space-y-3 font-mono shadow-sm"
-              style={{ direction: 'rtl' }}
-            >
-              <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                <h2 className="text-base font-black">Bebyoon Center</h2>
-                <p className="text-[11px] text-slate-600 font-bold">إيصال أمر تفصيل</p>
-              </div>
-
-              <div className="flex justify-between items-center text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div>
-                  <div>فاتورة: #{selectedReceiptOrder.invoice_number || selectedReceiptOrder.id}</div>
-                  <div>العميل: {selectedReceiptOrder.customer_name}</div>
-                  <div>الهاتف: {selectedReceiptOrder.customer_phone}</div>
-                </div>
-                <div className="text-left" dir="ltr">
-                  <div>{new Date(selectedReceiptOrder.created_at).toLocaleDateString('ar-EG')}</div>
-                </div>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div>القطعة: {selectedReceiptOrder.product_description}</div>
-                <div className="text-slate-600 font-normal">المقاسات: {selectedReceiptOrder.measurements}</div>
-                <div className="flex justify-between pt-1">
-                  <span>الإجمالي:</span>
-                  <span>{Number(selectedReceiptOrder.total_amount || 0).toLocaleString()} ج.م</span>
-                </div>
-                <div className="flex justify-between text-emerald-700">
-                  <span>المدفوع (العربون):</span>
-                  <span>{Number(selectedReceiptOrder.paid_amount || 0).toLocaleString()} ج.م</span>
-                </div>
-                {Number(selectedReceiptOrder.remaining_amount || 0) > 0 && (
-                  <div className="flex justify-between text-rose-600">
-                    <span>المتبقي:</span>
-                    <span>{Number(selectedReceiptOrder.remaining_amount || 0).toLocaleString()} ج.م</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="text-center pt-2 space-y-1 text-[10px] text-slate-500">
-                <p>شكراً لتعاملكم معنا</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button
-                variant="primary"
-                size="lg"
-                icon={Printer}
-                onClick={() => window.print()}
-                className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
-              >
-                طباعة الإيصال
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => setShowReceiptModal(false)}
-              >
-                إغلاق
-              </Button>
-            </div>
-          </div>
+          <ThermalReceipt
+            id="tailoring-receipt-ticket"
+            type="tailoring"
+            title="إيصال أمر تفصيل"
+            orderNumber={selectedReceiptOrder.invoice_number || selectedReceiptOrder.id}
+            date={selectedReceiptOrder.created_at || new Date()}
+            customerName={selectedReceiptOrder.customer_name}
+            customerPhone={selectedReceiptOrder.customer_phone}
+            sellerName="مسؤول التفصيل"
+            paymentMethod="كاش"
+            branchName="المقر الرئيسي"
+            items={[
+              {
+                name: selectedReceiptOrder.product_description || 'أمر تفصيل',
+                color: selectedReceiptOrder.measurements ? `المقاسات: ${selectedReceiptOrder.measurements}` : '',
+                quantity: 1,
+                price: Number(selectedReceiptOrder.total_amount || 0),
+              },
+            ]}
+            subtotal={Number(selectedReceiptOrder.total_amount || 0)}
+            totalAmount={Number(selectedReceiptOrder.total_amount || 0)}
+            paidAmount={Number(selectedReceiptOrder.paid_amount || 0)}
+            remainingAmount={Number(selectedReceiptOrder.remaining_amount || 0)}
+            footerMessage="شكراً لتعاملكم معنا • يرجى إحضار هذا الإيصال عند الاستلام والتسليم"
+            onPrint={() => printElement('tailoring-receipt-ticket', `إيصال تفصيل #${selectedReceiptOrder.invoice_number || selectedReceiptOrder.id}`)}
+            onClose={() => setShowReceiptModal(false)}
+          />
         )}
       </Modal>
     </div>

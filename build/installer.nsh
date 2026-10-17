@@ -44,7 +44,12 @@ init_app_dirs:
   CreateDirectory "$R0\Bebyoon System\data\uploads"
   CreateDirectory "$R0\Bebyoon System\data\uploads\products"
   CreateDirectory "$R0\Bebyoon System\postgres_data"
+  CreateDirectory "$R0\Bebyoon Branch System"
+  CreateDirectory "$R0\Bebyoon Branch System\data"
+  CreateDirectory "$R0\Bebyoon Branch System\data\uploads"
+  CreateDirectory "$R0\Bebyoon Branch System\data\uploads\products"
   ExecWait '"$SYSDIR\icacls.exe" "$R0\Bebyoon System" /grant *S-1-1-0:(OI)(CI)F /T /Q' $0
+  ExecWait '"$SYSDIR\icacls.exe" "$R0\Bebyoon Branch System" /grant *S-1-1-0:(OI)(CI)F /T /Q' $0
 !macroend
 
 !macro customUnInstall

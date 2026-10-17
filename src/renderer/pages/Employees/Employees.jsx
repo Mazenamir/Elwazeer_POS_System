@@ -9,6 +9,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
 import client from '../../services/api/client';
+import { printElement } from '../../utils/print';
 import {
   UserCheck,
   Plus,
@@ -36,6 +37,8 @@ import {
   Lock,
   Unlock,
   KeyRound,
+  Sparkles,
+  Gift,
 } from 'lucide-react';
 
 export function Employees() {
@@ -48,6 +51,8 @@ export function Employees() {
   const [search, setSearch] = useState('');
   const [filterBranch, setFilterBranch] = useState('all');
   const [filterPosition, setFilterPosition] = useState('all');
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [filterBonusStatus, setFilterBonusStatus] = useState('all');
 
   // Salary Visibility & Authentication
   const [salaryVisible, setSalaryVisible] = useState(false);
@@ -131,7 +136,7 @@ export function Employees() {
   const loadEmployees = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await client.get('/employees');
+      const res = await client.get('/employees', { params: { month: selectedMonth } });
       const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : Array.isArray(res?.employees) ? res.employees : [];
       setEmployees(list);
     } catch (err) {
@@ -143,7 +148,7 @@ export function Employees() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [selectedMonth, toast]);
 
   useEffect(() => {
     loadEmployees();
@@ -169,6 +174,8 @@ export function Employees() {
     return employees.filter((emp) => {
       if (filterBranch !== 'all' && String(emp.branch_id) !== String(filterBranch)) return false;
       if (filterPosition !== 'all' && emp.position !== filterPosition) return false;
+      if (filterBonusStatus === 'with_bonus' && Number(emp.current_month_bonuses || 0) <= 0) return false;
+      if (filterBonusStatus === 'no_bonus' && Number(emp.current_month_bonuses || 0) > 0) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
         const matchesName = (emp.name || '').toLowerCase().includes(q);
@@ -178,7 +185,7 @@ export function Employees() {
       }
       return true;
     });
-  }, [employees, filterBranch, filterPosition, search]);
+  }, [employees, filterBranch, filterPosition, filterBonusStatus, search]);
 
   const totalPages = Math.ceil(filteredEmployees.length / itemsPerPage) || 1;
   const paginatedEmployees = useMemo(() => {
@@ -513,6 +520,7 @@ export function Employees() {
       const headers = txForm.salary_password ? { 'x-salary-password': txForm.salary_password } : {};
       const res = await client.get(`/employees/${summaryEmp.id}/summary`, { headers });
       setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
+      loadEmployees();
     } catch (err) {
       toast({
         title: 'خطأ',
@@ -585,11 +593,39 @@ export function Employees() {
     }
   };
 
+  const cleanNotes = (text) => {
+    if (!text) return '';
+    return text.replace(/\s*\[EXP-[a-zA-Z0-9-]+\]\s*/g, ' ').trim();
+  };
+
+  const getArabicMonthName = (monthStr) => {
+    if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return '';
+    const [, month] = monthStr.split('-').map(Number);
+    const arabicMonths = [
+      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+    ];
+    return arabicMonths[month - 1] || '';
+  };
+
+  const totalBonuses = useMemo(() => {
+    const list = filterBranch === 'all' ? employees : filteredEmployees;
+    return list.reduce((acc, e) => acc + Number(e.current_month_bonuses || 0), 0);
+  }, [employees, filteredEmployees, filterBranch]);
+
+  const bonusEmployeesCount = useMemo(() => {
+    const list = filterBranch === 'all' ? employees : filteredEmployees;
+    return list.filter((e) => Number(e.current_month_bonuses || 0) > 0).length;
+  }, [employees, filteredEmployees, filterBranch]);
+
   const formatCurrency = (val) => {
-    return `${Number(val || 0).toLocaleString('en-US', {
+    const parsed = Number(val);
+    const num = Number.isFinite(parsed) ? parsed : 0;
+    const formatted = num.toLocaleString('en-US', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
-    })} ج.م`;
+    });
+    return num < 0 ? `\u200E${formatted} ج.م` : `${formatted} ج.م`;
   };
 
   const formatTime = (timeStr) => {
@@ -619,7 +655,7 @@ export function Employees() {
                 الموظفين والموارد البشرية (HR)
               </h1>
               <p className="text-sm font-semibold text-slate-500 mt-0.5">
-                سجل الموظفين، الحضور والانصراف، المرتبات، السلف والعمولات
+                سجل الموظفين، الحضور والانصراف، المرتبات، المكافآت والسلف
               </p>
             </div>
           </div>
@@ -639,7 +675,7 @@ export function Employees() {
       </div>
 
       {/* KPI Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="إجمالي الموظفين"
           value={employees.length}
@@ -681,11 +717,18 @@ export function Employees() {
               : 'مسير الرواتب الشهري (محمي)'
           }
         />
+        <StatCard
+          title={`مكافآت شهر ${getArabicMonthName(selectedMonth)}`}
+          value={salaryVisible ? formatCurrency(totalBonuses) : '•••••• ج.م'}
+          icon={Gift}
+          variant="success"
+          subtitle={`${bonusEmployeesCount} موظف حصلوا على مكافأة`}
+        />
       </div>
 
       {/* Filter Bar */}
       <Card>
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <Input
               placeholder="بحث بالاسم، رقم الهاتف، الوظيفة..."
@@ -733,6 +776,56 @@ export function Employees() {
               ))}
             </select>
           </div>
+
+          <div>
+            <select
+              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+              value={filterBonusStatus}
+              onChange={(e) => {
+                setFilterBonusStatus(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="all">كل حالات المكافآت</option>
+              <option value="with_bonus">حصل على مكافأة (+)</option>
+              <option value="no_bonus">المرتب فقط (بدون مكافأة)</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Month Selector Bar */}
+        <div className="px-4 pb-3.5 pt-1 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-600">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-indigo-600" />
+            <span>عرض مكافآت ومسير شهر:</span>
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setSelectedMonth(e.target.value);
+                  setPage(1);
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+            />
+            <span className="text-indigo-600 font-black">
+              ({getArabicMonthName(selectedMonth)})
+            </span>
+          </div>
+
+          {selectedMonth !== new Date().toISOString().slice(0, 7) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedMonth(new Date().toISOString().slice(0, 7));
+                setPage(1);
+              }}
+              className="text-xs text-indigo-600 hover:text-indigo-800 underline font-black"
+            >
+              الرجوع للشهر الحالي ({getArabicMonthName(new Date().toISOString().slice(0, 7))})
+            </button>
+          )}
         </div>
       </Card>
 
@@ -765,6 +858,12 @@ export function Employees() {
                     </button>
                   </div>
                 </th>
+                <th className="py-3.5 px-4 whitespace-nowrap">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>المكافآت ({getArabicMonthName(selectedMonth)})</span>
+                  </div>
+                </th>
                 <th className="py-3.5 px-4">حالة حضور اليوم</th>
                 <th className="py-3.5 px-4 text-center">إجراءات</th>
               </tr>
@@ -772,13 +871,13 @@ export function Employees() {
             <tbody className="divide-y divide-slate-100 text-sm">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400 font-bold">
+                  <td colSpan={9} className="py-12 text-center text-slate-400 font-bold">
                     جارِ تحميل بيانات الموظفين...
                   </td>
                 </tr>
               ) : paginatedEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center text-slate-400 font-bold">
+                  <td colSpan={9} className="py-16 text-center text-slate-400 font-bold">
                     <Users className="w-12 h-12 mx-auto mb-2 text-slate-300" />
                     لا يوجد موظفون مطابقون لبيانات البحث
                   </td>
@@ -835,6 +934,53 @@ export function Employees() {
 
                       <td className="py-3.5 px-4 font-black text-slate-900 whitespace-nowrap">
                         {salaryVisible ? formatCurrency(emp.basic_salary) : '••••••'}
+                      </td>
+
+                      {/* Bonuses Column */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        {!salaryVisible ? (
+                          <span className="text-slate-400 font-mono tracking-widest text-xs">••••••</span>
+                        ) : Number(emp.current_month_bonuses || 0) > 0 ? (
+                          <div className="flex flex-col gap-1 items-start">
+                            <button
+                              type="button"
+                              onClick={() => openSummaryModal(emp)}
+                              title="عرض تفاصيل المكافأة والحركات المالية"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-xs"
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span>+{formatCurrency(emp.current_month_bonuses)}</span>
+                              {emp.current_month_bonus_count > 1 && (
+                                <span className="bg-emerald-200 text-emerald-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                                  {emp.current_month_bonus_count}
+                                </span>
+                              )}
+                            </button>
+                            <div className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                              <span>المستحق:</span>
+                              <span className="text-emerald-700 font-black">
+                                {formatCurrency(Number(emp.basic_salary || 0) + Number(emp.current_month_bonuses || 0))}
+                              </span>
+                            </div>
+                            {emp.latest_bonus_notes && (
+                              <span
+                                className="text-[10px] text-slate-400 truncate max-w-[170px]"
+                                title={cleanNotes(emp.latest_bonus_notes)}
+                              >
+                                {cleanNotes(emp.latest_bonus_notes)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-0.5 items-start">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-black bg-slate-100 text-slate-600 border border-slate-200">
+                              المرتب فقط
+                            </span>
+                            <span className="text-[11px] font-semibold text-slate-400">
+                              المستحق: {formatCurrency(emp.basic_salary)}
+                            </span>
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -1510,7 +1656,7 @@ export function Employees() {
               <Button variant="outline" onClick={() => setShowPayslipModal(false)}>
                 إغلاق
               </Button>
-              <Button variant="primary" icon={Printer} onClick={() => window.print()}>
+              <Button variant="primary" icon={Printer} onClick={() => printElement('payslip-print-area', `كشف راتب - ${payslipEmp?.name || ''}`)}>
                 طباعة القسيمة
               </Button>
             </div>

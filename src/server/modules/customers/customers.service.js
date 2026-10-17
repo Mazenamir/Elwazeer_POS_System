@@ -3,6 +3,8 @@ const config = require('../../config/env');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
+const { queueSyncOperation } = require('../../database/sync.helpers');
+
 
 async function listCustomers(req, user) {
   const pagination = parsePagination(req, 50, 200, true);
@@ -127,7 +129,20 @@ async function createCustomer(data, user) {
       ON CONFLICT(offline_uuid) DO UPDATE SET name = excluded.name, phone = excluded.phone, status = excluded.status
     `);
     const info = stmt.run(normalizedName, initials, email || null, phone || null, national_id || null, customerStatus, branchId, offlineUuid);
-    return db.sqlite.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid);
+    const created = db.sqlite.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid);
+    try {
+      await queueSyncOperation(db, null, 'customer', 'create', created?.id, branchId, {
+        offline_uuid: offlineUuid,
+        name: normalizedName,
+        initials,
+        email: email || null,
+        phone: phone || null,
+        national_id: national_id || null,
+        status: customerStatus,
+        branch_id: branchId,
+      });
+    } catch {}
+    return created;
   }
 
   return db.transaction(async (tx) => {

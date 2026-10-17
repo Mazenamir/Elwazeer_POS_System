@@ -10,7 +10,10 @@ export function Modal({
   children,
   maxWidth = 'max-w-xl',
   className = '',
+  bodyClassName = 'p-6 sm:p-8',
   closeOnBackdropClick = true,
+  hideHeader = false,
+  plain = false,
 }) {
   const [mounted, setMounted] = useState(false);
 
@@ -53,31 +56,37 @@ export function Modal({
 
       {/* Modal Dialog Content */}
       <div
-        className={`relative w-full ${maxWidth} my-auto bg-white rounded-3xl md:rounded-[2.5rem] border border-slate-100 shadow-2xl overflow-hidden z-10 animate-scale-in flex flex-col max-h-[90vh] ${className}`}
+        className={`relative w-full ${maxWidth} my-auto ${
+          plain
+            ? 'bg-transparent border-0 shadow-none'
+            : 'bg-white rounded-3xl md:rounded-[2.5rem] border border-slate-100 shadow-2xl overflow-hidden'
+        } z-10 animate-scale-in flex flex-col max-h-[90vh] ${className}`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-6 sm:p-8 border-b border-slate-100 shrink-0">
-          <div>
-            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              {title}
-            </h3>
-            {subtitle && (
-              <p className="text-xs sm:text-sm font-semibold text-slate-400 mt-1">
-                {subtitle}
-              </p>
-            )}
+        {!hideHeader && !plain && (title || subtitle) && (
+          <div className="flex items-center justify-between p-6 sm:p-8 border-b border-slate-100 shrink-0">
+            <div>
+              <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                {title}
+              </h3>
+              {subtitle && (
+                <p className="text-xs sm:text-sm font-semibold text-slate-400 mt-1">
+                  {subtitle}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        )}
 
         {/* Body */}
-        <div className="p-6 sm:p-8 overflow-y-auto flex-1 custom-scrollbar">
+        <div className={`${bodyClassName} overflow-y-auto flex-1 custom-scrollbar`}>
           {children}
         </div>
       </div>

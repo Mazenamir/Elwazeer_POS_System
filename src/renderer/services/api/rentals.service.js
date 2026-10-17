@@ -8,7 +8,8 @@ export const rentalsService = {
   getById: (id) => api.get(`/rentals/${id}`),
   create: (data) => api.post('/rentals', data),
   updateStatus: (id, status, data = {}) => api.patch(`/rentals/${id}/status`, { status, ...data }),
-  returnRental: (id, data) => api.post(`/rentals/${id}/return`, data),
+  returnRental: (id, data) => api.put(`/rentals/${id}/return`, data),
+  settlePayment: (id, data) => api.put(`/rentals/${id}/settle-payment`, data),
   convertToSale: (id, data) => api.post(`/rentals/${id}/convert-to-sale`, data),
   
   // Rental Inventory Items

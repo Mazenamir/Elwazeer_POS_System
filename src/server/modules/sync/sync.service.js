@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const db = require('../../database/connection');
 const config = require('../../config/env');
@@ -88,7 +90,13 @@ async function pruneSyncedQueue() {
 }
 
 async function applyOperation(operation) {
-  const payload = operation.payload || {};
+  const rawPayload = operation.payload;
+  let payload = {};
+  if (typeof rawPayload === 'string') {
+    try { payload = JSON.parse(rawPayload); } catch { payload = {}; }
+  } else if (rawPayload && typeof rawPayload === 'object') {
+    payload = rawPayload;
+  }
   await db.transaction(async (tx) => {
     if (operation.entity_type === 'customer') {
       await tx.query(
@@ -107,28 +115,58 @@ async function applyOperation(operation) {
 
     if (operation.entity_type === 'expense') {
       await tx.query(
-        `INSERT INTO expenses (branch_id, category, amount, expense_date, notes, offline_uuid)
-         VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6)
+        `INSERT INTO expenses (branch_id, category, amount, expense_date, notes, offline_uuid, payment_method, created_by, updated_by, is_deleted, deleted_by)
+         VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6, COALESCE($7, 'cash'), $8, $9, COALESCE($10, FALSE), $11)
          ON CONFLICT (offline_uuid) DO UPDATE SET
            branch_id = EXCLUDED.branch_id,
            category = EXCLUDED.category,
            amount = EXCLUDED.amount,
            expense_date = EXCLUDED.expense_date,
-           notes = EXCLUDED.notes`,
-        [payload.branch_id || operation.branch_id || null, payload.category, payload.amount || 0, payload.expense_date || null, payload.notes || null, payload.offline_uuid]
+           notes = EXCLUDED.notes,
+           payment_method = EXCLUDED.payment_method,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = CURRENT_TIMESTAMP,
+           is_deleted = EXCLUDED.is_deleted,
+           deleted_by = EXCLUDED.deleted_by,
+           deleted_at = CASE WHEN EXCLUDED.is_deleted THEN CURRENT_TIMESTAMP ELSE expenses.deleted_at END`,
+        [
+          payload.branch_id || operation.branch_id || null,
+          payload.category,
+          payload.amount || 0,
+          payload.expense_date || null,
+          payload.notes || null,
+          payload.offline_uuid,
+          payload.payment_method || 'cash',
+          payload.created_by || null,
+          payload.updated_by || null,
+          Boolean(payload.is_deleted),
+          payload.deleted_by || null,
+        ]
       );
       if (payload.category === 'bonus' && payload.employee_id) {
         const marker = `[EXP-${payload.offline_uuid}]`;
-        const existingBonus = await tx.query(
-          "SELECT id FROM employee_transactions WHERE employee_id = $1 AND type = 'bonus' AND notes LIKE $2 LIMIT 1",
-          [payload.employee_id, `%${marker}%`]
-        );
-        if (!existingBonus.rows.length) {
+        if (Boolean(payload.is_deleted)) {
           await tx.query(
-            `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes)
-             VALUES ($1, 'bonus', $2, COALESCE($3::date, CURRENT_DATE), $4)`,
-            [payload.employee_id, payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`]
+            "DELETE FROM employee_transactions WHERE employee_id = $1 AND type = 'bonus' AND notes LIKE $2",
+            [payload.employee_id, `%${marker}%`]
           );
+        } else {
+          const existingBonus = await tx.query(
+            "SELECT id FROM employee_transactions WHERE employee_id = $1 AND type = 'bonus' AND notes LIKE $2 LIMIT 1",
+            [payload.employee_id, `%${marker}%`]
+          );
+          if (!existingBonus.rows.length) {
+            await tx.query(
+              `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes)
+               VALUES ($1, 'bonus', $2, COALESCE($3::date, CURRENT_DATE), $4)`,
+              [payload.employee_id, payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`]
+            );
+          } else {
+            await tx.query(
+              `UPDATE employee_transactions SET amount = $1, transaction_date = COALESCE($2::date, transaction_date), notes = $3 WHERE id = $4`,
+              [payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, existingBonus.rows[0].id]
+            );
+          }
         }
       }
       return;
@@ -375,10 +413,12 @@ async function applyOperation(operation) {
       return;
     }
 
-    if (operation.entity_type === 'order') {
-      const exists = await tx.query('SELECT id FROM orders WHERE offline_uuid = $1', [payload.offline_uuid]);
+    if (operation.entity_type === 'order' || operation.entity_type === 'sale') {
+      const orderData = payload.order || payload;
+      const orderOfflineUuid = payload.offline_uuid || orderData.offline_uuid;
+      const exists = await tx.query('SELECT id FROM orders WHERE offline_uuid = $1', [orderOfflineUuid]);
       if (exists.rows.length) return;
-      const branchId = payload.order?.branch_id || operation.branch_id || 1;
+      const branchId = orderData.branch_id || operation.branch_id || 1;
       const customer = payload.customer || {};
       if (customer.phone) {
         await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`customer-phone:${customer.phone}`]);
@@ -387,12 +427,12 @@ async function applyOperation(operation) {
       const existingCustomer = await tx.query('SELECT id FROM customers WHERE phone = $1 AND branch_id = $2 FOR UPDATE', [customer.phone || '', branchId]);
       if (existingCustomer.rows.length) {
         customerId = existingCustomer.rows[0].id;
-        await tx.query('UPDATE customers SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2', [payload.order?.total_amount || 0, customerId]);
+        await tx.query('UPDATE customers SET total_spent = COALESCE(total_spent, 0) + $1 WHERE id = $2', [orderData.total_amount || 0, customerId]);
       } else {
         const customerRes = await tx.query(
           `INSERT INTO customers (name, initials, phone, join_date, total_spent, status, branch_id, offline_uuid)
            VALUES ($1, $2, $3, CURRENT_DATE, $4, 'نشط', $5, $6) RETURNING id`,
-          [customer.name || 'عميل', getInitialsFromName(customer.name || 'عميل'), customer.phone || null, payload.order?.total_amount || 0, branchId, newUuid()]
+          [customer.name || 'عميل', getInitialsFromName(customer.name || 'عميل'), customer.phone || null, orderData.total_amount || 0, branchId, newUuid()]
         );
         customerId = customerRes.rows[0].id;
       }
@@ -402,10 +442,17 @@ async function applyOperation(operation) {
         [branchId]
       );
       const nextBranchInvoiceNumber = invoiceRes.rows[0].next_no;
+
+      let sellerId = orderData.seller_id || null;
+      if (sellerId) {
+        const empCheck = await tx.query('SELECT id FROM employees WHERE id = $1', [sellerId]);
+        if (!empCheck.rows.length) sellerId = null;
+      }
+
       const insertOrderRes = await tx.query(
         `INSERT INTO orders (customer_id, total_amount, order_date, branch_id, payment_method, seller_id, paid_amount, change_amount, invoice_discount, invoice_discount_type, branch_invoice_number, offline_uuid)
          VALUES ($1, $2, COALESCE($12::timestamp, timezone('utc', now())), $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-        [customerId, payload.order?.total_amount || 0, branchId, payload.order?.payment_method || 'cash', payload.order?.seller_id || null, payload.order?.paid_amount || 0, payload.order?.change_amount || 0, payload.order?.invoice_discount || 0, payload.order?.invoice_discount_type || 'amount', nextBranchInvoiceNumber, payload.offline_uuid, payload.order?.order_date || null]
+        [customerId, orderData.total_amount || 0, branchId, orderData.payment_method || 'cash', sellerId, orderData.paid_amount || 0, orderData.change_amount || 0, orderData.invoice_discount || 0, orderData.invoice_discount_type || 'amount', nextBranchInvoiceNumber, orderOfflineUuid, orderData.order_date || null]
       );
       const orderId = insertOrderRes.rows[0].id;
 
@@ -471,7 +518,7 @@ async function applyOperation(operation) {
       let resolvedOrderId = payload.order_id;
       if (payload.order_offline_uuid) {
         const orderLookup = await tx.query(
-          'SELECT id FROM orders WHERE offline_uuid LIKE $1 LIMIT 1',
+          'SELECT id FROM orders WHERE offline_uuid::text LIKE $1 LIMIT 1',
           [payload.order_offline_uuid + '%']
         );
         if (orderLookup.rows.length) {
@@ -480,7 +527,7 @@ async function applyOperation(operation) {
       } else if (typeof resolvedOrderId === 'string' && resolvedOrderId.toUpperCase().startsWith('OFF-')) {
         const offlinePart = resolvedOrderId.slice(4);
         const orderLookup = await tx.query(
-          'SELECT id FROM orders WHERE offline_uuid LIKE $1 LIMIT 1',
+          'SELECT id FROM orders WHERE offline_uuid::text LIKE $1 LIMIT 1',
           [offlinePart + '%']
         );
         if (orderLookup.rows.length) {
@@ -488,9 +535,19 @@ async function applyOperation(operation) {
         }
       }
 
+      let sellerId = payload.seller_id || null;
+      if (sellerId) {
+        const empCheck = await tx.query('SELECT id FROM employees WHERE id = $1', [sellerId]);
+        if (!empCheck.rows.length) sellerId = null;
+      }
+      if (resolvedOrderId) {
+        const orderCheck = await tx.query('SELECT id FROM orders WHERE id = $1', [resolvedOrderId]);
+        if (!orderCheck.rows.length) resolvedOrderId = null;
+      }
+
       const returnRes = await tx.query(
         'INSERT INTO returns (order_id, total_return_amount, branch_id, seller_id, offline_uuid) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-        [resolvedOrderId, payload.total_return_amount || 0, branchId, payload.seller_id || null, payload.offline_uuid]
+        [resolvedOrderId, payload.total_return_amount || 0, branchId, sellerId, payload.offline_uuid]
       );
       const returnId = returnRes.rows[0].id;
       for (const item of payload.items || []) {
@@ -538,10 +595,16 @@ async function applyOperation(operation) {
           }
         }
       }
+      let sellerId = payload.rental?.seller_id || null;
+      if (sellerId) {
+        const empCheck = await tx.query('SELECT id FROM employees WHERE id = $1', [sellerId]);
+        if (!empCheck.rows.length) sellerId = null;
+      }
+
       await tx.query(
         `INSERT INTO rentals (customer_id, rental_inventory_id, branch_id, pickup_date, return_date, total_price, national_id, deposit, remaining, id_card_guarantee, notes, status, daily_fine, seller_id, payment_method, rental_group_uuid, offline_uuid)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'booked', $12, $13, $14, $15, $16)`,
-        [customerId, payload.rental?.rental_inventory_id, branchId, payload.rental?.pickup_date, payload.rental?.return_date, payload.rental?.total_price || 0, payload.rental?.national_id || null, payload.rental?.deposit || 0, payload.rental?.remaining || 0, !!payload.rental?.id_card_guarantee, payload.rental?.notes || null, payload.rental?.daily_fine || 0, payload.rental?.seller_id || null, payload.rental?.payment_method || 'cash', payload.rental?.rental_group_uuid || payload.rental_group_uuid || null, payload.offline_uuid]
+        [customerId, payload.rental?.rental_inventory_id, branchId, payload.rental?.pickup_date, payload.rental?.return_date, payload.rental?.total_price || 0, payload.rental?.national_id || null, payload.rental?.deposit || 0, payload.rental?.remaining || 0, !!payload.rental?.id_card_guarantee, payload.rental?.notes || null, payload.rental?.daily_fine || 0, sellerId, payload.rental?.payment_method || 'cash', payload.rental?.rental_group_uuid || payload.rental_group_uuid || null, payload.offline_uuid]
       );
       return;
     }
@@ -626,10 +689,32 @@ async function applyOperation(operation) {
   });
 }
 
+let cachedCentralConnectivity = {
+  checked_at: 0,
+  online: false,
+  reason: null,
+  message: '',
+};
+
+async function getCachedOrFreshConnectivity(maxAgeMs = 15000) {
+  const now = Date.now();
+  if (now - cachedCentralConnectivity.checked_at < maxAgeMs && cachedCentralConnectivity.checked_at > 0) {
+    return cachedCentralConnectivity;
+  }
+  const check = await checkCentralConnectivity(3000);
+  cachedCentralConnectivity = {
+    checked_at: now,
+    online: Boolean(check.ok),
+    reason: check.reason || (check.ok ? 'connected' : 'unreachable'),
+    message: check.message || '',
+  };
+  return cachedCentralConnectivity;
+}
+
 async function getSyncStatus() {
   const [countsRes, lastSyncedRes] = await Promise.all([
     db.query(`
-      SELECT status, COUNT(*)::int AS count
+      SELECT status, COUNT(*) AS count
       FROM sync_queue
       WHERE status IN ('pending', 'failed')
       GROUP BY status
@@ -646,9 +731,19 @@ async function getSyncStatus() {
   const counts = Object.fromEntries(countsRes.rows.map(row => [row.status, Number(row.count || 0)]));
   const local = (config.IS_BRANCH_MODE && !config.IS_SYNC_TARGET) ? offlineStore.status() : { pending: 0, failed: 0, last_synced_at: null };
 
+  let connectivity = { online: true, reason: 'master', message: '' };
+  if (config.IS_BRANCH_MODE) {
+    connectivity = await getCachedOrFreshConnectivity(15000);
+  }
+
   return {
+    is_branch_mode: Boolean(config.IS_BRANCH_MODE),
     configured: Boolean(config.SYNC_SERVER_URL),
-    target: config.IS_SYNC_TARGET,
+    target: config.IS_BRANCH_MODE ? false : config.IS_SYNC_TARGET,
+    server_url: config.SYNC_SERVER_URL || null,
+    online: Boolean(connectivity.online),
+    connectivity_reason: connectivity.reason,
+    connectivity_message: connectivity.message,
     pending: Number(counts.pending || 0) + Number(local.pending || 0),
     failed: Number(counts.failed || 0) + Number(local.failed || 0),
     last_synced_at: lastSyncedRes.rows[0]?.last_synced_at || local.last_synced_at,
@@ -680,6 +775,11 @@ async function runSync(requestedLimit = 50) {
 
   for (const op of rows) {
     try {
+      let opPayload = op.payload;
+      if (typeof opPayload === 'string') {
+        try { opPayload = JSON.parse(opPayload); } catch {}
+      }
+
       const response = await fetchWithTimeout(`${config.SYNC_SERVER_URL}/api/sync/apply`, {
         method: 'POST',
         headers: {
@@ -692,14 +792,30 @@ async function runSync(requestedLimit = 50) {
           action: op.action,
           entity_id: op.entity_id,
           branch_id: op.branch_id,
-          payload: op.payload,
+          payload: opPayload,
         }),
       });
+
+      if (response.status === 401 || response.status === 403) {
+        const authErr = new Error('SYNC_AUTH_FAILED: مفتاح المزامنة غير صالح أو مرفوض من السيرفر');
+        authErr.statusCode = response.status;
+        authErr.isAuthError = true;
+        throw authErr;
+      }
+
       const text = await response.text();
       if (!response.ok) throw new Error(text.slice(0, 500));
       await db.query("UPDATE sync_queue SET status = 'synced', synced_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = $1", [op.id]);
       result.synced += 1;
     } catch (err) {
+      if (err.isAuthError) throw err;
+      const isNetworkErr = err.name === 'AbortError' || err.name === 'TimeoutError'
+        || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.message?.includes('fetch failed');
+      if (isNetworkErr) {
+        await db.query("UPDATE sync_queue SET last_error = $2 WHERE id = $1", [op.id, err.message]);
+        result.failed += 1;
+        break; // stop on network drop to preserve remaining operations
+      }
       await db.query(
         "UPDATE sync_queue SET status = 'failed', attempts = attempts + 1, last_error = $2 WHERE id = $1",
         [op.id, err.message]
@@ -710,6 +826,11 @@ async function runSync(requestedLimit = 50) {
 
   for (const op of localRows) {
     try {
+      let opPayload = op.payload;
+      if (typeof opPayload === 'string') {
+        try { opPayload = JSON.parse(opPayload); } catch {}
+      }
+
       const response = await fetchWithTimeout(`${config.SYNC_SERVER_URL}/api/sync/apply`, {
         method: 'POST',
         headers: {
@@ -722,16 +843,28 @@ async function runSync(requestedLimit = 50) {
           action: op.action,
           entity_id: null,
           branch_id: op.branch_id,
-          payload: op.payload,
+          payload: opPayload,
         }),
       });
+
+      if (response.status === 401 || response.status === 403) {
+        const authErr = new Error('SYNC_AUTH_FAILED: مفتاح المزامنة غير صالح أو مرفوض من السيرفر');
+        authErr.statusCode = response.status;
+        authErr.isAuthError = true;
+        throw authErr;
+      }
+
       const text = await response.text();
       if (!response.ok) throw new Error(text.slice(0, 500));
       offlineStore.markSynced(op.id);
       result.synced += 1;
     } catch (err) {
+      if (err.isAuthError) throw err;
+      const isNetworkErr = err.name === 'AbortError' || err.name === 'TimeoutError'
+        || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.message?.includes('fetch failed');
       offlineStore.markFailed(op.id, err.message);
       result.failed += 1;
+      if (isNetworkErr) break;
     }
   }
 
@@ -743,9 +876,766 @@ async function runSync(requestedLimit = 50) {
   return result;
 }
 
+async function exportCatalogForBranch(branchId = null) {
+  const [
+    usersRes,
+    branchesRes,
+    inventoryRes,
+    invBranchesRes,
+    rentalInvRes,
+    rentalBranchesRes,
+    colorsRes,
+    sizesRes,
+    invSizesRes,
+    settingsRes,
+    customersRes,
+    employeesRes,
+    suppliersRes,
+  ] = await Promise.all([
+    db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id FROM users'),
+    db.query('SELECT id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender FROM branches'),
+    db.query('SELECT id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted FROM inventory WHERE is_deleted = FALSE'),
+    db.query('SELECT inventory_id, branch_id, stock_level FROM inventory_branches'),
+    db.query('SELECT id, name, category, size_cut, color, barcode, price, image_url, is_deleted FROM rental_inventory WHERE is_deleted = FALSE'),
+    db.query('SELECT rental_inventory_id, branch_id, stock_level FROM rental_inventory_branches'),
+    db.query('SELECT id, name FROM colors'),
+    db.query('SELECT id, name FROM sizes'),
+    db.query('SELECT inventory_id, size_id, size_name, stock_level, branch_id FROM inventory_sizes'),
+    db.query('SELECT key, value FROM settings'),
+    db.query('SELECT id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid FROM customers'),
+    db.query("SELECT id, name, position, branch_id, basic_salary, phone, status FROM employees WHERE status = 'active'"),
+    db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status FROM suppliers'),
+  ]);
+
+  return {
+    timestamp: new Date().toISOString(),
+    users: usersRes.rows,
+    branches: branchesRes.rows,
+    inventory: inventoryRes.rows,
+    inventory_branches: invBranchesRes.rows,
+    rental_inventory: rentalInvRes.rows,
+    rental_inventory_branches: rentalBranchesRes.rows,
+    colors: colorsRes.rows,
+    sizes: sizesRes.rows,
+    inventory_sizes: invSizesRes.rows,
+    settings: settingsRes.rows,
+    customers: customersRes.rows,
+    employees: employeesRes.rows,
+    suppliers: suppliersRes.rows,
+  };
+}
+
+async function importCatalogIntoBranch(catalog, targetSqlite = null) {
+  const sqlite = targetSqlite || db.sqlite;
+  if (!sqlite) {
+    return { ok: false, message: 'SQLite database instance not available' };
+  }
+  sqlite.exec('BEGIN TRANSACTION;');
+  try {
+    // 1. Users
+    if (Array.isArray(catalog.users)) {
+      const uStmt = sqlite.prepare(`
+        INSERT INTO users (id, username, password_hash, role, branch_id, permissions, employee_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          username = excluded.username,
+          password_hash = excluded.password_hash,
+          role = excluded.role,
+          branch_id = excluded.branch_id,
+          permissions = excluded.permissions,
+          employee_id = excluded.employee_id
+      `);
+      for (const u of catalog.users) {
+        const perms = typeof u.permissions === 'object' ? JSON.stringify(u.permissions) : (u.permissions || '[]');
+        uStmt.run(u.id, u.username, u.password_hash, u.role, u.branch_id, perms, u.employee_id || null);
+      }
+    }
+
+    // 2. Branches
+    if (Array.isArray(catalog.branches)) {
+      const bStmt = sqlite.prepare(`
+        INSERT INTO branches (id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          location = excluded.location,
+          type = excluded.type,
+          is_main_warehouse = excluded.is_main_warehouse,
+          phone = excluded.phone,
+          logo_url = excluded.logo_url,
+          invoice_logo_height = excluded.invoice_logo_height,
+          invoice_logo_spacing = excluded.invoice_logo_spacing,
+          invoice_logo_filter = excluded.invoice_logo_filter,
+          invoice_logo_bg_enabled = excluded.invoice_logo_bg_enabled,
+          invoice_logo_bg_start = excluded.invoice_logo_bg_start,
+          invoice_logo_bg_end = excluded.invoice_logo_bg_end,
+          allowed_gender = excluded.allowed_gender
+      `);
+      for (const b of catalog.branches) {
+        bStmt.run(
+          b.id, b.name, b.location || null, b.type || null, b.is_main_warehouse ? 1 : 0,
+          b.phone || null, b.logo_url || null, b.invoice_logo_height || 160, b.invoice_logo_spacing || 8,
+          b.invoice_logo_filter || 'black', b.invoice_logo_bg_enabled ? 1 : 0,
+          b.invoice_logo_bg_start || '#ffffff', b.invoice_logo_bg_end || '#ffffff',
+          b.allowed_gender || 'both'
+        );
+      }
+    }
+
+    // 3. Settings
+    if (Array.isArray(catalog.settings)) {
+      const sStmt = sqlite.prepare(`
+        INSERT INTO settings (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `);
+      for (const s of catalog.settings) {
+        sStmt.run(s.key, s.value);
+      }
+    }
+
+    // 4. Inventory
+    if (Array.isArray(catalog.inventory)) {
+      const invStmt = sqlite.prepare(`
+        INSERT INTO inventory (id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          category = excluded.category,
+          size_cut = excluded.size_cut,
+          color = excluded.color,
+          barcode = excluded.barcode,
+          stock_level = excluded.stock_level,
+          min_stock_level = excluded.min_stock_level,
+          preferred_supplier_id = excluded.preferred_supplier_id,
+          price = excluded.price,
+          cost_price = excluded.cost_price,
+          image_url = excluded.image_url,
+          is_deleted = excluded.is_deleted
+      `);
+      for (const i of catalog.inventory) {
+        invStmt.run(
+          i.id, i.name, i.category || null, i.size_cut || null, i.color || null,
+          i.barcode || null, i.stock_level || 0, i.min_stock_level || 5,
+          i.preferred_supplier_id || null, i.price || 0, i.cost_price || 0,
+          i.image_url || null, i.is_deleted ? 1 : 0
+        );
+      }
+    }
+
+    // 5. Inventory Branches
+    if (Array.isArray(catalog.inventory_branches)) {
+      const ibStmt = sqlite.prepare(`
+        INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
+        VALUES (?, ?, ?)
+        ON CONFLICT(inventory_id, branch_id) DO UPDATE SET stock_level = excluded.stock_level
+      `);
+      for (const ib of catalog.inventory_branches) {
+        ibStmt.run(ib.inventory_id, ib.branch_id, ib.stock_level || 0);
+      }
+    }
+
+    // 6. Rental Inventory
+    if (Array.isArray(catalog.rental_inventory)) {
+      const riStmt = sqlite.prepare(`
+        INSERT INTO rental_inventory (id, name, category, size_cut, color, barcode, price, image_url, is_deleted, stock_level)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          category = excluded.category,
+          size_cut = excluded.size_cut,
+          color = excluded.color,
+          barcode = excluded.barcode,
+          price = excluded.price,
+          image_url = excluded.image_url,
+          is_deleted = excluded.is_deleted,
+          stock_level = excluded.stock_level
+      `);
+      for (const ri of catalog.rental_inventory) {
+        riStmt.run(
+          ri.id, ri.name, ri.category || null, ri.size_cut || null, ri.color || null,
+          ri.barcode || null, ri.price || 0, ri.image_url || null, ri.is_deleted ? 1 : 0, ri.stock_level || 0
+        );
+      }
+    }
+
+    // 7. Rental Inventory Branches
+    if (Array.isArray(catalog.rental_inventory_branches)) {
+      const ribStmt = sqlite.prepare(`
+        INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level)
+        VALUES (?, ?, ?)
+        ON CONFLICT(rental_inventory_id, branch_id) DO UPDATE SET stock_level = excluded.stock_level
+      `);
+      for (const rib of catalog.rental_inventory_branches) {
+        ribStmt.run(rib.rental_inventory_id, rib.branch_id, rib.stock_level || 0);
+      }
+    }
+
+    // 8. Colors & Sizes
+    if (Array.isArray(catalog.colors)) {
+      const cStmt = sqlite.prepare('INSERT OR IGNORE INTO colors (id, name) VALUES (?, ?)');
+      for (const c of catalog.colors) cStmt.run(c.id, c.name);
+    }
+    if (Array.isArray(catalog.sizes)) {
+      const sStmt = sqlite.prepare('INSERT OR IGNORE INTO sizes (id, name) VALUES (?, ?)');
+      for (const s of catalog.sizes) sStmt.run(s.id, s.name);
+    }
+    if (Array.isArray(catalog.inventory_sizes)) {
+      const iszStmt = sqlite.prepare(`
+        INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(inventory_id, size_name, branch_id) DO UPDATE SET stock_level = excluded.stock_level
+      `);
+      for (const isz of catalog.inventory_sizes) {
+        iszStmt.run(isz.inventory_id, isz.size_id || null, isz.size_name, isz.stock_level || 0, isz.branch_id || 1);
+      }
+    }
+
+    // Helper to safely format dates and primitives for SQLite
+    const toSqliteDate = (val) => {
+      if (!val) return null;
+      if (val instanceof Date) return val.toISOString().slice(0, 10);
+      return String(val);
+    };
+
+    // 9. Customers
+    if (Array.isArray(catalog.customers)) {
+      const custStmt = sqlite.prepare(`
+        INSERT INTO customers (id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid, pending_sync)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          initials = excluded.initials,
+          email = excluded.email,
+          phone = excluded.phone,
+          national_id = excluded.national_id,
+          total_spent = excluded.total_spent,
+          status = excluded.status,
+          branch_id = excluded.branch_id
+      `);
+      for (const cust of catalog.customers) {
+        custStmt.run(
+          cust.id, cust.name, cust.initials || null, cust.email || null, cust.phone || null,
+          cust.national_id || null, toSqliteDate(cust.join_date), Number(cust.total_spent || 0),
+          cust.status || 'نشط', cust.branch_id || 1, cust.offline_uuid || null
+        );
+      }
+    }
+
+    // 10. Employees
+    if (Array.isArray(catalog.employees)) {
+      const empStmt = sqlite.prepare(`
+        INSERT INTO employees (id, name, position, branch_id, basic_salary, phone, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          position = excluded.position,
+          branch_id = excluded.branch_id,
+          basic_salary = excluded.basic_salary,
+          phone = excluded.phone,
+          status = excluded.status
+      `);
+      for (const emp of catalog.employees) {
+        empStmt.run(emp.id, emp.name, emp.position || null, emp.branch_id || null, Number(emp.basic_salary || 0), emp.phone || null, emp.status || 'active');
+      }
+    }
+
+    // 11. Suppliers
+    if (Array.isArray(catalog.suppliers)) {
+      const supStmt = sqlite.prepare(`
+        INSERT INTO suppliers (id, name, initials, category, contact_person, phone, supply_type, balance, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          initials = excluded.initials,
+          category = excluded.category,
+          contact_person = excluded.contact_person,
+          phone = excluded.phone,
+          supply_type = excluded.supply_type,
+          balance = excluded.balance,
+          status = excluded.status
+      `);
+      for (const sup of catalog.suppliers) {
+        supStmt.run(sup.id, sup.name, sup.initials || null, sup.category || null, sup.contact_person || null, sup.phone || null, sup.supply_type || null, Number(sup.balance || 0), sup.status || 'active');
+      }
+    }
+
+    sqlite.exec('COMMIT;');
+    return {
+      ok: true,
+      imported_at: new Date().toISOString(),
+      counts: {
+        users: catalog.users?.length || 0,
+        inventory: catalog.inventory?.length || 0,
+        customers: catalog.customers?.length || 0,
+        branches: catalog.branches?.length || 0,
+      }
+    };
+  } catch (err) {
+    try { sqlite.exec('ROLLBACK;'); } catch {}
+    console.error('Failed to import catalog into branch SQLite:', err);
+    throw err;
+  }
+}
+
+async function pullCatalogFromCentral() {
+  if (!config.SYNC_SERVER_URL) {
+    return { ok: false, error: 'SYNC_SERVER_URL is not configured' };
+  }
+
+  const url = `${config.SYNC_SERVER_URL}/api/sync/catalog?branch_id=${config.BRANCH_ID || ''}`;
+  console.log(`[Sync] Pulling latest catalog from central: ${url}`);
+  const response = await fetchWithTimeout(url, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      ...(config.SYNC_API_KEY ? { 'x-sync-key': config.SYNC_API_KEY } : {}),
+    },
+  }, 25000);
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Catalog pull failed (${response.status}): ${errText.slice(0, 300)}`);
+  }
+
+  const catalog = await response.json();
+  const importResult = await importCatalogIntoBranch(catalog);
+  console.log(`[Sync] Successfully imported catalog at ${importResult.imported_at}:`, importResult.counts);
+  return importResult;
+}
+
+let syncIntervalHandle = null;
+let isSyncCycleActive = false;
+let lastCatalogPull = 0;
+
+async function checkCentralConnectivity(timeoutMs = 5000) {
+  const targetUrl = config.SYNC_SERVER_URL || process.env.SYNC_SERVER_URL;
+  if (!targetUrl) {
+    const res = { ok: false, reason: 'unconfigured', message: 'لم يتم ضبط رابط السيرفر المركزي (SYNC_SERVER_URL)' };
+    cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+    return res;
+  }
+
+  try {
+    const pingRes = await fetchWithTimeout(`${targetUrl}/api/sync/ping`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        ...(config.SYNC_API_KEY ? { 'x-sync-key': config.SYNC_API_KEY } : {}),
+      },
+    }, timeoutMs);
+
+    if (pingRes.status === 503) {
+      const res = { ok: false, reason: 'server_db_down', message: 'السيرفر المركزي متاح لكن قاعدة بياناته غير متصلة' };
+      cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+      return res;
+    }
+
+    if (pingRes.status === 401 || pingRes.status === 403) {
+      const res = { ok: false, reason: 'auth_failed', message: 'خطأ في المصادقة: مفتاح المزامنة (SYNC_API_KEY) غير صالح أو مرفوض' };
+      cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+      return res;
+    }
+
+    if (!pingRes.ok) {
+      const res = { ok: false, reason: 'server_error', message: `السيرفر المركزي أعاد رمز خطأ (${pingRes.status})` };
+      cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+      return res;
+    }
+
+    let pingData = null;
+    try {
+      pingData = await pingRes.json();
+    } catch {}
+
+    if (pingData && pingData.ok === false) {
+      const res = { ok: false, reason: 'server_db_down', message: pingData.error || 'قاعدة بيانات السيرفر غير متاحة' };
+      cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+      return res;
+    }
+
+    const res = { ok: true, serverTime: pingData?.time };
+    cachedCentralConnectivity = { checked_at: Date.now(), online: true, reason: 'connected', message: '' };
+    return res;
+  } catch (err) {
+    const isTimeout = err.name === 'TimeoutError' || err.name === 'AbortError'
+      || err.code === 'ETIMEDOUT' || err.cause?.code === 'ETIMEDOUT'
+      || err.message?.includes('timed out') || err.message?.includes('timeout');
+    if (isTimeout) {
+      const res = { ok: false, reason: 'timeout', message: 'انتهت مهلة الاتصال بالسيرفر المركزي' };
+      cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+      return res;
+    }
+    const isRefused = err.code === 'ECONNREFUSED' || err.cause?.code === 'ECONNREFUSED';
+    if (isRefused) {
+      const res = { ok: false, reason: 'unreachable', message: 'تعذر الاتصال بالسيرفر المركزي (أوفلاين - الاتصال مرفوض)' };
+      cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+      return res;
+    }
+    const isDns = err.code === 'ENOTFOUND' || err.cause?.code === 'ENOTFOUND';
+    if (isDns) {
+      const res = { ok: false, reason: 'unreachable', message: 'تعذر الاتصال بالسيرفر المركزي (أوفلاين - خطأ DNS)' };
+      cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+      return res;
+    }
+    const res = { ok: false, reason: 'unreachable', message: 'تعذر الاتصال بالسيرفر المركزي (أوفلاين)' };
+    cachedCentralConnectivity = { checked_at: Date.now(), online: false, reason: res.reason, message: res.message };
+    return res;
+  }
+}
+
+async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
+  if (!config.IS_BRANCH_MODE) {
+    return { ok: true, isMaster: true, message: 'النظام يعمل كخادم مركزي رئيسي' };
+  }
+
+  if (isSyncCycleActive) {
+    return { ok: false, inProgress: true, message: 'عملية المزامنة جارية بالفعل...' };
+  }
+
+  isSyncCycleActive = true;
+  try {
+    // 1. Check central server connectivity & health
+    const connCheck = await checkCentralConnectivity(isManual ? 15000 : 8000);
+    if (!connCheck.ok) {
+      return connCheck;
+    }
+
+    // 2. Push pending offline operations
+    let pushResult = { synced: 0, failed: 0 };
+    try {
+      pushResult = await runSync(limit);
+    } catch (err) {
+      if (err.isAuthError) {
+        return {
+          ok: false,
+          reason: 'auth_failed',
+          message: 'خطأ في المصادقة: مفتاح المزامنة غير صالح أو مرفوض من السيرفر',
+        };
+      }
+    }
+
+    // 3. Pull catalog from central
+    let pullResult = null;
+    let pullError = null;
+    const shouldPull = isManual || (Date.now() - lastCatalogPull > 5 * 60 * 1000);
+
+    if (shouldPull) {
+      try {
+        pullResult = await pullCatalogFromCentral();
+        lastCatalogPull = Date.now();
+      } catch (err) {
+        pullError = err;
+      }
+    }
+
+    // Determine pending remaining operations
+    let pendingRemaining = 0;
+    try {
+      const pendingRes = await db.query("SELECT COUNT(*) AS count FROM sync_queue WHERE status = 'pending'");
+      pendingRemaining = Number(pendingRes.rows[0]?.count || 0);
+    } catch {}
+
+    if (pullError && pushResult.synced === 0 && pushResult.failed === 0) {
+      if (pullError.message?.includes('401') || pullError.message?.includes('403')) {
+        return {
+          ok: false,
+          reason: 'auth_failed',
+          message: 'خطأ في المصادقة أثناء سحب الأصناف (مفتاح المزامنة غير صالح)',
+        };
+      }
+      return {
+        ok: false,
+        reason: 'pull_failed',
+        message: `فشل تحديث الأصناف من السيرفر: ${pullError.message}`,
+      };
+    }
+
+    if (pullError && pushResult.synced > 0) {
+      return {
+        ok: false,
+        partial: true,
+        pushed: { ...pushResult, pending: pendingRemaining },
+        reason: 'pull_failed',
+        message: `تم رفع ${pushResult.synced} عملية لكن تعذر تحديث الأصناف`,
+      };
+    }
+
+    if (pushResult.failed > 0) {
+      return {
+        ok: false,
+        partial: true,
+        pushed: { ...pushResult, pending: pendingRemaining },
+        pulled: pullResult,
+        reason: 'push_failed',
+        message: `تم رفع ${pushResult.synced} عملية وفشلت ${pushResult.failed} عملية`,
+      };
+    }
+
+    let summaryMessage = 'تمت المزامنة بنجاح!';
+    if (pushResult.synced > 0) {
+      summaryMessage = `تمت المزامنة بنجاح (تم رفع ${pushResult.synced} عملية وتحديث البيانات)`;
+    } else if (pullResult) {
+      summaryMessage = `البيانات محدثة (تم مزامنة الأصناف بنجاح)`;
+    } else {
+      summaryMessage = `البيانات محدثة بالكامل مع السيرفر الرئيسي`;
+    }
+
+    return {
+      ok: true,
+      pushed: { ...pushResult, pending: pendingRemaining },
+      pulled: pullResult,
+      message: summaryMessage,
+      synced_at: new Date().toISOString(),
+    };
+  } finally {
+    isSyncCycleActive = false;
+  }
+}
+
+function startBackgroundSyncWorker(intervalMs = 30000) {
+  if (!config.IS_BRANCH_MODE || !config.SYNC_SERVER_URL) {
+    console.log(`[Sync Worker] Background sync disabled (Mode: ${config.IS_BRANCH_MODE ? 'Branch' : 'Master'}, Server: ${config.SYNC_SERVER_URL || 'None'})`);
+    return;
+  }
+
+  if (syncIntervalHandle) {
+    clearInterval(syncIntervalHandle);
+  }
+
+  console.log(`📡 [Sync Worker] Background auto-sync worker started (Interval: ${Math.round(intervalMs / 1000)}s, Central: ${config.SYNC_SERVER_URL})`);
+
+  const runCycle = async () => {
+    try {
+      const res = await runSyncCycle({ isManual: false, limit: 50 });
+      if (res.ok && res.pushed?.synced > 0) {
+        console.log(`[Sync Worker] Pushed ${res.pushed.synced} offline operations to central server.`);
+      }
+    } catch (e) {
+      // background worker never throws unhandled
+    }
+  };
+
+  // Run first cycle 2 seconds after startup
+  setTimeout(runCycle, 2000);
+
+  syncIntervalHandle = setInterval(runCycle, intervalMs);
+}
+
+function saveEnvKeyValue(envFilePath, updates) {
+  let content = '';
+  if (fs.existsSync(envFilePath)) {
+    try {
+      content = fs.readFileSync(envFilePath, 'utf8');
+    } catch {}
+  }
+  let lines = content.split(/\r?\n/);
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined || value === null) continue;
+    let found = false;
+    lines = lines.map(line => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith(`${key}=`) || trimmed.startsWith(`${key} =`)) {
+        found = true;
+        return `${key}=${value}`;
+      }
+      return line;
+    });
+    if (!found) {
+      lines.push(`${key}=${value}`);
+    }
+  }
+  try {
+    const dir = path.dirname(envFilePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(envFilePath, lines.join('\n'), 'utf8');
+    return true;
+  } catch (err) {
+    console.warn(`[Sync] Could not write to ${envFilePath}:`, err.message);
+    return false;
+  }
+}
+
+async function getSyncDiagnostics() {
+  const startTime = Date.now();
+  let conn = { ok: false, reason: 'unreachable', message: '' };
+  let latencyMs = null;
+  if (config.IS_BRANCH_MODE) {
+    conn = await checkCentralConnectivity(8000);
+    latencyMs = Date.now() - startTime;
+  } else {
+    conn = { ok: true, reason: 'master', message: 'النظام يعمل كخادم مركزي رئيسي' };
+  }
+
+  let queueCounts = { pending: 0, failed: 0, synced: 0 };
+  try {
+    const res = await db.query(`
+      SELECT status, COUNT(*) AS count
+      FROM sync_queue
+      GROUP BY status
+    `);
+    for (const r of res.rows) {
+      queueCounts[r.status] = Number(r.count || 0);
+    }
+  } catch {}
+
+  const local = (config.IS_BRANCH_MODE && !config.IS_SYNC_TARGET)
+    ? offlineStore.status()
+    : { pending: 0, failed: 0, last_synced_at: null };
+
+  let lastErrorRecord = null;
+  try {
+    const errRes = await db.query(`
+      SELECT entity_type, action, last_error, updated_at
+      FROM sync_queue
+      WHERE last_error IS NOT NULL AND status IN ('pending', 'failed')
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `);
+    if (errRes.rows.length) {
+      lastErrorRecord = errRes.rows[0];
+    }
+  } catch {}
+
+  return {
+    is_branch_mode: Boolean(config.IS_BRANCH_MODE),
+    server_url: config.SYNC_SERVER_URL || '',
+    branch_id: config.BRANCH_ID || '',
+    online: Boolean(conn.ok),
+    connectivity_reason: conn.reason || (conn.ok ? 'connected' : 'unreachable'),
+    connectivity_message: conn.message || '',
+    latency_ms: conn.ok ? latencyMs : null,
+    queue: {
+      pending: Number(queueCounts.pending || 0) + Number(local.pending || 0),
+      failed: Number(queueCounts.failed || 0) + Number(local.failed || 0),
+      synced: Number(queueCounts.synced || 0),
+      last_error: lastErrorRecord?.last_error || null,
+      last_error_entity: lastErrorRecord ? `${lastErrorRecord.entity_type} (${lastErrorRecord.action})` : null,
+    },
+    server_time: conn.serverTime || null,
+    client_time: new Date().toISOString(),
+  };
+}
+
+async function configureSyncServer({ serverUrl, branchId, syncApiKey } = {}) {
+  let normalizedUrl = String(serverUrl || '').trim();
+  if (!normalizedUrl) {
+    throw new Error('رابط السيرفر مطلوب');
+  }
+
+  if (!/^https?:\/\//i.test(normalizedUrl)) {
+    normalizedUrl = `http://${normalizedUrl}`;
+  }
+
+  try {
+    const parsed = new URL(normalizedUrl);
+    if (!parsed.port && parsed.protocol.startsWith('http')) {
+      parsed.port = '6253';
+      normalizedUrl = parsed.origin;
+    }
+  } catch {
+    // URL parsing fallback
+  }
+
+  normalizedUrl = normalizedUrl.replace(/\/+$/, '');
+
+  const effectiveKey = (syncApiKey && String(syncApiKey).trim()) || config.SYNC_API_KEY || '';
+
+  let testPingOk = false;
+  let testMessage = '';
+  let testReason = 'unreachable';
+  try {
+    const pingRes = await fetchWithTimeout(`${normalizedUrl}/api/sync/ping`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        ...(effectiveKey ? { 'x-sync-key': effectiveKey } : {}),
+      },
+    }, 8000);
+
+    if (pingRes.status === 200) {
+      testPingOk = true;
+      testReason = 'connected';
+      testMessage = 'تم الاتصال بالسيرفر المركزي بنجاح';
+    } else if (pingRes.status === 401 || pingRes.status === 403) {
+      testReason = 'auth_failed';
+      testMessage = 'السيرفر المركزي متاح لكن مفتاح المزامنة (SYNC_API_KEY) غير صالح';
+    } else if (pingRes.status === 503) {
+      testReason = 'server_db_down';
+      testMessage = 'السيرفر المركزي متاح لكن قاعدة بياناته غير متصلة';
+    } else {
+      testReason = 'server_error';
+      testMessage = `السيرفر أعاد رمز خطأ (${pingRes.status})`;
+    }
+  } catch (err) {
+    testReason = 'unreachable';
+    testMessage = err.message?.includes('timeout')
+      ? 'انتهت مهلة الاتصال بالرابط المحدد (تأكد من الـ IP وعمل الراوتر)'
+      : 'تعذر الاتصال بالرابط المحدد (تأكد من فتح المنفذ 6253 في الراوتر وصحة الرابط)';
+  }
+
+  config.SYNC_SERVER_URL = normalizedUrl;
+  process.env.SYNC_SERVER_URL = normalizedUrl;
+
+  const updates = {
+    SYNC_SERVER_URL: normalizedUrl,
+  };
+
+  if (branchId !== undefined && branchId !== null && String(branchId).trim() !== '') {
+    const cleanBranchId = String(branchId).trim();
+    config.BRANCH_ID = cleanBranchId;
+    process.env.BRANCH_ID = cleanBranchId;
+    updates.BRANCH_ID = cleanBranchId;
+  }
+
+  if (syncApiKey && String(syncApiKey).trim()) {
+    const cleanKey = String(syncApiKey).trim();
+    config.SYNC_API_KEY = cleanKey;
+    process.env.SYNC_API_KEY = cleanKey;
+    updates.SYNC_API_KEY = cleanKey;
+  }
+
+  cachedCentralConnectivity = {
+    checked_at: Date.now(),
+    online: testPingOk,
+    reason: testReason,
+    message: testMessage,
+  };
+
+  const dataEnv = path.join(config.dataDir, '.env');
+  saveEnvKeyValue(dataEnv, updates);
+
+  if (config.appRoot && config.appRoot !== config.dataDir) {
+    const appEnv = path.join(config.appRoot, '.env');
+    saveEnvKeyValue(appEnv, updates);
+  }
+
+  return {
+    ok: true,
+    server_url: normalizedUrl,
+    branch_id: config.BRANCH_ID,
+    test_ping: testPingOk,
+    connectivity_reason: testReason,
+    message: testPingOk
+      ? 'تم حفظ الإعدادات والاتصال بالسيرفر المركزي بنجاح! 🚀'
+      : `تم حفظ الإعدادات، ولكن: ${testMessage}`,
+  };
+}
+
 module.exports = {
   applyOperation,
   getSyncStatus,
   runSync,
   pruneSyncedQueue,
+  exportCatalogForBranch,
+  importCatalogIntoBranch,
+  pullCatalogFromCentral,
+  checkCentralConnectivity,
+  runSyncCycle,
+  startBackgroundSyncWorker,
+  getSyncDiagnostics,
+  configureSyncServer,
 };
+

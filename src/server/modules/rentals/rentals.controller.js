@@ -107,7 +107,16 @@ async function cancelRental(req, res, next) {
 
 async function returnRental(req, res, next) {
   try {
-    const result = await service.returnRental(req.params.id, req.body.fine_per_day, req.user);
+    const result = await service.returnRental(req.params.id, req.body, req.user, req);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function settleRentalPayment(req, res, next) {
+  try {
+    const result = await service.settleRentalPayment(req.params.id, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     next(err);
@@ -143,5 +152,6 @@ module.exports = {
   pickupRental,
   cancelRental,
   returnRental,
+  settleRentalPayment,
   sellRental,
 };

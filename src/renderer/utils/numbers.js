@@ -1,11 +1,14 @@
 export function formatCurrency(amount, currency = 'ج.م') {
-  const num = Number(amount || 0);
-  return `${num.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currency}`;
+  const parsed = Number(amount);
+  const num = Number.isFinite(parsed) ? parsed : 0;
+  const formatted = num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return num < 0 ? `\u200E${formatted} ${currency}` : `${formatted} ${currency}`;
 }
 
 export function formatNumber(num) {
-  const val = Number(num || 0);
-  return val.toLocaleString('ar-EG');
+  const parsed = Number(num);
+  const val = Number.isFinite(parsed) ? parsed : 0;
+  return val.toLocaleString('en-US');
 }
 
 export function clamp(value, min, max) {

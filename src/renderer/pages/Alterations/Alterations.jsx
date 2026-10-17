@@ -23,6 +23,7 @@ import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
+import { printElement } from '../../utils/print';
 import { Card, CardHeader } from '../../components/ui/Card';
 
 const STATUS_MAP = {
@@ -489,7 +490,7 @@ export function Alterations() {
                 variant="primary"
                 size="lg"
                 icon={Printer}
-                onClick={() => window.print()}
+                onClick={() => printElement('alteration-ticket', `تيكت تعديل #${selectedTicketAlt.id}`)}
                 className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
               >
                 طباعة التيكت

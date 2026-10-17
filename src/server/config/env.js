@@ -4,19 +4,50 @@ const fs = require('fs');
 // Determine env file path & persistent data directory
 const appRoot = process.env.APP_ROOT || path.resolve(__dirname, '../../../');
 const isPackaged = process.env.ELECTRON_RUN_AS_NODE === '1' && !fs.existsSync(path.join(appRoot, 'src'));
+
+// Read shipped template config if present
+let appEnvConfig = {};
+const appEnvPath = path.join(appRoot, '.env');
+if (fs.existsSync(appEnvPath)) {
+  try {
+    const dotenv = require('dotenv');
+    appEnvConfig = dotenv.parse(fs.readFileSync(appEnvPath, 'utf8'));
+  } catch {}
+}
+
+const isBranchApp = (appEnvConfig.APP_MODE === 'branch')
+  || (process.env.APP_MODE === 'branch')
+  || (process.env.BRANCH_MODE === 'branch');
+
+const appDataFolderName = isBranchApp ? 'Bebyoon Branch System' : 'Bebyoon System';
+
 const defaultDataDir = isPackaged
-  ? (process.env.ProgramData ? path.join(process.env.ProgramData, 'Bebyoon System') : path.join(appRoot, 'data'))
+  ? (process.env.ProgramData ? path.join(process.env.ProgramData, appDataFolderName) : path.join(appRoot, 'data'))
   : appRoot;
 const dataDir = process.env.DATA_DIR || defaultDataDir;
 
 const dataEnvPath = path.join(dataDir, '.env');
-const appEnvPath = path.join(appRoot, '.env');
 if (fs.existsSync(dataEnvPath)) {
   require('dotenv').config({ path: dataEnvPath });
 } else if (fs.existsSync(appEnvPath)) {
   require('dotenv').config({ path: appEnvPath });
 } else {
   require('dotenv').config();
+}
+
+// Fallback: If packaged branch app, ensure essential branch parameters take priority over any stale local defaults
+if (isBranchApp) {
+  process.env.APP_MODE = 'branch';
+  delete process.env.SYNC_TARGET;
+  if (appEnvConfig.SYNC_SERVER_URL && (!process.env.SYNC_SERVER_URL || process.env.SYNC_SERVER_URL.includes('localhost'))) {
+    process.env.SYNC_SERVER_URL = appEnvConfig.SYNC_SERVER_URL;
+  }
+  if (appEnvConfig.SYNC_API_KEY && !process.env.SYNC_API_KEY) {
+    process.env.SYNC_API_KEY = appEnvConfig.SYNC_API_KEY;
+  }
+  if (appEnvConfig.BRANCH_ID && !process.env.BRANCH_ID) {
+    process.env.BRANCH_ID = appEnvConfig.BRANCH_ID;
+  }
 }
 
 function boundedEnvInt(name, fallback, min, max) {
@@ -27,6 +58,10 @@ function boundedEnvInt(name, fallback, min, max) {
 
 const IS_BRANCH_MODE = String(process.env.APP_MODE || process.env.BRANCH_MODE || '').toLowerCase() === 'branch'
   || String(process.env.BRANCH_LOCAL || '').toLowerCase() === 'true';
+
+if (IS_BRANCH_MODE) {
+  delete process.env.SYNC_TARGET;
+}
 
 const IS_SYNC_TARGET = process.env.SYNC_TARGET === 'true';
 

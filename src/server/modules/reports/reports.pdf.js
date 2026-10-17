@@ -1,0 +1,1479 @@
+const fs = require('fs');
+const path = require('path');
+const { formatCairoDateTime } = require('./reports.helpers');
+
+let localFontCss = '';
+try {
+  const fontDir = path.resolve(__dirname, '../../../renderer/assets');
+  const regPath = path.join(fontDir, 'SLXgc1nY6HkvangtZmpQdkhzfH5lkSs2SgRjCAGMQ1z0hOA-W1Q.ttf');
+  const boldPath = path.join(fontDir, 'SLXgc1nY6HkvangtZmpQdkhzfH5lkSs2SgRjCAGMQ1z0hAc5W1Q.ttf');
+
+  if (fs.existsSync(regPath)) {
+    const regBase64 = fs.readFileSync(regPath).toString('base64');
+    localFontCss += `
+      @font-face {
+        font-family: 'Cairo';
+        font-style: normal;
+        font-weight: 400;
+        src: url(data:font/truetype;charset=utf-8;base64,${regBase64}) format('truetype');
+      }
+    `;
+  }
+  if (fs.existsSync(boldPath)) {
+    const boldBase64 = fs.readFileSync(boldPath).toString('base64');
+    localFontCss += `
+      @font-face {
+        font-family: 'Cairo';
+        font-style: normal;
+        font-weight: 700;
+        src: url(data:font/truetype;charset=utf-8;base64,${boldBase64}) format('truetype');
+      }
+    `;
+  }
+} catch {
+  // Graceful fallback to system and Google fonts
+}
+
+/**
+ * Standard CSS for all Printable / PDF documents with Cairo Arabic font & RTL layout
+ */
+const BASE_PRINT_CSS = `
+  ${localFontCss}
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+  
+  @page {
+    size: A4 portrait;
+    margin: 12mm 10mm 15mm 10mm;
+    @bottom-center {
+      content: "صفحة " counter(page) " من " counter(pages);
+      font-family: 'Cairo', Tahoma, sans-serif;
+      font-size: 9pt;
+      color: #64748b;
+    }
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    font-family: 'Cairo', Tahoma, 'Segoe UI', Arial, sans-serif;
+    direction: rtl;
+    text-align: right;
+    margin: 0;
+    padding: 0;
+    color: #0f172a;
+    background: #ffffff;
+    font-size: 10pt;
+    line-height: 1.4;
+  }
+
+  .header {
+    border-bottom: 2px solid #0f172a;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .title-area h1 {
+    margin: 0;
+    font-size: 18pt;
+    font-weight: 900;
+    color: #0f172a;
+  }
+
+  .title-area .subtitle {
+    margin: 4px 0 0 0;
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: #64748b;
+  }
+
+  .meta-badge {
+    text-align: left;
+    font-size: 8.5pt;
+    color: #475569;
+    font-weight: 600;
+  }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .kpi-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #f8fafc;
+  }
+
+  .kpi-card.highlight {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+  }
+
+  .kpi-title {
+    font-size: 8pt;
+    font-weight: 700;
+    color: #64748b;
+    margin-bottom: 4px;
+  }
+
+  .kpi-value {
+    font-size: 13pt;
+    font-weight: 900;
+    color: #0f172a;
+  }
+
+  .kpi-card.highlight .kpi-value {
+    color: #15803d;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 16px;
+    page-break-inside: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  th {
+    background-color: #1e293b !important;
+    color: #ffffff !important;
+    font-weight: 800;
+    font-size: 9pt;
+    padding: 8px 10px;
+    text-align: right;
+    border: 1px solid #0f172a;
+  }
+
+  th.center, td.center {
+    text-align: center;
+  }
+
+  th.num, td.num {
+    text-align: left;
+    direction: ltr;
+    font-family: 'Cairo', Tahoma, sans-serif;
+  }
+
+  td {
+    padding: 6px 10px;
+    border: 1px solid #e2e8f0;
+    font-size: 8.5pt;
+    font-weight: 600;
+  }
+
+  tbody tr:nth-child(even) {
+    background-color: #f8fafc;
+  }
+
+  tfoot tr td {
+    font-weight: 900;
+    background-color: #f1f5f9;
+    border-top: 2px solid #0f172a;
+    border-bottom: 2px solid #0f172a;
+    font-size: 9pt;
+  }
+
+  .footer {
+    margin-top: 20px;
+    border-top: 1px solid #cbd5e1;
+    padding-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 8pt;
+    color: #64748b;
+  }
+
+  @media print {
+    body {
+      padding: 0;
+    }
+    .no-print {
+      display: none !important;
+    }
+  }
+`;
+
+function wrapHtml(title, bodyContent) {
+  return `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  <style>${BASE_PRINT_CSS}</style>
+</head>
+<body>
+  ${bodyContent}
+</body>
+</html>`;
+}
+
+function formatMoney(amount) {
+  const parsed = Number(amount);
+  const num = Number.isFinite(parsed) ? parsed : 0;
+  const formatted = num.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return num < 0 ? `\u200E${formatted} ج.م` : `${formatted} ج.م`;
+}
+
+/**
+ * 1. Daily Reports History PDF HTML
+ */
+function generateDailyHistoryPdfHtml(historyRows, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || 'آخر 30 يوماً';
+  const cairoTime = formatCairoDateTime();
+
+  let totalSales = 0;
+  let totalRentals = 0;
+  let totalTailoring = 0;
+  let totalRev = 0;
+  let totalExp = 0;
+  let totalSal = 0;
+  let totalCogs = 0;
+  let totalProfit = 0;
+
+  const tableRows = historyRows.map((item, idx) => {
+    const sales = Number(item.sales ?? item.sales_revenue ?? 0);
+    const rentals = Number(item.rentals ?? item.rental_revenue ?? 0);
+    const tailoring = Number(item.tailoring ?? item.tailoring_revenue ?? 0);
+    const revenue = Number(item.revenue ?? (sales + rentals + tailoring));
+    const expenses = Number(item.expenses ?? 0);
+    const salaries = Number(item.salaries ?? 0);
+    const cogs = Number(item.cogs ?? 0);
+    const profit = Number(item.profit ?? item.net_profit ?? (revenue - expenses - salaries - cogs));
+
+    totalSales += sales;
+    totalRentals += rentals;
+    totalTailoring += tailoring;
+    totalRev += revenue;
+    totalExp += expenses;
+    totalSal += salaries;
+    totalCogs += cogs;
+    totalProfit += profit;
+
+    return `
+      <tr>
+        <td class="center font-mono">${item.date || '-'}</td>
+        <td class="num">${formatMoney(sales)}</td>
+        <td class="num">${formatMoney(rentals)}</td>
+        <td class="num">${formatMoney(tailoring)}</td>
+        <td class="num font-bold">${formatMoney(revenue)}</td>
+        <td class="num text-rose-600">${formatMoney(expenses)}</td>
+        <td class="num">${formatMoney(salaries)}</td>
+        <td class="num">${formatMoney(cogs)}</td>
+        <td class="num font-black" style="color: ${profit >= 0 ? '#15803d' : '#e11d48'};">${formatMoney(profit)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير حركة الإيرادات والمصروفات اليومية</h1>
+        <div class="subtitle">نظام الوزير لإدارة المبيعات والتأجير والأنشطة التجارية</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي المبيعات</div>
+        <div class="kpi-value">${formatMoney(totalSales)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي التأجير والتفصيل</div>
+        <div class="kpi-value">${formatMoney(totalRentals + totalTailoring)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المصروفات والرواتب</div>
+        <div class="kpi-value">${formatMoney(totalExp + totalSal)}</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-title">صافي الأرباح</div>
+        <div class="kpi-value">${formatMoney(totalProfit)}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 12%;">التاريخ</th>
+          <th class="center" style="width: 11%;">مبيعات الكاشير</th>
+          <th class="center" style="width: 11%;">التأجير</th>
+          <th class="center" style="width: 11%;">التفصيل</th>
+          <th class="center" style="width: 11%;">إجمالي الإيرادات</th>
+          <th class="center" style="width: 11%;">المصروفات</th>
+          <th class="center" style="width: 11%;">الرواتب</th>
+          <th class="center" style="width: 11%;">تكلفة البضاعة</th>
+          <th class="center" style="width: 11%;">صافي الربح</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="9" class="center">لا توجد سجلات في هذه الفترة</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td class="center font-black">الإجمالي</td>
+          <td class="num font-black">${formatMoney(totalSales)}</td>
+          <td class="num font-black">${formatMoney(totalRentals)}</td>
+          <td class="num font-black">${formatMoney(totalTailoring)}</td>
+          <td class="num font-black">${formatMoney(totalRev)}</td>
+          <td class="num font-black">${formatMoney(totalExp)}</td>
+          <td class="num font-black">${formatMoney(totalSal)}</td>
+          <td class="num font-black">${formatMoney(totalCogs)}</td>
+          <td class="num font-black">${formatMoney(totalProfit)}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>تم إنشاء هذا التقرير آلياً بواسطة نظام الوزير (Bebyoon System)</div>
+      <div>صفحة 1 من 1</div>
+    </div>
+  `;
+
+  return wrapHtml('تقرير حركة الإيرادات اليومية', bodyContent);
+}
+
+/**
+ * 2. Monthly Financial Overview PDF HTML
+ */
+function generateMonthlyHistoryPdfHtml(monthlyRows, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || 'آخر 12 شهراً';
+  const cairoTime = formatCairoDateTime();
+
+  let totalSales = 0;
+  let totalRentals = 0;
+  let totalTailoring = 0;
+  let totalRev = 0;
+  let totalExp = 0;
+  let totalSal = 0;
+  let totalCogs = 0;
+  let totalProfit = 0;
+
+  const tableRows = monthlyRows.map((m) => {
+    const sales = Number(m.sales ?? m.sales_revenue ?? 0);
+    const rentals = Number(m.rentals ?? m.rental_revenue ?? 0);
+    const tailoring = Number(m.tailoring ?? m.tailoring_revenue ?? 0);
+    const revenue = Number(m.revenue ?? (sales + rentals + tailoring));
+    const expenses = Number(m.expenses ?? 0);
+    const salaries = Number(m.salaries ?? 0);
+    const cogs = Number(m.cogs ?? 0);
+    const profit = Number(m.profit ?? m.net_profit ?? (revenue - expenses - salaries - cogs));
+
+    totalSales += sales;
+    totalRentals += rentals;
+    totalTailoring += tailoring;
+    totalRev += revenue;
+    totalExp += expenses;
+    totalSal += salaries;
+    totalCogs += cogs;
+    totalProfit += profit;
+
+    return `
+      <tr>
+        <td class="center font-mono font-bold">${m.month || '-'}</td>
+        <td class="num">${formatMoney(sales)}</td>
+        <td class="num">${formatMoney(rentals)}</td>
+        <td class="num">${formatMoney(tailoring)}</td>
+        <td class="num font-bold">${formatMoney(revenue)}</td>
+        <td class="num text-rose-600">${formatMoney(expenses)}</td>
+        <td class="num">${formatMoney(salaries)}</td>
+        <td class="num">${formatMoney(cogs)}</td>
+        <td class="num font-black" style="color: ${profit >= 0 ? '#15803d' : '#e11d48'};">${formatMoney(profit)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>التقرير المالي وحركة الأرباح الشهرية</h1>
+        <div class="subtitle">مقارنة الإيرادات والمصروفات وصافي الأرباح شهرياً</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي المبيعات السنوية</div>
+        <div class="kpi-value">${formatMoney(totalSales)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي التأجير والتفصيل</div>
+        <div class="kpi-value">${formatMoney(totalRentals + totalTailoring)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المصروفات والرواتب</div>
+        <div class="kpi-value">${formatMoney(totalExp + totalSal)}</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-title">صافي الأرباح المحققة</div>
+        <div class="kpi-value">${formatMoney(totalProfit)}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 12%;">الشهر</th>
+          <th class="center" style="width: 11%;">مبيعات الكاشير</th>
+          <th class="center" style="width: 11%;">التأجير</th>
+          <th class="center" style="width: 11%;">التفصيل</th>
+          <th class="center" style="width: 11%;">إجمالي الإيرادات</th>
+          <th class="center" style="width: 11%;">المصروفات</th>
+          <th class="center" style="width: 11%;">الرواتب</th>
+          <th class="center" style="width: 11%;">تكلفة البضاعة</th>
+          <th class="center" style="width: 11%;">صافي الربح</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="9" class="center">لا تتوفر بيانات للأشهر السابقة</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td class="center font-black">الإجمالي</td>
+          <td class="num font-black">${formatMoney(totalSales)}</td>
+          <td class="num font-black">${formatMoney(totalRentals)}</td>
+          <td class="num font-black">${formatMoney(totalTailoring)}</td>
+          <td class="num font-black">${formatMoney(totalRev)}</td>
+          <td class="num font-black">${formatMoney(totalExp)}</td>
+          <td class="num font-black">${formatMoney(totalSal)}</td>
+          <td class="num font-black">${formatMoney(totalCogs)}</td>
+          <td class="num font-black">${formatMoney(totalProfit)}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>نظام الوزير المحاسبي المتكامل - فرع ${branchName}</div>
+      <div>وثيقة مالية معتمدة</div>
+    </div>
+  `;
+
+  return wrapHtml('التقرير المالي الشهري', bodyContent);
+}
+
+/**
+ * 3. Profit & Loss Statement PDF HTML
+ */
+function generateProfitReportPdfHtml(profitReport, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || profitReport.month || '-';
+  const cairoTime = formatCairoDateTime();
+  const summary = profitReport.summary || profitReport;
+
+  const totalRev = Number(summary.total_revenue || summary.revenue || 0);
+  const cogs = Number(summary.cogs || 0);
+  const grossProfit = Number(summary.gross_profit || (totalRev - cogs));
+  const expenses = Number(summary.expenses || 0);
+  const salaries = Number(summary.total_salaries_paid || summary.salaries || 0);
+  const netProfit = Number(summary.net_profit || 0);
+  const margin = totalRev > 0 ? ((netProfit / totalRev) * 100).toFixed(1) : '0.0';
+  const cashDrawer = Number(summary.cash_drawer || 0);
+
+  const branchRows = (profitReport.branch_reports || []).map((b) => `
+    <tr>
+      <td class="font-bold">${b.branch_name || `فرع #${b.branch_id}`}</td>
+      <td class="num">${formatMoney(b.total_sales)}</td>
+      <td class="num">${formatMoney(b.total_rentals)}</td>
+      <td class="num">${formatMoney(b.total_tailoring)}</td>
+      <td class="num font-bold">${formatMoney(b.total_revenue)}</td>
+      <td class="num">${formatMoney(b.cogs)}</td>
+      <td class="num text-rose-600">${formatMoney(b.expenses)}</td>
+      <td class="num">${formatMoney(b.total_salaries_paid)}</td>
+      <td class="num font-black" style="color: ${b.net_profit >= 0 ? '#15803d' : '#e11d48'};">${formatMoney(b.net_profit)}</td>
+      <td class="num font-bold" style="color: #0369a1;">${formatMoney(b.cash_drawer)}</td>
+    </tr>
+  `).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>قائمة الدخل والأرباح والخسائر الشاملة</h1>
+        <div class="subtitle">بيان الإيرادات والتكاليف والمصروفات وصافي العائد التجاري</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي الإيرادات الكلية</div>
+        <div class="kpi-value">${formatMoney(totalRev)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">تكلفة البضاعة المباعة (COGS)</div>
+        <div class="kpi-value">${formatMoney(cogs)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المصروفات والرواتب المدفوعة</div>
+        <div class="kpi-value">${formatMoney(expenses + salaries)}</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-title">صافي الربح (\u200E${margin}%)</div>
+        <div class="kpi-value">${formatMoney(netProfit)}</div>
+      </div>
+    </div>
+
+    <h2 style="font-size: 12pt; margin: 16px 0 8px 0; color: #1e293b;">1. تفصيل بنود الأرباح والخسائر</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 60%;">البند المالي</th>
+          <th class="center" style="width: 40%;">المبلغ المحقق (ج.م)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>مبيعات الكاشير والطلبات</td>
+          <td class="num">${formatMoney(summary.total_sales)}</td>
+        </tr>
+        <tr>
+          <td>متحصلات عقود التأجير وغرامات التأخير</td>
+          <td class="num">${formatMoney(summary.total_rentals)}</td>
+        </tr>
+        <tr>
+          <td>متحصلات خدمات التفصيل والتعديلات</td>
+          <td class="num">${formatMoney(summary.total_tailoring)}</td>
+        </tr>
+        <tr style="background: #f1f5f9; font-weight: bold;">
+          <td><strong>إجمالي الإيرادات التجارية</strong></td>
+          <td class="num font-black">${formatMoney(totalRev)}</td>
+        </tr>
+        <tr>
+          <td>تكلفة البضاعة المباعة (سعر التكلفة للمخزون)</td>
+          <td class="num font-bold text-rose-600">- ${formatMoney(cogs)}</td>
+        </tr>
+        <tr style="background: #e2e8f0; font-weight: bold;">
+          <td><strong>مجمل الربح (Gross Profit)</strong></td>
+          <td class="num font-black">${formatMoney(grossProfit)}</td>
+        </tr>
+        <tr>
+          <td>المصروفات التشغيلية والنثريات العامة</td>
+          <td class="num text-rose-600">- ${formatMoney(expenses)}</td>
+        </tr>
+        <tr>
+          <td>الرواتب الشهرية والمسحوبات المدفوعة للعاملين</td>
+          <td class="num text-rose-600">- ${formatMoney(salaries)}</td>
+        </tr>
+        <tr style="background: #dcfce7; font-weight: bold;">
+          <td><strong>صافي الربح النهائي (Net Profit)</strong></td>
+          <td class="num font-black" style="color: #15803d; font-size: 11pt;">${formatMoney(netProfit)}</td>
+        </tr>
+        <tr>
+          <td>المبلغ المحصّل بالدرج (كاش فعلي بعد المصروفات)</td>
+          <td class="num font-black" style="color: #0369a1;">${formatMoney(cashDrawer)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    ${branchRows ? `
+      <h2 style="font-size: 12pt; margin: 24px 0 8px 0; color: #1e293b;">2. مقارنة أداء الفروع</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>الفرع</th>
+            <th class="center">المبيعات</th>
+            <th class="center">التأجير</th>
+            <th class="center">التفصيل</th>
+            <th class="center">الإيرادات</th>
+            <th class="center">التكلفة</th>
+            <th class="center">المصروفات</th>
+            <th class="center">الرواتب</th>
+            <th class="center">صافي الربح</th>
+            <th class="center">كاش الدرج</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${branchRows}
+        </tbody>
+      </table>
+    ` : ''}
+
+    <div class="footer">
+      <div>تقرير مالي تفصيلي - نظام الوزير</div>
+      <div>صفحة 1 من 1</div>
+    </div>
+  `;
+
+  return wrapHtml('تقرير الأرباح والخسائر', bodyContent);
+}
+
+/**
+ * 4. Top Selling Products PDF HTML
+ */
+function generateTopProductsPdfHtml(products, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || 'جميع الفترات';
+  const cairoTime = formatCairoDateTime();
+
+  const productList = Array.isArray(products)
+    ? products
+    : (products?.products || products?.top_sales || []);
+
+  let totalQty = 0;
+  let totalRevenue = 0;
+
+  const tableRows = productList.map((p, idx) => {
+    const qty = Number(p.quantity_sold ?? p.total_sold ?? p.quantity ?? 0);
+    const rev = Number(p.total_revenue ?? p.revenue ?? 0);
+    totalQty += qty;
+    totalRevenue += rev;
+
+    return `
+      <tr>
+        <td class="center font-bold text-slate-400">${idx + 1}</td>
+        <td class="font-bold">${p.name || '-'}</td>
+        <td class="center font-mono">${p.barcode ? '#' + p.barcode : '-'}</td>
+        <td class="center">${p.category || 'عام'}</td>
+        <td class="center">${p.branch_name || '-'}</td>
+        <td class="center font-black" style="color: #4338ca;">${qty} قطعة</td>
+        <td class="num font-black" style="color: #15803d;">${formatMoney(rev)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير المنتجات الأكثر طلباً ومبيعاً</h1>
+        <div class="subtitle">ترتيب المنتجات المحققة لأعلى عائد كمي ومالي</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">عدد المنتجات بالتقرير</div>
+        <div class="kpi-value">${productList.length}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي القطع المباعة</div>
+        <div class="kpi-value">${totalQty} قطعة</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي العائد المحقق</div>
+        <div class="kpi-value">${formatMoney(totalRevenue)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">متوسط سعر القطعة المباعة</div>
+        <div class="kpi-value">${totalQty > 0 ? formatMoney(totalRevenue / totalQty) : '0.00 ج.م'}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 6%;">#</th>
+          <th style="width: 30%;">اسم المنتج</th>
+          <th class="center" style="width: 14%;">الباركود</th>
+          <th class="center" style="width: 14%;">القسم</th>
+          <th class="center" style="width: 14%;">الفرع</th>
+          <th class="center" style="width: 10%;">الكمية المباعة</th>
+          <th class="center" style="width: 12%;">إجمالي الإيرادات</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="7" class="center">لا تتوفر مبيعات بالتقرير</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="5" class="center font-black">الإجمالي الكلي</td>
+          <td class="center font-black" style="color: #4338ca;">${totalQty} قطعة</td>
+          <td class="num font-black" style="color: #15803d;">${formatMoney(totalRevenue)}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>تقرير تحليلي للمبيعات - نظام الوزير</div>
+      <div>صفحة 1 من 1</div>
+    </div>
+  `;
+
+  return wrapHtml('المنتجات الأكثر مبيعاً', bodyContent);
+}
+
+/**
+ * 5. Daily Details PDF HTML (Invoices, Cash, Branches)
+ */
+function generateDailyDetailsPdfHtml(dailyData, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const dateStr = options.date || dailyData.date || '-';
+  const cairoTime = formatCairoDateTime();
+
+  const branchSales = dailyData.branch_sales || [];
+  const salesInvoices = dailyData.sales_invoices || [];
+  const rentalInvoices = dailyData.rental_invoices || [];
+
+  const bRows = branchSales.map((b) => `
+    <tr>
+      <td class="font-bold">${b.branch_name || '-'}</td>
+      <td class="num">${formatMoney(b.total_sales)}</td>
+      <td class="num">${formatMoney(b.total_rentals)}</td>
+      <td class="num">${formatMoney(b.total_tailoring)}</td>
+      <td class="num font-bold">${formatMoney(b.total_revenue)}</td>
+      <td class="num text-rose-600">${formatMoney(b.expenses)}</td>
+      <td class="num font-black" style="color: #0369a1;">${formatMoney(b.cash_drawer || b.cash_in_drawer || b.net_cash)}</td>
+    </tr>
+  `).join('');
+
+  const invRows = salesInvoices.slice(0, 100).map((inv) => `
+    <tr>
+      <td class="center font-mono font-bold">#${inv.invoice_number || '-'}</td>
+      <td class="center font-mono">${inv.created_date || '-'}</td>
+      <td>${inv.cashier_name || '-'}</td>
+      <td class="center">${inv.payment_method === 'cash' ? 'نقدي' : (inv.payment_method === 'visa' ? 'فيزا' : inv.payment_method || '-')}</td>
+      <td class="num font-bold">${formatMoney(inv.amount)}</td>
+      <td class="num">${formatMoney(inv.paid_amount)}</td>
+      <td class="num text-rose-600">${formatMoney(inv.remainder)}</td>
+    </tr>
+  `).join('');
+
+  const rRows = rentalInvoices.slice(0, 100).map((r) => {
+    const rem = Number(r.remainder || r.remaining || 0);
+    const statusLabel = r.status === 'returned'
+      ? (rem > 0 ? 'مرتجع (غير خالص / عليه متبقي)' : 'تم الإرجاع (خالص)')
+      : (r.status === 'active' ? 'تم الاستلام' : (r.status === 'booked' ? 'محجوزة' : (r.status || '-')));
+
+    return `
+      <tr>
+        <td class="center font-mono font-bold">#${r.invoice_number || r.id || '-'}</td>
+        <td class="center font-mono">${r.created_date || r.booking_date || '-'}</td>
+        <td>${r.cashier_name || '-'}</td>
+        <td class="center">${r.payment_method === 'cash' ? 'نقدي' : (r.payment_method || '-')}</td>
+        <td class="num font-bold">${formatMoney(r.amount || r.total_price)}</td>
+        <td class="num">${formatMoney(r.paid_amount || r.deposit)}</td>
+        <td class="num text-rose-600">${formatMoney(rem)}</td>
+        <td class="center font-bold" style="font-size: 8pt; color: ${r.status === 'returned' ? (rem > 0 ? '#d97706' : '#15803d') : '#475569'};">${statusLabel}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير حركة اليوم المفصل</h1>
+        <div class="subtitle">بيان مبيعات الكاشير وعقود التأجير وحركة الدرج النقدي ليوم: ${dateStr}</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>النطاق:</strong> ${branchName}</div>
+        <div><strong>اليوم:</strong> ${dateStr}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <h2 style="font-size: 11pt; margin: 12px 0 6px 0; color: #1e293b;">1. ملخص الفروع وحركة الدرج</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>الفرع</th>
+          <th class="center">مبيعات الكاشير</th>
+          <th class="center">متحصلات التأجير</th>
+          <th class="center">متحصلات التفصيل</th>
+          <th class="center">إجمالي الإيرادات</th>
+          <th class="center">المصروفات</th>
+          <th class="center">صافي الكاش بالدرج</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${bRows || '<tr><td colspan="7" class="center">لا تتوفر حركات مسجلة لهذا اليوم</td></tr>'}
+      </tbody>
+    </table>
+
+    ${salesInvoices.length > 0 ? `
+      <h2 style="font-size: 11pt; margin: 20px 0 6px 0; color: #1e293b;">2. فواتير المبيعات المسجلة اليوم (${salesInvoices.length} فاتورة)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="center" style="width: 12%;">رقم الفاتورة</th>
+            <th class="center" style="width: 18%;">الوقت</th>
+            <th style="width: 20%;">الكاشير / البائع</th>
+            <th class="center" style="width: 14%;">طريقة الدفع</th>
+            <th class="center" style="width: 12%;">الإجمالي</th>
+            <th class="center" style="width: 12%;">المدفوع</th>
+            <th class="center" style="width: 12%;">المتبقي</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${invRows}
+        </tbody>
+      </table>
+    ` : ''}
+
+    ${rentalInvoices.length > 0 ? `
+      <h2 style="font-size: 11pt; margin: 20px 0 6px 0; color: #1e293b;">3. عقود التأجير المسجلة اليوم (${rentalInvoices.length} عقد)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="center" style="width: 10%;">رقم العقد</th>
+            <th class="center" style="width: 16%;">الوقت</th>
+            <th style="width: 18%;">المسؤول</th>
+            <th class="center" style="width: 12%;">طريقة الدفع</th>
+            <th class="center" style="width: 11%;">الإجمالي</th>
+            <th class="center" style="width: 11%;">العربون</th>
+            <th class="center" style="width: 11%;">المتبقي</th>
+            <th class="center" style="width: 11%;">الحالة</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rRows}
+        </tbody>
+      </table>
+    ` : ''}
+
+    <div class="footer">
+      <div>تقرير الإغلاق اليومي - نظام الوزير للمبيعات والتأجير</div>
+      <div>صفحة 1 من 1</div>
+    </div>
+  `;
+
+  return wrapHtml(`تقرير اليوم المفصل - ${dateStr}`, bodyContent);
+}
+
+/**
+ * 6. Sales Invoices PDF HTML
+ */
+function generateSalesPdfHtml(salesData, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || (salesData.date_from && salesData.date_to ? `${salesData.date_from} إلى ${salesData.date_to}` : '-');
+  const cairoTime = formatCairoDateTime();
+
+  const orders = Array.isArray(salesData.orders) ? salesData.orders : [];
+  const summary = salesData.summary || {};
+
+  let totalAmount = 0;
+  let totalPaid = 0;
+  let totalRemainder = 0;
+
+  const rowsHtml = orders.map((o) => {
+    const amount = Number(o.total_amount || 0);
+    const paid = Number(o.paid_amount || 0);
+    const remainder = Number(o.remainder || 0);
+
+    totalAmount += amount;
+    totalPaid += paid;
+    totalRemainder += remainder;
+
+    const pMethod = o.payment_method === 'cash' ? 'نقدي' : (o.payment_method === 'visa' ? 'فيزا' : (o.payment_method || '-'));
+    const statusLabel = o.status === 'completed'
+      ? 'مكتملة'
+      : o.status === 'partially_returned'
+      ? 'مرتجع جزئياً'
+      : o.status === 'returned'
+      ? 'مرتجع بالكامل'
+      : o.status === 'cancelled'
+      ? 'ملغاة'
+      : (o.status || '-');
+
+    return `
+      <tr>
+        <td class="center font-bold">#${o.invoice_number || o.id || '-'}</td>
+        <td class="center">${o.created_at_formatted || o.order_date || '-'}</td>
+        <td>${o.customer_name || 'عميل نقدي'}</td>
+        <td class="center">${o.customer_phone || '-'}</td>
+        <td>${o.cashier_name || '-'}</td>
+        <td class="center">${pMethod}</td>
+        <td>${o.product_names || (o.items_count ? `${o.items_count} صنف` : '-')}</td>
+        <td class="num">${formatMoney(amount)}</td>
+        <td class="num text-emerald-600">${formatMoney(paid)}</td>
+        <td class="num text-rose-600">${formatMoney(remainder)}</td>
+        <td class="center">${statusLabel}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير فواتير ومتحصلات المبيعات</h1>
+        <div class="subtitle">سجل تفصيلي بحركات البيع والمتحصلات والمتبقيات</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>الفرع / النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">عدد الفواتير</div>
+        <div class="kpi-value">${Number(summary.total_orders || orders.length).toLocaleString('en-US')}</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي المبيعات</div>
+        <div class="kpi-value">${formatMoney(summary.total_amount || totalAmount)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المحصل نقداً</div>
+        <div class="kpi-value">${formatMoney(summary.cash_paid || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المحصل فيزا</div>
+        <div class="kpi-value">${formatMoney(summary.visa_paid || 0)}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 8%;">رقم الفاتورة</th>
+          <th class="center" style="width: 13%;">الوقت والتاريخ</th>
+          <th style="width: 14%;">العميل</th>
+          <th class="center" style="width: 10%;">الهاتف</th>
+          <th style="width: 11%;">الكاشير</th>
+          <th class="center" style="width: 7%;">الدفع</th>
+          <th style="width: 17%;">المنتجات / الأصناف</th>
+          <th class="num" style="width: 8%;">الإجمالي</th>
+          <th class="num" style="width: 8%;">المدفوع</th>
+          <th class="num" style="width: 8%;">المتبقي</th>
+          <th class="center" style="width: 8%;">الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml || '<tr><td colspan="11" class="center">لا تتوفر فواتير مبيعات في هذه الفترة</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="7" class="font-bold">الإجمالي العام</td>
+          <td class="num">${formatMoney(totalAmount)}</td>
+          <td class="num text-emerald-600">${formatMoney(totalPaid)}</td>
+          <td class="num text-rose-600">${formatMoney(totalRemainder)}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>تقرير فواتير المبيعات - نظام الوزير للمبيعات والتأجير</div>
+      <div>تقرير رسمي صادر من النظام الآلي</div>
+    </div>
+  `;
+
+  return wrapHtml(`تقرير فواتير المبيعات - ${period}`, bodyContent);
+}
+
+/**
+ * 7. Rentals Report PDF HTML
+ */
+function generateRentalsPdfHtml(rentalsData, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || (rentalsData.date_from && rentalsData.date_to ? `${rentalsData.date_from} إلى ${rentalsData.date_to}` : '-');
+  const cairoTime = formatCairoDateTime();
+
+  const rentals = Array.isArray(rentalsData.rentals) ? rentalsData.rentals : [];
+  const summary = rentalsData.summary || {};
+
+  let totalPrice = 0;
+  let totalDeposit = 0;
+  let totalRemaining = 0;
+  let totalFines = 0;
+
+  const rowsHtml = rentals.map((r) => {
+    const price = Number(r.total_price || 0);
+    const deposit = Number(r.deposit || 0);
+    const remaining = Number(r.remaining || 0);
+    const fine = Number(r.fine_amount || 0);
+
+    totalPrice += price;
+    totalDeposit += deposit;
+    totalRemaining += remaining;
+    totalFines += fine;
+
+    const statusLabel = r.status === 'returned'
+      ? (remaining > 0 ? 'مرتجع (غير خالص / عليه متبقي)' : 'تم الإرجاع (خالص)')
+      : (r.status === 'active' ? 'تم الاستلام' : (r.status === 'booked' ? 'محجوزة' : (r.status === 'sold' ? 'محولة لبيع' : (r.status === 'cancelled' ? 'ملغي' : (r.status || '-')))));
+
+    return `
+      <tr>
+        <td class="center font-bold">#${r.id}</td>
+        <td>${r.item_name || '-'}</td>
+        <td>${r.customer_name || '-'}</td>
+        <td class="center">${r.booking_date || '-'}</td>
+        <td class="center">${r.return_date || '-'}</td>
+        <td class="num">${formatMoney(price)}</td>
+        <td class="num text-emerald-600">${formatMoney(deposit)}</td>
+        <td class="num text-rose-600">${formatMoney(remaining)}</td>
+        <td class="num">${fine > 0 ? formatMoney(fine) : '-'}</td>
+        <td class="center">${statusLabel}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير عقود وتأجيرات الفروع</h1>
+        <div class="subtitle">سجل عقود التأجير والعربونات والمتبقيات والغرامات</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>الفرع / النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي العقود</div>
+        <div class="kpi-value">${Number(summary.total_rentals || rentals.length).toLocaleString('en-US')}</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي قيمة العقود</div>
+        <div class="kpi-value">${formatMoney(summary.total_price || totalPrice)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">العربونات المسددة</div>
+        <div class="kpi-value">${formatMoney(summary.total_deposit || totalDeposit)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المتبقي للتحصيل</div>
+        <div class="kpi-value text-rose-600">${formatMoney(summary.total_remaining || totalRemaining)}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 8%;">رقم العقد</th>
+          <th style="width: 18%;">المنتج / الفستان</th>
+          <th style="width: 16%;">العميل</th>
+          <th class="center" style="width: 10%;">تاريخ الحجز</th>
+          <th class="center" style="width: 10%;">تاريخ الإرجاع</th>
+          <th class="num" style="width: 10%;">الإجمالي</th>
+          <th class="num" style="width: 10%;">العربون</th>
+          <th class="num" style="width: 10%;">المتبقي</th>
+          <th class="num" style="width: 8%;">الغرامة</th>
+          <th class="center" style="width: 10%;">الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml || '<tr><td colspan="10" class="center">لا تتوفر عقود تأجير في هذه الفترة</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="5" class="font-bold">الإجمالي العام</td>
+          <td class="num">${formatMoney(totalPrice)}</td>
+          <td class="num text-emerald-600">${formatMoney(totalDeposit)}</td>
+          <td class="num text-rose-600">${formatMoney(totalRemaining)}</td>
+          <td class="num">${formatMoney(totalFines)}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>تقرير عقود التأجير - نظام الوزير للمبيعات والتأجير</div>
+      <div>تقرير رسمي صادر من النظام الآلي</div>
+    </div>
+  `;
+
+  return wrapHtml(`تقرير عقود التأجير - ${period}`, bodyContent);
+}
+
+/**
+ * 8. Expenses Report PDF HTML
+ */
+function generateExpensesPdfHtml(expensesData, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || (expensesData.date_from && expensesData.date_to ? `${expensesData.date_from} إلى ${expensesData.date_to}` : '-');
+  const cairoTime = formatCairoDateTime();
+
+  const expenses = Array.isArray(expensesData.expenses) ? expensesData.expenses : [];
+  const summary = expensesData.summary || {};
+  const categories = Array.isArray(expensesData.categories) ? expensesData.categories : [];
+
+  let totalAmount = 0;
+  const rowsHtml = expenses.map((e) => {
+    const amount = Number(e.amount || 0);
+    totalAmount += amount;
+
+    return `
+      <tr>
+        <td class="center font-bold">#${e.id}</td>
+        <td class="center">${e.expense_date || '-'}</td>
+        <td class="font-bold">${e.category || 'عام'}</td>
+        <td>${e.notes || '-'}</td>
+        <td class="center">${e.branch_name || '-'}</td>
+        <td class="num font-bold text-rose-600">${formatMoney(amount)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const catRowsHtml = categories.map((c) => {
+    const catAmt = Number(c.total_amount || 0);
+    const grand = Number(summary.total_amount || totalAmount || 1);
+    const pct = ((catAmt / grand) * 100).toFixed(1);
+    return `
+      <tr>
+        <td class="font-bold">${c.category || 'غير محدد'}</td>
+        <td class="center">${c.count || 0}</td>
+        <td class="num">${formatMoney(catAmt)}</td>
+        <td class="center">${pct}%</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير المصروفات والنثريات التشغيلية</h1>
+        <div class="subtitle">سجل تفصيلي بالمصروفات وبنود الإنفاق التشغيلي</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>الفرع / النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">عدد سندات الصرف</div>
+        <div class="kpi-value">${Number(summary.total_count || expenses.length).toLocaleString('en-US')}</div>
+      </div>
+      <div class="kpi-card highlight" style="background: #fff1f2; border-color: #fecdd3;">
+        <div class="kpi-title">إجمالي المصروفات</div>
+        <div class="kpi-value text-rose-600">${formatMoney(summary.total_amount || totalAmount)}</div>
+      </div>
+    </div>
+
+    ${categories.length > 0 ? `
+      <h2 style="font-size: 11pt; margin: 15px 0 6px 0; color: #1e293b;">1. توزيع المصروفات حسب التصنيف</h2>
+      <table style="width: 70%; margin-bottom: 20px;">
+        <thead>
+          <tr>
+            <th>التصنيف</th>
+            <th class="center" style="width: 20%;">عدد الحركات</th>
+            <th class="num" style="width: 30%;">المبلغ</th>
+            <th class="center" style="width: 15%;">النسبة</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${catRowsHtml}
+        </tbody>
+      </table>
+    ` : ''}
+
+    <h2 style="font-size: 11pt; margin: 15px 0 6px 0; color: #1e293b;">2. سجل سندات الصرف المفصل</h2>
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 10%;">رقم السند</th>
+          <th class="center" style="width: 14%;">التاريخ</th>
+          <th style="width: 18%;">التصنيف</th>
+          <th style="width: 32%;">البيان / الملاحظات</th>
+          <th class="center" style="width: 12%;">الفرع</th>
+          <th class="num" style="width: 14%;">المبلغ</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml || '<tr><td colspan="6" class="center">لا تتوفر مصروفات في هذه الفترة</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="5" class="font-bold">إجمالي المصروفات</td>
+          <td class="num text-rose-600">${formatMoney(totalAmount)}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>تقرير المصروفات - نظام الوزير للمبيعات والتأجير</div>
+      <div>تقرير رسمي صادر من النظام الآلي</div>
+    </div>
+  `;
+
+  return wrapHtml(`تقرير المصروفات - ${period}`, bodyContent);
+}
+
+/**
+ * 9. Financial Summary PDF HTML
+ */
+function generateSummaryPdfHtml(summaryData, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const period = options.period || (summaryData.date_from && summaryData.date_to ? `${summaryData.date_from} إلى ${summaryData.date_to}` : (summaryData.month || '-'));
+  const cairoTime = formatCairoDateTime();
+
+  const rev = Number(summaryData.revenue || summaryData.total_revenue || 0);
+  const cogs = Number(summaryData.cogs || 0);
+  const gp = Number(summaryData.gross_profit || (rev - cogs));
+  const exp = Number(summaryData.expenses || 0);
+  const sal = Number(summaryData.salaries || summaryData.total_salaries_paid || 0);
+  const np = Number(summaryData.net_profit || (gp - exp - sal));
+  const margin = rev > 0 ? (np / rev) * 100 : 0;
+  const cash = Number(summaryData.cash_drawer || 0);
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير الملخص المالي التنفيذي</h1>
+        <div class="subtitle">الموقف المالي العام والإيرادات والمصروفات وصافي الأرباح</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>الفرع / النطاق:</strong> ${branchName}</div>
+        <div><strong>الفترة:</strong> ${period}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي الإيرادات</div>
+        <div class="kpi-value text-emerald-600">${formatMoney(rev)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">تكلفة البضاعة المباعة</div>
+        <div class="kpi-value">${formatMoney(cogs)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المصروفات والرواتب</div>
+        <div class="kpi-value text-rose-600">${formatMoney(exp + sal)}</div>
+      </div>
+      <div class="kpi-card ${np >= 0 ? 'highlight' : ''}" style="${np < 0 ? 'background: #fff1f2; border-color: #fecdd3;' : ''}">
+        <div class="kpi-title">صافي الربح (\u200E${margin.toFixed(1)}%)</div>
+        <div class="kpi-value ${np >= 0 ? 'text-emerald-700' : 'text-rose-600'}">${formatMoney(np)}</div>
+      </div>
+    </div>
+
+    <table style="margin-top: 15px;">
+      <thead>
+        <tr>
+          <th style="width: 45%;">البند المالي</th>
+          <th class="num" style="width: 25%;">القيمة المحققة</th>
+          <th style="width: 30%;">ملاحظات وتفاصيل البند</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="font-bold">مبيعات الكاشير (صافي بعد المرتجعات)</td>
+          <td class="num">${formatMoney(summaryData.sales || summaryData.total_sales || 0)}</td>
+          <td>صافي إيرادات فواتير البيع</td>
+        </tr>
+        <tr>
+          <td class="font-bold">متحصلات التأجير والغرامات</td>
+          <td class="num">${formatMoney(summaryData.rentals || summaryData.total_rentals || 0)}</td>
+          <td>عقود التأجير وغرامات التأخير</td>
+        </tr>
+        <tr>
+          <td class="font-bold">متحصلات التفصيل والتعديلات</td>
+          <td class="num">${formatMoney(summaryData.tailoring || summaryData.total_tailoring || 0)}</td>
+          <td>مدفوعات التفصيل المحصلة</td>
+        </tr>
+        <tr style="background: #f8fafc;">
+          <td class="font-bold text-emerald-800">إجمالي الإيرادات الكلية</td>
+          <td class="num font-bold text-emerald-800">${formatMoney(rev)}</td>
+          <td>المبيعات + التأجير + التفصيل</td>
+        </tr>
+        <tr>
+          <td class="font-bold">تكلفة البضاعة المباعة (COGS)</td>
+          <td class="num">${formatMoney(cogs)}</td>
+          <td>تكلفة البضاعة المباعة المباشرة</td>
+        </tr>
+        <tr style="background: #f8fafc;">
+          <td class="font-bold">مجمل الربح (Gross Profit)</td>
+          <td class="num font-bold">${formatMoney(gp)}</td>
+          <td>الإيرادات - تكلفة البضاعة</td>
+        </tr>
+        <tr>
+          <td class="font-bold">المصروفات التشغيلية والنثريات</td>
+          <td class="num text-rose-600">${formatMoney(exp)}</td>
+          <td>مصاريف التشغيل والمرافق والصيانة</td>
+        </tr>
+        <tr>
+          <td class="font-bold">الرواتب والأجور المسددة</td>
+          <td class="num text-rose-600">${formatMoney(sal)}</td>
+          <td>صافي حركات رواتب الموظفين</td>
+        </tr>
+        <tr style="background: #f1f5f9; font-size: 10pt;">
+          <td class="font-bold" style="border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a;">صافي الربح النهائي</td>
+          <td class="num font-bold ${np >= 0 ? 'text-emerald-700' : 'text-rose-600'}" style="border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a;">${formatMoney(np)}</td>
+          <td style="border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a;">هامش الربح: \u200E${margin.toFixed(1)}%</td>
+        </tr>
+        <tr>
+          <td class="font-bold">صافي الكاش المحصل بالدرج والخزينة</td>
+          <td class="num font-bold">${formatMoney(cash)}</td>
+          <td>النقدية الفعلية المحصلة بالخزينة</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div>الملخص المالي التنفيذي - نظام الوزير للمبيعات والتأجير</div>
+      <div>تقرير رسمي صادر من النظام الآلي</div>
+    </div>
+  `;
+
+  return wrapHtml(`الملخص المالي التنفيذي - ${period}`, bodyContent);
+}
+
+/**
+ * 10. Inventory Valuation & Stock PDF HTML
+ */
+function generateInventoryPdfHtml(inventoryData, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع';
+  const cairoTime = formatCairoDateTime();
+
+  const items = Array.isArray(inventoryData.items) ? inventoryData.items : [];
+  const summary = inventoryData.summary || {};
+
+  let totalQty = 0;
+  let totalRetail = 0;
+  let totalCost = 0;
+  const canSeeCost = summary.total_cost_value !== null && summary.total_cost_value !== undefined;
+
+  const rowsHtml = items.map((item) => {
+    const qty = Number(item.stock_level || 0);
+    const price = Number(item.price || 0);
+    const cost = item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price || 0) : null;
+    const retailVal = qty * price;
+    const costVal = cost !== null ? qty * cost : null;
+
+    totalQty += qty;
+    totalRetail += retailVal;
+    if (costVal !== null) totalCost += costVal;
+
+    return `
+      <tr>
+        <td class="center font-bold">#${item.id}</td>
+        <td class="font-bold">${item.name}</td>
+        <td class="center">${item.barcode ? `#${item.barcode}` : '-'}</td>
+        <td class="center">${item.category || 'عام'}</td>
+        <td class="center font-bold">${qty}</td>
+        <td class="num">${formatMoney(price)}</td>
+        ${canSeeCost ? `<td class="num">${cost !== null ? formatMoney(cost) : '-'}</td>` : ''}
+        <td class="num font-bold">${formatMoney(retailVal)}</td>
+        <td class="center">${item.is_low_stock ? '<span style="color: #e11d48; font-weight: bold;">منخفض</span>' : '<span style="color: #15803d;">متوفر</span>'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير جرد وتقييم المخزون</h1>
+        <div class="subtitle">بيان رصيد البضاعة بالمخازن وتقييمها المالي</div>
+      </div>
+      <div class="meta-badge">
+        <div><strong>الفرع / النطاق:</strong> ${branchName}</div>
+        <div><strong>تاريخ الاستخراج:</strong> ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي الأصناف</div>
+        <div class="kpi-value">${Number(summary.total_items || items.length).toLocaleString('en-US')}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي كميات القطع</div>
+        <div class="kpi-value">${Number(summary.total_quantity || totalQty).toLocaleString('en-US')} قطعة</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-title">القيمة بسعر البيع</div>
+        <div class="kpi-value text-emerald-600">${formatMoney(summary.total_retail_value || totalRetail)}</div>
+      </div>
+      ${canSeeCost ? `
+        <div class="kpi-card">
+          <div class="kpi-title">القيمة بسعر التكلفة</div>
+          <div class="kpi-value text-indigo-700">${formatMoney(summary.total_cost_value || totalCost)}</div>
+        </div>
+      ` : `
+        <div class="kpi-card" style="${summary.low_stock_count > 0 ? 'background: #fff1f2; border-color: #fecdd3;' : ''}">
+          <div class="kpi-title">الأصناف المنخفضة</div>
+          <div class="kpi-value ${summary.low_stock_count > 0 ? 'text-rose-600' : ''}">${summary.low_stock_count || 0}</div>
+        </div>
+      `}
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 8%;">الكود</th>
+          <th style="width: 25%;">اسم المنتج</th>
+          <th class="center" style="width: 12%;">الباركود</th>
+          <th class="center" style="width: 12%;">القسم</th>
+          <th class="center" style="width: 9%;">الرصيد</th>
+          <th class="num" style="width: 12%;">سعر البيع</th>
+          ${canSeeCost ? '<th class="num" style="width: 11%;">سعر التكلفة</th>' : ''}
+          <th class="num" style="width: 14%;">إجمالي البيع</th>
+          <th class="center" style="width: 8%;">الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml || '<tr><td colspan="9" class="center">لا تتوفر منتجات مسجلة بالمخزون</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4" class="font-bold">الإجمالي العام</td>
+          <td class="center font-bold">${totalQty}</td>
+          <td></td>
+          ${canSeeCost ? `<td></td>` : ''}
+          <td class="num font-bold text-emerald-700">${formatMoney(totalRetail)}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>تقرير جرد المخزون - نظام الوزير للمبيعات والتأجير</div>
+      <div>تقرير رسمي صادر من النظام الآلي</div>
+    </div>
+  `;
+
+  return wrapHtml('تقرير جرد وتقييم المخزون', bodyContent);
+}
+
+module.exports = {
+  BASE_PRINT_CSS,
+  wrapHtml,
+  generateDailyHistoryPdfHtml,
+  generateMonthlyHistoryPdfHtml,
+  generateProfitReportPdfHtml,
+  generateTopProductsPdfHtml,
+  generateDailyDetailsPdfHtml,
+  generateSalesPdfHtml,
+  generateRentalsPdfHtml,
+  generateExpensesPdfHtml,
+  generateSummaryPdfHtml,
+  generateInventoryPdfHtml,
+};
+

@@ -17,6 +17,10 @@ export const reportsService = {
     const qs = new URLSearchParams(params).toString();
     return api.get(`/reports/expenses${qs ? `?${qs}` : ''}`);
   },
+  getInventory: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/inventory${qs ? `?${qs}` : ''}`);
+  },
   getProfit: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return api.get(`/reports/profit${qs ? `?${qs}` : ''}`);
@@ -24,6 +28,30 @@ export const reportsService = {
   getDashboard: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return api.get(`/dashboard${qs ? `?${qs}` : ''}`);
+  },
+  getDailyHistory: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/daily-history${qs ? `?${qs}` : ''}`);
+  },
+  getMonthlyHistory: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/monthly-history${qs ? `?${qs}` : ''}`);
+  },
+  getTopProducts: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/top-products${qs ? `?${qs}` : ''}`);
+  },
+  getDailyReport: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/daily${qs ? `?${qs}` : ''}`);
+  },
+  exportExcel: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/export/excel${qs ? `?${qs}` : ''}`, { responseType: 'blob' });
+  },
+  exportPdfHtml: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/export/pdf-html${qs ? `?${qs}` : ''}`);
   },
 };
 

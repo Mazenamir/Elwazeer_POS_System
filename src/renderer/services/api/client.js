@@ -20,12 +20,27 @@ export class ApiError extends Error {
   }
 }
 
+// Ensure Blob instances have .data returning the blob itself across all environments
+if (typeof Blob !== 'undefined') {
+  try {
+    if (!('data' in Blob.prototype)) {
+      Object.defineProperty(Blob.prototype, 'data', {
+        get() {
+          return this;
+        },
+        configurable: true,
+      });
+    }
+  } catch (_) {}
+}
+
 async function request(endpoint, options = {}) {
   const url = endpoint.startsWith('http') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
   const method = (options.method || 'GET').toUpperCase();
   
+  const isBinaryRequest = options.responseType === 'blob' || options.responseType === 'arraybuffer';
   const headers = {
-    'Accept': 'application/json',
+    'Accept': isBinaryRequest ? '*/*' : 'application/json',
     ...(options.headers || {}),
   };
 
@@ -91,31 +106,67 @@ async function request(endpoint, options = {}) {
       }
     }
 
-    // Try parsing JSON response
+    // Parse response according to responseType or content-type
     const contentType = response.headers.get('content-type') || '';
     let data = null;
-    if (contentType.includes('application/json')) {
+    if (options.responseType === 'blob') {
+      data = await response.blob();
+    } else if (options.responseType === 'arraybuffer') {
+      data = await response.arrayBuffer();
+    } else if (contentType.includes('application/json')) {
       data = await response.json();
     } else {
       data = await response.text();
     }
 
     if (!response.ok) {
-      const errorMessage = data?.error || data?.message || `طلب غير ناجح (${response.status})`;
-      throw new ApiError(errorMessage, response.status, data);
+      let errorMessage = `طلب غير ناجح (${response.status})`;
+      let errorData = data;
+      if (typeof Blob !== 'undefined' && data instanceof Blob) {
+        try {
+          const text = await data.text();
+          try {
+            errorData = JSON.parse(text);
+          } catch {
+            errorData = { message: text };
+          }
+        } catch {}
+      } else if (typeof ArrayBuffer !== 'undefined' && (data instanceof ArrayBuffer || ArrayBuffer.isView(data))) {
+        try {
+          const text = new TextDecoder().decode(data);
+          try {
+            errorData = JSON.parse(text);
+          } catch {
+            errorData = { message: text };
+          }
+        } catch {}
+      }
+      errorMessage = errorData?.error || errorData?.message || errorMessage;
+      throw new ApiError(errorMessage, response.status, errorData);
     }
 
     if (data && typeof data === 'object') {
-      try {
-        if (data.data === undefined) {
-          Object.defineProperty(data, 'data', {
-            value: data,
-            writable: true,
-            enumerable: false,
-            configurable: true,
-          });
-        }
-      } catch (e) {}
+      if (typeof Blob !== 'undefined' && data instanceof Blob) {
+        try {
+          if (!('data' in Blob.prototype)) {
+            Object.defineProperty(Blob.prototype, 'data', {
+              get() { return this; },
+              configurable: true,
+            });
+          }
+        } catch (_) {}
+      } else {
+        try {
+          if (data.data === undefined) {
+            Object.defineProperty(data, 'data', {
+              value: data,
+              writable: true,
+              enumerable: false,
+              configurable: true,
+            });
+          }
+        } catch (e) {}
+      }
     }
 
     return data;

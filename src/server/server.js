@@ -6,6 +6,7 @@ const app = require('./app');
 const config = require('./config/env');
 const db = require('./database/connection');
 const { runMigrations } = require('./database/migrator');
+const syncService = require('./modules/sync/sync.service');
 
 function isPortOpen(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
@@ -274,6 +275,18 @@ async function startServer() {
   try {
     console.log(`🚀 Starting Bebyoon Server in ${config.IS_BRANCH_MODE ? 'BRANCH' : 'MASTER'} mode...`);
 
+    // Ensure persistent environment configuration (.env) exists
+    const dataEnvPath = path.join(config.dataDir, '.env');
+    const appEnvPath = path.join(config.appRoot, '.env');
+    if (config.dataDir !== config.appRoot && !fs.existsSync(dataEnvPath) && fs.existsSync(appEnvPath)) {
+      try {
+        fs.copyFileSync(appEnvPath, dataEnvPath);
+        console.log(`[Config] Initialized persistent environment configuration at: ${dataEnvPath}`);
+      } catch (e) {
+        console.warn(`[Config] Note: Could not copy template .env: ${e.message}`);
+      }
+    }
+
     // 0. Ensure PostgreSQL is active if in Master mode
     await ensurePostgresRunning();
 
@@ -281,14 +294,36 @@ async function startServer() {
     await runMigrations();
 
     // 2. Start HTTP listener
+    if (await isPortOpen(config.PORT, '127.0.0.1')) {
+      console.error(`\n❌ Error: Port ${config.PORT} is already in use by another process.`);
+      console.error(`💡 Tip: An instance of Bebyoon Server is already running on port ${config.PORT}.`);
+      console.error(`   If you want to restart it, please terminate the running process first.\n`);
+      process.exit(1);
+    }
+
     const server = app.listen(config.PORT, '0.0.0.0', () => {
       console.log(`✅ Server is running on http://127.0.0.1:${config.PORT}`);
       console.log(`📡 Operational Mode: ${config.IS_BRANCH_MODE ? 'Branch (SQLite Offline-First)' : 'Master (PostgreSQL Server)'}`);
+
+      // Start background auto-sync worker if running in Branch mode
+      if (config.IS_BRANCH_MODE) {
+        syncService.startBackgroundSyncWorker(30000);
+      }
 
       // Notify parent Electron process if running under fork()
       if (typeof process.send === 'function') {
         process.send('server-ready');
       }
+    });
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`\n❌ Error: Port ${config.PORT} is already in use by another process.`);
+        console.error(`💡 Tip: An instance of Bebyoon Server is already running on port ${config.PORT}.\n`);
+      } else {
+        console.error('\n❌ Server HTTP error:', err.message);
+      }
+      process.exit(1);
     });
 
     // 3. Graceful shutdown

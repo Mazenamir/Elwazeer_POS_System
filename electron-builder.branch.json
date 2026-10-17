@@ -1,0 +1,98 @@
+{
+  "appId": "com.bebyoon.branch.system",
+  "productName": "Bebyoon Branch System",
+  "artifactName": "Bebyoon Branch Setup ${version}.${ext}",
+  "directories": {
+    "output": "dist-branch"
+  },
+  "files": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/renderer/logos/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "src/server",
+      "to": "server",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "src/shared",
+      "to": "shared",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "dist/renderer",
+      "to": "dist/renderer",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "programs/node",
+      "to": "programs/node",
+      "filter": [
+        "**/*",
+        "!node_modules/**/*"
+      ]
+    },
+    {
+      "from": ".env.branch",
+      "to": ".env"
+    },
+    {
+      "from": "node_modules",
+      "to": "node_modules",
+      "filter": [
+        "**/*",
+        "!electron/**/*",
+        "!electron-builder/**/*",
+        "!vite/**/*",
+        "!@vitejs/**/*",
+        "!tailwindcss/**/*",
+        "!postcss/**/*",
+        "!autoprefixer/**/*",
+        "!concurrently/**/*",
+        "!electron-winstaller/**/*",
+        "!@electron/windows-sign/**/*",
+        "!@rolldown/**/*",
+        "!lightningcss*/**/*",
+        "!rolldown/**/*",
+        "!.package-lock.json",
+        "!.cache/**/*",
+        "!.bin/**/*"
+      ]
+    }
+  ],
+  "nsis": {
+    "oneClick": false,
+    "perMachine": true,
+    "allowElevation": true,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Bebyoon Branch System",
+    "include": "build/installer.nsh"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "Mazenamir",
+    "repo": "Elwazeer_POS_System"
+  },
+  "electronVersion": "30.0.0"
+}

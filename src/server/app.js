@@ -152,7 +152,17 @@ app.get('/logout', (req, res) => {
 
 // Mount Static Renderer Files (Serve SPA first if available)
 if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
+  app.use(express.static(distPath, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      } else if (filePath.includes(path.sep + 'assets' + path.sep) || filePath.includes('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  }));
 }
 app.use(express.static(rendererPath));
 
@@ -178,9 +188,15 @@ app.use('/api', wornRoutes);
 // SPA client fallback for HTML5 History API
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
-  if (req.path.startsWith('/api/')) return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/') || req.path.startsWith('/assets/')) return next();
+  // Do not serve index.html for missing static files with extensions (avoid MIME type mismatch errors)
+  if (path.extname(req.path)) return next();
+
   const distIndex = path.join(distPath, 'index.html');
   if (fs.existsSync(distIndex)) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return res.sendFile(distIndex);
   }
   next();

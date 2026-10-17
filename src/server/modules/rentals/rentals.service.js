@@ -355,9 +355,14 @@ async function getRentalsSummary(branchId, user) {
 
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const { rows } = await db.query(
-    `SELECT status, COUNT(*)::int as count
+    `SELECT status, 
+            COUNT(*)::int as count,
+            COUNT(CASE WHEN status = 'returned' AND remaining > 0 THEN 1 END)::int as returned_debt_count,
+            COUNT(CASE WHEN status = 'returned' AND (remaining IS NULL OR remaining <= 0) THEN 1 END)::int as returned_settled_count
      FROM (
-       SELECT COALESCE(rental_group_uuid::text, id::text) as rental_group_key, MIN(status) as status
+       SELECT COALESCE(rental_group_uuid::text, id::text) as rental_group_key, 
+              MIN(status) as status,
+              SUM(COALESCE(remaining, 0)) as remaining
        FROM rentals
        ${whereClause}
        GROUP BY rental_group_key
@@ -366,9 +371,13 @@ async function getRentalsSummary(branchId, user) {
     params
   );
 
-  const summary = { booked: 0, active: 0, returned: 0, sold: 0, cancelled: 0 };
+  const summary = { booked: 0, active: 0, returned: 0, sold: 0, cancelled: 0, returned_debt: 0, returned_settled: 0 };
   rows.forEach((row) => {
     summary[row.status] = row.count;
+    if (row.status === 'returned') {
+      summary.returned_debt = row.returned_debt_count || 0;
+      summary.returned_settled = row.returned_settled_count || 0;
+    }
   });
   return summary;
 }
@@ -425,7 +434,11 @@ async function listRentals(query = {}, user = null, req = null) {
     where.push(`r.branch_id = $${params.length}`);
   }
 
-  if (query.status) {
+  if (query.status === 'returned_debt') {
+    where.push(`r.status = 'returned' AND COALESCE(r.remaining, 0) > 0`);
+  } else if (query.status === 'returned_settled') {
+    where.push(`r.status = 'returned' AND COALESCE(r.remaining, 0) <= 0`);
+  } else if (query.status) {
     params.push(query.status);
     where.push(`r.status = $${params.length}`);
   }
@@ -845,8 +858,16 @@ async function cancelRental(id, user, req) {
   return { success: true };
 }
 
-async function returnRental(id, finePerDay, user) {
+async function returnRental(id, bodyOrFine, user, req) {
+  let options = {};
+  if (typeof bodyOrFine === 'object' && bodyOrFine !== null) {
+    options = bodyOrFine;
+  } else if (typeof bodyOrFine === 'number') {
+    options = { fine_per_day: bodyOrFine };
+  }
+
   let calculatedFine = 0;
+  let remainingAfterReturn = 0;
 
   await db.transaction(async (tx) => {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
@@ -864,18 +885,84 @@ async function returnRental(id, finePerDay, user) {
       throw err;
     }
 
-    const cairoNow = await getDatabaseCairoNow(tx);
-    const delayDays = daysBetween(rentals[0].return_date, cairoNow.date);
-    const perDay = Number(rentals[0].daily_fine || finePerDay || DEFAULT_RENTAL_FINE_PER_DAY);
-    calculatedFine = Math.max(0, roundCurrency(delayDays * perDay));
+    // 1. Calculate Fine
+    if (options.fine !== undefined && options.fine !== null && options.fine !== '') {
+      calculatedFine = Math.max(0, roundCurrency(Number(options.fine)));
+    } else {
+      const cairoNow = await getDatabaseCairoNow(tx);
+      const delayDays = daysBetween(rentals[0].return_date, cairoNow.date);
+      const perDay = Number(rentals[0].daily_fine || options.fine_per_day || DEFAULT_RENTAL_FINE_PER_DAY);
+      calculatedFine = Math.max(0, roundCurrency(delayDays * perDay));
+    }
+
+    // 2. Handle Remaining Settlement
+    const currentRemaining = Number(rentals[0].remaining || 0);
+    const depositAmount = Number(rentals[0].deposit || 0);
+    let noteAppend = '';
+
+    if (currentRemaining > 0) {
+      const allowedActions = ['collect', 'deduct_deposit', 'debt'];
+      let action = options.settlement_action;
+      if (!action && typeof bodyOrFine === 'number') {
+        action = 'debt';
+      }
+      if (!action || !allowedActions.includes(action)) {
+        const err = new Error('الرجاء اختيار طريقة تسوية المبلغ المتبقي (تحصيل نقدي، خصم من التأمين، أو تسجيل كدين خالص)');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      if (action === 'collect') {
+        const paid = options.paid_amount !== undefined
+          ? roundCurrency(Number(options.paid_amount))
+          : currentRemaining;
+        if (!Number.isFinite(paid) || paid <= 0) {
+          const err = new Error('يرجى تحديد المبلغ المحصل من العميل بشكل صحيح (أكبر من الصفر)');
+          err.statusCode = 400;
+          throw err;
+        }
+        if (paid > currentRemaining) {
+          const err = new Error(`المبلغ المحصل (${paid} ج.م) لا يمكن أن يتجاوز المتبقي المطلوب (${currentRemaining} ج.م)`);
+          err.statusCode = 400;
+          throw err;
+        }
+        remainingAfterReturn = Math.max(0, roundCurrency(currentRemaining - paid));
+        const method = options.payment_method || 'نقدي';
+        noteAppend = `[تم تحصيل ${paid} ج.م من المتبقي عند الإرجاع (${method})]`;
+      } else if (action === 'deduct_deposit') {
+        const availableDeposit = Math.max(0, roundCurrency(depositAmount - calculatedFine));
+        if (availableDeposit <= 0) {
+          const err = new Error('لا يوجد مبلغ تأمين متاح للخصم منه بعد احتساب الغرامات');
+          err.statusCode = 400;
+          throw err;
+        }
+        const deducted = Math.min(availableDeposit, currentRemaining);
+        remainingAfterReturn = Math.max(0, roundCurrency(currentRemaining - deducted));
+        noteAppend = `[تم خصم ${deducted} ج.م من التأمين لسداد المتبقي عند الإرجاع]`;
+      } else if (action === 'debt') {
+        remainingAfterReturn = currentRemaining;
+        noteAppend = `[تم تسجيل المتبقي (${currentRemaining} ج.م) كدين خالص على العميل عند الإرجاع]`;
+      }
+    } else {
+      remainingAfterReturn = 0;
+    }
+
+    if (options.notes && typeof options.notes === 'string' && options.notes.trim()) {
+      noteAppend = noteAppend ? `${noteAppend} - ${options.notes.trim()}` : options.notes.trim();
+    }
 
     await tx.query(
       `UPDATE rentals
        SET status = 'returned',
            actual_return_date = ${CAIRO_DATE_SQL},
-           fine_amount = CASE WHEN id = $2 THEN $1 ELSE 0 END
+           fine_amount = CASE WHEN id = $2 THEN $1 ELSE 0 END,
+           remaining = CASE WHEN id = $2 THEN $4 ELSE 0 END,
+           notes = CASE 
+             WHEN id = $2 AND $5 <> '' THEN TRIM(COALESCE(notes, '') || ' ' || $5)
+             ELSE notes
+           END
        WHERE id = ANY($3::int[])`,
-      [calculatedFine, rentals[0].id, rentals.map((r) => r.id)]
+      [calculatedFine, rentals[0].id, rentals.map((r) => r.id), remainingAfterReturn, noteAppend]
     );
 
     for (const rental of rentals) {
@@ -886,19 +973,92 @@ async function returnRental(id, finePerDay, user) {
       );
     }
 
+    await queueSyncOperation(tx, req, 'rental', 'update', rentals[0].id, branchId, {
+      id: rentals[0].id,
+      status: 'returned',
+      fine_amount: calculatedFine,
+      remaining: remainingAfterReturn,
+    });
+
     if (user) {
       await logActivity(
         user.id,
         user.username,
         'إرجاع إيجار',
-        `تم إرجاع الحجز #${id} (${rentals.length} منتج) مع غرامة ${calculatedFine} ج.م`,
+        `تم إرجاع الحجز #${id} (${rentals.length} منتج) مع غرامة ${calculatedFine} ج.م ومتبقي ${remainingAfterReturn} ج.م`,
         'Rental',
         branchId
       );
     }
   });
 
-  return { success: true, fine_amount: calculatedFine };
+  return { success: true, fine_amount: calculatedFine, remaining: remainingAfterReturn };
+}
+
+async function settleRentalPayment(id, body, user, req) {
+  const { paid_amount, payment_method, notes } = body || {};
+  const pay = roundCurrency(Number(paid_amount));
+  if (!Number.isFinite(pay) || pay <= 0) {
+    const err = new Error('المبلغ المدفوع يجب أن يكون أكبر من الصفر');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let updatedRemaining = 0;
+
+  await db.transaction(async (tx) => {
+    const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
+    const branchId = rentals[0].branch_id;
+
+    if (user && user.role === 'branch_user' && Number(branchId) !== Number(user.branch_id)) {
+      const err = new Error('Unauthorized');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const currentRemaining = Number(rentals[0].remaining || 0);
+    if (currentRemaining <= 0) {
+      const err = new Error('هذا الحجز مسدد بالكامل بالفعل ولا يوجد متبقي');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (pay > currentRemaining) {
+      const err = new Error(`المبلغ المدفوع (${pay}) أكبر من المتبقي المطلوب (${currentRemaining})`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    updatedRemaining = Math.max(0, roundCurrency(currentRemaining - pay));
+    const methodStr = payment_method || 'نقدي';
+    const noteMsg = `[سداد دفعة من المتبقي: ${pay} ج.م (${methodStr})${notes ? ` - ${notes}` : ''}]`;
+
+    await tx.query(
+      `UPDATE rentals
+       SET remaining = CASE WHEN id = $1 THEN $2 ELSE 0 END,
+           notes = TRIM(COALESCE(notes, '') || ' ' || $3)
+       WHERE id = ANY($4::int[])`,
+      [rentals[0].id, updatedRemaining, noteMsg, rentals.map((r) => r.id)]
+    );
+
+    await queueSyncOperation(tx, req, 'rental', 'update', rentals[0].id, branchId, {
+      id: rentals[0].id,
+      remaining: updatedRemaining,
+    });
+
+    if (user) {
+      await logActivity(
+        user.id,
+        user.username,
+        'سداد متبقي إيجار',
+        `تم سداد ${pay} ج.م للحجز #${id}، المتبقي الحالي: ${updatedRemaining} ج.م`,
+        'Rental',
+        branchId
+      );
+    }
+  });
+
+  return { success: true, remaining: updatedRemaining };
 }
 
 async function sellRental(id, sellPrice, paymentMethod, offlineUuid, user, req) {
@@ -1009,5 +1169,6 @@ module.exports = {
   pickupRental,
   cancelRental,
   returnRental,
+  settleRentalPayment,
   sellRental,
 };

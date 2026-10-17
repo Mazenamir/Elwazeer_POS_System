@@ -14,3 +14,13 @@ programs/
 postgresql/
 backup/*.json
 *.log
+
+# Build & Dist
+dist-branch/
+
+# Environment files
+.env.*
+!.env.example
+
+# Scratch directory (temporary test scripts & artifacts)
+scratch/

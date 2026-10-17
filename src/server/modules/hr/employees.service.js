@@ -116,36 +116,48 @@ async function getCheckoutReminders(branchId, user) {
 async function listEmployees(query = {}, user = null, req = null) {
   const pagination = parsePagination(req || { query }, 50, 200, true);
   const { date: todayDate } = getCairoDateTimeParts();
-  const params = [todayDate];
+  const selectedMonth = query.month && /^\d{4}-\d{2}$/.test(query.month)
+    ? query.month
+    : todayDate.substring(0, 7);
+  const monthRange = getMonthRange(selectedMonth);
+
+  const whereParams = [];
   const where = [];
 
   if (user && user.role === 'branch_user') {
-    params.push(user.branch_id);
-    where.push(`e.branch_id = $${params.length}`);
+    whereParams.push(user.branch_id);
+    where.push(`e.branch_id = $${whereParams.length}`);
   }
 
   if (query.search) {
-    params.push(likePattern(query.search));
-    where.push(`(e.name ILIKE $${params.length} OR e.phone ILIKE $${params.length})`);
+    whereParams.push(likePattern(query.search));
+    where.push(`(e.name ILIKE $${whereParams.length} OR e.phone ILIKE $${whereParams.length})`);
   }
   if (query.name) {
-    params.push(likePattern(query.name));
-    where.push(`e.name ILIKE $${params.length}`);
+    whereParams.push(likePattern(query.name));
+    where.push(`e.name ILIKE $${whereParams.length}`);
   }
   if (query.position) {
-    params.push(likePattern(query.position));
-    where.push(`e.position ILIKE $${params.length}`);
+    whereParams.push(likePattern(query.position));
+    where.push(`e.position ILIKE $${whereParams.length}`);
   }
   if (query.phone) {
-    params.push(likePattern(query.phone));
-    where.push(`e.phone ILIKE $${params.length}`);
+    whereParams.push(likePattern(query.phone));
+    where.push(`e.phone ILIKE $${whereParams.length}`);
   }
   if (query.branch_id && query.branch_id !== 'all' && (!user || user.role !== 'branch_user')) {
-    params.push(query.branch_id);
-    where.push(`e.branch_id = $${params.length}`);
+    whereParams.push(query.branch_id);
+    where.push(`e.branch_id = $${whereParams.length}`);
   }
 
-  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const countWhereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const countQuery = `SELECT COUNT(*)::int as total FROM employees e ${countWhereClause}`;
+
+  // Shift where parameter indices by 3 for selectQuery ($1=todayDate, $2=monthStart, $3=monthEnd)
+  const selectWhere = where.map((clause) =>
+    clause.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + 3}`)
+  );
+  const selectWhereClause = selectWhere.length ? `WHERE ${selectWhere.join(' AND ')}` : '';
 
   let selectQuery = `
     SELECT DISTINCT ON (e.id)
@@ -156,24 +168,58 @@ async function listEmployees(query = {}, user = null, req = null) {
       u.permissions as user_permissions,
       a.check_in as today_check_in,
       a.check_out as today_check_out,
-      a.status as today_attendance_status
+      a.status as today_attendance_status,
+      COALESCE((
+        SELECT SUM(et.amount)
+        FROM employee_transactions et
+        WHERE et.employee_id = e.id
+          AND et.type = 'bonus'
+          AND et.transaction_date >= $2::date
+          AND et.transaction_date < $3::date
+      ), 0) AS current_month_bonuses,
+      (
+        SELECT COUNT(*)::int
+        FROM employee_transactions et
+        WHERE et.employee_id = e.id
+          AND et.type = 'bonus'
+          AND et.transaction_date >= $2::date
+          AND et.transaction_date < $3::date
+      ) AS current_month_bonus_count,
+      (
+        SELECT et.notes
+        FROM employee_transactions et
+        WHERE et.employee_id = e.id
+          AND et.type = 'bonus'
+          AND et.transaction_date >= $2::date
+          AND et.transaction_date < $3::date
+        ORDER BY et.transaction_date DESC, et.id DESC
+        LIMIT 1
+      ) AS latest_bonus_notes,
+      (
+        SELECT TO_CHAR(et.transaction_date, 'YYYY-MM-DD')
+        FROM employee_transactions et
+        WHERE et.employee_id = e.id
+          AND et.type = 'bonus'
+          AND et.transaction_date >= $2::date
+          AND et.transaction_date < $3::date
+        ORDER BY et.transaction_date DESC, et.id DESC
+        LIMIT 1
+      ) AS latest_bonus_date
     FROM employees e
     LEFT JOIN branches b ON e.branch_id = b.id
     LEFT JOIN users u ON u.employee_id = e.id AND u.role != 'admin'
     LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = $1
-    ${whereClause}
+    ${selectWhereClause}
     ORDER BY e.id ASC
   `;
 
-  const countWhereClause = where.length ? `WHERE $1::date IS NOT NULL AND ${where.join(' AND ')}` : 'WHERE $1::date IS NOT NULL';
-  const countQuery = `SELECT COUNT(*)::int as total FROM employees e ${countWhereClause}`;
-  const queryParams = [...params];
+  const queryParams = [todayDate, monthRange.start, monthRange.end, ...whereParams];
 
   if (pagination.enabled) {
     selectQuery = appendPagination(selectQuery, queryParams, pagination);
     const [dataRes, countRes] = await Promise.all([
       db.query(selectQuery, queryParams),
-      db.query(countQuery, params),
+      db.query(countQuery, whereParams),
     ]);
     return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
   }

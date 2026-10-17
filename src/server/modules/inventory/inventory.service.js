@@ -151,6 +151,152 @@ async function listProductNames(search = '') {
   return rows.map((r) => r.name);
 }
 
+function resolveCategoryQuery(catInput) {
+  if (!catInput) return null;
+  const raw = String(catInput).trim();
+  if (!raw || raw === 'all' || raw === 'الكل' || raw === 'كل التصنيفات' || raw === 'كل الأصناف') return null;
+  const lower = raw.toLowerCase();
+
+  // Formal Suit
+  if (
+    lower === 'formal suit' ||
+    lower.includes('formal') ||
+    lower === 'بدل رسمية' ||
+    lower === 'بدل رسميه' ||
+    lower.includes('بدل رسمية') ||
+    lower.includes('بدل رسميه') ||
+    lower.includes('بدلة رسمية') ||
+    lower.includes('بدله رسميه')
+  ) {
+    return { type: 'exact', value: 'FORMAL SUIT' };
+  }
+
+  // Tuxedo Suit
+  if (
+    lower === 'tuxedo suit' ||
+    lower === 'tuxedo' ||
+    lower.includes('tuxedo') ||
+    lower === 'بدل سموكن' ||
+    lower.includes('بدل سموكن') ||
+    lower.includes('سموكن')
+  ) {
+    return { type: 'exact', value: 'TUXEDO SUIT' };
+  }
+
+  // Casual Suit
+  if (
+    lower === 'casual suit' ||
+    lower.includes('casual') ||
+    lower === 'بدل كاجوال' ||
+    lower.includes('بدل كاجوال') ||
+    lower.includes('بدلة كاجوال')
+  ) {
+    return { type: 'exact', value: 'CASUAL SUIT' };
+  }
+
+  // Regular Suit
+  if (
+    lower === 'suit' ||
+    lower === 'بدل عادية' ||
+    lower === 'بدل عاديه' ||
+    lower.includes('بدل عادية') ||
+    lower.includes('بدل عاديه') ||
+    lower.includes('بدلة عادية')
+  ) {
+    return { type: 'exact', value: 'SUIT' };
+  }
+
+  // All Suits
+  if (
+    lower === 'بدل' ||
+    lower === 'suits' ||
+    lower.includes('بدل (جميع') ||
+    lower.includes('بدل (جميع الانواع)') ||
+    lower.includes('بدل (جميع الأنواع)') ||
+    lower === 'all suits'
+  ) {
+    return { type: 'suits' };
+  }
+
+  // Kids
+  if (
+    lower === 'kids' ||
+    lower === 'أطفال' ||
+    lower === 'اطفال' ||
+    lower.includes('أطفال') ||
+    lower.includes('اطفال') ||
+    lower.includes('kids')
+  ) {
+    return { type: 'exact', value: 'KIDS' };
+  }
+
+  // Wallets
+  if (
+    lower === 'wallet' ||
+    lower === 'محافظ' ||
+    lower.includes('محافظ') ||
+    lower.includes('محفظة') ||
+    lower.includes('محفظه') ||
+    lower.includes('wallet')
+  ) {
+    return { type: 'exact', value: 'WALLET' };
+  }
+
+  // Uncategorized / Other
+  if (
+    lower === 'أخرى' ||
+    lower === 'اخري' ||
+    lower === 'other' ||
+    lower === 'uncategorized' ||
+    lower.includes('بدون تصنيف') ||
+    lower.includes('أخرى') ||
+    lower.includes('اخري') ||
+    lower === 'none'
+  ) {
+    return { type: 'other' };
+  }
+
+  // Exact fallback
+  return { type: 'exact', value: raw };
+}
+
+function populateCategoryCounts(categoryCounts, totalAll, totalSuits) {
+  categoryCounts['الكل'] = totalAll;
+  categoryCounts['كل التصنيفات'] = totalAll;
+  categoryCounts['كل الأصناف'] = totalAll;
+  categoryCounts['all'] = totalAll;
+  categoryCounts['بدل'] = totalSuits;
+  categoryCounts['بدل (جميع الأنواع)'] = totalSuits;
+  categoryCounts['بدل (جميع الانواع)'] = totalSuits;
+  categoryCounts['أخرى'] = categoryCounts['أخرى'] || 0;
+  categoryCounts['بدون تصنيف / أخرى'] = categoryCounts['أخرى'];
+  categoryCounts['بدون تصنيف'] = categoryCounts['أخرى'];
+  if (categoryCounts['FORMAL SUIT']) {
+    categoryCounts['بدل رسمية'] = categoryCounts['FORMAL SUIT'];
+    categoryCounts['بدل رسمية (FORMAL SUIT)'] = categoryCounts['FORMAL SUIT'];
+  }
+  if (categoryCounts['TUXEDO SUIT']) {
+    categoryCounts['بدل سموكن'] = categoryCounts['TUXEDO SUIT'];
+    categoryCounts['بدل سموكن (TUXEDO SUIT)'] = categoryCounts['TUXEDO SUIT'];
+  }
+  if (categoryCounts['SUIT']) {
+    categoryCounts['بدل عادية'] = categoryCounts['SUIT'];
+    categoryCounts['بدل عادية (SUIT)'] = categoryCounts['SUIT'];
+  }
+  if (categoryCounts['CASUAL SUIT']) {
+    categoryCounts['بدل كاجوال'] = categoryCounts['CASUAL SUIT'];
+    categoryCounts['بدل كاجوال (CASUAL SUIT)'] = categoryCounts['CASUAL SUIT'];
+  }
+  if (categoryCounts['KIDS']) {
+    categoryCounts['أطفال'] = categoryCounts['KIDS'];
+    categoryCounts['أطفال (KIDS)'] = categoryCounts['KIDS'];
+  }
+  if (categoryCounts['WALLET']) {
+    categoryCounts['محافظ'] = categoryCounts['WALLET'];
+    categoryCounts['محافظ (WALLET)'] = categoryCounts['WALLET'];
+  }
+}
+
 async function getMetadata() {
   const cached = getInventoryMetadataCache();
   if (cached) return cached;
@@ -159,7 +305,7 @@ async function getMetadata() {
 
   if (config.IS_BRANCH_MODE) {
     const cats = db.sqlite.prepare(`
-      SELECT DISTINCT category FROM (
+      SELECT DISTINCT TRIM(category) as category FROM (
         SELECT category FROM inventory WHERE category IS NOT NULL AND TRIM(category) != ''
         UNION
         SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
@@ -167,9 +313,38 @@ async function getMetadata() {
     `).all();
     const colors = db.sqlite.prepare('SELECT name FROM colors ORDER BY name COLLATE NOCASE ASC').all();
     const sizes = db.sqlite.prepare('SELECT name FROM sizes ORDER BY name COLLATE NOCASE ASC').all();
-    const uniqueCats = Array.from(new Set([...cats.map((r) => r.category), ...defaultCategories]));
+
+    const countsRows = db.sqlite.prepare(`
+      SELECT COALESCE(NULLIF(TRIM(category), ''), 'أخرى') as cat, count(*) as count
+      FROM inventory
+      WHERE is_deleted = 0
+      GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'أخرى')
+      ORDER BY count DESC
+    `).all();
+
+    const categoryCounts = {};
+    let totalAll = 0;
+    let totalSuits = 0;
+    countsRows.forEach((r) => {
+      const c = Number(r.count);
+      categoryCounts[r.cat] = c;
+      totalAll += c;
+      if (r.cat.toLowerCase().includes('suit') || r.cat.includes('بدل')) {
+        totalSuits += c;
+      }
+    });
+    populateCategoryCounts(categoryCounts, totalAll, totalSuits);
+
+    const uniqueCats = Array.from(new Set([
+      'بدل',
+      ...countsRows.map((r) => r.cat),
+      ...cats.map((r) => r.category.trim()),
+      ...defaultCategories,
+    ]));
+
     const metadata = {
       categories: uniqueCats,
+      categoryCounts,
       colors: colors.map((r) => r.name),
       sizes: sizes.map((r) => r.name),
     };
@@ -178,7 +353,7 @@ async function getMetadata() {
   }
 
   const categoriesRes = await db.query(`
-    SELECT DISTINCT category FROM (
+    SELECT DISTINCT TRIM(category) as category FROM (
       SELECT category FROM inventory WHERE category IS NOT NULL AND TRIM(category) != ''
       UNION
       SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
@@ -187,12 +362,38 @@ async function getMetadata() {
   const colorsRes = await db.query('SELECT name FROM colors ORDER BY name ASC');
   const sizesRes = await db.query('SELECT name FROM sizes ORDER BY name ASC');
 
-  const uniqueCats = Array.from(new Set([...categoriesRes.rows.map((r) => r.category), ...defaultCategories]));
+  const countsRes = await db.query(`
+    SELECT COALESCE(NULLIF(TRIM(category), ''), 'أخرى') as cat, count(*)::int as count
+    FROM inventory
+    WHERE is_deleted = FALSE
+    GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'أخرى')
+    ORDER BY count DESC
+  `);
+
+  const categoryCounts = {};
+  let totalAll = 0;
+  let totalSuits = 0;
+  countsRes.rows.forEach((r) => {
+    categoryCounts[r.cat] = r.count;
+    totalAll += r.count;
+    if (r.cat.toLowerCase().includes('suit') || r.cat.includes('بدل')) {
+      totalSuits += r.count;
+    }
+  });
+  populateCategoryCounts(categoryCounts, totalAll, totalSuits);
+
+  const uniqueCats = Array.from(new Set([
+    'بدل',
+    ...countsRes.rows.map((r) => r.cat),
+    ...categoriesRes.rows.map((r) => r.category.trim()),
+    ...defaultCategories,
+  ]));
   const uniqueCols = colorsRes.rows.map((r) => r.name);
   const uniqueSizes = sizesRes.rows.map((r) => r.name);
 
   const metadata = {
     categories: uniqueCats,
+    categoryCounts,
     colors: uniqueCols,
     sizes: uniqueSizes,
   };
@@ -318,15 +519,62 @@ async function listInventory(req, user) {
       params.push(likePattern(req.query.search));
       params.push(likePattern(req.query.search));
       params.push(likePattern(req.query.search));
-      where.push('(i.name LIKE ? OR i.barcode LIKE ? OR i.category LIKE ? OR CAST(i.id AS TEXT) LIKE ?)');
+      params.push(likePattern(req.query.search));
+      params.push(likePattern(req.query.search));
+      where.push('(i.name LIKE ? OR i.barcode LIKE ? OR i.category LIKE ? OR i.color LIKE ? OR i.size_cut LIKE ? OR CAST(i.id AS TEXT) LIKE ?)');
     }
     if (req.query.name) {
       params.push(likePattern(req.query.name));
       where.push('i.name LIKE ?');
     }
-    if (req.query.category) {
-      params.push(req.query.category);
-      where.push('i.category = ?');
+    const catQuery = resolveCategoryQuery(req.query.category);
+    if (catQuery) {
+      if (catQuery.type === 'suits') {
+        where.push(`(i.category LIKE '%SUIT%' OR i.category LIKE '%suit%' OR i.category LIKE '%بدل%')`);
+      } else if (catQuery.type === 'other') {
+        where.push(`(i.category IS NULL OR TRIM(i.category) = '' OR LOWER(TRIM(i.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+      } else {
+        params.push(catQuery.value);
+        where.push('LOWER(TRIM(i.category)) = LOWER(?)');
+      }
+    }
+    if (req.query.supplier_id && req.query.supplier_id !== 'all') {
+      if (req.query.supplier_id === 'none' || req.query.supplier_id === 'null') {
+        where.push('i.preferred_supplier_id IS NULL');
+      } else {
+        const sId = parseInt(req.query.supplier_id, 10);
+        if (!Number.isNaN(sId) && sId > 0) {
+          params.push(sId);
+          where.push('i.preferred_supplier_id = ?');
+        }
+      }
+    }
+    if (req.query.stock_status && req.query.stock_status !== 'all') {
+      if (req.query.stock_status === 'in_stock') {
+        where.push('CAST(i.stock_level AS REAL) > 0');
+      } else if (req.query.stock_status === 'in_stock_safe') {
+        where.push('CAST(i.stock_level AS REAL) > COALESCE(i.min_stock_level, 5)');
+      } else if (req.query.stock_status === 'all_low' || req.query.stock_status === 'low_stock_all') {
+        where.push('CAST(i.stock_level AS REAL) <= COALESCE(i.min_stock_level, 5)');
+      } else if (req.query.stock_status === 'low_stock' || req.query.stock_status === 'low_stock_near') {
+        where.push('CAST(i.stock_level AS REAL) > 0 AND CAST(i.stock_level AS REAL) <= COALESCE(i.min_stock_level, 5)');
+      } else if (req.query.stock_status === 'out_of_stock') {
+        where.push('CAST(i.stock_level AS REAL) <= 0');
+      } else if (req.query.stock_status === 'broken_sizes' || req.query.stock_status === 'missing_sizes') {
+        where.push('CAST(i.stock_level AS REAL) > 0 AND EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.stock_level <= 0)');
+      }
+    }
+
+    let sqliteOrder = 'ORDER BY i.id DESC';
+    if (req.query.sort) {
+      if (req.query.sort === 'price_desc') sqliteOrder = 'ORDER BY (i.price IS NULL), CAST(i.price AS REAL) DESC, i.id DESC';
+      else if (req.query.sort === 'price_asc') sqliteOrder = 'ORDER BY (i.price IS NULL), CAST(i.price AS REAL) ASC, i.id DESC';
+      else if (req.query.sort === 'name_asc') sqliteOrder = 'ORDER BY TRIM(i.name) COLLATE NOCASE ASC, i.id DESC';
+      else if (req.query.sort === 'name_desc') sqliteOrder = 'ORDER BY TRIM(i.name) COLLATE NOCASE DESC, i.id DESC';
+      else if (req.query.sort === 'stock_desc') sqliteOrder = 'ORDER BY CAST(i.stock_level AS REAL) DESC, i.id DESC';
+      else if (req.query.sort === 'stock_asc') sqliteOrder = 'ORDER BY CAST(i.stock_level AS REAL) ASC, i.id DESC';
+      else if (req.query.sort === 'oldest') sqliteOrder = 'ORDER BY i.id ASC';
+      else if (req.query.sort === 'latest') sqliteOrder = 'ORDER BY i.id DESC';
     }
 
     const whereClause = `WHERE ${where.join(' AND ')}`;
@@ -337,12 +585,12 @@ async function listInventory(req, user) {
         SELECT i.*, i.stock_level
         FROM inventory i
         ${whereClause}
-        ORDER BY i.id DESC
+        ${sqliteOrder}
         LIMIT ? OFFSET ?
       `).all(...params, pagination.limit, pagination.offset);
 
       const rowsWithSizes = rows.map((r) => {
-        const sizes = db.sqlite.prepare('SELECT id, size_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(r.id);
+        const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(r.id);
         return { ...r, sizes };
       });
 
@@ -353,11 +601,11 @@ async function listInventory(req, user) {
       SELECT i.*, i.stock_level
       FROM inventory i
       ${whereClause}
-      ORDER BY i.id DESC
+      ${sqliteOrder}
     `).all(...params);
 
     const rowsWithSizes = rows.map((r) => {
-      const sizes = db.sqlite.prepare('SELECT id, size_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(r.id);
+      const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(r.id);
       return { ...r, sizes };
     });
 
@@ -372,16 +620,17 @@ async function listInventory(req, user) {
   const reqBranchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
   const activeBranchId = !canViewAllBranches ? parseInt(user?.branch_id, 10) : reqBranchId;
 
-  let stockLevelSql = 'COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), 0)';
+  let stockLevelSql = 'COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), i.stock_level, 0)';
   let branchStocksSql = `(SELECT json_agg(json_build_object('branch_id', branch_id, 'stock_level', stock_level, 'has_stock', stock_level > 0)) FROM inventory_branches WHERE inventory_id = i.id)`;
   let sizesSql = `COALESCE((
     SELECT json_agg(json_build_object(
       'size_name', sub.size_name,
+      'color_name', sub.color_name,
       'stock_level', sub.total_stock,
       'size_id', sub.size_id
     ) ORDER BY sub.size_name)
     FROM (
-      SELECT s.size_name, MIN(s.size_id) as size_id, SUM(s.stock_level) as total_stock
+      SELECT s.size_name, MIN(s.color_name) as color_name, MIN(s.size_id) as size_id, SUM(s.stock_level) as total_stock
       FROM inventory_sizes s
       WHERE s.inventory_id = i.id
       GROUP BY s.size_name
@@ -389,7 +638,11 @@ async function listInventory(req, user) {
   ), '[]'::json)`;
 
   if (activeBranchId && !Number.isNaN(activeBranchId)) {
-    stockLevelSql = `COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id AND branch_id = ${activeBranchId}), 0)`;
+    if (activeBranchId === 1) {
+      stockLevelSql = `COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id AND branch_id = ${activeBranchId}), i.stock_level, 0)`;
+    } else {
+      stockLevelSql = `COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id AND branch_id = ${activeBranchId}), 0)`;
+    }
     branchStocksSql = `(SELECT json_agg(json_build_object(
       'branch_id', branch_id,
       'stock_level', CASE WHEN branch_id = ${activeBranchId} THEN stock_level ELSE NULL END,
@@ -397,13 +650,21 @@ async function listInventory(req, user) {
     )) FROM inventory_branches WHERE inventory_id = i.id)`;
     sizesSql = `COALESCE((
       SELECT json_agg(json_build_object(
-        'id', s.id,
-        'size_name', s.size_name,
-        'stock_level', s.stock_level,
-        'size_id', s.size_id
-      ) ORDER BY s.id)
-      FROM inventory_sizes s
-      WHERE s.inventory_id = i.id AND s.branch_id = ${activeBranchId}
+        'size_name', sub.size_name,
+        'color_name', branch_sz.color_name,
+        'stock_level', COALESCE(branch_sz.stock_level, 0),
+        'size_id', sub.size_id
+      ) ORDER BY sub.size_name)
+      FROM (
+      SELECT size_name, MIN(size_id) as size_id
+        FROM inventory_sizes
+        WHERE inventory_id = i.id
+        GROUP BY size_name
+      ) sub
+      LEFT JOIN inventory_sizes branch_sz 
+        ON branch_sz.inventory_id = i.id 
+        AND branch_sz.size_name = sub.size_name 
+        AND branch_sz.branch_id = ${activeBranchId}
     ), '[]'::json)`;
   }
 
@@ -440,9 +701,58 @@ async function listInventory(req, user) {
     params.push(likePattern(req.query.barcode));
     where.push(`i.barcode ILIKE $${params.length}`);
   }
-  if (req.query.category) {
-    params.push(req.query.category);
-    where.push(`i.category = $${params.length}`);
+  const catQuery = resolveCategoryQuery(req.query.category);
+  if (catQuery) {
+    if (catQuery.type === 'suits') {
+      where.push(`(i.category ILIKE '%SUIT%' OR i.category ILIKE '%بدل%')`);
+    } else if (catQuery.type === 'other') {
+      where.push(`(i.category IS NULL OR TRIM(i.category) = '' OR LOWER(TRIM(i.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+    } else {
+      params.push(catQuery.value);
+      where.push(`LOWER(TRIM(i.category)) = LOWER($${params.length})`);
+    }
+  }
+  if (req.query.supplier_id && req.query.supplier_id !== 'all') {
+    if (req.query.supplier_id === 'none' || req.query.supplier_id === 'null') {
+      where.push('i.preferred_supplier_id IS NULL');
+    } else {
+      const sId = parseInt(req.query.supplier_id, 10);
+      if (!Number.isNaN(sId) && sId > 0) {
+        params.push(sId);
+        where.push(`i.preferred_supplier_id = $${params.length}`);
+      }
+    }
+  }
+  const brokenSizesSql = (activeBranchId && !Number.isNaN(activeBranchId))
+    ? `EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.branch_id = ${activeBranchId} AND sz.stock_level <= 0)`
+    : `EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id GROUP BY sz.size_name HAVING SUM(sz.stock_level) <= 0)`;
+
+  if (req.query.stock_status && req.query.stock_status !== 'all') {
+    if (req.query.stock_status === 'in_stock') {
+      where.push(`${stockLevelSql} > 0`);
+    } else if (req.query.stock_status === 'in_stock_safe') {
+      where.push(`${stockLevelSql} > COALESCE(i.min_stock_level, 5)`);
+    } else if (req.query.stock_status === 'all_low' || req.query.stock_status === 'low_stock_all') {
+      where.push(`(${stockLevelSql} <= COALESCE(i.min_stock_level, 5))`);
+    } else if (req.query.stock_status === 'low_stock' || req.query.stock_status === 'low_stock_near') {
+      where.push(`(${stockLevelSql} > 0 AND ${stockLevelSql} <= COALESCE(i.min_stock_level, 5))`);
+    } else if (req.query.stock_status === 'out_of_stock') {
+      where.push(`(${stockLevelSql} <= 0)`);
+    } else if (req.query.stock_status === 'broken_sizes' || req.query.stock_status === 'missing_sizes') {
+      where.push(`(${stockLevelSql} > 0 AND ${brokenSizesSql})`);
+    }
+  }
+
+  let orderBySql = 'ORDER BY i.id DESC';
+  if (req.query.sort) {
+    if (req.query.sort === 'price_desc') orderBySql = 'ORDER BY (i.price IS NULL), i.price DESC, i.id DESC';
+    else if (req.query.sort === 'price_asc') orderBySql = 'ORDER BY (i.price IS NULL), i.price ASC, i.id DESC';
+    else if (req.query.sort === 'name_asc') orderBySql = 'ORDER BY TRIM(i.name) ASC, i.id DESC';
+    else if (req.query.sort === 'name_desc') orderBySql = 'ORDER BY TRIM(i.name) DESC, i.id DESC';
+    else if (req.query.sort === 'stock_desc') orderBySql = `ORDER BY ${stockLevelSql} DESC, i.id DESC`;
+    else if (req.query.sort === 'stock_asc') orderBySql = `ORDER BY ${stockLevelSql} ASC, i.id DESC`;
+    else if (req.query.sort === 'oldest') orderBySql = 'ORDER BY i.id ASC';
+    else if (req.query.sort === 'latest') orderBySql = 'ORDER BY i.id DESC';
   }
 
   const whereClause = `WHERE ${where.join(' AND ')}`;
@@ -454,7 +764,7 @@ async function listInventory(req, user) {
     FROM inventory i 
     LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id 
     ${whereClause}
-    ORDER BY i.id
+    ${orderBySql}
   `;
   const countQuery = `
     SELECT COUNT(*)::int as total
@@ -541,6 +851,7 @@ async function createProduct(body, user, file = null) {
     parsedSizes = sizes
       .map((s) => ({
         size: String(s?.size || s?.size_name || '').trim(),
+        color: String(s?.color || s?.color_name || '').trim(),
         stock: parseNonNegativeInt(s?.stock ?? s?.stock_level ?? 0, 'size stock'),
       }))
       .filter((s) => s.size);
@@ -596,9 +907,9 @@ async function createProduct(body, user, file = null) {
         for (const s of parsedSizes) {
           const resS = await createOrGetSize(s.size);
           db.sqlite.prepare(`
-            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
-            VALUES (?, ?, ?, ?, ?)
-          `).run(newId, resS?.id || null, s.size, s.stock, b_id);
+            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, stock_level, branch_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(newId, resS?.id || null, s.size, s.color || colorName, s.stock, b_id);
         }
       } else if (sizeName) {
         db.sqlite.prepare(`
@@ -609,7 +920,7 @@ async function createProduct(body, user, file = null) {
 
       invalidateInventoryMetadata();
       const resRow = db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(newId);
-      const sizesRows = db.sqlite.prepare('SELECT id, size_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ?').all(newId);
+      const sizesRows = db.sqlite.prepare('SELECT id, size_name, color_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ?').all(newId);
       return { ...resRow, sizes: sizesRows };
     }
 
@@ -668,18 +979,18 @@ async function createProduct(body, user, file = null) {
           if (resolvedS) sId = resolvedS.id;
 
           await tx.query(`
-            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, stock_level, branch_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (inventory_id, LOWER(TRIM(size_name)), COALESCE(branch_id, 1))
-            DO UPDATE SET stock_level = EXCLUDED.stock_level, size_id = EXCLUDED.size_id
-          `, [newId, sId, s.size, s.stock, b_id]);
+            DO UPDATE SET stock_level = EXCLUDED.stock_level, size_id = EXCLUDED.size_id, color_name = EXCLUDED.color_name
+          `, [newId, sId, s.size, s.color || resolvedColorName, s.stock, b_id]);
 
           // Also initialize other branches with 0 stock
           await tx.query(`
-            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
-            SELECT $1, $2, $3, 0, id FROM branches WHERE id != $4
+            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, stock_level, branch_id)
+            SELECT $1, $2, $3, $4, 0, id FROM branches WHERE id != $5
             ON CONFLICT DO NOTHING
-          `, [newId, sId, s.size, b_id]);
+          `, [newId, sId, s.size, s.color || resolvedColorName, b_id]);
         }
       } else if (resolvedSizeName) {
         await tx.query(`
@@ -771,6 +1082,7 @@ async function updateProduct(id, body, user, file = null) {
     parsedSizes = sizes
       .map((s) => ({
         size: String(s?.size || s?.size_name || '').trim(),
+        color: String(s?.color || s?.color_name || '').trim(),
         stock: parseNonNegativeInt(s?.stock ?? s?.stock_level ?? 0, 'size stock'),
       }))
       .filter((s) => s.size);
@@ -824,16 +1136,16 @@ async function updateProduct(id, body, user, file = null) {
           branchTotal += s.stock;
           const resS = await createOrGetSize(s.size);
           db.sqlite.prepare(`
-            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
-            VALUES (?, ?, ?, ?, ?)
-          `).run(id, resS?.id || null, s.size, s.stock, targetBranchId);
+            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, stock_level, branch_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(id, resS?.id || null, s.size, s.color || colorName, s.stock, targetBranchId);
         }
         db.sqlite.prepare('UPDATE inventory SET stock_level = ? WHERE id = ?').run(branchTotal, id);
       }
 
       invalidateInventoryMetadata();
       const row = db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(id);
-      const sizesRows = db.sqlite.prepare('SELECT id, size_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ?').all(id);
+      const sizesRows = db.sqlite.prepare('SELECT id, size_name, color_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ?').all(id);
       return { ...row, sizes: sizesRows };
     }
 
@@ -888,11 +1200,11 @@ async function updateProduct(id, body, user, file = null) {
           if (resolvedS) sId = resolvedS.id;
 
           await tx.query(`
-            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, stock_level, branch_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (inventory_id, LOWER(TRIM(size_name)), COALESCE(branch_id, 1))
-            DO UPDATE SET stock_level = EXCLUDED.stock_level, size_id = EXCLUDED.size_id
-          `, [id, sId, s.size, s.stock, targetBranchId]);
+            DO UPDATE SET stock_level = EXCLUDED.stock_level, size_id = EXCLUDED.size_id, color_name = EXCLUDED.color_name
+          `, [id, sId, s.size, s.color || resolvedColorName, s.stock, targetBranchId]);
         }
 
         if (parsedSizes.length > 0) {
@@ -973,7 +1285,7 @@ async function updateProduct(id, body, user, file = null) {
       const { rows } = await db.query(`
         SELECT i.*, s.name as supplier_name,
                (SELECT json_agg(json_build_object('branch_id', branch_id, 'stock_level', stock_level)) FROM inventory_branches WHERE inventory_id = i.id) as branch_stocks,
-               (SELECT json_agg(json_build_object('id', id, 'size_name', size_name, 'stock_level', stock_level, 'size_id', size_id)) FROM inventory_sizes WHERE inventory_id = i.id AND branch_id = $2) as sizes
+               (SELECT json_agg(json_build_object('id', id, 'size_name', size_name, 'color_name', color_name, 'stock_level', stock_level, 'size_id', size_id)) FROM inventory_sizes WHERE inventory_id = i.id AND branch_id = $2) as sizes
         FROM inventory i 
         LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id 
         WHERE i.id = $1
@@ -1009,7 +1321,7 @@ async function getInventoryById(id, requestedBranchId, user) {
       err.statusCode = 404;
       throw err;
     }
-    const sizes = db.sqlite.prepare('SELECT id, size_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(itemId);
+    const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(itemId);
     return { ...row, sizes };
   }
 
@@ -1020,6 +1332,7 @@ async function getInventoryById(id, requestedBranchId, user) {
         SELECT json_agg(json_build_object(
           'id', s.id,
           'size_name', s.size_name,
+          'color_name', s.color_name,
           'stock_level', s.stock_level,
           'size_id', s.size_id
         ) ORDER BY s.id)

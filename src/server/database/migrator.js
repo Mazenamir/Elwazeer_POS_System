@@ -51,9 +51,9 @@ async function runPostgresMigrations() {
   console.log('✨ All PostgreSQL migrations are up to date.');
 }
 
-async function runBranchSqliteMigrations() {
+async function runBranchSqliteMigrations(targetSqlite = null) {
   console.log('🔄 Initializing Branch SQLite schema...');
-  const sqlite = db.sqlite;
+  const sqlite = targetSqlite || db.sqlite;
   if (!sqlite) return;
 
   // Execute baseline SQLite schema with WAL mode
@@ -141,6 +141,9 @@ async function runBranchSqliteMigrations() {
       payment_method TEXT DEFAULT 'cash',
       total_cost_price REAL DEFAULT 0,
       profit REAL DEFAULT 0,
+      invoice_discount REAL DEFAULT 0,
+      invoice_discount_type TEXT DEFAULT 'amount',
+      branch_invoice_number TEXT,
       offline_uuid TEXT UNIQUE,
       order_source TEXT DEFAULT 'pos',
       pending_sync INTEGER DEFAULT 1
@@ -261,6 +264,14 @@ async function runBranchSqliteMigrations() {
       expense_date TEXT DEFAULT CURRENT_DATE,
       notes TEXT,
       offline_uuid TEXT UNIQUE,
+      payment_method TEXT DEFAULT 'cash',
+      created_by INTEGER,
+      updated_by INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      is_deleted INTEGER DEFAULT 0,
+      deleted_by INTEGER,
+      deleted_at TEXT,
       pending_sync INTEGER DEFAULT 1
     );
 
@@ -403,6 +414,41 @@ async function runBranchSqliteMigrations() {
   } catch {}
 
   try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN branch_invoice_number TEXT");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN invoice_discount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN invoice_discount_type TEXT DEFAULT 'amount'");
+  } catch {}
+
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN payment_method TEXT DEFAULT 'cash'");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN created_by INTEGER");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN updated_by INTEGER");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN is_deleted INTEGER DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN deleted_by INTEGER");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE expenses ADD COLUMN deleted_at TEXT");
+  } catch {}
+
+  try {
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS colors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -427,11 +473,76 @@ async function runBranchSqliteMigrations() {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(inventory_id, size_name, branch_id)
       );
-    `);
-    try { sqlite.exec('ALTER TABLE inventory ADD COLUMN color_id INTEGER'); } catch {}
-    try { sqlite.exec('ALTER TABLE inventory ADD COLUMN size_id INTEGER'); } catch {}
-    try { sqlite.exec('ALTER TABLE order_items ADD COLUMN size TEXT'); } catch {}
+    CREATE TABLE IF NOT EXISTS sync_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_uuid TEXT UNIQUE NOT NULL,
+      entity_type TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity_id INTEGER,
+      branch_id INTEGER,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      synced_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sync_queue_status_attempts ON sync_queue(status, attempts);
+    CREATE INDEX IF NOT EXISTS idx_sync_queue_created_at ON sync_queue(created_at DESC);
+  `);
+  } catch (e) {
+    console.warn('Error ensuring auxiliary SQLite tables:', e.message);
+  }
+  try {
+    sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN color_name TEXT');
   } catch {}
+  try {
+    sqlite.exec(`
+      UPDATE inventory_sizes
+      SET color_name = (SELECT color FROM inventory WHERE inventory.id = inventory_sizes.inventory_id)
+      WHERE color_name IS NULL OR TRIM(color_name) = ''
+    `);
+  } catch {}
+
+  // Seed initial users & branches into branch SQLite if empty
+  try {
+    const userCount = sqlite.prepare('SELECT COUNT(*) as count FROM users').get()?.count || 0;
+    if (userCount === 0) {
+      const seedFile = path.join(__dirname, 'branch_initial_seed.json');
+      if (fs.existsSync(seedFile)) {
+        const seedData = JSON.parse(fs.readFileSync(seedFile, 'utf8'));
+        if (Array.isArray(seedData.users)) {
+          const insertUser = sqlite.prepare(`
+            INSERT OR REPLACE INTO users (id, username, password_hash, role, branch_id, permissions, employee_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `);
+          for (const u of seedData.users) {
+            const perms = typeof u.permissions === 'object' ? JSON.stringify(u.permissions) : (u.permissions || '[]');
+            insertUser.run(u.id, u.username, u.password_hash, u.role, u.branch_id, perms, u.employee_id || null);
+          }
+          console.log(`🌱 Seeded ${seedData.users.length} initial users into branch SQLite.`);
+        }
+        if (Array.isArray(seedData.branches)) {
+          const insertBranch = sqlite.prepare(`
+            INSERT OR REPLACE INTO branches (id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+          for (const b of seedData.branches) {
+            insertBranch.run(
+              b.id, b.name, b.location || null, b.type || null, b.is_main_warehouse ? 1 : 0,
+              b.phone || null, b.logo_url || null, b.invoice_logo_height || 160, b.invoice_logo_spacing || 8,
+              b.invoice_logo_filter || 'black', b.invoice_logo_bg_enabled ? 1 : 0,
+              b.invoice_logo_bg_start || '#ffffff', b.invoice_logo_bg_end || '#ffffff',
+              b.allowed_gender || 'both'
+            );
+          }
+          console.log(`🌱 Seeded ${seedData.branches.length} initial branches into branch SQLite.`);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not seed initial users into SQLite:', err.message);
+  }
 
   console.log('✨ Branch SQLite schema initialized successfully.');
 }
@@ -446,4 +557,5 @@ async function runMigrations() {
 
 module.exports = {
   runMigrations,
+  runBranchSqliteMigrations,
 };

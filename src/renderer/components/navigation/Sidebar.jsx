@@ -144,7 +144,7 @@ export function Sidebar({ mobileOpen, setMobileOpen }) {
         </div>
 
         {/* Navigation Items */}
-        <nav className="mt-3 px-3 flex flex-col gap-1.5 flex-1 overflow-y-auto overflow-x-hidden">
+        <nav className="mt-3 px-3 flex flex-col gap-1.5 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (

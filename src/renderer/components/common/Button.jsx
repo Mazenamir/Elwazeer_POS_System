@@ -13,7 +13,7 @@ export function Button({
   onClick,
   ...props
 }) {
-  const baseClasses = 'inline-flex items-center justify-center font-bold rounded-xl transition-all duration-200 select-none active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none gap-2';
+  const baseClasses = 'inline-flex items-center justify-center font-bold rounded-xl transition-all duration-200 select-none active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none gap-2 cursor-pointer';
 
   const sizeClasses = {
     sm: 'px-3 py-1.5 text-xs',

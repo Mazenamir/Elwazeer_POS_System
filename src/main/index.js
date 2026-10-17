@@ -48,6 +48,22 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     log(`[UPDATER] Update downloaded: ${info.version}`);
+    try {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'تحديث جديد متوفر',
+        message: `تم تنزيل التحديث الجديد (الإصدار ${info.version}) بنجاح.\nهل ترغب في إعادة تشغيل البرنامج الآن لتطبيق التحديث؟`,
+        buttons: ['إعادة التشغيل وتطبيق التحديث الآن', 'لاحقاً عند إغلاق البرنامج'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then((result) => {
+        if (result.response === 0) {
+          autoUpdater.quitAndInstall();
+        }
+      });
+    } catch (e) {
+      log(`[UPDATER] Dialog prompt failed: ${e.message}`);
+    }
   });
 
   autoUpdater.on('error', (error) => {
@@ -96,6 +112,46 @@ ipcMain.on('fix-focus', () => {
   if (mainWindow) {
     mainWindow.blur();
     mainWindow.focus();
+  }
+});
+
+// Export report to PDF via offscreen printToPDF
+ipcMain.handle('export-pdf', async (event, { html, defaultFileName }) => {
+  try {
+    const parentWin = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const { canceled, filePath } = await dialog.showSaveDialog(parentWin, {
+      title: 'حفظ التقرير كملف PDF',
+      defaultPath: defaultFileName || `report-${new Date().toISOString().split('T')[0]}.pdf`,
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+    });
+
+    if (canceled || !filePath) return { success: false, canceled: true };
+
+    const printWin = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    });
+
+    try {
+      await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      // Ensure local & web fonts (Cairo font) are fully loaded before capturing PDF
+      await printWin.webContents.executeJavaScript('document.fonts ? document.fonts.ready : Promise.resolve()');
+      const data = await printWin.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4',
+        preferCSSPageSize: true,
+      });
+      fs.writeFileSync(filePath, data);
+      return { success: true, filePath };
+    } finally {
+      printWin.destroy();
+    }
+  } catch (err) {
+    log(`[EXPORT-PDF ERROR] ${err.message}`);
+    return { success: false, error: err.message };
   }
 });
 
@@ -260,13 +316,22 @@ app.on('ready', async () => {
   if (isExternalServer) log('[DEV MODE] External server mode enabled');
 
   const appRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '../../');
+  const appEnvPath = path.join(appRoot, '.env');
+  let isBranchApp = false;
+  if (fs.existsSync(appEnvPath)) {
+    try {
+      const parsed = require('dotenv').parse(fs.readFileSync(appEnvPath, 'utf8'));
+      if (parsed.APP_MODE === 'branch') isBranchApp = true;
+    } catch {}
+  }
+  const appDataFolderName = isBranchApp ? 'Bebyoon Branch System' : 'Bebyoon System';
+
   const defaultDataDir = app.isPackaged
-    ? (process.env.ProgramData ? path.join(process.env.ProgramData, 'Bebyoon System') : path.join(app.getPath('userData'), 'data'))
+    ? (process.env.ProgramData ? path.join(process.env.ProgramData, appDataFolderName) : path.join(app.getPath('userData'), 'data'))
     : appRoot;
   const dataDir = process.env.DATA_DIR || defaultDataDir;
 
   const dataEnvPath = path.join(dataDir, '.env');
-  const appEnvPath = path.join(appRoot, '.env');
   if (fs.existsSync(dataEnvPath)) {
     require('dotenv').config({ path: dataEnvPath });
   } else if (fs.existsSync(appEnvPath)) {

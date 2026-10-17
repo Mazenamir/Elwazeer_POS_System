@@ -31,6 +31,10 @@ import {
   ChevronsRight,
   Upload,
   Image as ImageIcon,
+  ArrowUpDown,
+  Filter,
+  ChevronDown,
+  Users,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
@@ -42,8 +46,25 @@ import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
 import SearchableCombobox from '../../components/forms/SearchableCombobox';
+import { printElement } from '../../utils/print';
 
-const BASE_CATEGORIES = ['الكل', 'FORMAL SUIT', 'TUXEDO SUIT', 'SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'صديري', 'تيشيرت', 'جينز', 'KIDS', 'ترنج', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'إكسسوارات', 'WALLET', 'أخرى'];
+const BASE_CATEGORIES = ['الكل', 'بدل', 'بنطلون', 'FORMAL SUIT', 'TUXEDO SUIT', 'KIDS', 'قميص', 'تيشيرت', 'SUIT', 'WALLET', 'ترنج', 'CASUAL SUIT', 'أخرى'];
+
+const CATEGORY_DISPLAY_MAP = {
+  'الكل': 'كل التصنيفات',
+  'بدل': 'بدل (جميع الأنواع)',
+  'FORMAL SUIT': 'بدل رسمية (FORMAL SUIT)',
+  'TUXEDO SUIT': 'بدل سموكن (TUXEDO SUIT)',
+  'SUIT': 'بدل عادية (SUIT)',
+  'CASUAL SUIT': 'بدل كاجوال (CASUAL SUIT)',
+  'KIDS': 'أطفال (KIDS)',
+  'بنطلون': 'بنطلون',
+  'قميص': 'قميص',
+  'تيشيرت': 'تيشيرت',
+  'ترنج': 'ترنج',
+  'WALLET': 'محافظ (WALLET)',
+  'أخرى': 'بدون تصنيف / أخرى',
+};
 
 export function Suppliers() {
   const { user, isAdmin } = useAuth();
@@ -55,9 +76,14 @@ export function Suppliers() {
   // INVENTORY STATE
   const [products, setProducts] = useState([]);
   const [categoriesList, setCategoriesList] = useState(BASE_CATEGORIES);
+  const [categoryCounts, setCategoryCounts] = useState({});
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [productSearch, setProductSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('الكل');
+  const [stockStatusFilter, setStockStatusFilter] = useState('all');
+  const [sortOrder, setSortOrder] = useState('latest');
+  const [supplierFilter, setSupplierFilter] = useState('all');
+  const [inventoryBranchFilter, setInventoryBranchFilter] = useState('all');
   const [inventoryPagination, setInventoryPagination] = useState({
     page: 1,
     limit: 50,
@@ -65,13 +91,49 @@ export function Suppliers() {
     totalPages: 1,
   });
 
-  // Load Metadata categories
+  const hasActiveFilters = useMemo(() => {
+    return (
+      selectedCategory !== 'الكل' ||
+      stockStatusFilter !== 'all' ||
+      supplierFilter !== 'all' ||
+      inventoryBranchFilter !== 'all' ||
+      sortOrder !== 'latest' ||
+      productSearch.trim().length > 0
+    );
+  }, [selectedCategory, stockStatusFilter, supplierFilter, inventoryBranchFilter, sortOrder, productSearch]);
+
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (selectedCategory !== 'الكل') count++;
+    if (stockStatusFilter !== 'all') count++;
+    if (supplierFilter !== 'all') count++;
+    if (inventoryBranchFilter !== 'all') count++;
+    if (sortOrder !== 'latest') count++;
+    if (productSearch.trim().length > 0) count++;
+    return count;
+  }, [selectedCategory, stockStatusFilter, supplierFilter, inventoryBranchFilter, sortOrder, productSearch]);
+
+  const handleResetInventoryFilters = () => {
+    setSelectedCategory('الكل');
+    setStockStatusFilter('all');
+    setSupplierFilter('all');
+    setInventoryBranchFilter('all');
+    setSortOrder('latest');
+    setProductSearch('');
+    setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+  };
+
+  // Load Metadata categories and real counts
   useEffect(() => {
     api.get('/inventory/metadata')
       .then((meta) => {
         if (meta?.categories && Array.isArray(meta.categories)) {
-          const merged = Array.from(new Set([...BASE_CATEGORIES, ...meta.categories]));
-          setCategoriesList(merged);
+          const trimmed = meta.categories.map((c) => (typeof c === 'string' ? c.trim() : c)).filter(Boolean);
+          const ordered = Array.from(new Set(['الكل', 'بدل', ...trimmed]));
+          setCategoriesList(ordered);
+        }
+        if (meta?.categoryCounts) {
+          setCategoryCounts(meta.categoryCounts);
         }
       })
       .catch(() => {});
@@ -156,16 +218,16 @@ export function Suppliers() {
 
   // Multi-Size Inventory Management (same barcode, multiple sizes with individual quantities)
   const [productSizes, setProductSizes] = useState([
-    { id: 1, size_name: '48', stock_level: '5' },
-    { id: 2, size_name: '50', stock_level: '5' },
-    { id: 3, size_name: '52', stock_level: '5' },
-    { id: 4, size_name: '54', stock_level: '5' },
+    { id: 1, size_name: '48', color_name: '', stock_level: '5' },
+    { id: 2, size_name: '50', color_name: '', stock_level: '5' },
+    { id: 3, size_name: '52', color_name: '', stock_level: '5' },
+    { id: 4, size_name: '54', color_name: '', stock_level: '5' },
   ]);
 
   const addSizeRow = (defaultName = '', defaultStock = '0') => {
     setProductSizes((prev) => [
       ...prev,
-      { id: Date.now() + Math.random(), size_name: defaultName, stock_level: defaultStock },
+      { id: Date.now() + Math.random(), size_name: defaultName, color_name: '', stock_level: defaultStock },
     ]);
   };
 
@@ -192,11 +254,17 @@ export function Suppliers() {
       sizes = ['S', 'M', 'L', 'XL', '2XL', '3XL'];
     } else if (type === 'shoes') {
       sizes = ['40', '41', '42', '43', '44', '45'];
+    } else if (type === 'men_pants') {
+      sizes = ['30', '32', '34', '36', '38', '40'];
+    } else if (type === 'kids_boys') {
+      sizes = ['2', '4', '6', '8', '10', '12'];
+    } else if (type === 'kids_girls') {
+      sizes = ['2', '4', '6', '8', '10', '12'];
     } else if (type === 'single') {
       sizes = ['حر'];
     }
     setProductSizes(
-      sizes.map((s, idx) => ({ id: Date.now() + idx, size_name: s, stock_level: '5' }))
+      sizes.map((s, idx) => ({ id: Date.now() + idx, size_name: s, color_name: '', stock_level: '5' }))
     );
   };
 
@@ -334,9 +402,13 @@ export function Suppliers() {
     try {
       setLoadingProducts(true);
       const query = new URLSearchParams();
-      if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
+      const branchToUse = isAdmin ? inventoryBranchFilter : activeBranchId;
+      if (branchToUse && branchToUse !== 'all') query.append('branch_id', branchToUse);
       if (productSearch.trim()) query.append('search', productSearch.trim());
       if (selectedCategory !== 'الكل') query.append('category', selectedCategory);
+      if (stockStatusFilter !== 'all') query.append('stock_status', stockStatusFilter);
+      if (sortOrder !== 'latest') query.append('sort', sortOrder);
+      if (supplierFilter !== 'all') query.append('supplier_id', supplierFilter);
 
       if (inventoryPagination.limit === 'all') {
         query.append('all', 'true');
@@ -373,7 +445,7 @@ export function Suppliers() {
     } finally {
       setLoadingProducts(false);
     }
-  }, [activeBranchId, productSearch, selectedCategory, inventoryPagination.page, inventoryPagination.limit]);
+  }, [isAdmin, inventoryBranchFilter, activeBranchId, productSearch, selectedCategory, stockStatusFilter, sortOrder, supplierFilter, inventoryPagination.page, inventoryPagination.limit]);
 
   // Load Suppliers
   const fetchSuppliers = useCallback(async () => {
@@ -445,6 +517,10 @@ export function Suppliers() {
     }
   }, [activeTab, fetchProducts, fetchSuppliers, fetchRequests]);
 
+  useEffect(() => {
+    fetchSuppliers();
+  }, [fetchSuppliers]);
+
   // Reset pagination when branch changes
   useEffect(() => {
     setInventoryPagination((prev) => ({ ...prev, page: 1 }));
@@ -494,10 +570,10 @@ export function Suppliers() {
     setPMinStock('5');
     setPImage('');
     setProductSizes([
-      { id: 1, size_name: '48', stock_level: '5' },
-      { id: 2, size_name: '50', stock_level: '5' },
-      { id: 3, size_name: '52', stock_level: '5' },
-      { id: 4, size_name: '54', stock_level: '5' },
+      { id: 1, size_name: '48', color_name: '', stock_level: '5' },
+      { id: 2, size_name: '50', color_name: '', stock_level: '5' },
+      { id: 3, size_name: '52', color_name: '', stock_level: '5' },
+      { id: 4, size_name: '54', color_name: '', stock_level: '5' },
     ]);
     setSelectedImageFile(null);
     setImagePreviewUrl(null);
@@ -529,6 +605,7 @@ export function Suppliers() {
         p.sizes.map((s, idx) => ({
           id: s.id || idx + 1,
           size_name: s.size_name || '',
+          color_name: s.color_name || p.color || '',
           stock_level: String(s.stock_level ?? 0),
         }))
       );
@@ -542,14 +619,15 @@ export function Suppliers() {
           parts.map((s, idx) => ({
             id: idx + 1,
             size_name: s,
+            color_name: p.color || '',
             stock_level: String(perSize),
           }))
         );
       } else {
-        setProductSizes([{ id: 1, size_name: raw, stock_level: String(p.stock_level ?? p.stock ?? 0) }]);
+        setProductSizes([{ id: 1, size_name: raw, color_name: p.color || '', stock_level: String(p.stock_level ?? p.stock ?? 0) }]);
       }
     } else {
-      setProductSizes([{ id: 1, size_name: 'حر', stock_level: String(p.stock_level ?? p.stock ?? 0) }]);
+      setProductSizes([{ id: 1, size_name: 'حر', color_name: p.color || '', stock_level: String(p.stock_level ?? p.stock ?? 0) }]);
     }
 
     setSelectedImageFile(null);
@@ -578,11 +656,17 @@ export function Suppliers() {
       .filter((s) => s.size_name && s.size_name.trim())
       .map((s) => ({
         size_name: s.size_name.trim(),
+        color_name: String(s.color_name || '').trim(),
         stock_level: Math.max(0, Number(s.stock_level) || 0),
       }));
 
     if (cleanedSizes.length === 0) {
       toast.error('يرجى تحديد مقاس واحد على الأقل مع إدخال الكمية');
+      return;
+    }
+
+    if (cleanedSizes.some((s) => !s.color_name)) {
+      toast.error('يرجى تحديد لون لكل مقاس');
       return;
     }
 
@@ -593,7 +677,7 @@ export function Suppliers() {
     try {
       const selectedSupId = Number(pSupplierId) || suppliers[0]?.id || 1;
       const targetBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1;
-      const finalColor = pColor === '__OTHER__' ? pNewColor.trim() : pColor.trim();
+      const finalColor = (pColor === '__OTHER__' ? pNewColor.trim() : pColor.trim()) || cleanedSizes[0].color_name;
 
       if (selectedImageFile) {
         // Method 2: Local Upload via Multipart FormData
@@ -1208,7 +1292,7 @@ export function Suppliers() {
               action={
                 <div className="flex items-center gap-2">
                   <div className="relative w-64">
-                    <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                     <input
                       type="text"
                       value={productSearch}
@@ -1217,8 +1301,21 @@ export function Suppliers() {
                         setInventoryPagination((prev) => ({ ...prev, page: 1 }));
                       }}
                       placeholder="ابحث بالاسم، الكود، الباركود..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-8 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 focus:bg-white transition-all"
                     />
+                    {productSearch.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProductSearch('');
+                          setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                        }}
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        title="مسح البحث"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                   <Button variant="outline" onClick={fetchProducts} icon={RotateCcw}>
                     تحديث
@@ -1227,24 +1324,311 @@ export function Suppliers() {
               }
             />
 
-            {/* Category Filter Pills */}
-            <div className="px-6 py-2 border-b border-slate-100 flex items-center gap-2 overflow-x-auto no-scrollbar">
-              {categoriesList.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => {
-                    setSelectedCategory(cat);
-                    setInventoryPagination((prev) => ({ ...prev, page: 1 }));
-                  }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    selectedCategory === cat
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
+            {/* Inventory Filter Bar */}
+            <div className="border-b border-slate-100 bg-slate-50/70 p-4 space-y-3">
+              {/* Row 1: Horizontal Quick Category Pills with Real Counts */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                {categoriesList.map((cat) => {
+                  const isSelected = selectedCategory === cat;
+                  const count = categoryCounts[cat];
+                  const displayName = CATEGORY_DISPLAY_MAP[cat] || cat;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategory(cat);
+                        setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-200'
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200/80 hover:border-slate-300'
+                      }`}
+                    >
+                      <span>{cat === 'الكل' ? 'كل الأصناف' : displayName}</span>
+                      {typeof count === 'number' && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
+                            isSelected ? 'bg-indigo-700/60 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {count.toLocaleString()}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Row 2: Filter Selectors Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 items-center">
+                {/* Category Dropdown */}
+                <div className="relative">
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => {
+                      setSelectedCategory(e.target.value);
+                      setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                    }}
+                    className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
+                    aria-label="التصنيف / الفئة"
+                  >
+                    {categoriesList.map((cat) => {
+                      const count = categoryCounts[cat];
+                      const label = CATEGORY_DISPLAY_MAP[cat] || cat;
+                      return (
+                        <option key={cat} value={cat}>
+                          {label}{typeof count === 'number' ? ` (${count.toLocaleString()})` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <Tag className="w-4 h-4 text-indigo-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+
+                {/* Stock Status Dropdown */}
+                <div className="relative">
+                  <select
+                    value={stockStatusFilter}
+                    onChange={(e) => {
+                      setStockStatusFilter(e.target.value);
+                      setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                    }}
+                    className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
+                    aria-label="حالة المخزون"
+                  >
+                    <option value="all">كل حالات التوفر</option>
+                    <option value="in_stock">متوفر بالمخزن (&gt; 0)</option>
+                    <option value="in_stock_safe">متوفر بوفرة (&gt; حد الأمان)</option>
+                    <option value="all_low">كل النواقص والمنتهي (≤ حد الأمان)</option>
+                    <option value="low_stock">نواقص وشيكة (1 إلى حد الأمان)</option>
+                    <option value="out_of_stock">منتهي تماماً من المخزن (0)</option>
+                    <option value="broken_sizes">أصناف بها مقاسات نافدة (0 قطعة)</option>
+                  </select>
+                  <Package className="w-4 h-4 text-indigo-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+
+                {/* Branch Scope Dropdown (Admin only) */}
+                {isAdmin && Array.isArray(branches) && branches.length > 0 && (
+                  <div className="relative">
+                    <select
+                      value={inventoryBranchFilter}
+                      onChange={(e) => {
+                        setInventoryBranchFilter(e.target.value);
+                        setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                      }}
+                      className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
+                      aria-label="نطاق الرصيد"
+                    >
+                      <option value="all">كل الفروع والمخازن (الإجمالي)</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Building2 className="w-4 h-4 text-indigo-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                )}
+
+                {/* Supplier Filter Dropdown (Admin only) */}
+                {isAdmin && suppliers.length > 0 && (
+                  <div className="relative">
+                    <select
+                      value={supplierFilter}
+                      onChange={(e) => {
+                        setSupplierFilter(e.target.value);
+                        setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                      }}
+                      className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
+                      aria-label="المورد"
+                    >
+                      <option value="all">كل الموردين</option>
+                      <option value="none">أصناف بدون مورد محدد</option>
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Users className="w-4 h-4 text-indigo-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                )}
+
+                {/* Sort Order Dropdown */}
+                <div className="relative">
+                  <select
+                    value={sortOrder}
+                    onChange={(e) => {
+                      setSortOrder(e.target.value);
+                      setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                    }}
+                    className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
+                    aria-label="الترتيب"
+                  >
+                    <option value="latest">الأحدث إضافة</option>
+                    <option value="price_asc">سعر البيع: من الأقل للأعلى</option>
+                    <option value="price_desc">سعر البيع: من الأعلى للأقل</option>
+                    <option value="stock_desc">الكمية: الأكثر توفراً</option>
+                    <option value="stock_asc">الكمية: الأقل توفراً</option>
+                    <option value="name_asc">الاسم (أ - ي)</option>
+                  </select>
+                  <ArrowUpDown className="w-4 h-4 text-indigo-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Active Filter Badges & Reset Filters Row */}
+              {hasActiveFilters && (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/60 animate-fade-in">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500">الفلاتر المطبقة:</span>
+                    {selectedCategory !== 'الكل' && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <span>الفئة: {CATEGORY_DISPLAY_MAP[selectedCategory] || selectedCategory}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCategory('الكل');
+                            setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                          }}
+                          className="hover:text-indigo-900 cursor-pointer"
+                          title="إلغاء فلتر الفئة"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {stockStatusFilter !== 'all' && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-amber-50 text-amber-700 border border-amber-200">
+                        <span>
+                          الحالة: {
+                            stockStatusFilter === 'in_stock'
+                              ? 'متوفر بالمخزن'
+                              : stockStatusFilter === 'in_stock_safe'
+                              ? 'متوفر بوفرة'
+                              : stockStatusFilter === 'all_low'
+                              ? 'كل النواقص والمنتهي'
+                              : stockStatusFilter === 'low_stock'
+                              ? 'نواقص وشيكة'
+                              : stockStatusFilter === 'broken_sizes'
+                              ? 'مقاسات نافدة'
+                              : 'منتهي تماماً'
+                          }
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStockStatusFilter('all');
+                            setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                          }}
+                          className="hover:text-amber-900 cursor-pointer"
+                          title="إلغاء فلتر الحالة"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {inventoryBranchFilter !== 'all' && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span>
+                          الفرع: {branches.find((b) => String(b.id) === String(inventoryBranchFilter))?.name || inventoryBranchFilter}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInventoryBranchFilter('all');
+                            setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                          }}
+                          className="hover:text-emerald-900 cursor-pointer"
+                          title="إلغاء فلتر الفرع"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {supplierFilter !== 'all' && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-purple-50 text-purple-700 border border-purple-200">
+                        <span>
+                          المورد: {supplierFilter === 'none' ? 'بدون مورد' : suppliers.find((s) => String(s.id) === String(supplierFilter))?.name || supplierFilter}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSupplierFilter('all');
+                            setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                          }}
+                          className="hover:text-purple-900 cursor-pointer"
+                          title="إلغاء فلتر المورد"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {sortOrder !== 'latest' && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-blue-50 text-blue-700 border border-blue-200">
+                        <span>
+                          الترتيب: {
+                            sortOrder === 'price_asc'
+                              ? 'سعر البيع: الأقل للأعلى'
+                              : sortOrder === 'price_desc'
+                              ? 'سعر البيع: الأعلى للأقل'
+                              : sortOrder === 'stock_desc'
+                              ? 'الأكثر توفراً'
+                              : sortOrder === 'stock_asc'
+                              ? 'الأقل توفراً'
+                              : sortOrder === 'name_asc'
+                              ? 'الاسم (أ - ي)'
+                              : sortOrder
+                          }
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSortOrder('latest');
+                            setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                          }}
+                          className="hover:text-blue-900 cursor-pointer"
+                          title="إلغاء الترتيب"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {productSearch.trim() && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-slate-100 text-slate-700 border border-slate-300">
+                        <span>البحث: "{productSearch.trim()}"</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProductSearch('');
+                            setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+                          }}
+                          className="hover:text-slate-900 cursor-pointer"
+                          title="مسح البحث"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleResetInventoryFilters}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
+                    title="إعادة ضبط كافة الفلاتر"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>مسح الفلاتر {activeFiltersCount > 0 ? `(${activeFiltersCount})` : ''}</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {loadingProducts ? (
@@ -1275,7 +1659,11 @@ export function Suppliers() {
                   <tbody className="divide-y divide-slate-100 font-medium">
                     {products.map((p) => {
                       const stock = Number(p.stock_level ?? p.stock_quantity ?? p.stock ?? 0);
-                      const isLow = stock <= (p.min_stock_level ?? 5);
+                      const minStock = Number(p.min_stock_level ?? 5);
+                      const isZero = stock <= 0;
+                      const isLow = stock > 0 && stock <= minStock;
+                      const isSafe = stock > minStock;
+                      const hasDepletedSizes = Array.isArray(p.sizes) && p.sizes.length > 0 && p.sizes.some((s) => Number(s.stock_level ?? 0) <= 0);
 
                       return (
                         <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
@@ -1313,22 +1701,22 @@ export function Suppliers() {
                                 </div>
                               )}
                               {Array.isArray(p.sizes) && p.sizes.length > 0 ? (
-                                <div className="flex flex-wrap items-center gap-1 max-w-xs">
+                                <div className="flex flex-wrap items-center gap-1.5 max-w-xs">
                                   {p.sizes.map((s, sIdx) => {
                                     const qty = Number(s.stock_level ?? 0);
                                     return (
                                       <span
                                         key={sIdx}
-                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${
+                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border transition-colors ${
                                           qty > 0
                                             ? 'bg-slate-50 text-slate-800 border-slate-200'
-                                            : 'bg-rose-50 text-rose-500 border-rose-200 line-through opacity-70'
+                                            : 'bg-rose-50/70 text-rose-600 border-rose-200'
                                         }`}
-                                        title={`المقاس: ${s.size_name} | الكمية بالمخزن: ${qty} قطعة`}
+                                        title={`المقاس: ${s.size_name} | الرصيد: ${qty} قطعة`}
                                       >
                                         <span className="font-extrabold">{s.size_name}</span>
                                         <span
-                                          className={`px-1 py-0.2 rounded text-[10px] font-black ${
+                                          className={`px-1.5 py-0.5 rounded text-[11px] font-black ${
                                             qty > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-rose-100 text-rose-700'
                                           }`}
                                         >
@@ -1366,12 +1754,22 @@ export function Suppliers() {
                           <td className="py-3">
                             <span
                               className={`px-2.5 py-1 rounded-full text-xs font-black border inline-flex items-center gap-1 ${
-                                isLow
+                                isZero
                                   ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : isLow
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : hasDepletedSizes
+                                  ? 'bg-amber-50/90 text-amber-800 border-amber-300'
                                   : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                               }`}
                             >
-                              {stock} قطعة
+                              {isZero
+                                ? 'منتهي (0 قطعة)'
+                                : isLow
+                                ? `نواقص (${stock} قطعة)`
+                                : hasDepletedSizes
+                                ? `متوفر (${stock} قطعة) • مقاسات نافدة`
+                                : `متوفر (${stock} قطعة)`}
                             </span>
                             {Array.isArray(p.sizes) && p.sizes.length > 1 && (
                               <div className="text-[10px] text-slate-400 font-bold mt-1">
@@ -1881,14 +2279,14 @@ export function Suppliers() {
             {/* 2. COLOR: DYNAMIC SEARCHABLE DROPDOWN WITH 'OTHER' OPTION */}
             <div className="space-y-2 sm:col-span-1">
               <SearchableCombobox
-                label="اللون"
+                label="لون عام للمنتج (اختياري)"
                 value={pColor}
                 onChange={(val) => {
                   setPColor(val);
                   if (val !== '__OTHER__') setPNewColor('');
                 }}
                 options={colorsList}
-                placeholder="اختر أو ابحث عن لون..."
+                placeholder="يُستخدم فقط كبيان عام؛ أدخل لون كل مقاس بالجدول..."
                 searchPlaceholder="ابحث في الألوان المسجلة..."
                 isLoading={loadingDropdowns}
                 customOptionLabel="أخرى (إضافة لون جديد) ➕"
@@ -1954,7 +2352,7 @@ export function Suppliers() {
                       مقاسات المنتج ورصيد كل مقاس بالمخزن
                     </h4>
                     <p className="text-[11px] text-slate-500 font-medium">
-                      جميع المقاسات تتبع نفس الباركود الواحد مع تتبع مستقل لكمية كل مقاس
+                      لكل مقاس لون وكمية مستقلان، بينما يظل الباركود واحدًا للمنتج كله
                     </p>
                   </div>
                 </div>
@@ -2001,6 +2399,27 @@ export function Suppliers() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => applySizesPreset('men_pants')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  بنطلونات رجالي (30-40)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applySizesPreset('kids_boys')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  أطفال أولادي (2-12)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applySizesPreset('kids_girls')}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                >
+                  أطفال بناتي (2-12)
+                </button>
+                <button
+                  type="button"
                   onClick={() => applySizesPreset('single')}
                   className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-slate-700 font-bold text-[11px] border border-slate-200 transition-colors shadow-2xs cursor-pointer"
                 >
@@ -2014,14 +2433,20 @@ export function Suppliers() {
                   <option key={idx} value={s} />
                 ))}
               </datalist>
+              <datalist id="colors-autocomplete-list">
+                {colorsList.map((color, idx) => (
+                  <option key={idx} value={color} />
+                ))}
+              </datalist>
 
               {/* Size Rows Table */}
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
                 <table className="w-full text-right text-xs">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                     <tr>
-                      <th className="py-2 px-3 w-1/2">المقاس (Size)</th>
-                      <th className="py-2 px-3 w-1/3">الكمية بالمخزن (قطعة)</th>
+                      <th className="py-2 px-3 w-[35%]">المقاس (Size)</th>
+                      <th className="py-2 px-3 w-[35%]">اللون</th>
+                      <th className="py-2 px-3 w-[25%]">الكمية بالمخزن (قطعة)</th>
                       <th className="py-2 px-3 text-center w-16">إجراء</th>
                     </tr>
                   </thead>
@@ -2035,6 +2460,17 @@ export function Suppliers() {
                             value={row.size_name}
                             onChange={(e) => updateSizeRow(row.id, 'size_name', e.target.value)}
                             placeholder="مثال: 48، 50، L..."
+                            className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition-all"
+                            required
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            list="colors-autocomplete-list"
+                            value={row.color_name || ''}
+                            onChange={(e) => updateSizeRow(row.id, 'color_name', e.target.value)}
+                            placeholder="مثال: كحلي، أسود..."
                             className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition-all"
                             required
                           />
@@ -2721,7 +3157,7 @@ export function Suppliers() {
             جاري تحميل كشف الحساب...
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-4" id="supplier-statement-area">
             <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
               <div>
                 <span className="text-xs text-slate-500 font-bold block">إجمالي التوريدات</span>
@@ -2740,7 +3176,7 @@ export function Suppliers() {
                   variant="outline"
                   size="sm"
                   icon={Printer}
-                  onClick={() => window.print()}
+                  onClick={() => printElement('supplier-statement-area', `كشف حساب المورد: ${selectedSupplier?.name || ''}`)}
                 >
                   طباعة الكشف
                 </Button>

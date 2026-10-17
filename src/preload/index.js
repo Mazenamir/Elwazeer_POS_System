@@ -1,4 +1,33 @@
-const { ipcRenderer, webFrame } = require('electron');
+const { ipcRenderer, webFrame, contextBridge } = require('electron');
+
+try {
+  contextBridge.exposeInMainWorld('electronAPI', {
+    exportPdf: (payload) => ipcRenderer.invoke('export-pdf', payload),
+    changeZoom: (delta) => {
+      const nextZoom = Math.min(2, Math.max(0.5, webFrame.getZoomFactor() + Number(delta || 0)));
+      webFrame.setZoomFactor(nextZoom);
+      try {
+        window.localStorage.setItem('app-zoom', nextZoom.toString());
+      } catch (e) {}
+      return nextZoom;
+    },
+    isElectron: true,
+  });
+} catch (e) {
+  // If contextBridge is not enabled or fails, fallback to window assignment
+  window.electronAPI = {
+    exportPdf: (payload) => ipcRenderer.invoke('export-pdf', payload),
+    changeZoom: (delta) => {
+      const nextZoom = Math.min(2, Math.max(0.5, webFrame.getZoomFactor() + Number(delta || 0)));
+      webFrame.setZoomFactor(nextZoom);
+      try {
+        window.localStorage.setItem('app-zoom', nextZoom.toString());
+      } catch (e) {}
+      return nextZoom;
+    },
+    isElectron: true,
+  };
+}
 
 window.addEventListener('DOMContentLoaded', () => {
   try {

@@ -661,9 +661,24 @@ export function Customers() {
                             {Number(r.total_price || 0).toLocaleString()} ج.م
                           </td>
                           <td className="p-3">
-                            <Badge variant={r.status === 'returned' ? 'success' : 'warning'}>
-                              {r.status === 'returned' ? 'تم الإرجاع' : r.status}
-                            </Badge>
+                            {(() => {
+                              const isReturnedWithRem = r.status === 'returned' && Number(r.remaining || 0) > 0;
+                              const statusMap = {
+                                booked: { label: 'محجوزة', variant: 'warning' },
+                                active: { label: 'تم الاستلام (نشط)', variant: 'info' },
+                                returned: { label: 'تم الإرجاع (خالص)', variant: 'success' },
+                                sold: { label: 'محولة لبيع', variant: 'purple' },
+                                cancelled: { label: 'ملغي', variant: 'danger' },
+                              };
+                              const badgeInfo = isReturnedWithRem
+                                ? { label: 'مرتجع (غير خالص / عليه متبقي)', variant: 'warning' }
+                                : (statusMap[r.status] || { label: r.status || '-', variant: 'neutral' });
+                              return (
+                                <Badge variant={badgeInfo.variant}>
+                                  {badgeInfo.label}
+                                </Badge>
+                              );
+                            })()}
                           </td>
                         </tr>
                       ))}

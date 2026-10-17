@@ -7,7 +7,7 @@
     "prestart": "node -e \"const fs = require('fs'); if (!fs.existsSync('dist/renderer/index.html')) { require('child_process').execSync('npm run build:client', { stdio: 'inherit' }); }\"",
     "start": "electron .",
     "build": "vite build",
-    "server": "node src/server/server.js",
+    "server": "node --watch --watch-path=src/server src/server/server.js",
     "dev:client": "vite",
     "dev:electron": "electron . --dev",
     "dev:web": "concurrently -k -n server,client -c blue,green \"npm run server\" \"npm run dev:client\"",
@@ -19,6 +19,7 @@
     "predist": "npm run build:client",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
+    "dist:branch": "electron-builder --config electron-builder.branch.json --win",
     "verify:package": "node scratch/verify_package.js"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "electron-updater": "^6.8.9",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
@@ -131,6 +133,7 @@
           "!@rolldown/**/*",
           "!lightningcss*/**/*",
           "!rolldown/**/*",
+          "!.package-lock.json",
           "!.bin/**/*"
         ]
       }

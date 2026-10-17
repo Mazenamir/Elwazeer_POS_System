@@ -6,7 +6,7 @@ async function resolveOrderId(db, idParam) {
   if (idStr.toUpperCase().startsWith('OFF-')) {
     const offlinePart = idStr.slice(4); // remove 'OFF-' prefix
     const { rows } = await db.query(
-      'SELECT id FROM orders WHERE offline_uuid LIKE $1 LIMIT 1',
+      'SELECT id FROM orders WHERE offline_uuid::text LIKE $1 LIMIT 1',
       [offlinePart + '%']
     );
     if (rows.length === 0) return null;

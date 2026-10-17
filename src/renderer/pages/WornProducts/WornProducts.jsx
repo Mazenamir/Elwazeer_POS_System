@@ -251,10 +251,13 @@ export function WornProducts() {
   };
 
   const formatCurrency = (val) => {
-    return `${Number(val || 0).toLocaleString('en-US', {
+    const parsed = Number(val);
+    const num = Number.isFinite(parsed) ? parsed : 0;
+    const formatted = num.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    })} ج.م`;
+    });
+    return num < 0 ? `\u200E${formatted} ج.م` : `${formatted} ج.م`;
   };
 
   const formatDate = (val) => {

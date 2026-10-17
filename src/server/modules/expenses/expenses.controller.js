@@ -27,6 +27,33 @@ async function createExpense(req, res, next) {
   }
 }
 
+async function updateExpense(req, res, next) {
+  try {
+    const updated = await expensesService.updateExpense(req.params.id, req.body, req.user, req);
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function deleteExpense(req, res, next) {
+  try {
+    const deleted = await expensesService.deleteExpense(req.params.id, req.user, req);
+    res.json({ success: true, deleted });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function listExpenseCashiers(req, res, next) {
+  try {
+    const cashiers = await expensesService.listExpenseCashiers(req.user);
+    res.json(cashiers);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getWornProductsSummary(req, res, next) {
   try {
     const summary = await expensesService.getWornProductsSummary(req.query, req.user);
@@ -66,7 +93,10 @@ async function updateWornProduct(req, res, next) {
 module.exports = {
   getExpensesSummary,
   listExpenses,
+  listExpenseCashiers,
   createExpense,
+  updateExpense,
+  deleteExpense,
   getWornProductsSummary,
   listWornProducts,
   createWornProduct,

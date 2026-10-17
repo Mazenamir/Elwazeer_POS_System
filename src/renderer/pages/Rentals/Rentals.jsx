@@ -30,11 +30,14 @@ import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
+import { printElement } from '../../utils/print';
+import { ThermalReceipt } from '../../components/receipts';
+
 
 const STATUS_MAP = {
   booked: { label: 'محجوزة', variant: 'warning' },
   active: { label: 'تم الاستلام', variant: 'info' },
-  returned: { label: 'مُرجعة', variant: 'success' },
+  returned: { label: 'تم الإرجاع (خالص)', variant: 'success' },
   sold: { label: 'محولة لبيع', variant: 'purple' },
   cancelled: { label: 'ملغي', variant: 'danger' },
 };
@@ -84,7 +87,19 @@ export function Rentals() {
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [selectedRentalForReturn, setSelectedRentalForReturn] = useState(null);
   const [fineAmount, setFineAmount] = useState('0');
+  const [returnSettlementAction, setReturnSettlementAction] = useState('collect'); // 'collect' | 'deduct_deposit' | 'debt'
+  const [returnPaidAmount, setReturnPaidAmount] = useState('');
+  const [returnPaymentMethod, setReturnPaymentMethod] = useState('cash');
+  const [returnNotes, setReturnNotes] = useState('');
   const [returnSubmitting, setReturnSubmitting] = useState(false);
+
+  // Settle Payment Modal State (for rentals with remaining debt)
+  const [showSettlePaymentModal, setShowSettlePaymentModal] = useState(false);
+  const [selectedRentalForPayment, setSelectedRentalForPayment] = useState(null);
+  const [paymentSettleAmount, setPaymentSettleAmount] = useState('');
+  const [paymentSettleMethod, setPaymentSettleMethod] = useState('cash');
+  const [paymentSettleNotes, setPaymentSettleNotes] = useState('');
+  const [paymentSettleSubmitting, setPaymentSettleSubmitting] = useState(false);
 
   // Thermal Receipt Modal
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -269,6 +284,16 @@ export function Rentals() {
   const openReturnModal = (rental) => {
     setSelectedRentalForReturn(rental);
     setFineAmount(rental.suggested_fine ? rental.suggested_fine.toString() : '0');
+    const rem = Number(rental.remaining || 0);
+    if (rem > 0) {
+      setReturnSettlementAction('collect');
+      setReturnPaidAmount(rem.toString());
+    } else {
+      setReturnSettlementAction('collect');
+      setReturnPaidAmount('0');
+    }
+    setReturnPaymentMethod('cash');
+    setReturnNotes('');
     setShowReturnModal(true);
   };
 
@@ -277,12 +302,44 @@ export function Rentals() {
     e.preventDefault();
     if (!selectedRentalForReturn) return;
 
+    const rem = Number(selectedRentalForReturn.remaining || 0);
+    const fine = Number(fineAmount) || 0;
+
+    if (rem > 0) {
+      if (!returnSettlementAction) {
+        toast.warning('يرجى اختيار طريقة تسوية المتبقي');
+        return;
+      }
+      if (returnSettlementAction === 'collect') {
+        const paid = Number(returnPaidAmount);
+        if (isNaN(paid) || paid <= 0) {
+          toast.warning('يرجى إدخال مبلغ تحصيل صحيح أكبر من الصفر');
+          return;
+        }
+        if (paid > rem) {
+          toast.warning(`المبلغ المحصل (${paid} ج.م) لا يمكن أن يتجاوز المتبقي المطلوب (${rem} ج.م)`);
+          return;
+        }
+      } else if (returnSettlementAction === 'deduct_deposit') {
+        const dep = Number(selectedRentalForReturn.deposit || 0);
+        const avail = Math.max(0, dep - fine);
+        if (avail <= 0) {
+          toast.warning('مبلغ التأمين المتاح 0 ج.م ولا يمكن الخصم منه');
+          return;
+        }
+      }
+    }
+
     setReturnSubmitting(true);
     try {
       await api.put(`/rentals/${selectedRentalForReturn.id}/return`, {
-        fine: Number(fineAmount) || 0,
+        fine,
+        settlement_action: rem > 0 ? returnSettlementAction : 'collect',
+        paid_amount: rem > 0 ? Number(returnPaidAmount) || 0 : 0,
+        payment_method: returnPaymentMethod,
+        notes: returnNotes.trim(),
       });
-      toast.success('تم استرجاع القطعة وتسوية التأمين بنجاح! ✅');
+      toast.success('تم استرجاع القطعة وتسوية الحساب بنجاح! ✅');
       setShowReturnModal(false);
       fetchRentals();
       fetchSummary();
@@ -290,6 +347,48 @@ export function Rentals() {
       toast.error(err.message || 'فشل استرجاع الإيجار');
     } finally {
       setReturnSubmitting(false);
+    }
+  };
+
+  // Open Settle Payment Modal
+  const openSettlePaymentModal = (rental) => {
+    setSelectedRentalForPayment(rental);
+    setPaymentSettleAmount(rental.remaining ? rental.remaining.toString() : '');
+    setPaymentSettleMethod('cash');
+    setPaymentSettleNotes('');
+    setShowSettlePaymentModal(true);
+  };
+
+  // Submit Settle Payment
+  const handleSettlePaymentSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedRentalForPayment) return;
+    const pay = Number(paymentSettleAmount);
+    if (!pay || pay <= 0) {
+      toast.warning('يرجى إدخال مبلغ سداد صحيح أكبر من الصفر');
+      return;
+    }
+    const maxPay = Number(selectedRentalForPayment.remaining || 0);
+    if (pay > maxPay) {
+      toast.warning(`المبلغ المدخل (${pay}) أكبر من المتبقي المطلوب (${maxPay})`);
+      return;
+    }
+
+    setPaymentSettleSubmitting(true);
+    try {
+      await api.put(`/rentals/${selectedRentalForPayment.id}/settle-payment`, {
+        paid_amount: pay,
+        payment_method: paymentSettleMethod,
+        notes: paymentSettleNotes.trim(),
+      });
+      toast.success('تم تسجيل سداد المبلغ بنجاح! ✨');
+      setShowSettlePaymentModal(false);
+      fetchRentals();
+      fetchSummary();
+    } catch (err) {
+      toast.error(err.message || 'فشل تسجيل السداد');
+    } finally {
+      setPaymentSettleSubmitting(false);
     }
   };
 
@@ -392,7 +491,14 @@ export function Rentals() {
           </div>
           <div>
             <div className="text-xs font-bold text-slate-400">مُرجعة</div>
-            <div className="text-2xl font-black text-slate-900">{summary.returned || 0}</div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-black text-slate-900">{summary.returned || 0}</span>
+              {Number(summary.returned_debt || 0) > 0 && (
+                <span className="text-[11px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-lg border border-amber-200">
+                  {summary.returned_debt} عليه متبقي
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -435,7 +541,9 @@ export function Rentals() {
                 <option value="all">كل الحالات</option>
                 <option value="booked">محجوزة</option>
                 <option value="active">تم الاستلام</option>
-                <option value="returned">مُرجعة</option>
+                <option value="returned">مُرجعة (الكل)</option>
+                <option value="returned_debt">مرتجع (غير خالص / عليه متبقي)</option>
+                <option value="returned_settled">تم الإرجاع (خالص)</option>
                 <option value="sold">محولة لبيع</option>
                 <option value="cancelled">ملغي</option>
               </select>
@@ -472,10 +580,18 @@ export function Rentals() {
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
                 {rentals.map((r) => {
-                  const statusInfo = STATUS_MAP[r.status] || {
-                    label: r.status,
-                    variant: 'neutral',
-                  };
+                  const isReturnedWithRemaining = r.status === 'returned' && Number(r.remaining || 0) > 0;
+                  const statusInfo = isReturnedWithRemaining
+                    ? {
+                        label: 'مرتجع (غير خالص / عليه متبقي)',
+                        variant: 'warning',
+                      }
+                    : (r.status === 'returned'
+                        ? { label: 'تم الإرجاع (خالص)', variant: 'success' }
+                        : (STATUS_MAP[r.status] || {
+                            label: r.status,
+                            variant: 'neutral',
+                          }));
                   const isDelay = r.delay_days > 0 && r.status === 'active';
 
                   return (
@@ -599,6 +715,19 @@ export function Rentals() {
                             >
                               <Tag className="w-4 h-4" />
                             </button>
+                          )}
+
+                          {/* Settle Remaining Payment if remaining > 0 (for returned or active) */}
+                          {Number(r.remaining || 0) > 0 && r.status !== 'cancelled' && (
+                            <Button
+                              variant="warning"
+                              size="sm"
+                              onClick={() => openSettlePaymentModal(r)}
+                              className="!bg-amber-500 hover:!bg-amber-600 text-white font-bold text-xs"
+                              title="سداد المبلغ المتبقي على العميل"
+                            >
+                              سداد متبقي
+                            </Button>
                           )}
 
                           {/* Print Receipt */}
@@ -837,17 +966,23 @@ export function Rentals() {
         isOpen={showReturnModal}
         onClose={() => setShowReturnModal(false)}
         title="استرجاع القطعة وتسوية التأمين 📦"
-        subtitle={`العميل: ${selectedRentalForReturn?.customer_name || ''}`}
-        maxWidth="max-w-md"
+        subtitle={`حجز رقم #${selectedRentalForReturn?.id || ''} - العميل: ${selectedRentalForReturn?.customer_name || ''}`}
+        maxWidth="max-w-lg"
       >
         <form onSubmit={handleReturnSubmit} className="space-y-4">
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2">
             <div className="flex justify-between font-bold text-slate-700">
               <span>القطعة:</span>
-              <span>{selectedRentalForReturn?.inventory_name}</span>
+              <span>{selectedRentalForReturn?.inventory_name || 'قطعة تأجير'}</span>
             </div>
             <div className="flex justify-between font-bold text-slate-700">
-              <span>مبلغ التأمين المحتجز:</span>
+              <span>قيمة التأجير الأصلية:</span>
+              <span className="font-black text-indigo-600">
+                {Number(selectedRentalForReturn?.total_price || 0).toLocaleString()} ج.م
+              </span>
+            </div>
+            <div className="flex justify-between font-bold text-slate-700">
+              <span>مبلغ التأمين المحتجز (الضمان):</span>
               <span className="text-emerald-600 font-black">
                 {Number(selectedRentalForReturn?.deposit || 0).toLocaleString()} ج.م
               </span>
@@ -868,27 +1003,247 @@ export function Rentals() {
             helperText="في حال وجود تلف أو تأخير، يتم خصم هذا المبلغ من التأمين"
           />
 
-          <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold flex justify-between">
-            <span>المبلغ المسترد للعميل من التأمين:</span>
-            <span className="font-black">
-              {Math.max(
-                0,
-                Number(selectedRentalForReturn?.deposit || 0) - Number(fineAmount || 0)
-              ).toLocaleString()}{' '}
-              ج.م
-            </span>
+          {/* Remaining Balance Settlement Section */}
+          {Number(selectedRentalForReturn?.remaining || 0) > 0 ? (
+            <div className="p-4 rounded-2xl bg-amber-50/90 border-2 border-amber-300 space-y-3">
+              <div className="flex items-center gap-2 text-amber-950 font-black text-xs">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  متبقي على العميل:{' '}
+                  <span className="text-rose-600 text-sm font-black">
+                    {Number(selectedRentalForReturn.remaining).toLocaleString()} ج.م
+                  </span>
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-900 font-medium">
+                يلزم تسوية المتبقي أولاً أو تسجيله كدين لإتمام الإرجاع:
+              </p>
+
+              <div className="space-y-2">
+                {/* Option 1: Collect now */}
+                <label
+                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                    returnSettlementAction === 'collect'
+                      ? 'bg-white border-indigo-600 shadow-sm'
+                      : 'border-amber-200 hover:bg-white/60'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="return_settlement_action"
+                    value="collect"
+                    checked={returnSettlementAction === 'collect'}
+                    onChange={() => setReturnSettlementAction('collect')}
+                    className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div className="flex-1">
+                    <div className="text-xs font-bold text-slate-900">
+                      تحصيل وسداد المتبقي الآن (خالص)
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      يقوم العميل بسداد المتبقي حالياً نقداً أو إلكترونياً
+                    </div>
+                  </div>
+                </label>
+
+                {/* Option 2: Deduct from deposit if deposit > 0 */}
+                {Number(selectedRentalForReturn?.deposit || 0) > 0 && (() => {
+                  const availDep = Math.max(0, Number(selectedRentalForReturn.deposit || 0) - Number(fineAmount || 0));
+                  const isDepZero = availDep <= 0;
+                  return (
+                    <label
+                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition-all ${
+                        isDepZero
+                          ? 'opacity-50 cursor-not-allowed border-slate-200 bg-slate-50'
+                          : returnSettlementAction === 'deduct_deposit'
+                          ? 'bg-white border-indigo-600 shadow-sm cursor-pointer'
+                          : 'border-amber-200 hover:bg-white/60 cursor-pointer'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="return_settlement_action"
+                        value="deduct_deposit"
+                        disabled={isDepZero}
+                        checked={returnSettlementAction === 'deduct_deposit'}
+                        onChange={() => setReturnSettlementAction('deduct_deposit')}
+                        className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div className="flex-1">
+                        <div className="text-xs font-bold text-slate-900">
+                          خصم المتبقي من التأمين المحتجز
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {isDepZero
+                            ? 'لا يتوفر مبلغ تأمين متاح للخصم (تم استهلاك التأمين في الغرامات)'
+                            : `خصم حتى ${Math.min(availDep, Number(selectedRentalForReturn.remaining || 0)).toLocaleString()} ج.م من التأمين وتصفية الحساب`}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })()}
+
+                {/* Option 3: Record as debt */}
+                <label
+                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                    returnSettlementAction === 'debt'
+                      ? 'bg-white border-rose-500 shadow-sm'
+                      : 'border-amber-200 hover:bg-white/60'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="return_settlement_action"
+                    value="debt"
+                    checked={returnSettlementAction === 'debt'}
+                    onChange={() => setReturnSettlementAction('debt')}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div className="flex-1">
+                    <div className="text-xs font-bold text-slate-900">
+                      تسجيل المبلغ كدين خالص على العميل (آجل)
+                    </div>
+                    <div className="text-[11px] text-rose-600 font-medium">
+                      إرجاع البدلة مع تثبيت دين قدره{' '}
+                      {Number(selectedRentalForReturn.remaining).toLocaleString()} ج.م على العميل
+                      (تظهر كمرتجع عليه متبقي)
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              {/* If collect selected: show amount and payment method */}
+              {returnSettlementAction === 'collect' && (
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-amber-200/80">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      المبلغ المحصل (ج.م) *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      value={returnPaidAmount}
+                      onChange={(e) => setReturnPaidAmount(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      طريقة الدفع
+                    </label>
+                    <select
+                      value={returnPaymentMethod}
+                      onChange={(e) => setReturnPaymentMethod(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-600"
+                    >
+                      <option value="cash">نقدي (كاش)</option>
+                      <option value="card">بطاقة (فيزا)</option>
+                      <option value="wallet">فودافون كاش / محفظة</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>قيمة الإيجار مسددة بالكامل (لا يوجد متبقي على العميل).</span>
+            </div>
+          )}
+
+          {/* Settlement Summary Calculations */}
+          {(() => {
+            const dep = Number(selectedRentalForReturn?.deposit || 0);
+            const fine = Number(fineAmount || 0);
+            const rem = Number(selectedRentalForReturn?.remaining || 0);
+
+            let netRefund = Math.max(0, dep - fine);
+            let finalRemaining = rem;
+
+            if (rem > 0) {
+              if (returnSettlementAction === 'deduct_deposit') {
+                const avail = Math.max(0, dep - fine);
+                const deduct = Math.min(avail, rem);
+                netRefund = Math.max(0, avail - deduct);
+                finalRemaining = Math.max(0, rem - deduct);
+              } else if (returnSettlementAction === 'collect') {
+                const paid = Number(returnPaidAmount || 0);
+                finalRemaining = Math.max(0, rem - paid);
+              }
+            }
+
+            return (
+              <div className="space-y-2 p-3 bg-slate-100 rounded-xl text-xs font-bold">
+                <div className="flex justify-between text-emerald-800">
+                  <span>المبلغ المسترد للعميل من التأمين:</span>
+                  <span className="font-black text-sm">{netRefund.toLocaleString()} ج.م</span>
+                </div>
+                {finalRemaining > 0 ? (
+                  <div className="flex justify-between text-rose-600 pt-1 border-t border-slate-200">
+                    <span>المتبقي المسجل على العميل:</span>
+                    <span className="font-black text-sm">
+                      {finalRemaining.toLocaleString()} ج.م (دين مؤجل)
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between text-emerald-700 pt-1 border-t border-slate-200">
+                    <span>حالة الحساب بعد الإرجاع:</span>
+                    <span className="font-black">خالص بالكامل (تم الإرجاع خالص) ✅</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Notes */}
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">
+              ملاحظات تسوية الإرجاع (اختياري)
+            </label>
+            <input
+              type="text"
+              value={returnNotes}
+              onChange={(e) => setReturnNotes(e.target.value)}
+              placeholder="أي ملاحظات خاصة بالتسوية أو الاستلام..."
+              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+            />
           </div>
 
           <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              isLoading={returnSubmitting}
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
-            >
-              تأكيد الاسترجاع وتسليم التأمين
-            </Button>
+            {(() => {
+              const dep = Number(selectedRentalForReturn?.deposit || 0);
+              const fine = Number(fineAmount || 0);
+              const rem = Number(selectedRentalForReturn?.remaining || 0);
+              let finalRemaining = rem;
+              if (rem > 0) {
+                if (returnSettlementAction === 'deduct_deposit') {
+                  const avail = Math.max(0, dep - fine);
+                  const deduct = Math.min(avail, rem);
+                  finalRemaining = Math.max(0, rem - deduct);
+                } else if (returnSettlementAction === 'collect') {
+                  const paid = Number(returnPaidAmount || 0);
+                  finalRemaining = Math.max(0, rem - paid);
+                }
+              }
+              const hasDebt = finalRemaining > 0;
+              return (
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="lg"
+                  isLoading={returnSubmitting}
+                  className={`flex-1 font-black ${
+                    hasDebt
+                      ? '!bg-amber-600 hover:!bg-amber-700 text-white'
+                      : '!bg-emerald-600 hover:!bg-emerald-700 text-white'
+                  }`}
+                >
+                  {hasDebt
+                    ? 'تأكيد الاسترجاع وتسجيل المتبقي كدين'
+                    : 'تأكيد الاسترجاع وتسوية الحساب (خالص) ✅'}
+                </Button>
+              );
+            })()}
             <Button
               type="button"
               variant="outline"
@@ -901,88 +1256,130 @@ export function Rentals() {
         </form>
       </Modal>
 
+      {/* SETTLE PAYMENT MODAL (سداد المتبقي) */}
+      <Modal
+        isOpen={showSettlePaymentModal}
+        onClose={() => setShowSettlePaymentModal(false)}
+        title="سداد المبلغ المتبقي على العميل 💰"
+        subtitle={`حجز رقم #${selectedRentalForPayment?.id || ''} - العميل: ${selectedRentalForPayment?.customer_name || ''}`}
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleSettlePaymentSubmit} className="space-y-4">
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs space-y-2">
+            <div className="flex justify-between font-bold text-slate-700">
+              <span>القطعة:</span>
+              <span>{selectedRentalForPayment?.inventory_name || 'قطعة تأجير'}</span>
+            </div>
+            <div className="flex justify-between font-bold text-slate-700">
+              <span>إجمالي قيمة الحجز:</span>
+              <span className="font-mono">
+                {Number(selectedRentalForPayment?.total_price || 0).toLocaleString()} ج.م
+              </span>
+            </div>
+            <div className="flex justify-between font-bold text-rose-600 pt-1 border-t border-amber-200">
+              <span>المبلغ المتبقي المطلوب سداده:</span>
+              <span className="text-sm font-black">
+                {Number(selectedRentalForPayment?.remaining || 0).toLocaleString()} ج.م
+              </span>
+            </div>
+          </div>
+
+          <Input
+            label="المبلغ المدفوع حالياً (ج.م) *"
+            type="number"
+            required
+            value={paymentSettleAmount}
+            onChange={(e) => setPaymentSettleAmount(e.target.value)}
+            helperText={`الحد الأقصى للسداد: ${Number(selectedRentalForPayment?.remaining || 0).toLocaleString()} ج.م`}
+          />
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
+            <select
+              value={paymentSettleMethod}
+              onChange={(e) => setPaymentSettleMethod(e.target.value)}
+              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+            >
+              <option value="cash">نقدي (كاش)</option>
+              <option value="card">بطاقة (فيزا)</option>
+              <option value="wallet">فودافون كاش / محفظة</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">
+              ملاحظات السداد (اختياري)
+            </label>
+            <input
+              type="text"
+              value={paymentSettleNotes}
+              onChange={(e) => setPaymentSettleNotes(e.target.value)}
+              placeholder="رقم العملية أو ملاحظات خاصة..."
+              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+            />
+          </div>
+
+          <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={paymentSettleSubmitting}
+              className="flex-1 !bg-emerald-600 hover:!bg-emerald-700 font-black text-white"
+            >
+              تأكيد سداد المبلغ وتحديث الحساب
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowSettlePaymentModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       {/* THERMAL RENTAL RECEIPT MODAL */}
       <Modal
         isOpen={showReceiptModal}
         onClose={() => setShowReceiptModal(false)}
-        title="إيصال حجز تأجير 🧾"
-        subtitle="معاينة إيصال الاستلام والتأمين للطباعة الحرارية"
-        maxWidth="max-w-md"
+        maxWidth="max-w-sm"
+        hideHeader={true}
+        plain={true}
+        bodyClassName="p-2 sm:p-4 flex justify-center overflow-visible"
       >
         {selectedReceiptRental && (
-          <div className="space-y-4">
-            <div
-              id="printable-rental-receipt"
-              className="bg-white p-5 rounded-2xl border border-slate-200 text-black text-xs leading-relaxed space-y-3 font-mono shadow-sm"
-              style={{ direction: 'rtl' }}
-            >
-              <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                <h2 className="text-base font-black">Bebyoon Center</h2>
-                <p className="text-[11px] text-slate-600 font-bold">إيصال حجز وتأجير</p>
-              </div>
-
-              <div className="flex justify-between items-center text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div>
-                  <div>حجز رقم: #{selectedReceiptRental.id}</div>
-                  <div>العميل: {selectedReceiptRental.customer_name}</div>
-                  <div>الهاتف: {selectedReceiptRental.customer_phone}</div>
-                </div>
-                <div className="text-left" dir="ltr">
-                  <div>استلام: {selectedReceiptRental.pickup_date}</div>
-                  <div>إرجاع: {selectedReceiptRental.return_date}</div>
-                </div>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div className="flex justify-between">
-                  <span>القطعة:</span>
-                  <span>{selectedReceiptRental.inventory_name || 'قطعة تأجير'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>قيمة التأجير:</span>
-                  <span>{Number(selectedReceiptRental.total_price || 0).toLocaleString()} ج.م</span>
-                </div>
-                <div className="flex justify-between text-emerald-700">
-                  <span>مبلغ التأمين:</span>
-                  <span>{Number(selectedReceiptRental.deposit || 0).toLocaleString()} ج.م</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>المدفوع:</span>
-                  <span>{Number(selectedReceiptRental.paid_amount || 0).toLocaleString()} ج.م</span>
-                </div>
-                {Number(selectedReceiptRental.remaining || 0) > 0 && (
-                  <div className="flex justify-between text-rose-600">
-                    <span>المتبقي:</span>
-                    <span>{Number(selectedReceiptRental.remaining || 0).toLocaleString()} ج.م</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="text-center pt-2 space-y-1 text-[10px] text-slate-500">
-                <p>يرجى إحضار هذا الإيصال عند الاستلام والتسليم</p>
-                <p>شكراً لثقتكم بنا</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button
-                variant="primary"
-                size="lg"
-                icon={Printer}
-                onClick={() => window.print()}
-                className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
-              >
-                طباعة الإيصال
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => setShowReceiptModal(false)}
-              >
-                إغلاق
-              </Button>
-            </div>
-          </div>
+          <ThermalReceipt
+            id="printable-rental-receipt"
+            type="rental"
+            title="إيصال حجز وتأجير"
+            orderNumber={`RNT-${selectedReceiptRental.id}`}
+            date={selectedReceiptRental.created_at || new Date()}
+            customerName={selectedReceiptRental.customer_name}
+            customerPhone={selectedReceiptRental.customer_phone}
+            sellerName="مسؤول التأجير"
+            paymentMethod="كاش"
+            branchName={branches.find((b) => b.id?.toString() === activeBranchId?.toString())?.name || 'الفرع الرئيسي'}
+            items={[
+              {
+                name: selectedReceiptRental.inventory_name || 'قطعة تأجير',
+                quantity: 1,
+                price: Number(selectedReceiptRental.total_price || 0),
+              },
+            ]}
+            subtotal={Number(selectedReceiptRental.total_price || 0)}
+            deposit={Number(selectedReceiptRental.deposit || 0)}
+            totalAmount={Number(selectedReceiptRental.total_price || 0)}
+            paidAmount={Number(selectedReceiptRental.paid_amount || 0)}
+            remainingAmount={Number(selectedReceiptRental.remaining || 0)}
+            pickupDate={selectedReceiptRental.pickup_date}
+            returnDate={selectedReceiptRental.return_date}
+            footerMessage="يرجى إحضار هذا الإيصال عند الاستلام والتسليم • شكراً لثقتكم بنا"
+            onPrint={() => printElement('printable-rental-receipt', `إيصال حجز تأجير #${selectedReceiptRental.id}`)}
+            onClose={() => setShowReceiptModal(false)}
+          />
         )}
       </Modal>
 
@@ -1046,76 +1443,42 @@ export function Rentals() {
       </Modal>
 
       {/* SALE INVOICE RECEIPT MODAL */}
+      {/* SALE INVOICE RECEIPT MODAL */}
       <Modal
         isOpen={showSaleInvoiceModal}
         onClose={() => setShowSaleInvoiceModal(false)}
-        title="فاتورة بيع نهائي (تحويل تأجير) 🧾"
-        subtitle="معاينة إيصال البيع الحراري (80mm)"
-        maxWidth="max-w-md"
+        maxWidth="max-w-sm"
+        hideHeader={true}
+        plain={true}
+        bodyClassName="p-2 sm:p-4 flex justify-center overflow-visible"
       >
         {saleInvoiceData && (
-          <div className="space-y-4">
-            <div
-              id="printable-sale-receipt"
-              className="bg-white p-5 rounded-2xl border border-slate-200 text-black text-xs leading-relaxed space-y-3 font-mono shadow-sm"
-              style={{ direction: 'rtl' }}
-            >
-              <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                <h2 className="text-base font-black">Bebyoon Center</h2>
-                <p className="text-[11px] text-purple-600 font-black">فاتورة بيع (تحويل من تأجير)</p>
-              </div>
-
-              <div className="flex justify-between items-center text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div>
-                  <div>رقم الفاتورة: #{saleInvoiceData.order_number}</div>
-                  <div>العميل: {saleInvoiceData.customer_name}</div>
-                  <div>الهاتف: {saleInvoiceData.customer_phone || '-'}</div>
-                </div>
-                <div className="text-left" dir="ltr">
-                  <div>{new Date(saleInvoiceData.created_at).toLocaleDateString('ar-EG')}</div>
-                </div>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div className="flex justify-between">
-                  <span>الصنف المباع:</span>
-                  <span>{saleInvoiceData.inventory_name}</span>
-                </div>
-                <div className="flex justify-between text-base font-black text-purple-600 pt-1">
-                  <span>سعر البيع النهائي:</span>
-                  <span>{saleInvoiceData.sell_price.toLocaleString()} ج.م</span>
-                </div>
-                <div className="flex justify-between text-slate-500 text-[10px]">
-                  <span>طريقة الدفع:</span>
-                  <span>{saleInvoiceData.payment_method}</span>
-                </div>
-              </div>
-
-              <div className="text-center pt-2 space-y-1 text-[10px] text-slate-500">
-                <p>تم تحويل الصنف إلى بيع دائم ونقله من المخزون</p>
-                <p>شكراً لتعاملكم معنا</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button
-                variant="primary"
-                size="lg"
-                icon={Printer}
-                onClick={() => window.print()}
-                className="flex-1 !bg-purple-600 hover:!bg-purple-700 font-black"
-              >
-                طباعة الفاتورة
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => setShowSaleInvoiceModal(false)}
-              >
-                إغلاق
-              </Button>
-            </div>
-          </div>
+          <ThermalReceipt
+            id="printable-sale-receipt"
+            type="rental-sale"
+            title="فاتورة بيع (تحويل تأجير)"
+            orderNumber={saleInvoiceData.order_number}
+            date={saleInvoiceData.created_at || new Date()}
+            customerName={saleInvoiceData.customer_name}
+            customerPhone={saleInvoiceData.customer_phone}
+            sellerName="مسؤول التأجير"
+            paymentMethod={saleInvoiceData.payment_method || 'كاش'}
+            branchName={branches.find((b) => b.id?.toString() === activeBranchId?.toString())?.name || 'الفرع الرئيسي'}
+            items={[
+              {
+                name: saleInvoiceData.inventory_name || 'قطعة تأجير محولة لبيع',
+                quantity: 1,
+                price: Number(saleInvoiceData.sell_price || 0),
+              },
+            ]}
+            subtotal={Number(saleInvoiceData.sell_price || 0)}
+            totalAmount={Number(saleInvoiceData.sell_price || 0)}
+            paidAmount={Number(saleInvoiceData.sell_price || 0)}
+            remainingAmount={0}
+            footerMessage="تم تحويل الصنف إلى بيع نهائي ونقله من المخزون • شكراً لتعاملكم معنا"
+            onPrint={() => printElement('printable-sale-receipt', `فاتورة بيع تأجير #${saleInvoiceData.order_number}`)}
+            onClose={() => setShowSaleInvoiceModal(false)}
+          />
         )}
       </Modal>
     </div>

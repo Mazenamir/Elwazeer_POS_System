@@ -6,6 +6,51 @@ const config = require('../config/env');
 let pool = null;
 let sqliteDb = null;
 
+function translatePgToSqlite(sql) {
+  if (typeof sql !== 'string') return { isAdvisoryLock: false, sql };
+  let s = sql;
+  if (/pg_advisory_xact_lock/i.test(s)) {
+    return { isAdvisoryLock: true, sql: 'SELECT 1 AS lock' };
+  }
+
+  // Cairo now & date
+  s = s.replace(/\(now\(\)\s+AT\s+TIME\s+ZONE\s+'[^']+'\)::date/gi, "date('now', 'localtime')");
+  s = s.replace(/\(now\(\)\s+AT\s+TIME\s+ZONE\s+'[^']+'\)/gi, "datetime('now', 'localtime')");
+
+  // ILIKE -> LIKE
+  s = s.replace(/\bILIKE\b/gi, 'LIKE');
+
+  // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
+  s = s.replace(/::[a-zA-Z0-9_]+(\s*\[\s*\])?/g, '');
+
+  // Strip FOR UPDATE
+  s = s.replace(/\bFOR\s+UPDATE\b/gi, '');
+
+  // json_agg -> json_group_array, json_build_object -> json_object
+  s = s.replace(/\bjson_agg\b/gi, 'json_group_array');
+  s = s.replace(/\bjson_build_object\b/gi, 'json_object');
+
+  // = ANY($1) -> IN (SELECT value FROM json_each(?1))
+  s = s.replace(/=\s*ANY\s*\(\s*\$(\d+)\s*\)/gi, 'IN (SELECT value FROM json_each(?$1))');
+
+  // Intervals: col + INTERVAL '1 day' -> datetime(col, '+1 day')
+  s = s.replace(/datetime\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime('now', 'localtime', '+$1 $2')");
+  s = s.replace(/date\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "date('now', 'localtime', '+$1 $2')");
+  s = s.replace(/datetime\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime('now', 'localtime', '-$1 $2')");
+  s = s.replace(/date\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "date('now', 'localtime', '-$1 $2')");
+
+  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime($1, '+$2 $3')");
+  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime($1, '-$2 $3')");
+
+  // Intervals with param multiplication: date - ($1 * INTERVAL '1 day') -> datetime(date, '-' || $1 || ' day')
+  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '-' || $2 || ' day')");
+  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '+' || $2 || ' day')");
+
+  // $1 -> ?1
+  s = s.replace(/\$(\d+)/g, '?$1');
+  return { isAdvisoryLock: false, sql: s };
+}
+
 if (config.IS_BRANCH_MODE) {
   // Branch Mode - SQLite Adapter
   const { DatabaseSync } = require('node:sqlite');
@@ -35,52 +80,8 @@ if (config.IS_BRANCH_MODE) {
   sqliteDb.function('pg_advisory_lock', { varargs: true }, () => 1);
   sqliteDb.function('pg_advisory_unlock', { varargs: true }, () => 1);
 
-  function translatePgToSqlite(sql) {
-    if (typeof sql !== 'string') return { isAdvisoryLock: false, sql };
-    let s = sql;
-    if (/pg_advisory_xact_lock/i.test(s)) {
-      return { isAdvisoryLock: true, sql: 'SELECT 1 AS lock' };
-    }
-
-    // Cairo now & date
-    s = s.replace(/\(now\(\)\s+AT\s+TIME\s+ZONE\s+'[^']+'\)::date/gi, "date('now', 'localtime')");
-    s = s.replace(/\(now\(\)\s+AT\s+TIME\s+ZONE\s+'[^']+'\)/gi, "datetime('now', 'localtime')");
-
-    // ILIKE -> LIKE
-    s = s.replace(/\bILIKE\b/gi, 'LIKE');
-
-    // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
-    s = s.replace(/::[a-zA-Z0-9_]+(\s*\[\s*\])?/g, '');
-
-    // Strip FOR UPDATE
-    s = s.replace(/\bFOR\s+UPDATE\b/gi, '');
-
-    // json_agg -> json_group_array, json_build_object -> json_object
-    s = s.replace(/\bjson_agg\b/gi, 'json_group_array');
-    s = s.replace(/\bjson_build_object\b/gi, 'json_object');
-
-    // = ANY($1) -> IN (SELECT value FROM json_each(?1))
-    s = s.replace(/=\s*ANY\s*\(\s*\$(\d+)\s*\)/gi, 'IN (SELECT value FROM json_each(?$1))');
-
-    // Intervals: col + INTERVAL '1 day' -> datetime(col, '+1 day')
-    s = s.replace(/datetime\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime('now', 'localtime', '+$1 $2')");
-    s = s.replace(/date\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "date('now', 'localtime', '+$1 $2')");
-    s = s.replace(/datetime\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime('now', 'localtime', '-$1 $2')");
-    s = s.replace(/date\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "date('now', 'localtime', '-$1 $2')");
-
-    s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime($1, '+$2 $3')");
-    s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime($1, '-$2 $3')");
-
-    // Intervals with param multiplication: date - ($1 * INTERVAL '1 day') -> datetime(date, '-' || $1 || ' day')
-    s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '-' || $2 || ' day')");
-    s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '+' || $2 || ' day')");
-
-    // $1 -> ?1
-    s = s.replace(/\$(\d+)/g, '?$1');
-    return { isAdvisoryLock: false, sql: s };
-  }
-
-  function executeSqliteQuery(rawSql, params = []) {
+  function executeSqliteQuery(targetDb, rawSql, params = []) {
+    const sDb = targetDb || sqliteDb;
     const { isAdvisoryLock, sql } = translatePgToSqlite(rawSql);
     if (isAdvisoryLock) {
       return { rows: [{ pg_advisory_xact_lock: 1 }], rowCount: 1 };
@@ -98,7 +99,7 @@ if (config.IS_BRANCH_MODE) {
     const isSelect = /^(SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(trimmed);
     const hasReturning = /\bRETURNING\b/i.test(trimmed);
 
-    const stmt = sqliteDb.prepare(sql);
+    const stmt = sDb.prepare(sql);
 
     if (isSelect || hasReturning) {
       const rawRows = stmt.all(...normalizedParams);
@@ -114,27 +115,28 @@ if (config.IS_BRANCH_MODE) {
     _isBranchMode: true,
     sqlite: sqliteDb,
     query: async (text, params = []) => {
-      return executeSqliteQuery(text, params);
+      return executeSqliteQuery(module.exports.sqlite || sqliteDb, text, params);
     },
     transaction: async (callback) => {
-      sqliteDb.exec('BEGIN IMMEDIATE');
+      const sDb = module.exports.sqlite || sqliteDb;
+      sDb.exec('BEGIN IMMEDIATE');
       try {
         const tx = {
-          query: async (text, params = []) => executeSqliteQuery(text, params),
+          query: async (text, params = []) => executeSqliteQuery(sDb, text, params),
         };
         const result = await callback(tx);
-        sqliteDb.exec('COMMIT');
+        sDb.exec('COMMIT');
         return result;
       } catch (err) {
         try {
-          sqliteDb.exec('ROLLBACK');
+          sDb.exec('ROLLBACK');
         } catch {}
         throw err;
       }
     },
     isPrimaryDbAvailable: async () => {
       try {
-        const res = sqliteDb.prepare('SELECT 1 AS ok').get();
+        const res = (module.exports.sqlite || sqliteDb).prepare('SELECT 1 AS ok').get();
         return Boolean(res?.ok);
       } catch (err) {
         return false;
@@ -143,7 +145,7 @@ if (config.IS_BRANCH_MODE) {
     getLastDbError: () => null,
     close: async () => {
       try {
-        sqliteDb.close();
+        (module.exports.sqlite || sqliteDb).close();
       } catch {}
     },
   };
@@ -187,10 +189,48 @@ if (config.IS_BRANCH_MODE) {
     return lastDbError;
   }
 
+  function executeSqliteQuery(targetDb, rawSql, params = []) {
+    const sDb = targetDb;
+    if (!sDb) throw new Error('No SQLite database attached for branch query execution');
+    const { isAdvisoryLock, sql } = translatePgToSqlite(rawSql);
+    if (isAdvisoryLock) {
+      return { rows: [{ pg_advisory_xact_lock: 1 }], rowCount: 1 };
+    }
+
+    const normalizedParams = (params || []).map((p) => {
+      if (p instanceof Date) return p.toISOString();
+      if (Array.isArray(p)) return JSON.stringify(p);
+      if (typeof p === 'boolean') return p ? 1 : 0;
+      if (p === undefined) return null;
+      return p;
+    });
+
+    const trimmed = sql.trim();
+    const isSelect = /^(SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(trimmed);
+    const hasReturning = /\bRETURNING\b/i.test(trimmed);
+
+    const stmt = sDb.prepare(sql);
+
+    if (isSelect || hasReturning) {
+      const rawRows = stmt.all(...normalizedParams);
+      const rows = rawRows.map((r) => ({ ...r }));
+      return { rows, rowCount: rows.length };
+    } else {
+      const res = stmt.run(...normalizedParams);
+      return { rows: [], rowCount: res.changes, lastInsertRowid: res.lastInsertRowid };
+    }
+  }
+
   module.exports = {
     _isBranchMode: false,
     pool,
-    query: (text, params) => pool.query(text, params),
+    sqlite: null,
+    query: (text, params = []) => {
+      if (module.exports.sqlite && typeof text === 'string' && /sync_queue/i.test(text)) {
+        return executeSqliteQuery(module.exports.sqlite, text, params);
+      }
+      return pool.query(text, params);
+    },
     transaction: async (callback) => {
       const client = await pool.connect();
       try {

@@ -30,7 +30,9 @@ import {
   Info,
   Undo2,
   Filter,
+  Wallet,
 } from 'lucide-react';
+import ExpensesManager from '../../components/expenses/ExpensesManager';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
@@ -40,6 +42,9 @@ import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
+import { printElement } from '../../utils/print';
+import { ThermalReceipt } from '../../components/receipts';
+
 
 const BASE_CATEGORIES = ['الكل', 'FORMAL SUIT', 'TUXEDO SUIT', 'SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'صديري', 'تيشيرت', 'جينز', 'KIDS', 'ترنج', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'إكسسوارات', 'WALLET', 'أخرى'];
 
@@ -580,13 +585,18 @@ export function POS() {
       setShowCheckoutModal(false);
 
       setCompletedOrder({
-        order_number: res.order_number || res.id || nextOrderId,
+        order_number: res.branch_invoice_number || res.order_number || res.id || nextOrderId,
         created_at: new Date().toISOString(),
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
         seller_name: employees.find((e) => e.id.toString() === sellerId)?.name || 'الكاشير',
-        branch_name: branches.find((b) => b.id.toString() === chosenBranchId.toString())?.name || 'الفرع الرئيسي',
-        items: [...currentCart],
+        branch_name:
+          branches.find((b) => b.id.toString() === chosenBranchId.toString())?.name ||
+          (activeBranchId && activeBranchId !== 'all'
+            ? branches.find((b) => b.id.toString() === activeBranchId.toString())?.name
+            : '') ||
+          settings.store_name ||
+          '',
         subtotal,
         discount: totalDiscount,
         total_amount: grandTotal,
@@ -1141,6 +1151,18 @@ export function POS() {
             <Undo2 className="w-4 h-4" />
             <span>المرتجعات</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('expenses')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+              activeTab === 'expenses'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Wallet className="w-4 h-4" />
+            <span>المصروفات</span>
+          </button>
         </div>
 
         {/* Live Invoice Badge */}
@@ -1661,6 +1683,7 @@ export function POS() {
                   {historyOrders.map((order) => {
                     const remaining = Math.max(0, Number(order.total_amount || 0) - Number(order.paid_amount || 0));
                     const isReturned = order.status === 'returned';
+                    const isPartiallyReturned = order.status === 'partially_returned';
 
                     return (
                       <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
@@ -1687,16 +1710,22 @@ export function POS() {
                         </td>
                         <td className="py-3.5 font-bold text-xs">
                           {isReturned ? (
-                            <span className="text-slate-400">-</span>
+                            <span className="text-slate-400">0 ج.م</span>
+                          ) : isPartiallyReturned ? (
+                            <span className="text-amber-600 font-black">
+                              {order.remainder !== undefined ? `${Number(order.remainder).toLocaleString()} ج.م` : `${remaining.toLocaleString()} ج.م`}
+                            </span>
                           ) : remaining > 0 ? (
-                            <span className="text-amber-600">{remaining.toLocaleString()} ج.م</span>
+                            <span className="text-amber-600 font-black">{remaining.toLocaleString()} ج.م</span>
                           ) : (
                             <span className="text-emerald-600">تم الدفع بالكامل</span>
                           )}
                         </td>
                         <td className="py-3.5">
                           {isReturned ? (
-                            <Badge variant="danger">تم الإرجاع</Badge>
+                            <Badge variant="danger">مرتجع بالكامل</Badge>
+                          ) : isPartiallyReturned ? (
+                            <Badge variant="warning">مرتجع جزئياً</Badge>
                           ) : remaining > 0 ? (
                             <Badge variant="warning">آجل / غير خالص</Badge>
                           ) : (
@@ -1939,6 +1968,11 @@ export function POS() {
             </div>
           )}
         </Card>
+      )}
+
+      {/* 4. EXPENSES VIEW */}
+      {activeTab === 'expenses' && (
+        <ExpensesManager isCashierTab={true} />
       )}
 
       {/* PROCESS RETURN MODAL */}
@@ -2556,95 +2590,36 @@ export function POS() {
       <Modal
         isOpen={showReturnReceiptModal}
         onClose={() => setShowReturnReceiptModal(false)}
-        title="إيصال استرداد مرتجع 🧾"
-        subtitle="معاينة إيصال الإرجاع الحراري (80mm)"
-        maxWidth="max-w-md"
+        maxWidth="max-w-sm"
+        hideHeader={true}
+        plain={true}
+        bodyClassName="p-2 sm:p-4 flex justify-center overflow-visible"
       >
         {completedReturn && (
-          <div className="space-y-4">
-            <div
-              id="printable-return-receipt"
-              className="bg-white p-5 rounded-2xl border border-slate-200 text-black text-xs leading-relaxed space-y-3 font-mono shadow-sm"
-              style={{ direction: 'rtl' }}
-            >
-              <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                <h2 className="text-base font-black tracking-tight">{settings.store_name}</h2>
-                <p className="text-[11px] text-slate-600 font-bold">{completedReturn.branch_name}</p>
-                <p className="text-xs font-black text-rose-600 uppercase">إيصال مرتجع مبيعات</p>
-              </div>
-
-              <div className="flex justify-between items-center text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div>
-                  <div>مرتجع: #RET-{completedReturn.return_id}</div>
-                  <div>طلب أصلي: #{completedReturn.original_order_id}</div>
-                  <div>العميل: {completedReturn.customer_name}</div>
-                </div>
-                <div className="text-left" dir="ltr">
-                  <div>
-                    {new Date(completedReturn.created_at).toLocaleDateString('ar-EG')}
-                  </div>
-                  <div>
-                    {new Date(completedReturn.created_at).toLocaleTimeString('ar-EG', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <div className="border-b border-dashed border-slate-400 pb-2">
-                <table className="w-full text-right text-[11px]">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      <th className="pb-1">الصنف</th>
-                      <th className="pb-1 text-center">الكمية</th>
-                      <th className="pb-1 text-left">المسترد</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {completedReturn.items.map((it, i) => (
-                      <tr key={i}>
-                        <td className="py-1">{it.name}</td>
-                        <td className="py-1 text-center font-bold">{it.quantity}</td>
-                        <td className="py-1 text-left font-black">
-                          {(it.price * it.quantity).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex justify-between items-center text-sm font-black text-rose-600 pt-1 border-b border-dashed border-slate-400 pb-2">
-                <span>إجمالي المبلغ المسترد:</span>
-                <span>{completedReturn.total_return_amount.toLocaleString()} ج.م</span>
-              </div>
-
-              <div className="text-center pt-2 space-y-1">
-                <p className="text-[10px] text-slate-500">تم تسجيل الإرجاع وإعادة الأصناف للمخزون</p>
-                <p className="text-[10px] text-slate-400">الكاشير: {completedReturn.seller_name}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button
-                variant="primary"
-                size="lg"
-                icon={Printer}
-                onClick={() => window.print()}
-                className="flex-1 !rounded-2xl !py-3.5 !bg-indigo-600 hover:!bg-indigo-700 font-black text-base"
-              >
-                طباعة إيصال المرتجع
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => setShowReturnReceiptModal(false)}
-              >
-                إغلاق
-              </Button>
-            </div>
-          </div>
+          <ThermalReceipt
+            id="printable-return-receipt"
+            type="return"
+            orderNumber={`RET-${completedReturn.return_id}`}
+            originalOrderId={completedReturn.original_order_id}
+            date={completedReturn.created_at}
+            customerName={completedReturn.customer_name}
+            customerPhone={completedReturn.customer_phone}
+            sellerName={completedReturn.seller_name}
+            paymentMethod="كاش"
+            branchName={completedReturn.branch_name || settings.store_address}
+            storePhone={settings.store_phone}
+            storeAddress={settings.store_address}
+            items={completedReturn.items}
+            subtotal={completedReturn.total_return_amount}
+            totalReturnAmount={completedReturn.total_return_amount}
+            totalAmount={completedReturn.total_return_amount}
+            paidAmount={completedReturn.total_return_amount}
+            changeAmount={0}
+            remainingAmount={0}
+            footerMessage="تم تسجيل الإرجاع وإعادة الأصناف للمخزون • شكراً لتعاملكم معنا"
+            onPrint={() => printElement('printable-return-receipt', `إيصال مرتجع #${completedReturn.return_id}`)}
+            onClose={() => setShowReturnReceiptModal(false)}
+          />
         )}
       </Modal>
 
@@ -2928,151 +2903,61 @@ export function POS() {
       </Modal>
 
       {/* 80mm THERMAL RECEIPT MODAL */}
+      {/* 80mm THERMAL RECEIPT MODAL */}
       <Modal
         isOpen={showInvoiceModal}
         onClose={() => setShowInvoiceModal(false)}
-        title="فاتورة بيع ضريبية 🧾"
-        subtitle="معاينة إيصال الطباعة الحرارية (80mm)"
-        maxWidth="max-w-md"
+        maxWidth="max-w-sm"
+        hideHeader={true}
+        plain={true}
+        bodyClassName="p-2 sm:p-4 flex justify-center overflow-visible"
       >
         {completedOrder && (
-          <div className="space-y-4">
-            <div
-              id="printable-receipt"
-              className="bg-white p-5 rounded-2xl border border-slate-200 text-black text-xs leading-relaxed space-y-3 font-mono shadow-sm"
-              style={{ direction: 'rtl' }}
-            >
-              <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                <h2 className="text-base font-black tracking-tight">{settings.store_name}</h2>
-                <p className="text-[11px] text-slate-600 font-bold">{completedOrder.branch_name}</p>
-                {settings.store_phone && (
-                  <p className="text-[11px] text-slate-600" dir="ltr">
-                    Tel: {settings.store_phone}
-                  </p>
-                )}
-                {settings.store_address && (
-                  <p className="text-[10px] text-slate-500">{settings.store_address}</p>
-                )}
-              </div>
-
-              <div className="flex justify-between items-center text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div>
-                  <div>فاتورة: #{completedOrder.order_number}</div>
-                  <div>العميل: {completedOrder.customer_name}</div>
-                </div>
-                <div className="text-left" dir="ltr">
-                  <div>{new Date(completedOrder.created_at).toLocaleDateString('ar-EG')}</div>
-                  <div>
-                    {new Date(completedOrder.created_at).toLocaleTimeString('ar-EG', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <div className="border-b border-dashed border-slate-400 pb-2">
-                <table className="w-full text-right text-[11px]">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      <th className="pb-1">الصنف</th>
-                      <th className="pb-1 text-center">الكمية</th>
-                      <th className="pb-1 text-left">السعر</th>
-                      <th className="pb-1 text-left">الإجمالي</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {completedOrder.items.map((item, idx) => {
-                      const itemPrice = Number(item.price_at_time ?? item.price ?? 0);
-                      const itemQty = Number(item.quantity || 1);
-                      const itemDisc = Number(item.discount || 0);
-                      const isPerc = item.discount_type === 'percent' || item.discount_type === 'percentage';
-                      const itemDiscAmt = itemDisc > 0 ? (isPerc ? (itemPrice * itemQty * itemDisc) / 100 : Math.min(itemPrice * itemQty, itemDisc)) : 0;
-                      const itemTotalNet = Math.max(0, (itemPrice * itemQty) - itemDiscAmt);
-
-                      return (
-                        <tr key={idx}>
-                          <td className="py-1">
-                            <div>{item.name} {item.size ? `(${item.size})` : ''}</div>
-                            {itemDiscAmt > 0 && (
-                              <div className="text-[10px] text-rose-600 font-bold">
-                                خصم: -{itemDiscAmt.toLocaleString()} ج.م
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-1 text-center font-bold">{itemQty}</td>
-                          <td className="py-1 text-left font-bold">
-                            {itemDiscAmt > 0 ? (
-                              <div>
-                                <span className="line-through text-slate-400 text-[10px] block">{itemPrice.toLocaleString()}</span>
-                                <span>{(Math.round((itemTotalNet / itemQty) * 100) / 100).toLocaleString()}</span>
-                              </div>
-                            ) : (
-                              itemPrice.toLocaleString()
-                            )}
-                          </td>
-                          <td className="py-1 text-left font-black">
-                            {itemTotalNet.toLocaleString()}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-bold border-b border-dashed border-slate-400 pb-2">
-                <div className="flex justify-between">
-                  <span>المجموع الفرعي:</span>
-                  <span>{completedOrder.subtotal.toLocaleString()} ج.م</span>
-                </div>
-                {completedOrder.discount > 0 && (
-                  <div className="flex justify-between text-rose-600">
-                    <span>الخصم:</span>
-                    <span>- {completedOrder.discount.toLocaleString()} ج.م</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-sm font-black pt-1">
-                  <span>الإجمالي المطلوب:</span>
-                  <span>{completedOrder.total_amount.toLocaleString()} ج.م</span>
-                </div>
-                <div className="flex justify-between text-slate-600 pt-1">
-                  <span>المدفوع ({completedOrder.payment_method}):</span>
-                  <span>{completedOrder.paid_amount.toLocaleString()} ج.م</span>
-                </div>
-                {completedOrder.change_amount > 0 && (
-                  <div className="flex justify-between text-emerald-700">
-                    <span>الباقي للمشتري:</span>
-                    <span>{completedOrder.change_amount.toLocaleString()} ج.م</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="text-center pt-2 space-y-1">
-                <p className="font-bold text-xs">{settings.cashier_footer}</p>
-                <p className="text-[10px] text-slate-400">الكاشير: {completedOrder.seller_name}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button
-                variant="primary"
-                size="lg"
-                icon={Printer}
-                onClick={() => window.print()}
-                className="flex-1 !rounded-2xl !py-3.5 !bg-indigo-600 hover:!bg-indigo-700 font-black text-base"
-              >
-                طباعة الإيصال الحراري
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => setShowInvoiceModal(false)}
-              >
-                إغلاق
-              </Button>
-            </div>
-          </div>
+          <ThermalReceipt
+            id="printable-receipt"
+            type="sale"
+            orderNumber={completedOrder.order_number}
+            date={completedOrder.created_at}
+            customerName={completedOrder.customer_name}
+            customerPhone={completedOrder.customer_phone}
+            sellerName={completedOrder.seller_name}
+            paymentMethod={completedOrder.payment_method}
+            branchName={
+              completedOrder.branch_name ||
+              (activeBranchId && activeBranchId !== 'all'
+                ? branches.find((b) => b.id.toString() === activeBranchId.toString())?.name
+                : '') ||
+              settings.store_name ||
+              ''
+            }
+            storePhone={
+              branches.find((b) => b.name === completedOrder.branch_name)?.phone ||
+              (activeBranchId && activeBranchId !== 'all'
+                ? branches.find((b) => b.id.toString() === activeBranchId.toString())?.phone
+                : '') ||
+              settings.store_phone ||
+              ''
+            }
+            storeAddress={
+              branches.find((b) => b.name === completedOrder.branch_name)?.location ||
+              (activeBranchId && activeBranchId !== 'all'
+                ? branches.find((b) => b.id.toString() === activeBranchId.toString())?.location
+                : '') ||
+              settings.store_address ||
+              ''
+            }
+            items={completedOrder.items}
+            subtotal={completedOrder.subtotal}
+            discount={completedOrder.discount}
+            taxRate={Number(settings.tax_rate || 0)}
+            totalAmount={completedOrder.total_amount}
+            paidAmount={completedOrder.paid_amount}
+            changeAmount={completedOrder.change_amount}
+            remainingAmount={Math.max(0, (completedOrder.total_amount || 0) - (completedOrder.paid_amount || 0))}
+            footerMessage={settings.cashier_footer}
+            onPrint={() => printElement('printable-receipt', `فاتورة #${completedOrder.order_number}`)}
+            onClose={() => setShowInvoiceModal(false)}
+          />
         )}
       </Modal>
     </div>

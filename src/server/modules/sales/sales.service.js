@@ -875,7 +875,7 @@ async function searchOrders(queryStr, branchId, user) {
     const offlinePart = queryStr.slice(4);
     const offParams = [offlinePart + '%'];
     const offWhere = [
-      `o.offline_uuid LIKE $1`,
+      `o.offline_uuid::text LIKE $1`,
       `COALESCE(o.order_source, 'cashier') = 'cashier'`,
     ];
 
@@ -988,7 +988,7 @@ async function createReturn(body, user, req) {
   const returnData = await db.transaction(async (tx) => {
     // 1. Read & lock order inside transaction
     const orderRes = await tx.query(
-      'SELECT id, branch_id, seller_id, customer_id, total_amount, status, invoice_discount, invoice_discount_type FROM orders WHERE id = $1 FOR UPDATE',
+      'SELECT id, branch_id, seller_id, customer_id, total_amount, status, invoice_discount, invoice_discount_type, offline_uuid FROM orders WHERE id = $1 FOR UPDATE',
       [order_id]
     );
     if (orderRes.rows.length === 0) {
@@ -1218,6 +1218,7 @@ async function createReturn(body, user, req) {
     await queueSyncOperation(tx, req, 'return', 'create', returnId, branch_id, {
       offline_uuid: returnOfflineUuid,
       order_id,
+      order_offline_uuid: orderRow.offline_uuid || null,
       total_return_amount: finalReturnAmount,
       branch_id,
       seller_id: s_id,
