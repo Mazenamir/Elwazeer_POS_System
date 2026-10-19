@@ -40,7 +40,7 @@ const SUIT_SLIDES = [
     tag: 'Velvet Midnight',
     tagAr: 'المجموعة المخملية الخاصة',
     title: 'Midnight Velvet Elegance',
-    titleAr: 'أناقة المخمل والقصات العصرية',
+    titleAr: 'أناقة المظهر والقصات العصرية',
     badge: 'VIP Rentals',
     badgeAr: 'تأجير VIP',
     author: 'Bebyoon Atelier',
