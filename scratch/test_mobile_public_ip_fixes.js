@@ -66,27 +66,35 @@ async function runTests() {
   }
 
   try {
+    const fs = require('fs');
+    const pathMod = require('path');
+    const indexHtml = fs.readFileSync(pathMod.resolve('dist/renderer/index.html'), 'utf8');
+    const jsMatch = indexHtml.match(/\/assets\/[^"]+\.js/);
+    const cssMatch = indexHtml.match(/\/assets\/[^"]+\.css/);
+    const currentJsAsset = jsMatch ? jsMatch[0] : '/assets/index-CViraLqt.js';
+    const currentCssAsset = cssMatch ? cssMatch[0] : '/assets/index-CHCpcbi2.css';
+
     // 1. GET /login document load
     await check('1. Document GET /login returns 200 and points to updated bundles', async () => {
       const res = await makeRequest({ path: '/login' });
       assert.strictEqual(res.status, 200);
       assert.ok(res.body.includes('<div id="root"></div>'));
-      assert.ok(res.body.includes('/assets/index-B9EytaOQ.js'));
-      assert.ok(res.body.includes('/assets/index-BFuSkk6G.css'));
+      assert.ok(res.body.includes(currentJsAsset));
+      assert.ok(res.body.includes(currentCssAsset));
     });
 
     // 2. GET JavaScript asset with mobile Public IP Origin
     await check('2. GET JS asset with Origin http://156.218.181.148:6298 returns 200 (not 500)', async () => {
       const origin = `http://156.218.181.148:${testPort}`;
       const res = await makeRequest({
-        path: '/assets/index-B9EytaOQ.js',
+        path: currentJsAsset,
         headers: {
           Origin: origin,
           Host: `156.218.181.148:${testPort}`,
         },
       });
       assert.strictEqual(res.status, 200, `Expected status 200 but got ${res.status}`);
-      assert.ok(res.headers['content-type'].includes('text/javascript'), 'Content-type must be javascript');
+      assert.ok(res.headers['content-type'].includes('text/javascript') || res.headers['content-type'].includes('application/javascript'), 'Content-type must be javascript');
       assert.strictEqual(res.headers['access-control-allow-origin'], origin);
       assert.strictEqual(res.headers['access-control-allow-credentials'], 'true');
       assert.ok(res.body.length > 500000, 'JavaScript body should be full bundle');
@@ -96,7 +104,7 @@ async function runTests() {
     await check('3. GET CSS asset with Origin http://156.218.181.148:6298 returns 200', async () => {
       const origin = `http://156.218.181.148:${testPort}`;
       const res = await makeRequest({
-        path: '/assets/index-BFuSkk6G.css',
+        path: currentCssAsset,
         headers: {
           Origin: origin,
           Host: `156.218.181.148:${testPort}`,

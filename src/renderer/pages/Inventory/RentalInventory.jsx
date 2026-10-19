@@ -235,7 +235,6 @@ export function RentalInventory() {
           size="lg"
           icon={Plus}
           onClick={openCreateModal}
-          className="!bg-indigo-600 hover:!bg-indigo-700 shadow-md shadow-indigo-600/20"
         >
           إضافة بدلة جديدة للمخزون
         </Button>
@@ -252,8 +251,8 @@ export function RentalInventory() {
             }}
             className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
               selectedCategory === cat
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'bg-[#FFFDF9] border border-[#E6DECD] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
             }`}
           >
             {cat}
@@ -273,7 +272,7 @@ export function RentalInventory() {
           action={
             <div className="flex items-center gap-2">
               <div className="relative w-64">
-                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266]" />
                 <input
                   type="text"
                   value={search}
@@ -282,7 +281,7 @@ export function RentalInventory() {
                     setPagination((prev) => ({ ...prev, page: 1 }));
                   }}
                   placeholder="ابحث بالاسم، اللون، الباركود..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-colors"
                 />
               </div>
               <Button variant="outline" size="sm" onClick={fetchItems} icon={RotateCcw}>
@@ -293,18 +292,18 @@ export function RentalInventory() {
         />
 
         {loading ? (
-          <div className="py-20 text-center text-slate-400 font-bold text-sm">
+          <div className="py-20 text-center text-[#777266] font-bold text-sm">
             جاري تحميل قطع التأجير...
           </div>
         ) : items.length === 0 ? (
-          <div className="py-20 text-center text-slate-400 font-bold text-sm">
+          <div className="py-20 text-center text-[#777266] font-bold text-sm">
             لا توجد قطع مطابقة للبحث في المخزون
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-right text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
+                <tr className="border-b border-[#E6DECD] text-[#777266] text-xs font-black uppercase">
                   <th className="pb-3 pr-2">الصورة</th>
                   <th className="pb-3">اسم القطعة والكود</th>
                   <th className="pb-3">التصنيف</th>
@@ -314,11 +313,11 @@ export function RentalInventory() {
                   <th className="pb-3 pl-2">إجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
+              <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
                 {items.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                  <tr key={item.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                     <td className="py-3 pr-2">
-                      <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden">
+                      <div className="w-12 h-12 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] flex items-center justify-center overflow-hidden">
                         {item.image_url ? (
                           <img
                             src={item.image_url}
@@ -326,7 +325,7 @@ export function RentalInventory() {
                             className="w-full h-full object-cover"
                           />
                         ) : (
-                          <Tag className="w-5 h-5 text-slate-300" />
+                          <Tag className="w-5 h-5 text-[#777266]" />
                         )}
                       </div>
                     </td>
@@ -390,12 +389,12 @@ export function RentalInventory() {
 
         {/* Rental Pagination Bar */}
         {pagination.total > 0 && (
-          <div className="p-4 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/50 rounded-b-2xl">
+          <div className="p-4 border-t border-[#E6DECD] flex flex-col md:flex-row items-center justify-between gap-3 bg-[#FAF6ED]/60 rounded-b-3xl">
             {/* Info summary & Page size */}
-            <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-600">
+            <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-[#777266]">
               <span>
                 عرض{' '}
-                <span className="text-indigo-600 font-black">
+                <span className="text-[#24221F] font-black">
                   {pagination.limit === 'all'
                     ? `1 - ${pagination.total}`
                     : `${(pagination.page - 1) * pagination.limit + 1} - ${Math.min(
@@ -404,22 +403,22 @@ export function RentalInventory() {
                       )}`}
                 </span>{' '}
                 من إجمالي{' '}
-                <span className="text-slate-900 font-black">
+                <span className="text-[#24221F] font-black">
                   {Number(pagination.total).toLocaleString()}
                 </span>{' '}
                 قطعة
               </span>
 
               <div className="flex items-center gap-1.5 mr-2">
-                <span className="text-slate-400">لكل صفحة:</span>
+                <span className="text-[#777266]">لكل صفحة:</span>
                 {[30, 50, 100, 200, 'الكل'].map((lim) => (
                   <button
                     key={lim}
                     onClick={() => handleLimitChange(lim)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
                       pagination.limit === lim || (lim === 'الكل' && pagination.limit === 'all')
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        ? 'bg-[#151515] text-white shadow-sm'
+                        : 'bg-[#FFFDF9] border border-[#E6DECD] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
                     }`}
                   >
                     {lim}
@@ -452,7 +451,7 @@ export function RentalInventory() {
                   السابق
                 </Button>
 
-                <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800">
+                <span className="px-3 py-1 bg-[#FFFDF9] border border-[#E6DECD] rounded-lg text-xs font-black text-[#24221F]">
                   صفحة {pagination.page} من {pagination.totalPages}
                 </span>
 

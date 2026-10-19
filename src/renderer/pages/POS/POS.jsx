@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ShoppingCart,
   Barcode,
@@ -31,6 +32,7 @@ import {
   Undo2,
   Filter,
   Wallet,
+  ArrowUpDown,
 } from 'lucide-react';
 import ExpensesManager from '../../components/expenses/ExpensesManager';
 import { useAuth } from '../../context/AuthContext';
@@ -44,6 +46,7 @@ import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
 import { printElement } from '../../utils/print';
 import { ThermalReceipt } from '../../components/receipts';
+import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
 
 
 const BASE_CATEGORIES = ['الكل', 'FORMAL SUIT', 'TUXEDO SUIT', 'SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'صديري', 'تيشيرت', 'جينز', 'KIDS', 'ترنج', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'إكسسوارات', 'WALLET', 'أخرى'];
@@ -64,13 +67,32 @@ function playBeep() {
   } catch {}
 }
 
+function playErrorSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(280, ctx.currentTime);
+    osc.frequency.setValueAtTime(180, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.22);
+  } catch {}
+}
+
 export function POS() {
   const { user, isAdmin } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
+  const [searchParams] = useSearchParams();
 
   // Top Tabs: 'pos' | 'history' | 'returns'
-  const [activeTab, setActiveTab] = useState('pos');
+  const initialPosTab = searchParams.get('tab') || (searchParams.get('orderId') ? 'history' : 'pos');
+  const [activeTab, setActiveTab] = useState(initialPosTab);
   const [categoriesList, setCategoriesList] = useState(BASE_CATEGORIES);
 
   // Multi-cart tabs
@@ -105,13 +127,22 @@ export function POS() {
   const [inventory, setInventory] = useState([]);
   const [employees, setEmployees] = useState([]);
 
-  // Load Metadata categories
+  // Load Metadata categories, colors, sizes
+  const [metadataColors, setMetadataColors] = useState([]);
+  const [metadataSizes, setMetadataSizes] = useState([]);
+
   useEffect(() => {
     api.get('/inventory/metadata')
       .then((meta) => {
         if (meta?.categories && Array.isArray(meta.categories)) {
           const merged = Array.from(new Set([...BASE_CATEGORIES, ...meta.categories]));
           setCategoriesList(merged);
+        }
+        if (meta?.colors && Array.isArray(meta.colors)) {
+          setMetadataColors(meta.colors);
+        }
+        if (meta?.sizes && Array.isArray(meta.sizes)) {
+          setMetadataSizes(meta.sizes);
         }
       })
       .catch(() => {});
@@ -124,8 +155,24 @@ export function POS() {
   });
   const [nextOrderId, setNextOrderId] = useState('...');
   const [loadingInventory, setLoadingInventory] = useState(false);
+
+  // Determine the effective branch for cashier checkout & invoice generation
+  const effectiveBranchId = useMemo(() => {
+    if (activeBranchId && activeBranchId !== 'all') {
+      return activeBranchId.toString();
+    }
+    if (user?.branch_id) {
+      return user.branch_id.toString();
+    }
+    const defaultRetailBranch = branches.find((b) => !b.is_main_warehouse) || branches[0];
+    return defaultRetailBranch ? defaultRetailBranch.id.toString() : '1';
+  }, [activeBranchId, user?.branch_id, branches]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('الكل');
+  const [stockFilter, setStockFilter] = useState('all'); // 'all' | 'in_branch' | 'in_any_branch' | 'out_of_stock' | 'low_stock'
+  const [selectedSize, setSelectedSize] = useState('all');
+  const [selectedColor, setSelectedColor] = useState('all');
+  const [sortBy, setSortBy] = useState('default'); // 'default' | 'stock_desc' | 'stock_asc' | 'price_asc' | 'price_desc' | 'name_asc'
 
   // Checkout Modal State
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
@@ -133,8 +180,13 @@ export function POS() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [sellerId, setSellerId] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('cash'); // 'cash' | 'card' | 'debt' | 'wallet'
+  const [paymentMethod, setPaymentMethod] = useState('cash'); // 'cash' | 'bank_transfer' | 'card' | 'wallet' | 'debt'
   const [paidAmount, setPaidAmount] = useState('');
+  const [isSplitPayment, setIsSplitPayment] = useState(false);
+  const [splitMethod1, setSplitMethod1] = useState('cash');
+  const [splitAmount1, setSplitAmount1] = useState('');
+  const [splitMethod2, setSplitMethod2] = useState('bank_transfer');
+  const [splitAmount2, setSplitAmount2] = useState('');
   const [needsAlteration, setNeedsAlteration] = useState(false);
   const [alterationDueDate, setAlterationDueDate] = useState(() => {
     const d = new Date();
@@ -158,9 +210,9 @@ export function POS() {
   const [historyOrders, setHistoryOrders] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFilters, setHistoryFilters] = useState({
-    id: '',
-    customer: '',
-    phone: '',
+    id: searchParams.get('orderId') || '',
+    customer: searchParams.get('customer') || '',
+    phone: searchParams.get('phone') || '',
     date: '',
     status: '',
   });
@@ -170,6 +222,22 @@ export function POS() {
     total: 0,
     totalPages: 1,
   });
+
+  // Sync searchParams when navigating from Header search
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const orderIdParam = searchParams.get('orderId');
+    const searchParam = searchParams.get('search');
+    if (orderIdParam) {
+      setActiveTab('history');
+      setHistoryFilters((prev) => ({ ...prev, id: orderIdParam }));
+    } else if (tabParam) {
+      setActiveTab(tabParam);
+    }
+    if (searchParam) {
+      setSearchQuery(searchParam);
+    }
+  }, [searchParams]);
 
   // Pay Remaining Modal State
   const [showPayRemainingModal, setShowPayRemainingModal] = useState(false);
@@ -255,7 +323,7 @@ export function POS() {
   useEffect(() => {
     async function loadMetadata() {
       try {
-        const nextIdUrl = `/next-order-id${activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : ''}`;
+        const nextIdUrl = `/next-order-id${effectiveBranchId ? `?branch_id=${effectiveBranchId}` : ''}`;
         const [settingsRes, nextIdRes] = await Promise.all([
           api.get('/public/settings').catch(() => null),
           api.get(nextIdUrl).catch(() => null),
@@ -269,7 +337,7 @@ export function POS() {
       } catch {}
     }
     loadMetadata();
-  }, [activeBranchId]);
+  }, [effectiveBranchId]);
 
   // Fetch employees for branch
   useEffect(() => {
@@ -295,9 +363,8 @@ export function POS() {
       if (activeBranchId && activeBranchId !== 'all') {
         query.append('branch_id', activeBranchId);
       }
-      if (searchQuery.trim()) {
-        query.append('search', searchQuery.trim());
-      }
+      // Always fetch full catalog for cashier to ensure instant offline-grade search and complete categories
+      query.append('all', 'true');
       const data = await api.get(`/inventory?${query.toString()}`);
       if (Array.isArray(data)) {
         setInventory(data);
@@ -309,7 +376,7 @@ export function POS() {
     } finally {
       setLoadingInventory(false);
     }
-  }, [activeBranchId, searchQuery]);
+  }, [activeBranchId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -318,30 +385,374 @@ export function POS() {
     return () => clearTimeout(timer);
   }, [fetchInventory]);
 
-  // Filter products by category
-  const filteredProducts = useMemo(() => {
-    return inventory.filter((item) => {
-      if (selectedCategory === 'الكل') return true;
-      return item.category === selectedCategory;
+  // Keep categories bar up to date with any categories present in inventory
+  useEffect(() => {
+    if (inventory.length > 0) {
+      const invCats = inventory.map((i) => i.category).filter(Boolean);
+      if (invCats.length > 0) {
+        setCategoriesList((prev) => Array.from(new Set([...prev, ...invCats])));
+      }
+    }
+  }, [inventory]);
+
+  // Extract all available sizes dynamically from inventory and metadata
+  const availableSizes = useMemo(() => {
+    const sizeSet = new Set();
+    inventory.forEach((item) => {
+      if (item.size_cut) sizeSet.add(String(item.size_cut).trim());
+      if (item.size) sizeSet.add(String(item.size).trim());
+      if (Array.isArray(item.sizes)) {
+        item.sizes.forEach((s) => {
+          if (s?.size_name) sizeSet.add(String(s.size_name).trim());
+        });
+      }
     });
-  }, [inventory, selectedCategory]);
+    if (Array.isArray(metadataSizes)) {
+      metadataSizes.forEach((s) => {
+        if (s) sizeSet.add(String(s).trim());
+      });
+    }
+    const cleanList = Array.from(sizeSet).filter(
+      (s) => s && s !== '-' && s !== 'null' && s !== 'undefined'
+    );
+    return cleanList.sort((a, b) => {
+      const numA = parseFloat(a);
+      const numB = parseFloat(b);
+      const isNumA = !isNaN(numA) && /^\d+(\.\d+)?$/.test(a);
+      const isNumB = !isNaN(numB) && /^\d+(\.\d+)?$/.test(b);
+      if (isNumA && isNumB) return numA - numB;
+      if (isNumA && !isNumB) return -1;
+      if (!isNumA && isNumB) return 1;
+      return a.localeCompare(b, 'ar');
+    });
+  }, [inventory, metadataSizes]);
+
+  // Extract all available colors dynamically from inventory and metadata
+  const availableColors = useMemo(() => {
+    const colorSet = new Set();
+    inventory.forEach((item) => {
+      if (item.color) colorSet.add(String(item.color).trim());
+      if (Array.isArray(item.sizes)) {
+        item.sizes.forEach((s) => {
+          if (s?.color_name) colorSet.add(String(s.color_name).trim());
+        });
+      }
+    });
+    if (Array.isArray(metadataColors)) {
+      metadataColors.forEach((c) => {
+        if (c) colorSet.add(String(c).trim());
+      });
+    }
+    const cleanList = Array.from(colorSet).filter(
+      (c) => c && c !== '-' && c !== 'null' && c !== 'undefined'
+    );
+    return cleanList.sort((a, b) => a.localeCompare(b, 'ar'));
+  }, [inventory, metadataColors]);
+
+  // Filter products by category, search query, color, size, stock status, and sorting
+  const filteredProducts = useMemo(() => {
+    const queryTerm = (searchQuery || '').trim().toLowerCase();
+    const selCategory = (selectedCategory || 'الكل').trim().toLowerCase();
+
+    const list = inventory.filter((item) => {
+      // 1. Category Filter
+      if (selCategory !== 'الكل' && selCategory !== 'all') {
+        const cat = (item.category || '').trim().toLowerCase();
+        if (selCategory === 'بدل') {
+          if (!cat.includes('suit') && !cat.includes('بدل')) return false;
+        } else if (selCategory === 'formal suit' || selCategory === 'بدل رسمية') {
+          if (cat !== 'formal suit' && !cat.includes('بدل رسمية')) return false;
+        } else if (selCategory === 'tuxedo suit' || selCategory === 'بدل سموكن') {
+          if (cat !== 'tuxedo suit' && !cat.includes('بدل سموكن')) return false;
+        } else if (selCategory === 'casual suit' || selCategory === 'بدل كاجوال') {
+          if (cat !== 'casual suit' && !cat.includes('بدل كاجوال')) return false;
+        } else if (selCategory === 'suit' || selCategory === 'بدل عادية') {
+          if (cat !== 'suit' && !cat.includes('بدل عادية')) return false;
+        } else if (selCategory === 'kids' || selCategory === 'أطفال' || selCategory === 'اطفال') {
+          if (cat !== 'kids' && !cat.includes('أطفال') && !cat.includes('اطفال')) return false;
+        } else if (selCategory === 'wallet' || selCategory === 'محافظ') {
+          if (cat !== 'wallet' && !cat.includes('محافظ') && !cat.includes('محفظ')) return false;
+        } else if (selCategory === 'أخرى' || selCategory === 'اخري') {
+          if (cat && !['أخرى', 'اخري', 'other', 'uncategorized'].includes(cat)) return false;
+        } else {
+          if (cat !== selCategory && !cat.includes(selCategory) && !selCategory.includes(cat)) return false;
+        }
+      }
+
+      // 2. Search Query Filter (in-memory fast search)
+      if (queryTerm) {
+        const nameMatch = (item.name || '').toLowerCase().includes(queryTerm);
+        const barcodeMatch = (item.barcode || '').toLowerCase().includes(queryTerm);
+        const idMatch = String(item.id || '').toLowerCase().includes(queryTerm);
+        const colorMatch = (item.color || '').toLowerCase().includes(queryTerm);
+        const catMatch = (item.category || '').toLowerCase().includes(queryTerm);
+        const sizeMatch = (item.size_cut || item.size || '').toLowerCase().includes(queryTerm);
+        const sizesMatch = Array.isArray(item.sizes) && item.sizes.some((s) =>
+          (s.size_name || '').toLowerCase().includes(queryTerm) ||
+          (s.color_name || '').toLowerCase().includes(queryTerm)
+        );
+
+        if (!nameMatch && !barcodeMatch && !idMatch && !colorMatch && !catMatch && !sizeMatch && !sizesMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    const map = new Map();
+    for (const item of list) {
+      const nameKey = (item.name || '').trim().toLowerCase();
+      const colorKey = (item.color || '').trim().toLowerCase();
+      const catKey = (item.category || '').trim().toLowerCase();
+      const priceKey = String(item.price || 0);
+      const groupKey = `${nameKey}___${colorKey}___${catKey}___${priceKey}`;
+
+      const itemSizes = Array.isArray(item.sizes) && item.sizes.length > 0 ? item.sizes : [];
+      const baseSizeName = itemSizes[0]?.size_name || item.size_cut || item.size || null;
+
+      if (!map.has(groupKey)) {
+        map.set(groupKey, {
+          ...item,
+          isGrouped: true,
+          originalItems: [item],
+          sizes: itemSizes.length > 1
+            ? itemSizes.map((s) => ({
+                id: s.id || item.id,
+                size_name: s.size_name,
+                stock_level: Number(s.stock_level ?? 0),
+                barcode: item.barcode,
+              }))
+            : (baseSizeName ? [{
+                id: item.id,
+                size_name: baseSizeName,
+                stock_level: Number(item.stock_level ?? 0),
+                barcode: item.barcode,
+              }] : []),
+          total_stock: Number(item.total_stock ?? item.stock_level ?? 0),
+          stock_level: Number(item.stock_level ?? 0),
+          available_branches: Array.isArray(item.available_branches)
+            ? item.available_branches.map((b) => ({ ...b, stock_level: Number(b.stock_level || 0) }))
+            : [],
+        });
+      } else {
+        const grouped = map.get(groupKey);
+        grouped.originalItems.push(item);
+        grouped.total_stock += Number(item.total_stock ?? item.stock_level ?? 0);
+        grouped.stock_level += Number(item.stock_level ?? 0);
+
+        // Merge available branches cleanly without mutating source inventory objects
+        if (Array.isArray(item.available_branches)) {
+          for (const ab of item.available_branches) {
+            const existingB = grouped.available_branches.find((b) => b.branch_id === ab.branch_id);
+            if (existingB) {
+              existingB.stock_level += Number(ab.stock_level || 0);
+            } else {
+              grouped.available_branches.push({ ...ab, stock_level: Number(ab.stock_level || 0) });
+            }
+          }
+        }
+
+        // Add size to sizes list if not already present and if a valid size exists
+        const sizeName = itemSizes[0]?.size_name || item.size_cut || item.size;
+        if (sizeName) {
+          const existingSize = grouped.sizes.find((s) => s.size_name === sizeName);
+          if (!existingSize) {
+            grouped.sizes.push({
+              id: item.id,
+              size_name: sizeName,
+              stock_level: Number(item.stock_level ?? 0),
+              barcode: item.barcode,
+            });
+          } else {
+            existingSize.stock_level += Number(item.stock_level ?? 0);
+          }
+        }
+      }
+    }
+
+    // Sort sizes numerically or alphabetically
+    const result = Array.from(map.values());
+    for (const prod of result) {
+      if (Array.isArray(prod.sizes) && prod.sizes.length > 1) {
+        prod.sizes.sort((a, b) => {
+          const numA = parseFloat(a.size_name);
+          const numB = parseFloat(b.size_name);
+          if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+          return String(a.size_name).localeCompare(String(b.size_name), 'ar');
+        });
+      }
+    }
+
+    // Apply color, size, and stock filters on the grouped products
+    const isAllBranches = !activeBranchId || activeBranchId === 'all';
+    let filteredList = result.filter((prod) => {
+      // 1. Color filter
+      if (selectedColor && selectedColor !== 'all') {
+        const targetColor = selectedColor.trim().toLowerCase();
+        const prodColor = (prod.color || '').trim().toLowerCase();
+        const hasColorVariant = Array.isArray(prod.sizes) && prod.sizes.some((s) => (s.color_name || '').trim().toLowerCase() === targetColor);
+        if (prodColor !== targetColor && !hasColorVariant) {
+          return false;
+        }
+      }
+
+      // 2. Size filter
+      if (selectedSize && selectedSize !== 'all') {
+        const targetSize = selectedSize.trim().toLowerCase();
+        const prodSize = (prod.size_cut || prod.size || '').trim().toLowerCase();
+        const hasSizeVariant = Array.isArray(prod.sizes) && prod.sizes.some((s) => String(s.size_name || '').trim().toLowerCase() === targetSize);
+        if (prodSize !== targetSize && !hasSizeVariant) {
+          return false;
+        }
+      }
+
+      // 3. Stock filter
+      const branchStock = isAllBranches
+        ? Number(prod.total_stock ?? prod.stock_level ?? 0)
+        : Number(prod.stock_level ?? 0);
+
+      if (stockFilter === 'in_branch') {
+        if (selectedSize && selectedSize !== 'all') {
+          const targetSize = selectedSize.trim().toLowerCase();
+          const targetSizeObj = prod.sizes?.find((s) => String(s.size_name || '').trim().toLowerCase() === targetSize);
+          if (targetSizeObj) {
+            return Number(targetSizeObj.stock_level ?? 0) > 0;
+          }
+        }
+        return branchStock > 0;
+      }
+
+      if (stockFilter === 'in_any_branch') {
+        const total = Number(prod.total_stock ?? prod.stock_level ?? 0);
+        return total > 0;
+      }
+
+      if (stockFilter === 'out_of_stock') {
+        if (selectedSize && selectedSize !== 'all') {
+          const targetSize = selectedSize.trim().toLowerCase();
+          const targetSizeObj = prod.sizes?.find((s) => String(s.size_name || '').trim().toLowerCase() === targetSize);
+          if (targetSizeObj) {
+            return Number(targetSizeObj.stock_level ?? 0) <= 0;
+          }
+        }
+        return branchStock <= 0;
+      }
+
+      if (stockFilter === 'low_stock') {
+        const minLevel = Number(prod.min_stock_level ?? 5);
+        return branchStock > 0 && branchStock <= minLevel;
+      }
+
+      return true;
+    });
+
+    // 4. Sorting
+    if (sortBy === 'stock_desc') {
+      filteredList.sort((a, b) => {
+        const stockA = isAllBranches ? (a.total_stock ?? a.stock_level ?? 0) : (a.stock_level ?? 0);
+        const stockB = isAllBranches ? (b.total_stock ?? b.stock_level ?? 0) : (b.stock_level ?? 0);
+        return stockB - stockA;
+      });
+    } else if (sortBy === 'stock_asc') {
+      filteredList.sort((a, b) => {
+        const stockA = isAllBranches ? (a.total_stock ?? a.stock_level ?? 0) : (a.stock_level ?? 0);
+        const stockB = isAllBranches ? (b.total_stock ?? b.stock_level ?? 0) : (b.stock_level ?? 0);
+        return stockA - stockB;
+      });
+    } else if (sortBy === 'price_asc') {
+      filteredList.sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
+    } else if (sortBy === 'price_desc') {
+      filteredList.sort((a, b) => Number(b.price || 0) - Number(a.price || 0));
+    } else if (sortBy === 'name_asc') {
+      filteredList.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
+    }
+
+    return filteredList;
+  }, [inventory, selectedCategory, searchQuery, selectedColor, selectedSize, stockFilter, sortBy, activeBranchId]);
+
+  const hasActiveFilters = useMemo(() => {
+    return (
+      (selectedCategory && selectedCategory !== 'الكل' && selectedCategory !== 'all') ||
+      stockFilter !== 'all' ||
+      selectedSize !== 'all' ||
+      selectedColor !== 'all' ||
+      sortBy !== 'default' ||
+      searchQuery.trim() !== ''
+    );
+  }, [selectedCategory, stockFilter, selectedSize, selectedColor, sortBy, searchQuery]);
+
+  const resetAllFilters = useCallback(() => {
+    setSelectedCategory('الكل');
+    setStockFilter('all');
+    setSelectedSize('all');
+    setSelectedColor('all');
+    setSortBy('default');
+    setSearchQuery('');
+  }, []);
+
+  const totalMatchingPieces = useMemo(() => {
+    const isAll = !activeBranchId || activeBranchId === 'all';
+    return filteredProducts.reduce((sum, p) => {
+      const stock = isAll ? Number(p.total_stock ?? p.stock_level ?? 0) : Number(p.stock_level ?? 0);
+      return sum + Math.max(0, stock);
+    }, 0);
+  }, [filteredProducts, activeBranchId]);
+
+  // Helper to get available stock for current branch or globally
+  const getProductAvailableStock = useCallback((product, sizeName = null) => {
+    if (!product) return 0;
+    if (sizeName && Array.isArray(product.sizes)) {
+      const sObj = product.sizes.find((s) => s.size_name === sizeName);
+      if (sObj && sObj.stock_level !== undefined) {
+        return Number(sObj.stock_level || 0);
+      }
+    }
+    const isAll = !activeBranchId || activeBranchId === 'all';
+    return isAll
+      ? Number(product.total_stock ?? product.stock_level ?? 0)
+      : Number(product.stock_level ?? 0);
+  }, [activeBranchId]);
 
   // Barcode Scan / Exact Match on Enter
-  const handleBarcodeSubmit = (e) => {
+  const handleBarcodeSubmit = async (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const code = searchQuery.trim();
       if (!code) return;
 
-      const matched = inventory.find(
+      let matched = inventory.find(
         (i) =>
           (i.barcode && i.barcode.toLowerCase() === code.toLowerCase()) ||
           (i.code && i.code.toLowerCase() === code.toLowerCase()) ||
-          (i.name && i.name.toLowerCase() === code.toLowerCase())
+          (i.name && i.name.toLowerCase() === code.toLowerCase()) ||
+          (Array.isArray(i.sizes) && i.sizes.some((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase()))
       );
 
+      if (!matched) {
+        try {
+          const directRes = await api.get(`/inventory?barcode=${encodeURIComponent(code)}&branch_id=${activeBranchId || 'all'}`);
+          const found = Array.isArray(directRes) ? directRes[0] : directRes?.items?.[0];
+          if (found) matched = found;
+        } catch {}
+      }
+
       if (matched) {
+        const availableStock = getProductAvailableStock(matched);
+        if (availableStock <= 0) {
+          playErrorSound();
+          const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
+          toast.error(`عفواً، الصنف "${matched.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
+          return;
+        }
+
         if (matched.sizes && Array.isArray(matched.sizes) && matched.sizes.length > 1) {
+          const hasAnyInStock = matched.sizes.some((s) => Number(s.stock_level || 0) > 0);
+          if (!hasAnyInStock) {
+            playErrorSound();
+            toast.error(`عفواً، جميع مقاسات الصنف "${matched.name}" نفدت من المخزون.`);
+            return;
+          }
           setPendingProduct(matched);
           setShowSizeModal(true);
           setSearchQuery('');
@@ -349,44 +760,76 @@ export function POS() {
           addToCart(matched);
           setSearchQuery('');
         }
-      } else {
+        playErrorSound();
         toast.warning(`لم يتم العثور على منتج بهذا الباركود: ${code}`);
       }
     }
   };
 
   // Add Item to Current Cart with optional selectedSize
-  const addToCart = (product, selectedSize = null) => {
+  const addToCart = (product, selectedSize = null, selectedSizeObj = null) => {
     let itemSize = selectedSize;
+    let chosenId = product.id;
+    let chosenBarcode = product.barcode;
+
+    if (selectedSizeObj) {
+      itemSize = selectedSizeObj.size_name;
+      if (selectedSizeObj.id) chosenId = selectedSizeObj.id;
+      if (selectedSizeObj.barcode) chosenBarcode = selectedSizeObj.barcode;
+    } else if (itemSize && Array.isArray(product.sizes)) {
+      const foundSize = product.sizes.find((s) => s.size_name === itemSize);
+      if (foundSize) {
+        if (foundSize.id) chosenId = foundSize.id;
+        if (foundSize.barcode) chosenBarcode = foundSize.barcode;
+      }
+    }
+
     if (!itemSize) {
       if (product.sizes && Array.isArray(product.sizes) && product.sizes.length === 1) {
         itemSize = product.sizes[0].size_name;
+        if (product.sizes[0].id) chosenId = product.sizes[0].id;
+        if (product.sizes[0].barcode) chosenBarcode = product.sizes[0].barcode;
       } else {
         itemSize = product.size_cut || product.size || '';
       }
     }
 
-    const cartItemId = `${product.id}_${itemSize || 'default'}`;
+    const availableStock = getProductAvailableStock(product, itemSize);
+    if (availableStock <= 0) {
+      playErrorSound();
+      const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
+      toast.error(`عفواً، الصنف "${product.name}"${itemSize ? ` مقاس (${itemSize})` : ''} غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
+      return;
+    }
+
+    const cartItemId = `${chosenId}_${itemSize || 'default'}`;
 
     setCarts((prev) => {
       const items = prev[activeCartId] || [];
       const existingIndex = items.findIndex((i) =>
-        i.cartItemId ? i.cartItemId === cartItemId : (i.id === product.id && (i.size || '') === (itemSize || ''))
+        i.cartItemId ? i.cartItemId === cartItemId : (i.id === chosenId && (i.size || '') === (itemSize || ''))
       );
 
       if (existingIndex > -1) {
+        const currentQty = items[existingIndex].quantity;
+        if (currentQty + 1 > availableStock) {
+          playErrorSound();
+          toast.warning(`الكمية المتاحة في المخزون لهذا الصنف هي ${availableStock} قطعة فقط.`);
+          return prev;
+        }
         const updated = [...items];
         updated[existingIndex] = {
           ...updated[existingIndex],
-          quantity: updated[existingIndex].quantity + 1,
+          quantity: currentQty + 1,
         };
+        playBeep();
         return { ...prev, [activeCartId]: updated };
       } else {
         const newItem = {
           cartItemId,
-          id: product.id,
+          id: chosenId,
           name: product.name,
-          barcode: product.barcode,
+          barcode: chosenBarcode,
           price: Number(product.price || 0),
           color: product.color || '',
           size: itemSize,
@@ -394,16 +837,31 @@ export function POS() {
           quantity: 1,
           discount: 0,
           discount_type: 'amount',
+          maxStock: availableStock,
         };
+        playBeep();
         return { ...prev, [activeCartId]: [...items, newItem] };
       }
     });
-    playBeep();
   };
 
   // Handler when clicking a product card in POS
   const handleProductCardClick = (product) => {
+    const availableStock = getProductAvailableStock(product);
+    if (availableStock <= 0) {
+      playErrorSound();
+      const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
+      toast.error(`عفواً، الصنف "${product.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
+      return;
+    }
+
     if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 1) {
+      const hasAnyInStock = product.sizes.some((s) => Number(s.stock_level || 0) > 0);
+      if (!hasAnyInStock) {
+        playErrorSound();
+        toast.error(`عفواً، جميع مقاسات الصنف "${product.name}" نفدت من المخزون ولا يمكن ضربه بالفاتورة.`);
+        return;
+      }
       setPendingProduct(product);
       setShowSizeModal(true);
     } else {
@@ -418,6 +876,15 @@ export function POS() {
         .map((item) => {
           const matches = (item.cartItemId && item.cartItemId === cartKey) || (!item.cartItemId && item.id === cartKey);
           if (matches) {
+            if (delta > 0) {
+              const prod = inventory.find((p) => p.id === item.id);
+              const maxStock = getProductAvailableStock(prod, item.size) || item.maxStock || Infinity;
+              if (item.quantity + delta > maxStock) {
+                playErrorSound();
+                toast.warning(`الكمية المتاحة في المخزون هي ${maxStock} قطعة فقط.`);
+                return item;
+              }
+            }
             const newQty = item.quantity + delta;
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
@@ -534,7 +1001,28 @@ export function POS() {
       toast.warning('السلة فارغة! برجاء إضافة منتجات أولاً');
       return;
     }
+
+    for (const item of currentCart) {
+      const prod = inventory.find((p) => p.id === item.id);
+      const available = getProductAvailableStock(prod, item.size);
+      if (available <= 0) {
+        playErrorSound();
+        toast.error(`لا يمكن المتابعة: الصنف "${item.name}" غير متوفر بالمخزون حالياً`);
+        return;
+      }
+      if (item.quantity > available) {
+        playErrorSound();
+        toast.error(`لا يمكن المتابعة: كمية الصنف "${item.name}" (${item.quantity}) تتجاوز المتاح بالمخزون (${available})`);
+        return;
+      }
+    }
+
     setPaidAmount(grandTotal.toString());
+    setIsSplitPayment(false);
+    setSplitMethod1('cash');
+    setSplitAmount1('');
+    setSplitMethod2('bank_transfer');
+    setSplitAmount2('');
     setShowCheckoutModal(true);
   };
 
@@ -550,9 +1038,70 @@ export function POS() {
       return;
     }
 
-    const paid = Number(paidAmount) || 0;
-    const change = Math.max(0, paid - grandTotal);
-    const chosenBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1;
+    for (const item of currentCart) {
+      const prod = inventory.find((p) => p.id === item.id);
+      const available = getProductAvailableStock(prod, item.size);
+      if (available <= 0 || item.quantity > available) {
+        playErrorSound();
+        toast.error(`لا يمكن إتمام الفاتورة: الصنف "${item.name}" غير متوفر بالكمية المطلوبة (المتاح: ${available})`);
+        return;
+      }
+    }
+
+    let finalPaid = Number(paidAmount) || 0;
+    let finalMethod = paymentMethod;
+    let splitsJson = null;
+    let pCash = 0;
+    let pBank = 0;
+    let pCard = 0;
+    let pWallet = 0;
+
+    if (isSplitPayment) {
+      const a1 = Number(splitAmount1) || 0;
+      const a2 = Number(splitAmount2) || 0;
+      if (a1 <= 0 || a2 <= 0) {
+        toast.error('يرجى إدخال مبالغ صحيحة أكبر من صفر لكلتا طريقتي الدفع المجزأ');
+        return;
+      }
+      if (splitMethod1 === splitMethod2) {
+        toast.error('لا يمكن اختيار نفس طريقة الدفع مرتين في الدفع المجزأ');
+        return;
+      }
+      finalPaid = a1 + a2;
+      finalMethod = 'split';
+      const splitsArray = [
+        { method: splitMethod1, amount: a1 },
+        { method: splitMethod2, amount: a2 },
+      ];
+      splitsJson = JSON.stringify(splitsArray);
+
+      if (splitMethod1 === 'cash') pCash += a1;
+      else if (splitMethod1 === 'bank_transfer') pBank += a1;
+      else if (splitMethod1 === 'card') pCard += a1;
+      else if (splitMethod1 === 'wallet') pWallet += a1;
+
+      if (splitMethod2 === 'cash') pCash += a2;
+      else if (splitMethod2 === 'bank_transfer') pBank += a2;
+      else if (splitMethod2 === 'card') pCard += a2;
+      else if (splitMethod2 === 'wallet') pWallet += a2;
+    } else {
+      if (paymentMethod === 'cash') pCash = finalPaid;
+      else if (paymentMethod === 'bank_transfer') pBank = finalPaid;
+      else if (paymentMethod === 'card') pCard = finalPaid;
+      else if (paymentMethod === 'wallet') pWallet = finalPaid;
+    }
+
+    const change = Math.max(0, finalPaid - grandTotal);
+    if (isSplitPayment) {
+      if (change > 0 && change > pCash) {
+        toast.error('لا يمكن صرف باقي نقدي يتجاوز المبلغ النقدي المستلم من العميل');
+        return;
+      }
+    } else if (paymentMethod !== 'cash' && change > 0) {
+      toast.error('لا يمكن صرف باقي نقدي لعمليات الدفع غير النقدية');
+      return;
+    }
+    const chosenBranchId = Number(effectiveBranchId) || 1;
 
     setCheckoutSubmitting(true);
     try {
@@ -561,9 +1110,14 @@ export function POS() {
         customer_phone: customerPhone.trim(),
         branch_id: chosenBranchId,
         seller_id: Number(sellerId),
-        payment_method: paymentMethod,
+        payment_method: finalMethod,
+        payment_splits: splitsJson,
+        cash_amount: pCash,
+        bank_transfer_amount: pBank,
+        card_amount: pCard,
+        wallet_amount: pWallet,
         total_amount: grandTotal,
-        paid_amount: paid,
+        paid_amount: finalPaid,
         change_amount: change,
         invoice_discount: invoiceDiscountTotal,
         invoice_discount_type: currentDiscount.type,
@@ -600,14 +1154,29 @@ export function POS() {
         subtotal,
         discount: totalDiscount,
         total_amount: grandTotal,
-        paid_amount: paid,
+        paid_amount: finalPaid,
         change_amount: change,
-        payment_method: paymentMethod,
+        payment_method: finalMethod,
+        payment_splits: splitsJson,
+        cash_amount: pCash,
+        bank_transfer_amount: pBank,
+        card_amount: pCard,
+        wallet_amount: pWallet,
+        items: currentCart.map((i) => ({
+          name: i.name,
+          category: i.category,
+          size: i.size,
+          quantity: i.quantity,
+          price: i.price,
+          price_at_time: i.price,
+          discount: i.discount || 0,
+          discount_type: i.discount_type || 'amount',
+        })),
       });
 
       clearCurrentCart();
 
-      const nextIdUrl = `/next-order-id${activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : ''}`;
+      const nextIdUrl = `/next-order-id${effectiveBranchId ? `?branch_id=${effectiveBranchId}` : ''}`;
       const nextIdRes = await api.get(nextIdUrl).catch(() => null);
       if (nextIdRes?.next_id) setNextOrderId(nextIdRes.next_id);
       fetchInventory();
@@ -1113,15 +1682,15 @@ export function POS() {
   return (
     <div className="space-y-4 max-w-[1700px] mx-auto select-none" style={{ direction: 'rtl' }}>
       {/* Top Bar: Tabs & Active Branch Info */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm no-print">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FFFDF9] p-3 rounded-3xl border border-[#E6DECD] shadow-sm no-print">
         {/* Navigation Tabs */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setActiveTab('pos')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
               activeTab === 'pos'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                : 'text-slate-600 hover:bg-slate-100'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
             }`}
           >
             <ShoppingCart className="w-4 h-4" />
@@ -1130,10 +1699,10 @@ export function POS() {
 
           <button
             onClick={() => setActiveTab('history')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
               activeTab === 'history'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                : 'text-slate-600 hover:bg-slate-100'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
             }`}
           >
             <Receipt className="w-4 h-4" />
@@ -1142,10 +1711,10 @@ export function POS() {
 
           <button
             onClick={() => setActiveTab('returns')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
               activeTab === 'returns'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                : 'text-slate-600 hover:bg-slate-100'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
             }`}
           >
             <Undo2 className="w-4 h-4" />
@@ -1154,10 +1723,10 @@ export function POS() {
 
           <button
             onClick={() => setActiveTab('expenses')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
               activeTab === 'expenses'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                : 'text-slate-600 hover:bg-slate-100'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
             }`}
           >
             <Wallet className="w-4 h-4" />
@@ -1167,7 +1736,7 @@ export function POS() {
 
         {/* Live Invoice Badge */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 font-extrabold text-xs border border-indigo-100">
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#FDF5D2] text-[#7A5B04] font-extrabold text-xs border border-[#F4D95B]/70 shadow-sm font-display">
             <span>فاتورة رقم:</span>
             <span className="font-mono text-sm">#{nextOrderId}</span>
           </div>
@@ -1204,21 +1773,204 @@ export function POS() {
               </div>
             </div>
 
-            {/* Category Pills */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {categoriesList.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
-                    selectedCategory === cat
-                      ? 'bg-slate-900 text-white shadow-sm'
-                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
+            {/* Comprehensive Dropdown Filter Bar */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5">
+                {/* 1. Category Dropdown */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-black text-slate-500 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>التصنيف</span>
+                  </label>
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className={`w-full bg-slate-50 text-xs font-bold rounded-xl px-2.5 py-2 border outline-none cursor-pointer transition-all ${
+                      selectedCategory !== 'الكل'
+                        ? 'border-indigo-500 bg-indigo-50/50 text-indigo-900 font-black ring-1 ring-indigo-300'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300 focus:border-indigo-500 focus:bg-white'
+                    }`}
+                  >
+                    <option value="الكل">كل التصنيفات ({categoriesList.length})</option>
+                    {categoriesList
+                      .filter((c) => c !== 'الكل')
+                      .map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* 2. Stock Availability Dropdown */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-black text-slate-500 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>حالة المخزون</span>
+                  </label>
+                  <select
+                    value={stockFilter}
+                    onChange={(e) => setStockFilter(e.target.value)}
+                    className={`w-full bg-slate-50 text-xs font-bold rounded-xl px-2.5 py-2 border outline-none cursor-pointer transition-all ${
+                      stockFilter !== 'all'
+                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-900 font-black ring-1 ring-emerald-300'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300 focus:border-emerald-500 focus:bg-white'
+                    }`}
+                  >
+                    <option value="all">كل حالات المخزن</option>
+                    <option value="in_branch">المتوفر بفرعي فقط</option>
+                    <option value="in_any_branch">المتوفر في أي فرع</option>
+                    <option value="out_of_stock">نفد من المخزون (0)</option>
+                    <option value="low_stock">رصيد منخفض (≤ 5)</option>
+                  </select>
+                </div>
+
+                {/* 3. Size Dropdown */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-black text-slate-500 flex items-center gap-1.5">
+                    <Scissors className="w-3.5 h-3.5 text-amber-500" />
+                    <span>المقاس</span>
+                  </label>
+                  <select
+                    value={selectedSize}
+                    onChange={(e) => setSelectedSize(e.target.value)}
+                    className={`w-full bg-slate-50 text-xs font-bold rounded-xl px-2.5 py-2 border outline-none cursor-pointer transition-all ${
+                      selectedSize !== 'all'
+                        ? 'border-amber-500 bg-amber-50/50 text-amber-900 font-black ring-1 ring-amber-300'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300 focus:border-amber-500 focus:bg-white'
+                    }`}
+                  >
+                    <option value="all">كل المقاسات ({availableSizes.length})</option>
+                    {availableSizes.map((sz) => (
+                      <option key={sz} value={sz}>
+                        مقاس {sz}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 4. Color Dropdown */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-black text-slate-500 flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-purple-500" />
+                    <span>اللون</span>
+                  </label>
+                  <select
+                    value={selectedColor}
+                    onChange={(e) => setSelectedColor(e.target.value)}
+                    className={`w-full bg-slate-50 text-xs font-bold rounded-xl px-2.5 py-2 border outline-none cursor-pointer transition-all ${
+                      selectedColor !== 'all'
+                        ? 'border-purple-500 bg-purple-50/50 text-purple-900 font-black ring-1 ring-purple-300'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300 focus:border-purple-500 focus:bg-white'
+                    }`}
+                  >
+                    <option value="all">كل الألوان ({availableColors.length})</option>
+                    {availableColors.map((col) => (
+                      <option key={col} value={col}>
+                        {col}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 5. Sort Dropdown */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-black text-slate-500 flex items-center gap-1.5">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-sky-500" />
+                    <span>الترتيب</span>
+                  </label>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className={`w-full bg-slate-50 text-xs font-bold rounded-xl px-2.5 py-2 border outline-none cursor-pointer transition-all ${
+                      sortBy !== 'default'
+                        ? 'border-sky-500 bg-sky-50/50 text-sky-900 font-black ring-1 ring-sky-300'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300 focus:border-sky-500 focus:bg-white'
+                    }`}
+                  >
+                    <option value="default">الافتراضي (الأحدث)</option>
+                    <option value="stock_desc">الأعلى توفراً بالمخزن</option>
+                    <option value="stock_asc">الأقل توفراً بالمخزن</option>
+                    <option value="price_asc">السعر: الأقل أولاً</option>
+                    <option value="price_desc">السعر: الأعلى أولاً</option>
+                    <option value="name_asc">الاسم أبجدياً (أ - ي)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Status & Active Filter Badges Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-slate-100 text-xs">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-slate-500 font-bold ml-1">
+                    النتائج: <strong className="text-slate-900 font-black">{filteredProducts.length}</strong> موديل
+                    <span className="text-slate-400 font-medium mr-1.5">({totalMatchingPieces} قطعة بالمخزون)</span>
+                  </span>
+
+                  {/* Active filter badges */}
+                  {selectedCategory !== 'الكل' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-bold">
+                      التصنيف: {selectedCategory}
+                      <button onClick={() => setSelectedCategory('الكل')} className="hover:text-rose-600 transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+
+                  {stockFilter !== 'all' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
+                      {stockFilter === 'in_branch'
+                        ? 'المتوفر بفرعي'
+                        : stockFilter === 'in_any_branch'
+                        ? 'المتوفر بأي فرع'
+                        : stockFilter === 'out_of_stock'
+                        ? 'نفد بالمخزن'
+                        : 'رصيد منخفض'}
+                      <button onClick={() => setStockFilter('all')} className="hover:text-rose-600 transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+
+                  {selectedSize !== 'all' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-[11px] font-bold">
+                      مقاس: {selectedSize}
+                      <button onClick={() => setSelectedSize('all')} className="hover:text-rose-600 transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+
+                  {selectedColor !== 'all' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-700 text-[11px] font-bold">
+                      لون: {selectedColor}
+                      <button onClick={() => setSelectedColor('all')} className="hover:text-rose-600 transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+
+                  {sortBy !== 'default' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-50 border border-sky-200 text-sky-700 text-[11px] font-bold">
+                      ترتيب مخصص
+                      <button onClick={() => setSortBy('default')} className="hover:text-rose-600 transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+                </div>
+
+                {/* Reset Filters button */}
+                {hasActiveFilters && (
+                  <button
+                    onClick={resetAllFilters}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-black text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 px-2.5 py-1 rounded-xl transition-all"
+                    title="إعادة ضبط جميع الفلاتر للوضع الافتراضي"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>إعادة ضبط الفلاتر</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Product Cards Grid */}
@@ -1234,14 +1986,28 @@ export function POS() {
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
                   {filteredProducts.map((product) => {
-                    const stock = Number(product.stock_level ?? product.stock_quantity ?? product.stock ?? 0);
-                    const isLow = stock <= (product.min_stock_level ?? 5);
+                    const isAll = !activeBranchId || activeBranchId === 'all';
+                    const activeBranchObj = branches.find((b) => b.id.toString() === activeBranchId?.toString());
+                    const activeBranchName = activeBranchObj?.name || 'فرعك';
+
+                    const currentBranchStock = isAll
+                      ? Number(product.total_stock ?? product.stock_level ?? 0)
+                      : Number(product.stock_level ?? 0);
+
+                    const isOutOfStock = currentBranchStock <= 0;
+                    const isLow = !isOutOfStock && currentBranchStock <= (product.min_stock_level ?? 5);
+
+                    const availableBranches = Array.isArray(product.available_branches) ? product.available_branches : [];
 
                     return (
                       <div
                         key={product.id}
                         onClick={() => handleProductCardClick(product)}
-                        className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md hover:border-indigo-400 transition-all cursor-pointer group flex flex-col justify-between"
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer group flex flex-col justify-between relative ${
+                          isOutOfStock
+                            ? 'bg-slate-50/80 border-slate-200 hover:border-rose-300'
+                            : 'bg-white border-slate-200/80 shadow-sm hover:shadow-md hover:border-indigo-400'
+                        }`}
                       >
                         {/* Thumbnail */}
                         <div className="aspect-square bg-slate-100 rounded-xl mb-3 overflow-hidden relative flex items-center justify-center">
@@ -1249,7 +2015,9 @@ export function POS() {
                             <img
                               src={product.image_url}
                               alt={product.name}
-                              className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                              className={`w-full h-full object-cover transition-transform group-hover:scale-105 ${
+                                isOutOfStock ? 'grayscale opacity-70' : ''
+                              }`}
                             />
                           ) : (
                             <Tag className="w-8 h-8 text-slate-300 group-hover:text-indigo-400 transition-colors" />
@@ -1257,6 +2025,13 @@ export function POS() {
                           <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md backdrop-blur-sm">
                             {product.category || 'ملابس'}
                           </span>
+                          {isOutOfStock && (
+                            <div className="absolute inset-0 bg-slate-900/30 flex items-center justify-center backdrop-blur-[1px]">
+                              <span className="bg-rose-600 text-white text-[11px] font-black px-2.5 py-1 rounded-lg shadow-md border border-rose-400">
+                                {isAll ? 'نفد من المخزون' : 'غير متوفر بفرعك'}
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Title & Attributes */}
@@ -1271,29 +2046,127 @@ export function POS() {
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px] font-bold">
                             {product.color && (
-                              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
                                 {product.color}
                               </span>
                             )}
-                            {Array.isArray(product.sizes) && product.sizes.length > 0 ? (
-                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                            {Array.isArray(product.sizes) && product.sizes.length > 1 ? (
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-black flex items-center gap-1">
+                                <Layers className="w-3 h-3 text-indigo-500" />
                                 {product.sizes.length} مقاسات
+                              </span>
+                            ) : Array.isArray(product.sizes) && product.sizes.length === 1 ? (
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-black">
+                                مقاس: {product.sizes[0].size_name}
                               </span>
                             ) : (
                               (product.size_cut || product.size) && (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                                  {product.size_cut || product.size}
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-black">
+                                  مقاس: {product.size_cut || product.size}
                                 </span>
                               )
                             )}
                           </div>
+
+                          {/* Multi-Sizes Pills Shown Directly on Outside of Card */}
+                          {Array.isArray(product.sizes) && product.sizes.length > 1 && (
+                            <div className="mt-2 bg-indigo-50/50 rounded-xl p-1.5 border border-indigo-100 flex flex-col gap-1">
+                              <div className="text-[10px] font-black text-indigo-900 flex items-center justify-between">
+                                <span className="flex items-center gap-1">
+                                  <Layers className="w-3 h-3 text-indigo-600" />
+                                  المقاسات:
+                                </span>
+                                {product.sizes.length > 4 && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPendingProduct(product);
+                                      setShowSizeModal(true);
+                                    }}
+                                    className="text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                                  >
+                                    عرض الكل ({product.sizes.length})
+                                  </button>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1">
+                                {(() => {
+                                  // Show in-stock first, capped at 4
+                                  const sortedSizes = [...product.sizes].sort((a, b) => {
+                                    const aStock = Number(a.stock_level || 0) > 0 ? 1 : 0;
+                                    const bStock = Number(b.stock_level || 0) > 0 ? 1 : 0;
+                                    return bStock - aStock;
+                                  });
+                                  const visibleSizes = sortedSizes.slice(0, 4);
+                                  const remainingCount = sortedSizes.length - 4;
+
+                                  return (
+                                    <>
+                                      {visibleSizes.map((s) => {
+                                        const hasStock = Number(s.stock_level || 0) > 0;
+                                        return (
+                                          <span
+                                            key={s.size_name}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (hasStock) {
+                                                addToCart(product, s.size_name, s);
+                                              } else {
+                                                playErrorSound();
+                                                toast.warning(`المقاس ${s.size_name} غير متوفر بالفرع حالياً`);
+                                              }
+                                            }}
+                                            className={`text-[10px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 transition-all ${
+                                              hasStock
+                                                ? 'bg-white text-indigo-700 border border-indigo-200 shadow-xs hover:bg-indigo-600 hover:text-white cursor-pointer'
+                                                : 'bg-slate-100 text-slate-400 border border-slate-200 line-through opacity-60 cursor-not-allowed'
+                                            }`}
+                                            title={`مقاس ${s.size_name}: ${hasStock ? `متوفر ${s.stock_level} قطعة (اضغط للإضافة مباشرة)` : 'نفذت الكمية'}`}
+                                          >
+                                            <span>{s.size_name}</span>
+                                            {hasStock && (
+                                              <span className="text-[9px] font-mono opacity-75">
+                                                ({s.stock_level})
+                                              </span>
+                                            )}
+                                          </span>
+                                        );
+                                      })}
+                                      {remainingCount > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setPendingProduct(product);
+                                            setShowSizeModal(true);
+                                          }}
+                                          className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-indigo-100/80 hover:bg-indigo-200 text-indigo-700 border border-indigo-200 transition-colors cursor-pointer"
+                                          title="عرض باقي المقاسات"
+                                        >
+                                          +{remainingCount} أخرى
+                                        </button>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                          )}
                         </div>
 
                         {/* Stock & Inter-Branch Request */}
-                        <div className="mt-2 flex items-center justify-between text-[11px] font-bold">
-                          <span className={isLow ? 'text-amber-600' : 'text-emerald-600'}>
-                            المتوفر: {stock}
-                          </span>
+                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold">
+                          {isOutOfStock ? (
+                            <span className="text-rose-600 font-black flex items-center gap-1 text-[11px]">
+                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                              {isAll ? 'غير متوفر (0)' : `غير متوفر بـ ${activeBranchName} (0)`}
+                            </span>
+                          ) : (
+                            <span className={isLow ? 'text-amber-600 font-black' : 'text-emerald-600 font-black'}>
+                              {isAll ? `المتوفر: ${currentBranchStock}` : `متوفر بـ ${activeBranchName}: ${currentBranchStock}`}
+                            </span>
+                          )}
                           {branches.length > 1 && (
                             <button
                               type="button"
@@ -1301,13 +2174,49 @@ export function POS() {
                                 e.stopPropagation();
                                 openStockRequestModal(product);
                               }}
-                              className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
+                              className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-100 transition-colors cursor-pointer shrink-0"
                               title="طلب بضاعة من الفروع الأخرى"
                             >
                               طلب من فرع 🚚
                             </button>
                           )}
                         </div>
+
+                        {/* Available Branches Outside Pill - توضيح الفروع المتاح بها من برا */}
+                        {availableBranches.length > 0 ? (
+                          <div className="mt-2 bg-slate-50/90 rounded-xl p-2 border border-slate-200/80 flex flex-col gap-1">
+                            <span className="text-[10px] font-bold text-slate-500 flex items-center gap-1">
+                              <Building2 className="w-3 h-3 text-indigo-600 shrink-0" />
+                              متاح في:
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1">
+                              {availableBranches.map((b) => {
+                                const isCurrent = !isAll && b.branch_id.toString() === activeBranchId?.toString();
+                                return (
+                                  <span
+                                    key={b.branch_id}
+                                    className={`text-[10px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-1 ${
+                                      isCurrent
+                                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                        : 'bg-indigo-50 text-indigo-700 border border-indigo-200/70'
+                                    }`}
+                                    title={`فرع ${b.branch_name}: متوفر ${b.stock_level} قطعة`}
+                                  >
+                                    <span>{b.branch_name}</span>
+                                    <span className="font-mono bg-white/80 px-1 rounded text-[9px]">
+                                      ({b.stock_level})
+                                    </span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-2 bg-rose-50/60 rounded-xl p-1.5 border border-rose-100 text-[10px] text-rose-600 font-bold flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3 shrink-0" />
+                            غير متاح في أي فرع
+                          </div>
+                        )}
 
                         {/* Price & Add Button */}
                         <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
@@ -1316,13 +2225,19 @@ export function POS() {
                           </span>
                           <button
                             type="button"
+                            disabled={isOutOfStock}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleProductCardClick(product);
                             }}
-                            className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white flex items-center justify-center transition-all shadow-sm cursor-pointer"
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all shadow-sm ${
+                              isOutOfStock
+                                ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed'
+                                : 'bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white cursor-pointer'
+                            }`}
+                            title={isOutOfStock ? 'الصنف غير متوفر بالمخزون ولا يمكن ضربه بالفاتورة' : 'إضافة للفاتورة'}
                           >
-                            <Plus className="w-4 h-4" />
+                            <Plus className={`w-4 h-4 ${isOutOfStock ? 'opacity-40' : ''}`} />
                           </button>
                         </div>
                       </div>
@@ -1674,6 +2589,7 @@ export function POS() {
                     <th className="py-3.5">الهاتف</th>
                     <th className="py-3.5">البائع</th>
                     <th className="py-3.5">الإجمالي</th>
+                    <th className="py-3.5">طريقة الدفع</th>
                     <th className="py-3.5">المتبقي</th>
                     <th className="py-3.5">الحالة</th>
                     <th className="py-3.5 pl-4 text-center">إجراءات</th>
@@ -1707,6 +2623,21 @@ export function POS() {
                         </td>
                         <td className="py-3.5 font-black text-indigo-600">
                           {Number(order.total_amount || 0).toLocaleString()} ج.م
+                        </td>
+                        <td className="py-3.5">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              order.payment_method === 'split'
+                                ? 'bg-purple-100 text-purple-800'
+                                : order.payment_method === 'bank_transfer'
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : order.payment_method === 'card'
+                                ? 'bg-sky-100 text-sky-800'
+                                : 'bg-slate-100 text-slate-800'
+                            }`}
+                          >
+                            {getPaymentMethodArabic(order.payment_method, order.payment_splits)}
+                          </span>
                         </td>
                         <td className="py-3.5 font-bold text-xs">
                           {isReturned ? (
@@ -1768,6 +2699,11 @@ export function POS() {
                                   paid_amount: Number(order.paid_amount || order.total_amount || 0),
                                   change_amount: Number(order.change_amount || 0),
                                   payment_method: order.payment_method || 'cash',
+                                  payment_splits: order.payment_splits,
+                                  cash_amount: order.cash_amount,
+                                  bank_transfer_amount: order.bank_transfer_amount,
+                                  card_amount: order.card_amount,
+                                  wallet_amount: order.wallet_amount,
                                 });
                                 setShowInvoiceModal(true);
                               }}
@@ -2249,7 +3185,8 @@ export function POS() {
               onChange={(e) => setPayRemainingMethod(e.target.value)}
               className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
             >
-              <option value="cash">نقدي (كاش)</option>
+              <option value="cash">نقدي (كاش بالدرج)</option>
+              <option value="bank_transfer">انستاباي / تحويل بنكي</option>
               <option value="card">بطاقة (فيزا)</option>
               <option value="wallet">فودافون كاش / محفظة</option>
             </select>
@@ -2630,7 +3567,8 @@ export function POS() {
           setShowSizeModal(false);
           setPendingProduct(null);
         }}
-        title="اختر مقاس المنتج للفاتورة 👔"
+        title="اختيار مقاس المنتج 📏"
+        subtitle="حتاخد أنهي مقاس لإضافته للفاتورة؟"
         maxWidth="max-w-md"
       >
         {pendingProduct && (
@@ -2669,7 +3607,7 @@ export function POS() {
             {/* Sizes selection */}
             <div className="space-y-2">
               <label className="text-xs font-black text-slate-700 block">
-                المقاسات المتوفرة لهذا الصنف (اضغط لاختيار المقاس):
+                حتاخد أنهي مقاس؟ (اضغط على المقاس لإضافته مباشرة للكاشير):
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto p-1">
                 {(pendingProduct.sizes || []).map((s, idx) => {
@@ -2682,7 +3620,7 @@ export function POS() {
                       type="button"
                       disabled={isOutOfStock}
                       onClick={() => {
-                        addToCart(pendingProduct, s.size_name);
+                        addToCart(pendingProduct, s.size_name, s);
                         setShowSizeModal(false);
                         setPendingProduct(null);
                       }}
@@ -2700,7 +3638,7 @@ export function POS() {
                             : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         }`}
                       >
-                        {isOutOfStock ? 'نفذت الكمية' : `${qty} قطعة بالمخزن`}
+                        {isOutOfStock ? 'نفذت الكمية (0)' : `${qty} قطعة متوفرة`}
                       </span>
                     </button>
                   );
@@ -2794,67 +3732,274 @@ export function POS() {
             </select>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {[
-                { id: 'cash', label: 'نقدي (كاش)', icon: DollarSign },
-                { id: 'card', label: 'بطاقة (فيزا)', icon: CreditCard },
-                { id: 'wallet', label: 'فودافون كاش', icon: Phone },
-                { id: 'debt', label: 'آجل / مديونية', icon: Clock },
-              ].map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setPaymentMethod(m.id)}
-                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 font-bold text-xs transition-all ${
-                    paymentMethod === m.id
-                      ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 shadow-sm'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <m.icon className="w-5 h-5 mb-1.5" />
-                  <span>{m.label}</span>
-                </button>
-              ))}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
+              {/* Split Payment Toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isSplitPayment;
+                  setIsSplitPayment(next);
+                  if (next) {
+                    const half = Math.round(grandTotal / 2);
+                    setSplitMethod1('cash');
+                    setSplitAmount1(half > 0 ? half.toString() : '');
+                    setSplitMethod2('bank_transfer');
+                    setSplitAmount2((grandTotal - half) > 0 ? (grandTotal - half).toString() : '');
+                  }
+                }}
+                className={`px-3 py-1 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+                  isSplitPayment
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                <span>{isSplitPayment ? 'دفع مجزأ مفعل ✓' : 'دفع مجزأ بطريقتين (Split)'}</span>
+              </button>
             </div>
+
+            {!isSplitPayment ? (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {[
+                  { id: 'cash', label: 'نقدي (كاش بالدرج)', icon: DollarSign },
+                  { id: 'bank_transfer', label: 'انستاباي / بنكي', icon: Building2 },
+                  { id: 'card', label: 'بطاقة (فيزا)', icon: CreditCard },
+                  { id: 'wallet', label: 'محفظة إلكترونية', icon: Phone },
+                  { id: 'debt', label: 'آجل / مديونية', icon: Clock },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setPaymentMethod(m.id)}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 font-bold text-xs transition-all ${
+                      paymentMethod === m.id
+                        ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 shadow-sm'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <m.icon className="w-4 h-4 mb-1" />
+                    <span className="text-[11px] text-center leading-tight">{m.label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3 p-3.5 bg-purple-50/50 border border-purple-200 rounded-2xl">
+                <div className="text-xs font-black text-purple-950 flex items-center justify-between">
+                  <span>توزيع الدفع المجزأ بين وسيلتين:</span>
+                  <span className="text-[11px] font-bold text-slate-500">
+                    الإجمالي المطلوب: {grandTotal.toLocaleString()} ج.م
+                  </span>
+                </div>
+
+                {/* Method 1 */}
+                <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">الوسيلة الأولى:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {[
+                        { id: 'cash', label: 'كاش (بالدرج)' },
+                        { id: 'bank_transfer', label: 'انستاباي / بنكي' },
+                        { id: 'card', label: 'فيزا' },
+                        { id: 'wallet', label: 'محفظة' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSplitMethod1(m.id);
+                            if (splitMethod2 === m.id) {
+                              setSplitMethod2(m.id === 'cash' ? 'bank_transfer' : 'cash');
+                            }
+                          }}
+                          className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-colors ${
+                            splitMethod1 === m.id
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      step="any"
+                      value={splitAmount1}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSplitAmount1(val);
+                        const num = Number(val) || 0;
+                        if (num >= 0 && grandTotal > num) {
+                          setSplitAmount2((grandTotal - num).toString());
+                        }
+                      }}
+                      placeholder="المبلغ للوسيلة الأولى..."
+                      className="font-black text-base"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur2 = Number(splitAmount2) || 0;
+                        setSplitAmount1(Math.max(0, grandTotal - cur2).toString());
+                      }}
+                      className="px-2.5 py-2.5 whitespace-nowrap bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl"
+                    >
+                      تكملة الإجمالي
+                    </button>
+                  </div>
+                </div>
+
+                {/* Method 2 */}
+                <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">الوسيلة الثانية:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {[
+                        { id: 'cash', label: 'كاش (بالدرج)' },
+                        { id: 'bank_transfer', label: 'انستاباي / بنكي' },
+                        { id: 'card', label: 'فيزا' },
+                        { id: 'wallet', label: 'محفظة' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSplitMethod2(m.id);
+                            if (splitMethod1 === m.id) {
+                              setSplitMethod1(m.id === 'cash' ? 'bank_transfer' : 'cash');
+                            }
+                          }}
+                          className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-colors ${
+                            splitMethod2 === m.id
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      step="any"
+                      value={splitAmount2}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSplitAmount2(val);
+                        const num = Number(val) || 0;
+                        if (num >= 0 && grandTotal > num) {
+                          setSplitAmount1((grandTotal - num).toString());
+                        }
+                      }}
+                      placeholder="المبلغ للوسيلة الثانية..."
+                      className="font-black text-base"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur1 = Number(splitAmount1) || 0;
+                        setSplitAmount2(Math.max(0, grandTotal - cur1).toString());
+                      }}
+                      className="px-2.5 py-2.5 whitespace-nowrap bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl"
+                    >
+                      تكملة الإجمالي
+                    </button>
+                  </div>
+                </div>
+
+                {/* Accounting Drawer Balance Note */}
+                {(() => {
+                  const a1 = Number(splitAmount1) || 0;
+                  const a2 = Number(splitAmount2) || 0;
+                  const totalPaidSplit = a1 + a2;
+                  const grossDrawerCash = (splitMethod1 === 'cash' ? a1 : 0) + (splitMethod2 === 'cash' ? a2 : 0);
+                  const splitChange = Math.max(0, totalPaidSplit - grandTotal);
+                  const netDrawerCash = Math.max(0, grossDrawerCash - splitChange);
+                  const electronicTotal = totalPaidSplit - grossDrawerCash;
+
+                  return (
+                    <div className="p-2.5 bg-white rounded-xl border border-purple-200 space-y-1 text-xs">
+                      <div className="flex justify-between items-center font-bold">
+                        <span className="text-slate-600">إجمالي المدفوع المجزأ:</span>
+                        <span className="font-black text-slate-900">{totalPaidSplit.toLocaleString()} ج.م</span>
+                      </div>
+                      <div className="flex justify-between items-center font-bold text-emerald-700">
+                        <span>يدخل درج الكاشير (صافي كاش):</span>
+                        <span className="font-black">
+                          {netDrawerCash.toLocaleString()} ج.م
+                          {splitChange > 0 && grossDrawerCash > netDrawerCash && (
+                            <span className="text-[10px] text-slate-500 font-normal mr-1">
+                              (مستلم: {grossDrawerCash.toLocaleString()} - باقي: {splitChange.toLocaleString()})
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      {electronicTotal > 0 && (
+                        <div className="flex justify-between items-center font-bold text-indigo-700">
+                          <span>تحصيل إلكتروني (خارج درج الكاشير):</span>
+                          <span className="font-black">{electronicTotal.toLocaleString()} ج.م</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center font-bold text-slate-500 pt-1 border-t border-slate-100">
+                        <span>حالة الفاتورة:</span>
+                        <span className={`font-black ${totalPaidSplit >= grandTotal ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {totalPaidSplit >= grandTotal
+                            ? `خالصة بالكامل ${splitChange > 0 ? `(باقي للعميل: ${splitChange.toLocaleString()} ج.م)` : '✓'}`
+                            : `غير خالصة (متبقي على العميل: ${(grandTotal - totalPaidSplit).toLocaleString()} ج.م)`}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-slate-700">المبلغ المدفوع (ج.م)</label>
-              <span className="text-xs font-bold text-slate-500">
-                المتبقي (الباقي):{' '}
-                <span
-                  className={`font-black ${
-                    Number(paidAmount) - grandTotal >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                  }`}
-                >
-                  {Math.abs(Number(paidAmount) - grandTotal).toLocaleString()} ج.م
+          {!isSplitPayment && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700">المبلغ المدفوع (ج.م)</label>
+                <span className="text-xs font-bold text-slate-500">
+                  المتبقي (الباقي):{' '}
+                  <span
+                    className={`font-black ${
+                      Number(paidAmount) - grandTotal >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                    }`}
+                  >
+                    {Math.abs(Number(paidAmount) - grandTotal).toLocaleString()} ج.م
+                  </span>
                 </span>
-              </span>
+              </div>
+              <Input
+                type="number"
+                step="any"
+                value={paidAmount}
+                onChange={(e) => setPaidAmount(e.target.value)}
+                placeholder="أدخل المبلغ المدفوع..."
+                className="font-black text-lg text-indigo-600"
+              />
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[grandTotal, 100, 200, 500, 1000].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => setPaidAmount(amt.toString())}
+                    className="px-3 py-1 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-700 transition-colors"
+                  >
+                    {amt === grandTotal ? 'المبلغ بالظبط' : `${amt} ج.م`}
+                  </button>
+                ))}
+              </div>
             </div>
-            <Input
-              type="number"
-              step="any"
-              value={paidAmount}
-              onChange={(e) => setPaidAmount(e.target.value)}
-              placeholder="أدخل المبلغ المدفوع..."
-              className="font-black text-lg text-indigo-600"
-            />
-            <div className="flex flex-wrap gap-2 pt-1">
-              {[grandTotal, 100, 200, 500, 1000].map((amt) => (
-                <button
-                  key={amt}
-                  type="button"
-                  onClick={() => setPaidAmount(amt.toString())}
-                  className="px-3 py-1 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-700 transition-colors"
-                >
-                  {amt === grandTotal ? 'المبلغ بالظبط' : `${amt} ج.م`}
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           <div className="pt-2 border-t border-slate-100 space-y-3">
             <label className="flex items-center gap-2.5 cursor-pointer">
@@ -2922,6 +4067,11 @@ export function POS() {
             customerPhone={completedOrder.customer_phone}
             sellerName={completedOrder.seller_name}
             paymentMethod={completedOrder.payment_method}
+            paymentSplits={completedOrder.payment_splits}
+            cashAmount={completedOrder.cash_amount}
+            bankTransferAmount={completedOrder.bank_transfer_amount}
+            cardAmount={completedOrder.card_amount}
+            walletAmount={completedOrder.wallet_amount}
             branchName={
               completedOrder.branch_name ||
               (activeBranchId && activeBranchId !== 'all'

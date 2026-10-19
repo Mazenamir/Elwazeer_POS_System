@@ -19,13 +19,13 @@ export const Input = forwardRef(function Input(
   return (
     <div className={`flex flex-col gap-1.5 ${containerClassName}`}>
       {label && (
-        <label htmlFor={inputId} className="text-xs font-bold text-slate-700 tracking-wide select-none">
+        <label htmlFor={inputId} className="text-xs font-bold text-[#24221F] tracking-wide select-none font-display">
           {label}
         </label>
       )}
       <div className="relative flex items-center">
         {Icon && (
-          <div className="absolute right-3.5 pointer-events-none text-slate-400">
+          <div className="absolute right-3.5 pointer-events-none text-[#9E988B]">
             <Icon className="w-5 h-5" />
           </div>
         )}
@@ -33,12 +33,12 @@ export const Input = forwardRef(function Input(
           ref={ref}
           id={inputId}
           type={type}
-          className={`w-full rounded-xl border-2 bg-white px-3.5 py-2.5 text-sm font-medium transition-all duration-200 outline-none placeholder:text-slate-400 text-slate-900 ${
+          className={`w-full rounded-2xl border bg-[#FFFDF9] px-3.5 py-2.5 text-sm font-medium transition-all duration-200 outline-none placeholder:text-[#9E988B] text-[#24221F] ${
             Icon ? 'pr-11' : ''
           } ${
             error
               ? 'border-rose-400 focus:border-rose-600 focus:ring-2 focus:ring-rose-100'
-              : 'border-slate-200 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-50'
+              : 'border-[#E6DECD] focus:border-[#151515] focus:ring-2 focus:ring-black/5'
           } ${className}`}
           {...props}
         />

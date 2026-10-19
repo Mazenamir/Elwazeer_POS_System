@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Users,
   UserPlus,
@@ -37,10 +38,18 @@ export function Customers() {
   const { user, isAdmin } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
+  const [searchParams] = useSearchParams();
 
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchParams.get('search') || '');
+
+  useEffect(() => {
+    const q = searchParams.get('search');
+    if (q !== null && q !== undefined) {
+      setSearch(q);
+    }
+  }, [searchParams]);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 50,
@@ -265,7 +274,6 @@ export function Customers() {
             size="lg"
             icon={UserPlus}
             onClick={openCreateModal}
-            className="!bg-indigo-600 hover:!bg-indigo-700 shadow-md shadow-indigo-600/20"
           >
             إضافة عميل جديد
           </Button>
@@ -284,7 +292,7 @@ export function Customers() {
           action={
             <div className="flex items-center gap-2">
               <div className="relative w-64">
-                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266]" />
                 <input
                   type="text"
                   value={search}
@@ -293,7 +301,7 @@ export function Customers() {
                     setPagination((prev) => ({ ...prev, page: 1 }));
                   }}
                   placeholder="ابحث بالاسم أو رقم الهاتف..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-colors"
                 />
               </div>
               <Button variant="outline" size="sm" onClick={fetchCustomers} icon={RotateCcw}>
@@ -304,18 +312,18 @@ export function Customers() {
         />
 
         {loading ? (
-          <div className="py-20 text-center text-slate-400 font-bold text-sm">
+          <div className="py-20 text-center text-[#777266] font-bold text-sm">
             جاري تحميل العملاء...
           </div>
         ) : customers.length === 0 ? (
-          <div className="py-20 text-center text-slate-400 font-bold text-sm">
+          <div className="py-20 text-center text-[#777266] font-bold text-sm">
             لا يوجد عملاء مسجلين مطابقين للبحث
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-right text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
+                <tr className="border-b border-[#E6DECD] text-[#777266] text-xs font-black uppercase">
                   <th className="pb-3 pr-2">العميل والكود</th>
                   <th className="pb-3">رقم الهاتف</th>
                   <th className="pb-3">الرقم القومي</th>
@@ -325,22 +333,22 @@ export function Customers() {
                   <th className="pb-3 pl-2">إجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
+              <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
                 {customers.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 pr-2 font-bold text-slate-900 flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xs shrink-0">
+                  <tr key={c.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
+                    <td className="py-3.5 pr-2 font-bold text-[#24221F] flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-[#FDF5D2] border border-[#F4D95B]/40 text-[#24221F] flex items-center justify-center font-black text-xs shrink-0">
                         {c.initials || (c.name ? c.name.charAt(0) : 'ع')}
                       </div>
                       <div>
                         <div>{c.name}</div>
-                        <div className="text-[10px] font-mono text-slate-400 font-bold">كود: #{c.id}</div>
+                        <div className="text-[10px] font-mono text-[#777266] font-bold">كود: #{c.id}</div>
                       </div>
                     </td>
-                    <td className="py-3.5 font-mono text-xs text-slate-600" dir="ltr">
+                    <td className="py-3.5 font-mono text-xs text-[#565147]" dir="ltr">
                       {c.phone}
                     </td>
-                    <td className="py-3.5 font-mono text-xs text-slate-400" dir="ltr">
+                    <td className="py-3.5 font-mono text-xs text-[#777266]" dir="ltr">
                       {c.national_id || '-'}
                     </td>
                     <td className="py-3.5">
@@ -356,24 +364,24 @@ export function Customers() {
                         {c.status || 'عادي'}
                       </Badge>
                     </td>
-                    <td className="py-3.5 font-black text-indigo-600">
+                    <td className="py-3.5 font-black text-[#24221F]">
                       {Number(c.total_spent || 0).toLocaleString()} ج.م
                     </td>
-                    <td className="py-3.5 text-xs text-slate-400" dir="ltr">
+                    <td className="py-3.5 text-xs text-[#777266]" dir="ltr">
                       {c.join_date ? new Date(c.join_date).toLocaleDateString('ar-EG') : '-'}
                     </td>
                     <td className="py-3.5 pl-2">
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => openHistory(c)}
-                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
                           title="عرض سجل وفواتير العميل"
                         >
                           <History className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => openEditModal(c)}
-                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
                           title="تعديل بيانات العميل"
                         >
                           <Edit2 className="w-4 h-4" />
@@ -381,7 +389,7 @@ export function Customers() {
                         {isAdmin && (
                           <button
                             onClick={() => handleDelete(c.id)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            className="p-1.5 text-[#777266] hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                             title="حذف العميل"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -398,12 +406,12 @@ export function Customers() {
 
         {/* Customers Pagination Bar */}
         {pagination.total > 0 && (
-          <div className="p-4 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/50 rounded-b-2xl">
+          <div className="p-4 border-t border-[#E6DECD] flex flex-col md:flex-row items-center justify-between gap-3 bg-[#FAF6ED]/60 rounded-b-3xl">
             {/* Info summary & Page size */}
-            <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-600">
+            <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-[#777266]">
               <span>
                 عرض{' '}
-                <span className="text-indigo-600 font-black">
+                <span className="text-[#24221F] font-black">
                   {pagination.limit === 'all'
                     ? `1 - ${pagination.total}`
                     : `${(pagination.page - 1) * pagination.limit + 1} - ${Math.min(
@@ -412,22 +420,22 @@ export function Customers() {
                       )}`}
                 </span>{' '}
                 من إجمالي{' '}
-                <span className="text-slate-900 font-black">
+                <span className="text-[#24221F] font-black">
                   {Number(pagination.total).toLocaleString()}
                 </span>{' '}
                 عميل
               </span>
 
               <div className="flex items-center gap-1.5 mr-2">
-                <span className="text-slate-400">لكل صفحة:</span>
+                <span className="text-[#777266]">لكل صفحة:</span>
                 {[30, 50, 100, 200, 'الكل'].map((lim) => (
                   <button
                     key={lim}
                     onClick={() => handleLimitChange(lim)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
                       pagination.limit === lim || (lim === 'الكل' && pagination.limit === 'all')
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        ? 'bg-[#151515] text-white shadow-sm'
+                        : 'bg-[#FFFDF9] border border-[#E6DECD] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
                     }`}
                   >
                     {lim}
@@ -460,7 +468,7 @@ export function Customers() {
                   السابق
                 </Button>
 
-                <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800">
+                <span className="px-3 py-1 bg-[#FFFDF9] border border-[#E6DECD] rounded-lg text-xs font-black text-[#24221F]">
                   صفحة {pagination.page} من {pagination.totalPages}
                 </span>
 
@@ -500,7 +508,7 @@ export function Customers() {
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           {editingCustomer && (
-            <div className="text-xs font-mono font-bold text-indigo-700 bg-indigo-50 p-2.5 rounded-xl border border-indigo-100 flex items-center justify-between">
+            <div className="text-xs font-mono font-bold text-[#24221F] bg-[#FAF6ED] p-2.5 rounded-xl border border-[#E6DECD] flex items-center justify-between">
               <span>كود العميل: #{editingCustomer.id}</span>
               <span>تاريخ الانضمام: {editingCustomer.join_date ? new Date(editingCustomer.join_date).toLocaleDateString('ar-EG') : '-'}</span>
             </div>
@@ -532,11 +540,11 @@ export function Customers() {
           />
 
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700">تصنيف العميل</label>
+            <label className="text-xs font-bold text-[#777266]">تصنيف العميل</label>
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-800 outline-none focus:border-indigo-600"
+              className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3.5 py-2.5 text-sm font-bold text-[#24221F] outline-none focus:border-[#151515]"
             >
               <option value="عادي">عادي</option>
               <option value="مميز">عميل مميز (VIP)</option>
@@ -545,23 +553,23 @@ export function Customers() {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700">ملاحظات إضافية</label>
+            <label className="text-xs font-bold text-[#777266]">ملاحظات إضافية</label>
             <textarea
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="أي ملاحظات أو عنوان العميل..."
-              className="w-full bg-white border-2 border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-600"
+              className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl p-3 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515]"
             />
           </div>
 
-          <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+          <div className="flex items-center gap-3 pt-3 border-t border-[#E6DECD]">
             <Button
               type="submit"
               variant="primary"
               size="lg"
               isLoading={submitting}
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+              className="flex-1 font-black"
             >
               {editingCustomer ? 'حفظ التعديلات' : 'إضافة العميل'}
             </Button>
@@ -593,18 +601,18 @@ export function Customers() {
           <div className="space-y-6">
             {/* Sales Orders */}
             <div>
-              <h4 className="text-sm font-black text-slate-900 mb-3 flex items-center gap-2">
-                <ShoppingBag className="w-4 h-4 text-indigo-600" />
+              <h4 className="text-sm font-black text-[#24221F] mb-3 flex items-center gap-2">
+                <ShoppingBag className="w-4 h-4 text-[#151515]" />
                 <span>فواتير الشراء السابقة</span>
               </h4>
               {!historyData?.orders || historyData.orders.length === 0 ? (
-                <p className="text-xs text-slate-400 bg-slate-50 p-4 rounded-xl text-center font-bold">
+                <p className="text-xs text-[#777266] bg-[#FAF6ED] p-4 rounded-2xl text-center font-bold border border-[#E6DECD]">
                   لا توجد فواتير شراء مسجلة لهذا العميل
                 </p>
               ) : (
-                <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <div className="overflow-x-auto border border-[#E6DECD] rounded-2xl">
                   <table className="w-full text-right text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500">
+                    <thead className="bg-[#FAF6ED] border-b border-[#E6DECD] font-bold text-[#777266]">
                       <tr>
                         <th className="p-3">رقم الفاتورة</th>
                         <th className="p-3">التاريخ</th>
@@ -613,14 +621,14 @@ export function Customers() {
                         <th className="p-3">طريقة الدفع</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 font-medium">
+                    <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
                       {historyData.orders.map((o) => (
-                        <tr key={o.id}>
-                          <td className="p-3 font-bold">#{o.branch_invoice_number || o.id}</td>
-                          <td className="p-3" dir="ltr">{new Date(o.order_date || o.created_at).toLocaleDateString('ar-EG')}</td>
-                          <td className="p-3 font-black text-indigo-600">{Number(o.total_amount || 0).toLocaleString()} ج.م</td>
-                          <td className="p-3 text-emerald-700">{Number(o.paid_amount || 0).toLocaleString()} ج.م</td>
-                          <td className="p-3">{o.payment_method || 'كاش'}</td>
+                        <tr key={o.id} className="hover:bg-[#FAF6ED]/50 transition-colors">
+                          <td className="p-3 font-bold text-[#24221F]">#{o.branch_invoice_number || o.id}</td>
+                          <td className="p-3 text-[#777266]" dir="ltr">{new Date(o.order_date || o.created_at).toLocaleDateString('ar-EG')}</td>
+                          <td className="p-3 font-black text-[#24221F]">{Number(o.total_amount || 0).toLocaleString()} ج.م</td>
+                          <td className="p-3 text-emerald-700 font-bold">{Number(o.paid_amount || 0).toLocaleString()} ج.م</td>
+                          <td className="p-3 text-[#565147]">{o.payment_method || 'كاش'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -631,18 +639,18 @@ export function Customers() {
 
             {/* Rentals */}
             <div>
-              <h4 className="text-sm font-black text-slate-900 mb-3 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-emerald-600" />
+              <h4 className="text-sm font-black text-[#24221F] mb-3 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-[#151515]" />
                 <span>حجوزات التأجير السابقة</span>
               </h4>
               {!historyData?.rentals || historyData.rentals.length === 0 ? (
-                <p className="text-xs text-slate-400 bg-slate-50 p-4 rounded-xl text-center font-bold">
+                <p className="text-xs text-[#777266] bg-[#FAF6ED] p-4 rounded-2xl text-center font-bold border border-[#E6DECD]">
                   لا توجد حجوزات تأجير مسجلة لهذا العميل
                 </p>
               ) : (
-                <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <div className="overflow-x-auto border border-[#E6DECD] rounded-2xl">
                   <table className="w-full text-right text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500">
+                    <thead className="bg-[#FAF6ED] border-b border-[#E6DECD] font-bold text-[#777266]">
                       <tr>
                         <th className="p-3">الحجز</th>
                         <th className="p-3">القطعة</th>
@@ -651,13 +659,13 @@ export function Customers() {
                         <th className="p-3">الحالة</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 font-medium">
+                    <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
                       {historyData.rentals.map((r) => (
-                        <tr key={r.id}>
-                          <td className="p-3 font-bold">#{r.id}</td>
-                          <td className="p-3 font-bold">{r.inventory_name || 'قطعة تأجير'}</td>
-                          <td className="p-3">{r.pickup_date} إلى {r.return_date}</td>
-                          <td className="p-3 font-black text-indigo-600">
+                        <tr key={r.id} className="hover:bg-[#FAF6ED]/50 transition-colors">
+                          <td className="p-3 font-bold text-[#24221F]">#{r.id}</td>
+                          <td className="p-3 font-bold text-[#24221F]">{r.inventory_name || 'قطعة تأجير'}</td>
+                          <td className="p-3 text-[#777266]">{r.pickup_date} إلى {r.return_date}</td>
+                          <td className="p-3 font-black text-[#24221F]">
                             {Number(r.total_price || 0).toLocaleString()} ج.م
                           </td>
                           <td className="p-3">

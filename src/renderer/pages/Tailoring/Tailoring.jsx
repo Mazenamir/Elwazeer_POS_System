@@ -204,7 +204,7 @@ export function Tailoring() {
           size="lg"
           icon={Plus}
           onClick={() => setShowCreateModal(true)}
-          className="!bg-indigo-600 hover:!bg-indigo-700 shadow-md shadow-indigo-600/20"
+          className="!bg-[#151515] hover:!bg-[#24221F] text-white shadow-sm"
         >
           أمر تفصيل جديد
         </Button>
@@ -218,13 +218,13 @@ export function Tailoring() {
           action={
             <div className="flex items-center gap-2">
               <div className="relative w-64">
-                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266]" />
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="ابحث بالاسم، الهاتف، رقم الفاتورة..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
                 />
               </div>
               <Button variant="outline" size="sm" onClick={fetchOrders} icon={RotateCcw}>
@@ -246,21 +246,21 @@ export function Tailoring() {
           <div className="overflow-x-auto">
             <table className="w-full text-right text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
-                  <th className="pb-3 pr-2">رقم الفاتورة</th>
-                  <th className="pb-3">العميل</th>
-                  <th className="pb-3">وصف القطعة</th>
-                  <th className="pb-3">المقاسات</th>
-                  <th className="pb-3">الإجمالي</th>
-                  <th className="pb-3">المدفوع (العربون)</th>
-                  <th className="pb-3">المتبقي</th>
-                  <th className="pb-3">التاريخ</th>
-                  <th className="pb-3 pl-2">إجراءات</th>
+                <tr className="bg-[#151515] text-white text-xs font-bold">
+                  <th className="py-3 px-3 rounded-r-xl">رقم الفاتورة</th>
+                  <th className="py-3 px-2">العميل</th>
+                  <th className="py-3 px-2">وصف القطعة</th>
+                  <th className="py-3 px-2">المقاسات</th>
+                  <th className="py-3 px-2">الإجمالي</th>
+                  <th className="py-3 px-2">المدفوع (العربون)</th>
+                  <th className="py-3 px-2">المتبقي</th>
+                  <th className="py-3 px-2">التاريخ</th>
+                  <th className="py-3 px-3 rounded-l-xl">إجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
+              <tbody className="divide-y divide-[#E6DECD]/60 font-medium">
                 {orders.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
+                  <tr key={order.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                     <td className="py-3.5 pr-2 font-bold text-slate-900 font-mono">
                       #{order.invoice_number || order.id}
                     </td>
@@ -380,7 +380,7 @@ export function Tailoring() {
               value={measurements}
               onChange={(e) => setMeasurements(e.target.value)}
               placeholder="الجاكت (طول 70 / صدر 44 / وسط 41 / هنش 48 / كتف 21 / كم 63) | البنطلون (طول 106 / وسط 43 / فخد 28)..."
-              className="w-full bg-white border-2 border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-600"
+              className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl p-3 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
               required
             />
           </div>
@@ -410,7 +410,7 @@ export function Tailoring() {
               <select
                 value={sellerId}
                 onChange={(e) => setSellerId(e.target.value)}
-                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+                className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
               >
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id.toString()}>
@@ -425,7 +425,7 @@ export function Tailoring() {
               <select
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value)}
-                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+                className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
               >
                 <option value="cash">نقدي (كاش)</option>
                 <option value="card">بطاقة (فيزا)</option>
@@ -440,7 +440,7 @@ export function Tailoring() {
               variant="primary"
               size="lg"
               isLoading={submitting}
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black text-base"
+              className="flex-1 !bg-[#151515] hover:!bg-[#24221F] text-white font-black text-base shadow-sm"
             >
               حفظ أمر التفصيل
             </Button>
@@ -478,7 +478,7 @@ export function Tailoring() {
             <select
               value={payMethod}
               onChange={(e) => setPayMethod(e.target.value)}
-              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+              className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
             >
               <option value="cash">نقدي (كاش)</option>
               <option value="card">بطاقة (فيزا)</option>
@@ -492,7 +492,7 @@ export function Tailoring() {
               variant="primary"
               size="lg"
               isLoading={paySubmitting}
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+              className="flex-1 !bg-[#151515] hover:!bg-[#24221F] text-white font-black shadow-sm"
             >
               تأكيد السداد
             </Button>

@@ -8,7 +8,7 @@ export function NotFound() {
 
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center text-center p-6">
-      <div className="w-20 h-20 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mb-6 shadow-sm">
+      <div className="w-20 h-20 rounded-3xl bg-[#151515] border border-[#24221F] flex items-center justify-center text-white mb-6 shadow-sm">
         <span className="text-3xl font-black">404</span>
       </div>
       <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">

@@ -37,7 +37,8 @@ async function runTests() {
   });
 
   // Setup mock active employee for testing sales
-  const today = new Date().toISOString().split('T')[0];
+  const { getCairoDateTimeParts } = require('../src/shared/utils/date');
+  const today = getCairoDateTimeParts().date;
   const empRes = await db.query(
     "INSERT INTO employees (name, phone, position, basic_salary, branch_id, join_date) VALUES ('Test Salesperson', '01011111111', 'كاشير', 5000, 1, CURRENT_DATE) RETURNING id"
   );

@@ -14,11 +14,11 @@ export function DataTable({
   className = '',
 }) {
   return (
-    <div className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-card ${className}`}>
+    <div className={`overflow-hidden rounded-3xl md:rounded-[26px] border border-[#E6DECD] bg-[#FFFDF9] shadow-[0_2px_10px_rgba(36,34,31,0.03)] ${className}`}>
       <div className="overflow-x-auto">
         <table className="w-full text-right border-collapse">
           <thead>
-            <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-black uppercase tracking-wider text-slate-500">
+            <tr className="bg-[#FAF6ED] border-b border-[#E6DECD] text-[11px] font-black uppercase tracking-wider text-[#777266] font-display">
               {columns.map((col, idx) => (
                 <th
                   key={col.key || idx}
@@ -30,7 +30,7 @@ export function DataTable({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-sm font-semibold text-slate-800">
+          <tbody className="divide-y divide-[#E6DECD]/60 text-sm font-semibold text-[#24221F]">
             {loading ? (
               <tr>
                 <td colSpan={columns.length} className="p-8">
@@ -48,7 +48,7 @@ export function DataTable({
                 <tr
                   key={row.id || rIdx}
                   onClick={() => onRowClick && onRowClick(row)}
-                  className={`transition-colors hover:bg-slate-50/80 ${
+                  className={`transition-colors hover:bg-[#FAF6ED]/70 ${
                     onRowClick ? 'cursor-pointer' : ''
                   }`}
                 >

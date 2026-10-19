@@ -3,8 +3,8 @@ import React from 'react';
 export function Card({ children, className = '', hover = false, ...props }) {
   return (
     <div
-      className={`bg-white rounded-2xl md:rounded-[2rem] border border-slate-200/80 shadow-card p-6 md:p-8 transition-all duration-200 ${
-        hover ? 'hover:shadow-premium-hover hover:border-slate-300' : ''
+      className={`bg-[#FFFDF9] rounded-3xl md:rounded-[26px] border border-[#E6DECD] shadow-[0_2px_10px_rgba(36,34,31,0.03)] p-6 md:p-8 transition-shadow duration-150 ${
+        hover ? 'hover:shadow-md hover:border-[#D4CBB9]' : ''
       } ${className}`}
       {...props}
     >
@@ -15,10 +15,10 @@ export function Card({ children, className = '', hover = false, ...props }) {
 
 export function CardHeader({ title, subtitle, action, className = '' }) {
   return (
-    <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 mb-6 border-b border-slate-100 ${className}`}>
+    <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 mb-5 border-b border-[#E6DECD]/70 ${className}`}>
       <div>
-        <h2 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight">{title}</h2>
-        {subtitle && <p className="text-xs md:text-sm font-medium text-slate-500 mt-1">{subtitle}</p>}
+        <h2 className="text-xl md:text-2xl font-black text-[#24221F] tracking-tight font-display">{title}</h2>
+        {subtitle && <p className="text-xs md:text-sm font-medium text-[#777266] mt-1">{subtitle}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

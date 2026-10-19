@@ -20,10 +20,19 @@ export function BranchProvider({ children }) {
       if (Array.isArray(data)) {
         setBranches(data);
 
-        // If user is branch_user, lock to their branch
-        if (user?.role === 'branch_user' && user?.branch_id) {
+        // If user is branch-scoped (branch_user or cashier), lock to their assigned branch
+        if ((user?.role === 'branch_user' || user?.role === 'cashier') && user?.branch_id) {
           setActiveBranchId(user.branch_id.toString());
           localStorage.setItem('bebyoon_active_branch_id', user.branch_id.toString());
+        } else {
+          const savedBranchId = localStorage.getItem('bebyoon_active_branch_id');
+          if (savedBranchId && savedBranchId !== 'all') {
+            const exists = data.some((b) => b.id.toString() === savedBranchId.toString());
+            if (!exists) {
+              setActiveBranchId('all');
+              localStorage.setItem('bebyoon_active_branch_id', 'all');
+            }
+          }
         }
       }
     } catch (err) {

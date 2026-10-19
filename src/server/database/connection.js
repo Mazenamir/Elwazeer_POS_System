@@ -20,6 +20,10 @@ function translatePgToSqlite(sql) {
   // ILIKE -> LIKE
   s = s.replace(/\bILIKE\b/gi, 'LIKE');
 
+  // GREATEST -> MAX, LEAST -> MIN (SQLite scalar equivalents)
+  s = s.replace(/\bGREATEST\b/gi, 'MAX');
+  s = s.replace(/\bLEAST\b/gi, 'MIN');
+
   // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
   s = s.replace(/::[a-zA-Z0-9_]+(\s*\[\s*\])?/g, '');
 
@@ -33,14 +37,18 @@ function translatePgToSqlite(sql) {
   // = ANY($1) -> IN (SELECT value FROM json_each(?1))
   s = s.replace(/=\s*ANY\s*\(\s*\$(\d+)\s*\)/gi, 'IN (SELECT value FROM json_each(?$1))');
 
-  // Intervals: col + INTERVAL '1 day' -> datetime(col, '+1 day')
-  s = s.replace(/datetime\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime('now', 'localtime', '+$1 $2')");
-  s = s.replace(/date\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "date('now', 'localtime', '+$1 $2')");
-  s = s.replace(/datetime\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime('now', 'localtime', '-$1 $2')");
-  s = s.replace(/date\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "date('now', 'localtime', '-$1 $2')");
+  // Handle NOW() / CURRENT_TIMESTAMP - INTERVAL 'X unit(s)'
+  s = s.replace(/\b(?:now\(\)|current_timestamp)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', '-$1 $2')");
+  s = s.replace(/\b(?:now\(\)|current_timestamp)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', '+$1 $2')");
 
-  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime($1, '+$2 $3')");
-  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute)s?'/gi, "datetime($1, '-$2 $3')");
+  // Intervals: col + INTERVAL '1 day' -> datetime(col, '+1 day')
+  s = s.replace(/datetime\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', 'localtime', '+$1 $2')");
+  s = s.replace(/date\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date('now', 'localtime', '+$1 $2')");
+  s = s.replace(/datetime\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', 'localtime', '-$1 $2')");
+  s = s.replace(/date\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date('now', 'localtime', '-$1 $2')");
+
+  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime($1, '+$2 $3')");
+  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime($1, '-$2 $3')");
 
   // Intervals with param multiplication: date - ($1 * INTERVAL '1 day') -> datetime(date, '-' || $1 || ' day')
   s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '-' || $2 || ' day')");
@@ -143,6 +151,7 @@ if (config.IS_BRANCH_MODE) {
       }
     },
     getLastDbError: () => null,
+    translatePgToSqlite,
     close: async () => {
       try {
         (module.exports.sqlite || sqliteDb).close();
@@ -249,6 +258,7 @@ if (config.IS_BRANCH_MODE) {
     },
     isPrimaryDbAvailable,
     getLastDbError,
+    translatePgToSqlite,
     close: async () => {
       if (pool) {
         await pool.end();

@@ -56,10 +56,12 @@ function employeeTransactionRemainingDeltaSql(alias = 'et') {
 
 function normalizedPaymentMethodSql(column = 'payment_method') {
   return `CASE
-    WHEN COALESCE(${column}, 'cash') IN ('cash', 'نقدي') THEN 'cash'
-    WHEN COALESCE(${column}, 'cash') IN ('visa', 'card') THEN 'visa'
-    WHEN COALESCE(${column}, 'cash') IN ('wallet', 'mobile_wallet') THEN 'wallet'
-    WHEN COALESCE(${column}, 'cash') IN ('bank_transfer', 'bank', 'transfer') THEN 'bank_transfer'
+    WHEN COALESCE(${column}, 'cash') IN ('cash', 'نقدي', 'كاش') THEN 'cash'
+    WHEN COALESCE(${column}, 'cash') IN ('visa', 'card', 'بطاقة', 'فيزا') THEN 'visa'
+    WHEN COALESCE(${column}, 'cash') IN ('wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة') THEN 'wallet'
+    WHEN COALESCE(${column}, 'cash') IN ('bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي') THEN 'bank_transfer'
+    WHEN COALESCE(${column}, 'cash') IN ('split', 'مجزأ', 'mixed') THEN 'split'
+    WHEN COALESCE(${column}, 'cash') IN ('debt', 'credit_customer', 'آجل') THEN 'debt'
     ELSE COALESCE(${column}, 'cash')
   END`;
 }

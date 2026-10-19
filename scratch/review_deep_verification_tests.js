@@ -36,7 +36,8 @@ async function runReviewTests() {
 
   // Setup mock seller for orders
   const randSuffix = Math.floor(Math.random() * 899999 + 100000);
-  const today = new Date().toISOString().split('T')[0];
+  const { getCairoDateTimeParts } = require('../src/shared/utils/date');
+  const today = getCairoDateTimeParts().date;
   const empRes = await db.query(
     "INSERT INTO employees (name, phone, position, basic_salary, branch_id, join_date) VALUES ('Review Salesperson', $1, 'كاشير', 6000, 1, CURRENT_DATE) RETURNING id",
     [`01022${randSuffix}0`]
@@ -377,6 +378,141 @@ async function runReviewTests() {
     const checkGlobal = await db.query('SELECT stock_level FROM inventory WHERE id = $1', [itemId1]);
     assert.strictEqual(Number(checkGlobal.rows[0].stock_level), 0);
   });
+
+  // 10. Financial Reports: Partial Return Remainder Precision
+  await test('REPORT-PARTIAL-RETURN-REMAINDER-01: partial return on fully paid order yields 0 remainder in sales report', async () => {
+    const reportsService = require('../src/server/modules/reports/reports.service');
+    // Order 2 items of itemId2 (200 each = 400), fully paid in cash
+    const ord = await salesService.createOrder({
+      customer_name: 'Partial Return Customer',
+      customer_phone: `01055${randSuffix}9`,
+      seller_id: sellerId,
+      branch_id: 1,
+      payment_method: 'cash',
+      paid_amount: 400,
+      items: [{ id: itemId2, quantity: 2, price: 200 }],
+    }, adminUser, null);
+
+    await salesService.createReturn({
+      order_id: ord.orderId,
+      branch_id: 1,
+      seller_id: sellerId,
+      items: [{ id: itemId2, quantity: 1, price: 200 }],
+    }, adminUser, null);
+
+    const rep = await reportsService.getSalesReport({
+      date_from: today,
+      date_to: today,
+      branch_id: 1,
+    }, adminUser);
+
+    const targetOrder = rep.orders.find((o) => o.id === ord.orderId);
+    assert.ok(targetOrder, 'Order must be present in sales report');
+    assert.strictEqual(targetOrder.status, 'partially_returned');
+    assert.strictEqual(Number(targetOrder.net_total), 200);
+    assert.strictEqual(Number(targetOrder.net_paid), 200);
+    assert.strictEqual(Number(targetOrder.remainder), 0, 'Customer paid in full; remainder must be 0, not net_total');
+  });
+
+  // 11. SQLite Branch Mode: NOW() - INTERVAL translation & Expense duplicate guard
+  await test('SQLITE-INTERVAL-EXPENSES-01: translatePgToSqlite converts NOW() and second intervals for SQLite duplicate guard', () => {
+    const { DatabaseSync } = require('node:sqlite');
+    const sqlite = new DatabaseSync(':memory:');
+    sqlite.exec(`
+      CREATE TABLE expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_by INTEGER,
+        branch_id INTEGER,
+        amount REAL,
+        category TEXT,
+        is_deleted INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        offline_uuid TEXT
+      );
+      INSERT INTO expenses (created_by, branch_id, amount, category, created_at, offline_uuid)
+      VALUES (1, 1, 75.50, 'نثريات', datetime('now'), 'exp-uuid-1');
+    `);
+
+    const rawSql = `
+      SELECT id, offline_uuid FROM expenses
+      WHERE created_by = $1 AND branch_id = $2 AND amount = $3 AND category = $4 AND is_deleted IS NOT TRUE
+        AND created_at >= NOW() - INTERVAL '3 seconds'
+      ORDER BY id DESC LIMIT 1
+    `;
+
+    const { isAdvisoryLock, sql } = db.translatePgToSqlite(rawSql);
+    assert.strictEqual(isAdvisoryLock, false);
+    assert.ok(sql.includes("datetime('now', '-3 second')"), `Expected datetime('now', '-3 second') but got: ${sql}`);
+
+    const stmt = sqlite.prepare(sql);
+    const row = stmt.get(1, 1, 75.50, 'نثريات');
+    assert.ok(row, 'Query must execute on SQLite and match the recent expense');
+    assert.strictEqual(row.offline_uuid, 'exp-uuid-1');
+    sqlite.close();
+  });
+
+  // 12. Rentals: Rental Sale populates order payment breakdown columns
+  await test('RENTAL-SALE-SPLIT-COLUMNS-01: selling a rental populates cash_amount and financial columns', async () => {
+    const rentInv = await db.query(
+      "INSERT INTO rental_inventory (name, barcode, price, is_deleted) VALUES ('Rental Suit To Sell', $1, 800, false) RETURNING id",
+      [`RSBC${randSuffix}1`]
+    );
+    const rentInvId = rentInv.rows[0].id;
+    await db.query(
+      'INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level) VALUES ($1, 1, 5) ON CONFLICT (rental_inventory_id, branch_id) DO UPDATE SET stock_level = 5',
+      [rentInvId]
+    );
+
+    const booking = await rentalsService.createRental({
+      customer_name: 'Rental Buy Customer',
+      customer_phone: `01077${randSuffix}1`,
+      pickup_date: today,
+      return_date: today,
+      rental_inventory_id: rentInvId,
+      total_price: 150,
+      deposit: 50,
+      remaining: 100,
+      payment_method: 'cash',
+      branch_id: 1,
+      seller_id: sellerId,
+    }, adminUser, null);
+
+    const bookingId = booking.id;
+    await rentalsService.pickupRental(bookingId, adminUser);
+
+    const sellRes = await rentalsService.sellRental(bookingId, {
+      price: 1200,
+      payment_method: 'cash',
+    }, adminUser);
+
+    assert.ok(sellRes && (sellRes.orderId || sellRes.order_id), 'Rental sale must create an order');
+    const targetOrderId = sellRes.orderId || sellRes.order_id;
+    const ordCheck = await db.query('SELECT total_amount, paid_amount, payment_method, cash_amount, order_source FROM orders WHERE id = $1', [targetOrderId]);
+    assert.strictEqual(Number(ordCheck.rows[0].total_amount), 1200);
+    assert.strictEqual(Number(ordCheck.rows[0].paid_amount), 1200);
+    assert.strictEqual(Number(ordCheck.rows[0].cash_amount), 1200, 'Order cash_amount must be populated with price');
+    assert.strictEqual(ordCheck.rows[0].order_source, 'rental_sale');
+
+    // Clean up rental test items and order
+    await db.query('DELETE FROM rentals WHERE id = $1', [bookingId]);
+    if (sellRes && (sellRes.orderId || sellRes.order_id)) {
+      await db.query('DELETE FROM order_items WHERE order_id = $1', [targetOrderId]);
+      await db.query('DELETE FROM orders WHERE id = $1', [targetOrderId]);
+    }
+    await db.query('DELETE FROM rental_inventory_branches WHERE rental_inventory_id = $1', [rentInvId]);
+    await db.query('DELETE FROM rental_inventory WHERE id = $1', [rentInvId]);
+    await db.query("DELETE FROM inventory WHERE name = 'Rental Suit To Sell'");
+  });
+
+  // Final Teardown
+  try {
+    await db.query('DELETE FROM inventory_branches WHERE inventory_id IN ($1, $2)', [itemId1, itemId2]);
+    await db.query('DELETE FROM inventory WHERE id IN ($1, $2)', [itemId1, itemId2]);
+    await db.query('DELETE FROM attendance WHERE employee_id = $1', [sellerId]);
+    await db.query('DELETE FROM employees WHERE id = $1', [sellerId]);
+  } catch (cleanErr) {
+    console.warn('Teardown warning:', cleanErr.message);
+  }
 
   console.log(`\nReview Test Results: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {

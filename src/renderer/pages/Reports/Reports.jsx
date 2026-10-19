@@ -31,7 +31,10 @@ import {
   Eye,
   EyeOff,
   RotateCcw,
+  Building2,
+  CreditCard,
 } from 'lucide-react';
+import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
 
 export function Reports() {
   const { user } = useAuth();
@@ -919,9 +922,9 @@ export function Reports() {
                                 </span>
                               </div>
 
-                              <div className="p-3.5 rounded-xl bg-white border border-emerald-200 bg-emerald-50/50">
+                              <div className="p-3.5 rounded-xl bg-white border border-emerald-300 bg-emerald-50/60 shadow-sm">
                                 <span className="text-[10px] font-black text-emerald-800 block">
-                                  المبلغ المحصّل بالدرج (كاش)
+                                  المبلغ المحصّل بالدرج (كاش فعلي) 💵
                                 </span>
                                 <span className="text-base font-black text-emerald-700 block mt-0.5">
                                   {formatCurrency(
@@ -931,8 +934,57 @@ export function Reports() {
                                     )
                                   )}
                                 </span>
+                                <span className="text-[10px] text-emerald-600 font-bold block mt-0.5">
+                                  الصافي داخل درج النقدية
+                                </span>
                               </div>
                             </div>
+
+                            {/* Electronic & Collections Breakdown Banner */}
+                            {Array.isArray(expandedDetails.payment_methods) && expandedDetails.payment_methods.length > 0 && (
+                              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                                <div className="text-xs font-black text-slate-700 mb-2 flex items-center justify-between">
+                                  <span>تفصيل طرق التحصيل (فصل الدرج عن الإلكتروني):</span>
+                                  <span className="text-[10px] text-slate-500 font-bold">
+                                    المدفوعات الإلكترونية لا تدخل درج الكاشير
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                                  <div className="p-2.5 bg-white rounded-lg border border-emerald-200">
+                                    <span className="text-[10px] font-bold text-emerald-800 block">كاش (بالدرج)</span>
+                                    <span className="text-sm font-black text-emerald-700">
+                                      {formatCurrency(
+                                        expandedDetails.payment_methods.find((p) => p.method === 'cash')?.total_amount || 0
+                                      )}
+                                    </span>
+                                  </div>
+                                  <div className="p-2.5 bg-white rounded-lg border border-indigo-200">
+                                    <span className="text-[10px] font-bold text-indigo-800 block">انستاباي / تحويل بنكي</span>
+                                    <span className="text-sm font-black text-indigo-700">
+                                      {formatCurrency(
+                                        expandedDetails.payment_methods.find((p) => p.method === 'bank_transfer')?.total_amount || 0
+                                      )}
+                                    </span>
+                                  </div>
+                                  <div className="p-2.5 bg-white rounded-lg border border-sky-200">
+                                    <span className="text-[10px] font-bold text-sky-800 block">فيزا / بطاقات</span>
+                                    <span className="text-sm font-black text-sky-700">
+                                      {formatCurrency(
+                                        expandedDetails.payment_methods.find((p) => p.method === 'visa')?.total_amount || 0
+                                      )}
+                                    </span>
+                                  </div>
+                                  <div className="p-2.5 bg-white rounded-lg border border-purple-200">
+                                    <span className="text-[10px] font-bold text-purple-800 block">محافظ إلكترونية</span>
+                                    <span className="text-sm font-black text-purple-700">
+                                      {formatCurrency(
+                                        expandedDetails.payment_methods.find((p) => p.method === 'wallet')?.total_amount || 0
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
 
                             {/* Branch Sales Breakdown table */}
                             {expandedDetails.branch_sales?.length > 0 && (
@@ -1080,7 +1132,7 @@ export function Reports() {
       {/* Tab: Sales Invoices Report */}
       {activeTab === 'sales' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <StatCard
               title="عدد الفواتير"
               value={Number(salesReport.summary?.total_orders || 0).toLocaleString('en-US')}
@@ -1100,15 +1152,21 @@ export function Reports() {
               variant="primary"
             />
             <StatCard
-              title="المحصل نقداً"
+              title="المحصل بالدرج (كاش)"
               value={formatCurrency(salesReport.summary?.cash_paid || 0)}
               icon={Wallet}
+              variant="success"
+            />
+            <StatCard
+              title="انستاباي / تحويل"
+              value={formatCurrency(salesReport.summary?.bank_transfer_paid || 0)}
+              icon={Building2}
               variant="info"
             />
             <StatCard
-              title="المحصل فيزا"
-              value={formatCurrency(salesReport.summary?.visa_paid || 0)}
-              icon={DollarSign}
+              title="المحصل فيزا ومحافظ"
+              value={formatCurrency(Number(salesReport.summary?.visa_paid || 0) + Number(salesReport.summary?.wallet_paid || 0))}
+              icon={CreditCard}
               variant="warning"
             />
           </div>
@@ -1168,9 +1226,21 @@ export function Reports() {
                         <td className="py-3 px-4 text-xs font-bold text-slate-700">{o.cashier_name || '-'}</td>
                         <td className="py-3 px-4 text-xs text-slate-600">{o.branch_name || '-'}</td>
                         <td className="py-3 px-4">
-                          <Badge variant={o.payment_method === 'cash' ? 'success' : 'info'}>
-                            {o.payment_method === 'cash' ? 'نقدي' : (o.payment_method === 'visa' ? 'فيزا' : (o.payment_method || '-'))}
-                          </Badge>
+                          <span
+                            className={`px-2.5 py-1 rounded text-xs font-bold inline-block ${
+                              o.payment_method === 'cash'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : o.payment_method === 'split'
+                                ? 'bg-purple-100 text-purple-800'
+                                : o.payment_method === 'bank_transfer'
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : o.payment_method === 'visa' || o.payment_method === 'card'
+                                ? 'bg-sky-100 text-sky-800'
+                                : 'bg-slate-100 text-slate-800'
+                            }`}
+                          >
+                            {getPaymentMethodArabic(o.payment_method, o.payment_splits)}
+                          </span>
                         </td>
                         <td className="py-3 px-4 min-w-[200px]">
                           {Array.isArray(o.items) && o.items.length > 0 ? (

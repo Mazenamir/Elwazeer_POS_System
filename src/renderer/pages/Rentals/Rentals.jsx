@@ -30,6 +30,7 @@ import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
+import StatCard from '../../components/ui/StatCard';
 import { printElement } from '../../utils/print';
 import { ThermalReceipt } from '../../components/receipts';
 
@@ -457,7 +458,6 @@ export function Rentals() {
           size="lg"
           icon={Plus}
           onClick={() => setShowCreateModal(true)}
-          className="!bg-indigo-600 hover:!bg-indigo-700 shadow-md shadow-indigo-600/20"
         >
           حجز إيجار جديد
         </Button>
@@ -465,52 +465,41 @@ export function Rentals() {
 
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-            <Clock className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-slate-400">محجوزة</div>
-            <div className="text-2xl font-black text-slate-900">{summary.booked || 0}</div>
-          </div>
-        </div>
+        <StatCard
+          variant="pastel-yellow"
+          title="محجوزة"
+          value={summary.booked || 0}
+          icon={Clock}
+          subtitle="حجوزات قادمة ومؤكدة"
+        />
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0">
-            <Sparkles className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-slate-400">تم الاستلام</div>
-            <div className="text-2xl font-black text-slate-900">{summary.active || 0}</div>
-          </div>
-        </div>
+        <StatCard
+          variant="pastel-blue"
+          title="تم الاستلام"
+          value={summary.active || 0}
+          icon={Sparkles}
+          subtitle="بدل خارج المحل حالياً"
+        />
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-slate-400">مُرجعة</div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-black text-slate-900">{summary.returned || 0}</span>
-              {Number(summary.returned_debt || 0) > 0 && (
-                <span className="text-[11px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-lg border border-amber-200">
-                  {summary.returned_debt} عليه متبقي
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
+        <StatCard
+          variant="pastel-green"
+          title="مُرجعة"
+          value={summary.returned || 0}
+          icon={CheckCircle2}
+          subtitle={
+            Number(summary.returned_debt || 0) > 0
+              ? `${summary.returned_debt} عليه متبقي`
+              : 'تمت إعادتها للمخزون'
+          }
+        />
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-slate-400">ملغي</div>
-            <div className="text-2xl font-black text-slate-900">{summary.cancelled || 0}</div>
-          </div>
-        </div>
+        <StatCard
+          variant="pastel-pink"
+          title="ملغي"
+          value={summary.cancelled || 0}
+          icon={AlertTriangle}
+          subtitle="حجوزات ملغاة"
+        />
       </div>
 
       {/* Main Table Card */}
@@ -522,13 +511,13 @@ export function Rentals() {
             <div className="flex flex-wrap items-center gap-2.5">
               {/* Search */}
               <div className="relative w-64">
-                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266]" />
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="ابحث باسم العميل أو الهاتف..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-colors"
                 />
               </div>
 
@@ -536,7 +525,7 @@ export function Rentals() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 cursor-pointer"
+                className="bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] cursor-pointer transition-colors"
               >
                 <option value="all">كل الحالات</option>
                 <option value="booked">محجوزة</option>
@@ -556,18 +545,18 @@ export function Rentals() {
         />
 
         {loading ? (
-          <div className="py-20 text-center text-slate-400 font-bold text-sm">
+          <div className="py-20 text-center text-[#777266] font-bold text-sm">
             جاري تحميل الحجوزات...
           </div>
         ) : rentals.length === 0 ? (
-          <div className="py-20 text-center text-slate-400 font-bold text-sm">
+          <div className="py-20 text-center text-[#777266] font-bold text-sm">
             لا توجد حجوزات مسجلة مطابقة للبحث
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-right text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
+                <tr className="border-b border-[#E6DECD] text-[#777266] text-xs font-black uppercase">
                   <th className="pb-3 pr-2">رقم الحجز</th>
                   <th className="pb-3">العميل</th>
                   <th className="pb-3">القطعة المستأجرة</th>
@@ -578,7 +567,7 @@ export function Rentals() {
                   <th className="pb-3 pl-2">إجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
+              <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
                 {rentals.map((r) => {
                   const isReturnedWithRemaining = r.status === 'returned' && Number(r.remaining || 0) > 0;
                   const statusInfo = isReturnedWithRemaining
@@ -595,48 +584,48 @@ export function Rentals() {
                   const isDelay = r.delay_days > 0 && r.status === 'active';
 
                   return (
-                    <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 pr-2 font-bold text-slate-900">
+                    <tr key={r.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
+                      <td className="py-3.5 pr-2 font-bold text-[#24221F]">
                         #{r.id}
                       </td>
                       <td className="py-3.5">
-                        <div className="font-bold text-slate-900">{r.customer_name}</div>
-                        <div className="text-xs text-slate-400 font-mono" dir="ltr">
+                        <div className="font-bold text-[#24221F]">{r.customer_name}</div>
+                        <div className="text-xs text-[#777266] font-mono" dir="ltr">
                           {r.customer_phone}
                         </div>
                       </td>
                       <td className="py-3.5">
-                        <div className="font-bold text-slate-800">
+                        <div className="font-bold text-[#24221F]">
                           {r.inventory_name || 'قطعة تأجير'}
                         </div>
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-bold mt-0.5">
+                        <div className="flex items-center gap-1.5 text-[11px] text-[#777266] font-bold mt-0.5">
                           {r.rental_inventory_id && (
-                            <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono text-[10px]">
+                            <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD] text-[#24221F] font-mono text-[10px]">
                               كود: #{r.rental_inventory_id}
                             </span>
                           )}
                           {r.inventory_barcode && (
-                            <span className="font-mono text-slate-400">#{r.inventory_barcode}</span>
+                            <span className="font-mono text-[#777266]">#{r.inventory_barcode}</span>
                           )}
                           {r.inventory_color && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100">
+                            <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD]">
                               {r.inventory_color}
                             </span>
                           )}
                           {r.inventory_size && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100">
+                            <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD]">
                               {r.inventory_size}
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="py-3.5 text-xs text-slate-600">
+                      <td className="py-3.5 text-xs text-[#565147]">
                         <div className="flex items-center gap-1">
-                          <span className="text-slate-400 font-bold">من:</span>
+                          <span className="text-[#777266] font-bold">من:</span>
                           <span>{new Date(r.pickup_date).toLocaleDateString('ar-EG')}</span>
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
-                          <span className="text-slate-400 font-bold">إلى:</span>
+                          <span className="text-[#777266] font-bold">إلى:</span>
                           <span className={isDelay ? 'text-rose-600 font-black' : ''}>
                             {new Date(r.return_date).toLocaleDateString('ar-EG')}
                           </span>
@@ -648,10 +637,10 @@ export function Rentals() {
                         )}
                       </td>
                       <td className="py-3.5">
-                        <div className="font-black text-indigo-600 text-sm">
+                        <div className="font-black text-[#24221F] text-sm">
                           {Number(r.total_price || 0).toLocaleString()} ج.م
                         </div>
-                        <div className="text-xs text-slate-400 font-bold mt-0.5">
+                        <div className="text-xs text-[#777266] font-bold mt-0.5">
                           تأمين: {Number(r.deposit || 0).toLocaleString()} ج.م
                         </div>
                       </td>
@@ -661,7 +650,7 @@ export function Rentals() {
                             {Number(r.remaining).toLocaleString()} ج.م
                           </span>
                         ) : (
-                          <span className="text-emerald-600 font-bold text-xs">مسدد بالكامل</span>
+                          <span className="text-emerald-700 font-bold text-xs">مسدد بالكامل</span>
                         )}
                       </td>
                       <td className="py-3.5">
@@ -688,7 +677,6 @@ export function Rentals() {
                               variant="primary"
                               size="sm"
                               onClick={() => openReturnModal(r)}
-                              className="!bg-indigo-600"
                             >
                               إرجاع وتسوية
                             </Button>

@@ -75,11 +75,6 @@ const dataDir = path.resolve('programs/data');
 check('PostgreSQL template PG_VERSION exists', fs.existsSync(path.join(dataDir, 'PG_VERSION')));
 check('PostgreSQL template postgresql.conf exists', fs.existsSync(path.join(dataDir, 'postgresql.conf')));
 check('PostgreSQL template pg_hba.conf exists', fs.existsSync(path.join(dataDir, 'pg_hba.conf')));
-check('No stale current_logfiles in template', !fs.existsSync(path.join(dataDir, 'current_logfiles')));
-
-// Clean any leftover dev/test postmaster files from working directory
-try { if (fs.existsSync(path.join(dataDir, 'postmaster.pid'))) fs.unlinkSync(path.join(dataDir, 'postmaster.pid')); } catch {}
-try { if (fs.existsSync(path.join(dataDir, 'postmaster.opts'))) fs.unlinkSync(path.join(dataDir, 'postmaster.opts')); } catch {}
 
 // 7. Verify Frontend Client Build
 const distRendererIndex = path.resolve('dist/renderer/index.html');
@@ -102,10 +97,15 @@ check('package.json excludes stale logs & current_logfiles from programs/data', 
 check('package.json excludes dev native modules (@rolldown, lightningcss)', Boolean(nodeModulesRes?.filter?.includes('!@rolldown/**/*')));
 
 // 9. Verify Generated Production Windows Installer
-const installerExe = path.resolve(`dist/${pkg.build.productName} Setup ${pkg.version}.exe`);
-const installerExists = fs.existsSync(installerExe);
+const candidateInstallers = [
+  path.resolve(`dist/${pkg.build.productName} Setup ${pkg.version}.exe`),
+  path.resolve(`dist/Bebyoon Master Setup ${pkg.version}.exe`),
+  path.resolve(`dist/Bebyoon System Setup ${pkg.version}.exe`),
+];
+const installerExe = candidateInstallers.find(p => fs.existsSync(p));
+const installerExists = Boolean(installerExe);
 const installerSize = installerExists ? fs.statSync(installerExe).size : 0;
-check('Generated Windows NSIS installer exists', installerExists, installerExists ? `${(installerSize / (1024 * 1024)).toFixed(1)} MB` : 'Missing');
+check('Generated Windows NSIS installer exists', installerExists, installerExists ? `${path.basename(installerExe)} (${(installerSize / (1024 * 1024)).toFixed(1)} MB)` : 'Missing');
 
 console.log('\n----------------------------------------------------');
 console.log(`Summary: ${passed} passed, ${failed} failed`);

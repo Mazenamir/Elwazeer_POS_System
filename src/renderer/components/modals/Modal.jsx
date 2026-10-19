@@ -59,18 +59,18 @@ export function Modal({
         className={`relative w-full ${maxWidth} my-auto ${
           plain
             ? 'bg-transparent border-0 shadow-none'
-            : 'bg-white rounded-3xl md:rounded-[2.5rem] border border-slate-100 shadow-2xl overflow-hidden'
+            : 'bg-[#FFFDF9] rounded-3xl md:rounded-[28px] border border-[#E6DECD] shadow-2xl overflow-hidden'
         } z-10 animate-scale-in flex flex-col max-h-[90vh] ${className}`}
       >
         {/* Header */}
         {!hideHeader && !plain && (title || subtitle) && (
-          <div className="flex items-center justify-between p-6 sm:p-8 border-b border-slate-100 shrink-0">
+          <div className="flex items-center justify-between p-6 sm:p-7 border-b border-[#E6DECD] bg-[#FAF6ED]/60 shrink-0">
             <div>
-              <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              <h3 className="text-xl sm:text-2xl font-black text-[#24221F] tracking-tight font-display">
                 {title}
               </h3>
               {subtitle && (
-                <p className="text-xs sm:text-sm font-semibold text-slate-400 mt-1">
+                <p className="text-xs sm:text-sm font-semibold text-[#777266] mt-1">
                   {subtitle}
                 </p>
               )}
@@ -78,7 +78,7 @@ export function Modal({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="p-2 rounded-2xl text-[#9E988B] hover:text-[#24221F] hover:bg-[#FAF6ED] transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>

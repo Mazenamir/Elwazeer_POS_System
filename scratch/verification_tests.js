@@ -66,9 +66,9 @@ async function runTests() {
     assert.ok(postRoute, 'POST /inventory exists');
     assert.ok(putRoute, 'PUT /inventory/:id exists');
     assert.ok(deleteRoute, 'DELETE /inventory/:id exists');
-    assert.strictEqual(postRoute.route.stack.length, 2, 'POST /inventory must have RBAC middleware');
-    assert.strictEqual(putRoute.route.stack.length, 2, 'PUT /inventory/:id must have RBAC middleware');
-    assert.strictEqual(deleteRoute.route.stack.length, 2, 'DELETE /inventory/:id must have RBAC middleware');
+    assert.ok(postRoute.route.stack.some(s => s.name === 'requireInventoryAdmin' || s.handle.name === 'requireInventoryAdmin'), 'POST /inventory must have RBAC middleware');
+    assert.ok(putRoute.route.stack.some(s => s.name === 'requireInventoryAdmin' || s.handle.name === 'requireInventoryAdmin'), 'PUT /inventory/:id must have RBAC middleware');
+    assert.ok(deleteRoute.route.stack.some(s => s.name === 'requireInventoryAdmin' || s.handle.name === 'requireInventoryAdmin'), 'DELETE /inventory/:id must have RBAC middleware');
 
     // Service-level check
     const inventoryService = require('../src/server/modules/inventory/inventory.service');

@@ -591,7 +591,9 @@ async function listInventory(req, user) {
 
       const rowsWithSizes = rows.map((r) => {
         const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(r.id);
-        return { ...r, sizes };
+        const stock = Number(r.stock_level || 0);
+        const available_branches = stock > 0 ? [{ branch_id: 1, branch_name: 'الفرع الحالي', stock_level: stock }] : [];
+        return { ...r, total_stock: stock, sizes, available_branches };
       });
 
       return paginatedPayload(rowsWithSizes, total, pagination);
@@ -606,7 +608,9 @@ async function listInventory(req, user) {
 
     const rowsWithSizes = rows.map((r) => {
       const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(r.id);
-      return { ...r, sizes };
+      const stock = Number(r.stock_level || 0);
+      const available_branches = stock > 0 ? [{ branch_id: 1, branch_name: 'الفرع الحالي', stock_level: stock }] : [];
+      return { ...r, total_stock: stock, sizes, available_branches };
     });
 
     return paginatedPayload(rowsWithSizes, total, { page: 1, limit: total, total });
@@ -620,8 +624,31 @@ async function listInventory(req, user) {
   const reqBranchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
   const activeBranchId = !canViewAllBranches ? parseInt(user?.branch_id, 10) : reqBranchId;
 
-  let stockLevelSql = 'COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), i.stock_level, 0)';
-  let branchStocksSql = `(SELECT json_agg(json_build_object('branch_id', branch_id, 'stock_level', stock_level, 'has_stock', stock_level > 0)) FROM inventory_branches WHERE inventory_id = i.id)`;
+  const totalStockSql = 'COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), i.stock_level, 0)';
+  let stockLevelSql = totalStockSql;
+  let branchStocksSql = `COALESCE((
+    SELECT json_agg(json_build_object(
+      'branch_id', ib.branch_id,
+      'branch_name', b.name,
+      'stock_level', ib.stock_level,
+      'has_stock', (ib.stock_level > 0)
+    ) ORDER BY (ib.branch_id = ${activeBranchId || 0}) DESC, ib.stock_level DESC, b.name ASC)
+    FROM inventory_branches ib
+    JOIN branches b ON b.id = ib.branch_id
+    WHERE ib.inventory_id = i.id
+  ), '[]'::json)`;
+
+  let availableBranchesSql = `COALESCE((
+    SELECT json_agg(json_build_object(
+      'branch_id', ib.branch_id,
+      'branch_name', b.name,
+      'stock_level', ib.stock_level
+    ) ORDER BY (ib.branch_id = ${activeBranchId || 0}) DESC, ib.stock_level DESC, b.name ASC)
+    FROM inventory_branches ib
+    JOIN branches b ON b.id = ib.branch_id
+    WHERE ib.inventory_id = i.id AND ib.stock_level > 0
+  ), '[]'::json)`;
+
   let sizesSql = `COALESCE((
     SELECT json_agg(json_build_object(
       'size_name', sub.size_name,
@@ -643,11 +670,6 @@ async function listInventory(req, user) {
     } else {
       stockLevelSql = `COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id AND branch_id = ${activeBranchId}), 0)`;
     }
-    branchStocksSql = `(SELECT json_agg(json_build_object(
-      'branch_id', branch_id,
-      'stock_level', CASE WHEN branch_id = ${activeBranchId} THEN stock_level ELSE NULL END,
-      'has_stock', stock_level > 0
-    )) FROM inventory_branches WHERE inventory_id = i.id)`;
     sizesSql = `COALESCE((
       SELECT json_agg(json_build_object(
         'size_name', sub.size_name,
@@ -758,8 +780,10 @@ async function listInventory(req, user) {
   const whereClause = `WHERE ${where.join(' AND ')}`;
   let query = `
     SELECT ${columns},
+           ${totalStockSql} as total_stock,
            ${stockLevelSql} as stock_level,
            ${branchStocksSql} as branch_stocks,
+           ${availableBranchesSql} as available_branches,
            ${sizesSql} as sizes
     FROM inventory i 
     LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id 
@@ -1474,7 +1498,7 @@ async function approveTransfer(transferId, user) {
     }
 
     await tx.query('UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3', [transferQty, transfer.inventory_id, transfer.from_branch_id]);
-    await tx.query("UPDATE stock_transfers SET status = 'pending' WHERE id = $1", [transferId]);
+    await tx.query("UPDATE stock_transfers SET status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [transferId]);
   });
   return { success: true, message: 'تمت الموافقة وإرسال البضاعة بنجاح' };
 }
@@ -1486,7 +1510,7 @@ async function rejectTransfer(transferId, user) {
     params.push(user.branch_id);
     branchFilter = ' AND from_branch_id = $2';
   }
-  const res = await db.query(`UPDATE stock_transfers SET status = 'rejected' WHERE id = $1 AND status = 'requested'${branchFilter}`, params);
+  const res = await db.query(`UPDATE stock_transfers SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'requested'${branchFilter}`, params);
   if (res.rowCount === 0) {
     const err = new Error('الطلب غير موجود');
     err.statusCode = 404;
@@ -1540,7 +1564,7 @@ async function receiveTransfer(transferId, user) {
       ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = inventory_branches.stock_level + $3
     `, [transfer.inventory_id, transfer.to_branch_id, transfer.quantity]);
 
-    await tx.query("UPDATE stock_transfers SET status = 'received' WHERE id = $1", [transferId]);
+    await tx.query("UPDATE stock_transfers SET status = 'received', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [transferId]);
   });
   return { success: true, message: 'تم تأكيد استلام المخزون بنجاح' };
 }

@@ -19,7 +19,14 @@ export function AuthProvider({ children }) {
       }
       setSetupRequired(false);
 
-      // Verify current authenticated session
+      // Verify current authenticated session if token exists
+      const token = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('auth_token') : null;
+      if (!token) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       const userData = await api.get('/me');
       setUser(userData?.user || userData);
     } catch (err) {

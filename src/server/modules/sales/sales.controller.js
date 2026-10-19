@@ -34,7 +34,7 @@ async function createOrder(req, res) {
 
 async function payRemaining(req, res, next) {
   try {
-    const result = await service.payRemaining(req.params.id, req.body.amount, req.body.payment_method, req.user);
+    const result = await service.payRemaining(req.params.id, req.body.amount, req.body.payment_method, req.user, req);
     res.json(result);
   } catch (err) {
     next(err);

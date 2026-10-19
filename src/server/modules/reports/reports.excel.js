@@ -48,6 +48,42 @@ function applyWorksheetStyles(worksheet, title, options = {}) {
   worksheet.getRow(3).height = 10;
 }
 
+function formatPaymentMethodLabel(item) {
+  if (!item) return '-';
+  const splits = Array.isArray(item.payment_splits)
+    ? item.payment_splits
+    : (typeof item.payment_splits === 'string' ? (() => { try { return JSON.parse(item.payment_splits); } catch { return null; } })() : null);
+
+  if (item.payment_method === 'split' || (splits && splits.length > 1)) {
+    if (splits && splits.length > 0) {
+      const parts = splits.map(s => {
+        const m = String(s.method || '').toLowerCase();
+        let mName = 'نقدي';
+        if (['visa', 'card', 'بطاقة', 'فيزا'].includes(m)) mName = 'فيزا';
+        else if (['bank_transfer', 'instapay', 'bank', 'انستاباي', 'تحويل بنكي'].includes(m)) mName = 'انستاباي';
+        else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(m)) mName = 'محفظة';
+        else if (['debt', 'آجل'].includes(m)) mName = 'آجل';
+        return `${mName}: ${Number(s.amount || 0)}`;
+      });
+      return `مجزأ (${parts.join(' + ')})`;
+    }
+    const parts = [];
+    if (Number(item.cash_amount) > 0) parts.push(`نقدي: ${item.cash_amount}`);
+    if (Number(item.bank_transfer_amount) > 0) parts.push(`انستاباي: ${item.bank_transfer_amount}`);
+    if (Number(item.card_amount) > 0) parts.push(`فيزا: ${item.card_amount}`);
+    if (Number(item.wallet_amount) > 0) parts.push(`محفظة: ${item.wallet_amount}`);
+    return parts.length > 0 ? `مجزأ (${parts.join(' + ')})` : 'مجزأ';
+  }
+
+  const m = String(item.payment_method || '').toLowerCase();
+  if (m === 'cash' || m === 'نقدي' || m === 'كاش') return 'نقدي';
+  if (m === 'visa' || m === 'card' || m === 'فيزا' || m === 'بطاقة') return 'فيزا';
+  if (['bank_transfer', 'bank', 'transfer', 'instapay', 'انستاباي', 'تحويل بنكي'].includes(m)) return 'تحويل بنكي / انستاباي';
+  if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(m)) return 'فودافون كاش / محفظة';
+  if (m === 'debt' || m === 'آجل') return 'آجل';
+  return item.payment_method || '-';
+}
+
 function styleHeaderRow(row) {
   row.height = 28;
   row.eachCell((cell) => {
@@ -582,7 +618,7 @@ async function generateDailyReportExcel(dailyData, options = {}) {
         sanitizeFormulaValue(String(inv.invoice_number || '-')),
         inv.created_date || '-',
         sanitizeFormulaValue(inv.cashier_name || '-'),
-        inv.payment_method === 'cash' ? 'نقدي' : (inv.payment_method === 'visa' ? 'فيزا' : (inv.payment_method || '-')),
+        formatPaymentMethodLabel(inv),
         Number(inv.amount || 0),
         Number(inv.paid_amount || 0),
         Number(inv.remainder || 0),
@@ -649,17 +685,24 @@ async function generateSalesReportExcel(salesData, options = {}) {
   ws.getCell('A4').value = `إجمالي عدد الفواتير: ${Number(summary.total_orders || orders.length).toLocaleString('en-US')}`;
   ws.getCell('A4').font = { name: 'Arial', size: 10, bold: true };
 
-  ws.mergeCells('D4:F4');
+  ws.mergeCells('D4:E4');
   ws.getCell('D4').value = formatMoneyLabel('إجمالي المبيعات', summary.total_amount);
   ws.getCell('D4').font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF15803D' } };
 
-  ws.mergeCells('G4:I4');
-  ws.getCell('G4').value = formatMoneyLabel('المحصل نقداً', summary.cash_paid);
-  ws.getCell('G4').font = { name: 'Arial', size: 10, bold: true };
+  ws.mergeCells('F4:G4');
+  ws.getCell('F4').value = formatMoneyLabel('المحصل بالدرج (كاش)', summary.cash_paid);
+  ws.getCell('F4').font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF047857' } };
 
-  ws.mergeCells('J4:L4');
+  ws.mergeCells('H4:I4');
+  ws.getCell('H4').value = formatMoneyLabel('المحصل انستاباي/تحويل', summary.bank_transfer_paid);
+  ws.getCell('H4').font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF4338CA' } };
+
+  ws.mergeCells('J4:K4');
   ws.getCell('J4').value = formatMoneyLabel('المحصل فيزا', summary.visa_paid);
   ws.getCell('J4').font = { name: 'Arial', size: 10, bold: true };
+
+  ws.getCell('L4').value = formatMoneyLabel('المحصل محافظ', summary.wallet_paid);
+  ws.getCell('L4').font = { name: 'Arial', size: 10, bold: true };
 
   ws.getRow(4).height = 24;
   ws.getRow(5).height = 10;
@@ -712,7 +755,7 @@ async function generateSalesReportExcel(salesData, options = {}) {
       sanitizeFormulaValue(o.customer_phone || '-'),
       sanitizeFormulaValue(o.cashier_name || '-'),
       sanitizeFormulaValue(o.branch_name || '-'),
-      o.payment_method === 'cash' ? 'نقدي' : (o.payment_method === 'visa' ? 'فيزا' : (o.payment_method || '-')),
+      formatPaymentMethodLabel(o),
       sanitizeFormulaValue(o.product_names || (o.items_count ? `${o.items_count} صنف` : '-')),
       amount,
       paid,

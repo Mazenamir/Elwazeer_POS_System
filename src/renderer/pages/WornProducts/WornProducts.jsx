@@ -284,7 +284,7 @@ export function WornProducts() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shadow-sm">
+            <div className="w-12 h-12 rounded-2xl bg-[#151515] border border-[#24221F] flex items-center justify-center text-white shadow-sm">
               <AlertTriangle className="w-6 h-6" />
             </div>
             <div>
@@ -308,28 +308,28 @@ export function WornProducts() {
           title="إجمالي السجلات"
           value={summary.records}
           icon={FileText}
-          variant="primary"
+          variant="pastel-yellow"
           subtitle="سجل هالك مقيد بالنظام"
         />
         <StatCard
           title="إجمالي القطع التالفة"
           value={summary.quantity}
           icon={Package}
-          variant="danger"
+          variant="pastel-pink"
           subtitle="قطعة مستبعدة من المخازن"
         />
         <StatCard
           title="هالك الشهر الحالي"
           value={summary.month_quantity}
           icon={Calendar}
-          variant="warning"
+          variant="pastel-green"
           subtitle="قطعة تالفة خلال هذا الشهر"
         />
         <StatCard
           title="إجمالي الخسارة التقديرية"
           value={formatCurrency(summary.estimated_loss)}
           icon={TrendingDown}
-          variant="danger"
+          variant="pastel-blue"
           subtitle="تكلفة تقديرية بناءً على سعر التكلفة"
         />
       </div>
@@ -349,7 +349,7 @@ export function WornProducts() {
           {!isBranchScoped && (
             <div>
               <select
-                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-sm text-[#24221F] focus:outline-none focus:border-[#151515]"
                 value={filterBranch}
                 onChange={(e) => setFilterBranch(e.target.value)}
               >
@@ -365,7 +365,7 @@ export function WornProducts() {
 
           <div>
             <select
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+              className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-sm text-[#24221F] focus:outline-none focus:border-[#151515]"
               value={filterType}
               onChange={(e) => setFilterType(e.target.value)}
             >
@@ -377,7 +377,7 @@ export function WornProducts() {
 
           <div>
             <select
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+              className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-sm text-[#24221F] focus:outline-none focus:border-[#151515]"
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
             >
@@ -400,19 +400,19 @@ export function WornProducts() {
         <div className="overflow-x-auto">
           <table className="w-full text-right border-collapse">
             <thead>
-              <tr className="bg-slate-900 text-white text-xs font-black">
-                <th className="py-3.5 px-4">التاريخ</th>
-                {!isBranchScoped && <th className="py-3.5 px-4">الفرع</th>}
-                <th className="py-3.5 px-4">المنتج والتفاصيل</th>
-                <th className="py-3.5 px-4">نوع المخزون</th>
-                <th className="py-3.5 px-4">الكمية</th>
-                <th className="py-3.5 px-4">درجة التلف</th>
-                <th className="py-3.5 px-4">السبب / الملاحظات</th>
-                <th className="py-3.5 px-4">الخسارة المقدرة</th>
-                <th className="py-3.5 px-4">الحالة</th>
+              <tr className="bg-[#151515] text-white text-xs font-bold">
+                <th className="py-3 px-4 rounded-r-xl">التاريخ</th>
+                {!isBranchScoped && <th className="py-3 px-4">الفرع</th>}
+                <th className="py-3 px-4">المنتج والتفاصيل</th>
+                <th className="py-3 px-4">نوع المخزون</th>
+                <th className="py-3 px-4">الكمية</th>
+                <th className="py-3 px-4">درجة التلف</th>
+                <th className="py-3 px-4">السبب / الملاحظات</th>
+                <th className="py-3 px-4">الخسارة المقدرة</th>
+                <th className="py-3 px-4 rounded-l-xl">الحالة</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
+            <tbody className="divide-y divide-[#E6DECD]/60 text-sm">
               {loading ? (
                 <tr>
                   <td
@@ -434,7 +434,7 @@ export function WornProducts() {
                 </tr>
               ) : (
                 records.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
+                  <tr key={r.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                     <td className="py-3.5 px-4 font-bold text-slate-600 whitespace-nowrap">
                       {formatDate(r.occurred_at || r.created_at)}
                     </td>

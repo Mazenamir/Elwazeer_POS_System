@@ -1062,7 +1062,13 @@ async function settleRentalPayment(id, body, user, req) {
 }
 
 async function sellRental(id, sellPrice, paymentMethod, offlineUuid, user, req) {
-  const price = Number(sellPrice);
+  let priceVal = sellPrice;
+  let methodVal = paymentMethod;
+  if (typeof sellPrice === 'object' && sellPrice !== null) {
+    priceVal = sellPrice.sell_price ?? sellPrice.price ?? sellPrice.sellPrice;
+    methodVal = sellPrice.payment_method ?? sellPrice.paymentMethod ?? paymentMethod;
+  }
+  const price = Number(priceVal);
   if (!Number.isFinite(price) || price <= 0) {
     const err = new Error('سعر البيع غير صحيح');
     err.statusCode = 400;
@@ -1101,13 +1107,26 @@ async function sellRental(id, sellPrice, paymentMethod, offlineUuid, user, req) 
 
     const salesInventoryId = await getOrCreateSalesInventoryForRental(tx, rental.rental_inventory_id, price);
     const orderOfflineUuid = newUuid(offlineUuid);
-    finalPaymentMethod = paymentMethod || rental.payment_method || 'cash';
+    finalPaymentMethod = methodVal || rental.payment_method || 'cash';
+    let r_cash = 0;
+    let r_card = 0;
+    let r_wallet = 0;
+    let r_bank = 0;
+    const normRPM = String(finalPaymentMethod).toLowerCase();
+    if (['cash', 'نقدي', 'كاش'].includes(normRPM)) r_cash = price;
+    else if (['card', 'visa', 'بطاقة', 'فيزا'].includes(normRPM)) r_card = price;
+    else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(normRPM)) r_wallet = price;
+    else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(normRPM)) r_bank = price;
 
     const orderResult = await tx.query(
-      `INSERT INTO orders (customer_id, total_amount, order_date, branch_id, payment_method, seller_id, paid_amount, change_amount, order_source, branch_invoice_number, offline_uuid)
-       VALUES ($1, $2, ${CAIRO_NOW_SQL}, $3, $4, $5, $2, 0, 'rental_sale', NULL, $6)
+      `INSERT INTO orders (
+        customer_id, total_amount, order_date, branch_id, payment_method, seller_id,
+        paid_amount, change_amount, order_source, branch_invoice_number, offline_uuid,
+        cash_amount, card_amount, wallet_amount, bank_transfer_amount
+      )
+       VALUES ($1, $2, ${CAIRO_NOW_SQL}, $3, $4, $5, $2, 0, 'rental_sale', NULL, $6, $7, $8, $9, $10)
        RETURNING id`,
-      [rental.customer_id, price, rental.branch_id, finalPaymentMethod, rental.seller_id || null, orderOfflineUuid]
+      [rental.customer_id, price, rental.branch_id, finalPaymentMethod, rental.seller_id || null, orderOfflineUuid, r_cash, r_card, r_wallet, r_bank]
     );
     createdOrderId = orderResult.rows[0].id;
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardHeader } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
@@ -45,14 +46,28 @@ export function Employees() {
   const { user } = useAuth();
   const { branches, activeBranchId, isMultiBranch } = useBranch();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
 
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [filterBranch, setFilterBranch] = useState('all');
+  const [search, setSearch] = useState(searchParams.get('search') || '');
+  const [filterBranch, setFilterBranch] = useState(searchParams.get('branch_id') || 'all');
   const [filterPosition, setFilterPosition] = useState('all');
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [filterBonusStatus, setFilterBonusStatus] = useState('all');
+
+  useEffect(() => {
+    const q = searchParams.get('search');
+    if (q !== null && q !== undefined) {
+      setSearch(q);
+      const b = searchParams.get('branch_id');
+      if (b) {
+        setFilterBranch(b);
+      } else if (q.trim()) {
+        setFilterBranch('all');
+      }
+    }
+  }, [searchParams]);
 
   // Salary Visibility & Authentication
   const [salaryVisible, setSalaryVisible] = useState(false);
@@ -647,14 +662,14 @@ export function Employees() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm">
+            <div className="w-12 h-12 rounded-2xl bg-[#151515] border border-black flex items-center justify-center text-white shadow-sm">
               <Users className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-black text-[#24221F] tracking-tight">
                 الموظفين والموارد البشرية (HR)
               </h1>
-              <p className="text-sm font-semibold text-slate-500 mt-0.5">
+              <p className="text-sm font-semibold text-[#777266] mt-0.5">
                 سجل الموظفين، الحضور والانصراف، المرتبات، المكافآت والسلف
               </p>
             </div>
@@ -743,7 +758,7 @@ export function Employees() {
 
           <div>
             <select
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+              className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-sm text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors"
               value={filterBranch}
               onChange={(e) => {
                 setFilterBranch(e.target.value);
@@ -761,7 +776,7 @@ export function Employees() {
 
           <div>
             <select
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+              className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-sm text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors"
               value={filterPosition}
               onChange={(e) => {
                 setFilterPosition(e.target.value);
@@ -779,7 +794,7 @@ export function Employees() {
 
           <div>
             <select
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+              className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-sm text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors"
               value={filterBonusStatus}
               onChange={(e) => {
                 setFilterBonusStatus(e.target.value);
@@ -794,9 +809,9 @@ export function Employees() {
         </div>
 
         {/* Month Selector Bar */}
-        <div className="px-4 pb-3.5 pt-1 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-600">
+        <div className="px-4 pb-3.5 pt-1 border-t border-[#E6DECD] flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-[#777266]">
           <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-indigo-600" />
+            <Calendar className="w-4 h-4 text-[#151515]" />
             <span>عرض مكافآت ومسير شهر:</span>
             <input
               type="month"
@@ -807,9 +822,9 @@ export function Employees() {
                   setPage(1);
                 }
               }}
-              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+              className="px-2.5 py-1 rounded-lg border border-[#E6DECD] bg-[#FFFDF9] text-xs font-black text-[#24221F] focus:outline-none focus:border-[#151515]"
             />
-            <span className="text-indigo-600 font-black">
+            <span className="text-[#24221F] font-black">
               ({getArabicMonthName(selectedMonth)})
             </span>
           </div>
@@ -821,7 +836,7 @@ export function Employees() {
                 setSelectedMonth(new Date().toISOString().slice(0, 7));
                 setPage(1);
               }}
-              className="text-xs text-indigo-600 hover:text-indigo-800 underline font-black"
+              className="text-xs text-[#24221F] hover:underline font-black"
             >
               الرجوع للشهر الحالي ({getArabicMonthName(new Date().toISOString().slice(0, 7))})
             </button>
@@ -839,7 +854,7 @@ export function Employees() {
         <div className="overflow-x-auto">
           <table className="w-full text-right border-collapse">
             <thead>
-              <tr className="bg-slate-900 text-white text-xs font-black">
+              <tr className="bg-[#151515] text-white text-xs font-black">
                 <th className="py-3.5 px-4">الموظف</th>
                 <th className="py-3.5 px-4">رقم الهاتف</th>
                 <th className="py-3.5 px-4">الوظيفة</th>
@@ -851,7 +866,7 @@ export function Employees() {
                     <button
                       type="button"
                       onClick={handleToggleSalaryVisibility}
-                      className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                      className="p-1 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
                       title={salaryVisible ? 'إخفاء الرواتب' : 'إظهار الرواتب'}
                     >
                       {salaryVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -868,17 +883,17 @@ export function Employees() {
                 <th className="py-3.5 px-4 text-center">إجراءات</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
+            <tbody className="divide-y divide-[#E6DECD]/70 text-sm">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400 font-bold">
+                  <td colSpan={9} className="py-12 text-center text-[#777266] font-bold">
                     جارِ تحميل بيانات الموظفين...
                   </td>
                 </tr>
               ) : paginatedEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center text-slate-400 font-bold">
-                    <Users className="w-12 h-12 mx-auto mb-2 text-slate-300" />
+                  <td colSpan={9} className="py-16 text-center text-[#777266] font-bold">
+                    <Users className="w-12 h-12 mx-auto mb-2 text-[#777266]/40" />
                     لا يوجد موظفون مطابقون لبيانات البحث
                   </td>
                 </tr>
@@ -888,16 +903,16 @@ export function Employees() {
                   const isCheckedOut = Boolean(emp.today_check_out);
 
                   return (
-                    <tr key={emp.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={emp.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm shrink-0">
+                          <div className="w-10 h-10 rounded-2xl bg-[#FDF5D2] border border-[#F4D95B]/40 text-[#24221F] flex items-center justify-center font-black text-sm shrink-0">
                             {(emp.name || 'م')[0]}
                           </div>
                           <div>
-                            <div className="font-black text-slate-900">{emp.name}</div>
+                            <div className="font-black text-[#24221F]">{emp.name}</div>
                             {emp.commission_rate > 0 && (
-                              <div className="text-[11px] font-bold text-emerald-600">
+                              <div className="text-[11px] font-bold text-emerald-700">
                                 عمولة: {emp.commission_rate}%
                               </div>
                             )}
@@ -905,34 +920,34 @@ export function Employees() {
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 font-bold text-slate-600">
+                      <td className="py-3.5 px-4 font-bold text-[#565147]">
                         {emp.phone ? (
                           <span className="dir-ltr text-xs font-mono">{emp.phone}</span>
                         ) : (
-                          <span className="text-slate-300">-</span>
+                          <span className="text-[#777266]">-</span>
                         )}
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <span className="px-2.5 py-1 rounded-full text-xs font-black bg-slate-100 text-slate-700">
+                        <span className="px-2.5 py-1 rounded-full text-xs font-black bg-[#FAF6ED] text-[#24221F] border border-[#E6DECD]">
                           {emp.position || 'موظف'}
                         </span>
                       </td>
 
-                      <td className="py-3.5 px-4 text-xs font-bold text-slate-500 whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-xs font-bold text-[#777266] whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          <Clock className="w-3.5 h-3.5 text-[#777266]" />
                           <span>{formatTime(emp.shift_start)}</span>
                           <span>-</span>
                           <span>{formatTime(emp.shift_end)}</span>
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 font-black text-slate-800">
+                      <td className="py-3.5 px-4 font-black text-[#24221F]">
                         {emp.branch_name || 'الفرع الرئيسي'}
                       </td>
 
-                      <td className="py-3.5 px-4 font-black text-slate-900 whitespace-nowrap">
+                      <td className="py-3.5 px-4 font-black text-[#24221F] whitespace-nowrap">
                         {salaryVisible ? formatCurrency(emp.basic_salary) : '••••••'}
                       </td>
 

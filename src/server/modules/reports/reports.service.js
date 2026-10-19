@@ -478,13 +478,21 @@ async function getProfitReport(query = {}, user = null) {
     db.query(
       `SELECT branch_id, COALESCE(SUM(total), 0) as total
        FROM (
-         SELECT branch_id, paid_amount as total
+         SELECT branch_id,
+                CASE
+                  WHEN COALESCE(cash_amount, 0) > 0 THEN cash_amount
+                  WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN GREATEST(0, paid_amount - COALESCE(change_amount, 0))
+                  ELSE 0
+                END as total
          FROM orders
          WHERE branch_id = ANY($1::int[])
            AND status <> 'cancelled'
            AND order_date >= $2::date
            AND order_date < $3::date
-           AND ${normalizedPaymentMethodSql('payment_method')} = 'cash'
+           AND (
+             COALESCE(cash_amount, 0) > 0
+             OR ${normalizedPaymentMethodSql('payment_method')} = 'cash'
+           )
          UNION ALL
          SELECT branch_id, deposit as total
          FROM rentals
@@ -614,9 +622,37 @@ async function getProfitReport(query = {}, user = null) {
     db.query(
       `SELECT payment_method, SUM(total) as total
        FROM (
-         SELECT ${normalizedPaymentMethodSql('payment_method')} as payment_method, total_amount as total
+         SELECT ${normalizedPaymentMethodSql('payment_method')} as payment_method,
+                CASE
+                  WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN
+                    COALESCE(NULLIF(cash_amount, 0), GREATEST(0, paid_amount - COALESCE(change_amount, 0)))
+                  ELSE paid_amount
+                END as total
          FROM orders
          WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date${paymentBranchFilter}
+           AND COALESCE(payment_method, 'cash') <> 'split'
+           AND paid_amount > 0
+         UNION ALL
+         SELECT 'cash' as payment_method,
+                cash_amount as total
+         FROM orders
+         WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date${paymentBranchFilter}
+           AND payment_method = 'split' AND COALESCE(cash_amount, 0) > 0
+         UNION ALL
+         SELECT 'visa' as payment_method, card_amount as total
+         FROM orders
+         WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date${paymentBranchFilter}
+           AND payment_method = 'split' AND COALESCE(card_amount, 0) > 0
+         UNION ALL
+         SELECT 'bank_transfer' as payment_method, bank_transfer_amount as total
+         FROM orders
+         WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date${paymentBranchFilter}
+           AND payment_method = 'split' AND COALESCE(bank_transfer_amount, 0) > 0
+         UNION ALL
+         SELECT 'wallet' as payment_method, wallet_amount as total
+         FROM orders
+         WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date${paymentBranchFilter}
+           AND payment_method = 'split' AND COALESCE(wallet_amount, 0) > 0
          UNION ALL
          SELECT ${normalizedPaymentMethodSql('payment_method')} as payment_method, total_price as total
          FROM rentals
@@ -798,8 +834,14 @@ async function getProfitReport(query = {}, user = null) {
     profit: net_profit,
     profit_margin,
     branch_reports: canViewProfit ? report : report.map(stripReportProfit),
+    branch_sales: canViewProfit ? report : report.map(stripReportProfit),
     summary: canViewProfit ? summary : stripReportProfit(summary),
     payments: paymentRes.rows,
+    payment_methods: paymentRes.rows.map(r => ({
+      method: r.payment_method,
+      total_amount: Number(r.total || 0),
+      total: Number(r.total || 0),
+    })),
     expenses_details: expenseDetails,
     salaries_details: salaryDetails,
     tailoring_details: tailoringDetails,
@@ -1430,13 +1472,21 @@ async function getDailyReport(query = {}, user = null) {
       db.query(
         `SELECT branch_id, COALESCE(SUM(total), 0) as total
          FROM (
-           SELECT branch_id, paid_amount as total
+           SELECT branch_id,
+                  CASE
+                    WHEN COALESCE(cash_amount, 0) > 0 THEN cash_amount
+                    WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN GREATEST(0, paid_amount - COALESCE(change_amount, 0))
+                    ELSE 0
+                  END as total
            FROM orders
            WHERE branch_id = ANY($1::int[])
              AND status <> 'cancelled'
              AND order_date >= $2::date
              AND order_date < $3::date
-             AND ${normalizedPaymentMethodSql('payment_method')} = 'cash'
+             AND (
+               COALESCE(cash_amount, 0) > 0
+               OR ${normalizedPaymentMethodSql('payment_method')} = 'cash'
+             )
            UNION ALL
            SELECT branch_id, deposit as total
            FROM rentals
@@ -1541,9 +1591,37 @@ async function getDailyReport(query = {}, user = null) {
   const paymentRes = await db.query(
     `SELECT payment_method, SUM(total) as total
      FROM (
-       SELECT ${normalizedPaymentMethodSql('payment_method')} as payment_method, total_amount as total
+       SELECT ${normalizedPaymentMethodSql('payment_method')} as payment_method,
+              CASE
+                WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN
+                  COALESCE(NULLIF(cash_amount, 0), GREATEST(0, paid_amount - COALESCE(change_amount, 0)))
+                ELSE paid_amount
+              END as total
        FROM orders
        WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${pFilter}
+         AND COALESCE(payment_method, 'cash') <> 'split'
+         AND paid_amount > 0
+       UNION ALL
+       SELECT 'cash' as payment_method,
+              cash_amount as total
+       FROM orders
+       WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${pFilter}
+         AND payment_method = 'split' AND COALESCE(cash_amount, 0) > 0
+       UNION ALL
+       SELECT 'visa' as payment_method, card_amount as total
+       FROM orders
+       WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${pFilter}
+         AND payment_method = 'split' AND COALESCE(card_amount, 0) > 0
+       UNION ALL
+       SELECT 'bank_transfer' as payment_method, bank_transfer_amount as total
+       FROM orders
+       WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${pFilter}
+         AND payment_method = 'split' AND COALESCE(bank_transfer_amount, 0) > 0
+       UNION ALL
+       SELECT 'wallet' as payment_method, wallet_amount as total
+       FROM orders
+       WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${pFilter}
+         AND payment_method = 'split' AND COALESCE(wallet_amount, 0) > 0
        UNION ALL
        SELECT ${normalizedPaymentMethodSql('payment_method')} as payment_method, total_price as total
        FROM rentals
@@ -1779,7 +1857,11 @@ async function getDailyReport(query = {}, user = null) {
       topParams
     ),
     db.query(
-      `SELECT COALESCE(o.branch_invoice_number, o.id) as invoice_number, o.total_amount as amount, o.paid_amount, GREATEST(o.total_amount - o.paid_amount, 0) as remainder, e.name as cashier_name, o.payment_method, TO_CHAR(o.order_date, 'YYYY-MM-DD HH12:MI AM') as created_date, 'sales' as invoice_type
+      `SELECT o.id, COALESCE(o.branch_invoice_number, o.id) as invoice_number, o.total_amount as amount, o.paid_amount,
+              CASE WHEN o.status = 'returned' THEN 0 ELSE GREATEST(o.total_amount - o.paid_amount, 0) END as remainder,
+              o.status, e.name as cashier_name, o.payment_method,
+              o.cash_amount, o.card_amount, o.wallet_amount, o.bank_transfer_amount, o.payment_splits,
+              TO_CHAR(o.order_date, 'YYYY-MM-DD HH12:MI AM') as created_date, 'sales' as invoice_type
        FROM orders o
        LEFT JOIN employees e ON o.seller_id = e.id
        WHERE o.branch_id = ANY($1::int[]) AND o.status <> 'cancelled' AND o.order_date >= $2::date AND o.order_date < $3::date
@@ -1800,11 +1882,19 @@ async function getDailyReport(query = {}, user = null) {
     date,
     branch_sales: canViewProfit ? report : report.map(stripReportProfit),
     payments: paymentRes.rows,
+    payment_methods: (paymentRes.rows || []).map(r => ({
+      method: r.payment_method,
+      total_amount: Number(r.total || 0),
+      total: Number(r.total || 0),
+    })),
     expenses: expenseDetails,
     salaries: salaryDetails,
     tailoring: tailoringDetails,
     attendance: attendanceRes.rows,
-    sales_invoices: salesInvoicesRes.rows,
+    sales_invoices: (salesInvoicesRes.rows || []).map((inv) => ({
+      ...inv,
+      payment_splits: typeof inv.payment_splits === 'string' ? (() => { try { return JSON.parse(inv.payment_splits); } catch { return null; } })() : inv.payment_splits,
+    })),
     rental_invoices: rentalInvoicesRes.rows,
     top_sales: topSalesRes.rows,
     top_rentals: topRentalsRes.rows,
@@ -1860,6 +1950,7 @@ async function getSalesReport(query = {}, user = null) {
              o.total_amount, o.paid_amount,
              GREATEST(o.total_amount - o.paid_amount, 0) as remainder,
              o.payment_method, o.invoice_discount, o.status,
+             o.cash_amount, o.card_amount, o.wallet_amount, o.bank_transfer_amount, o.payment_splits,
              c.name as customer_name, c.phone as customer_phone,
              b.name as branch_name, e.name as cashier_name,
              (SELECT COUNT(*) FROM order_items WHERE order_id = o.id)::int as items_count
@@ -1874,9 +1965,27 @@ async function getSalesReport(query = {}, user = null) {
     db.query(`
       SELECT COUNT(*)::int as count,
              COALESCE(SUM(total_amount), 0) as total_amount,
-             COALESCE(SUM(paid_amount), 0) as total_paid,
-             COALESCE(SUM(CASE WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN paid_amount ELSE 0 END), 0) as cash_paid,
-             COALESCE(SUM(CASE WHEN ${normalizedPaymentMethodSql('payment_method')} = 'visa' THEN paid_amount ELSE 0 END), 0) as visa_paid
+             COALESCE(SUM(CASE WHEN paid_amount > total_amount THEN total_amount ELSE paid_amount END), 0) as total_paid,
+             COALESCE(SUM(CASE
+               WHEN COALESCE(cash_amount, 0) > 0 THEN cash_amount
+               WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN GREATEST(0, paid_amount - COALESCE(change_amount, 0))
+               ELSE 0
+             END), 0) as cash_paid,
+             COALESCE(SUM(CASE
+               WHEN payment_method = 'split' OR COALESCE(card_amount, 0) > 0 THEN card_amount
+               WHEN ${normalizedPaymentMethodSql('payment_method')} = 'visa' THEN paid_amount
+               ELSE 0
+             END), 0) as visa_paid,
+             COALESCE(SUM(CASE
+               WHEN payment_method = 'split' OR COALESCE(bank_transfer_amount, 0) > 0 THEN bank_transfer_amount
+               WHEN ${normalizedPaymentMethodSql('payment_method')} = 'bank_transfer' THEN paid_amount
+               ELSE 0
+             END), 0) as bank_transfer_paid,
+             COALESCE(SUM(CASE
+               WHEN payment_method = 'split' OR COALESCE(wallet_amount, 0) > 0 THEN wallet_amount
+               WHEN ${normalizedPaymentMethodSql('payment_method')} = 'wallet' THEN paid_amount
+               ELSE 0
+             END), 0) as wallet_paid
       FROM orders o
       WHERE o.status <> 'cancelled' AND o.order_date >= $1::date AND o.order_date < $2::date ${branchFilter}
     `, params.slice(0, reportBranchId ? 3 : 2))
@@ -1934,13 +2043,13 @@ async function getSalesReport(query = {}, user = null) {
       if (o.status === 'returned') {
         o.remainder = 0;
       } else if (o.status === 'partially_returned') {
-        if (paidAmt < netTotal) {
-          o.remainder = Math.max(0, netTotal - paidAmt);
-        } else {
-          o.remainder = netTotal;
-        }
+        o.remainder = Math.max(0, netTotal - netPaid);
       } else {
         o.remainder = Math.max(0, totalAmt - paidAmt);
+      }
+
+      if (typeof o.payment_splits === 'string') {
+        try { o.payment_splits = JSON.parse(o.payment_splits); } catch { o.payment_splits = null; }
       }
     }
   }
@@ -1954,6 +2063,8 @@ async function getSalesReport(query = {}, user = null) {
       total_paid: Number(summaryRes.rows[0]?.total_paid || 0),
       cash_paid: Number(summaryRes.rows[0]?.cash_paid || 0),
       visa_paid: Number(summaryRes.rows[0]?.visa_paid || 0),
+      bank_transfer_paid: Number(summaryRes.rows[0]?.bank_transfer_paid || 0),
+      wallet_paid: Number(summaryRes.rows[0]?.wallet_paid || 0),
     },
     orders: ordersRes.rows,
   };

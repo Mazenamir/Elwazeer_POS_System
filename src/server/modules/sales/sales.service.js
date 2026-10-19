@@ -10,19 +10,36 @@ const { resolveOrderId } = require('./sales.helpers');
 
 async function getNextOrderId(branchId, user = null) {
   let b_id = branchId;
-  if (user && user.role === 'branch_user') {
+  if (user && (user.role === 'branch_user' || user.role === 'cashier')) {
     b_id = user.branch_id;
   }
-  const branch_id = (b_id && b_id !== 'all' && Number.isFinite(Number(b_id))) ? Number(b_id) : (user?.branch_id || 1);
+
+  let targetBranchId = (b_id && b_id !== 'all' && Number.isFinite(Number(b_id))) ? Number(b_id) : (user?.branch_id || null);
+
+  // If no specific branch was resolved (e.g. admin viewed "all" branches), pick the primary retail branch
+  if (!targetBranchId) {
+    try {
+      const branchRes = await db.query(
+        "SELECT id FROM branches ORDER BY CASE WHEN CAST(is_main_warehouse AS TEXT) = 'true' OR CAST(is_main_warehouse AS TEXT) = '1' THEN 1 ELSE 0 END, id ASC LIMIT 1"
+      );
+      if (branchRes.rows.length > 0) {
+        targetBranchId = Number(branchRes.rows[0].id);
+      }
+    } catch {}
+  }
+  const finalBranchId = targetBranchId || 1;
 
   try {
     const result = await db.query(
-      "SELECT COALESCE(MAX(branch_invoice_number), 0) + 1 AS next_id FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
-      [branch_id]
+      "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_id FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
+      [finalBranchId]
     );
-    return { next_id: result.rows[0]?.next_id || 1 };
+    return {
+      next_id: Number(result.rows[0]?.next_id) || 1,
+      branch_id: finalBranchId,
+    };
   } catch (err) {
-    return { next_id: '?' };
+    return { next_id: '?', branch_id: finalBranchId };
   }
 }
 
@@ -103,12 +120,19 @@ async function listOrders(query = {}, user = null, req = null) {
       db.query(selectQuery, queryParams),
       db.query(countQuery, params),
     ]);
-    return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
+    const parsedRows = (dataRes.rows || []).map((r) => ({
+      ...r,
+      payment_splits: typeof r.payment_splits === 'string' ? (() => { try { return JSON.parse(r.payment_splits); } catch { return null; } })() : r.payment_splits,
+    }));
+    return paginatedPayload(parsedRows, countRes.rows[0]?.total || 0, pagination);
   }
 
   selectQuery += ' LIMIT 100';
   const { rows } = await db.query(selectQuery, queryParams);
-  return rows;
+  return (rows || []).map((r) => ({
+    ...r,
+    payment_splits: typeof r.payment_splits === 'string' ? (() => { try { return JSON.parse(r.payment_splits); } catch { return null; } })() : r.payment_splits,
+  }));
 }
 
 async function createOrder(body, user, req) {
@@ -347,20 +371,113 @@ async function createOrder(body, user, req) {
     // 4. Calculate next branch_invoice_number safely with advisory lock
     await tx.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [4001, b_id]);
     const branchOrderRes = await tx.query(
-      "SELECT COALESCE(MAX(branch_invoice_number), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
+      "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
       [b_id]
     );
-    const nextBranchInvoiceNumber = branchOrderRes.rows[0].next_no;
+    const nextBranchInvoiceNumber = Number(branchOrderRes.rows[0].next_no) || 1;
 
-    // Financial paid/change handling
+    // Process payment methods, splits, and exact cash/non-cash breakdown
+    let parsedSplits = null;
+    if (Array.isArray(body?.payment_splits)) {
+      parsedSplits = body.payment_splits;
+    } else if (typeof body?.payment_splits === 'string' && body.payment_splits.trim()) {
+      try {
+        parsedSplits = JSON.parse(body.payment_splits);
+      } catch {}
+    }
+
+    let finalPaymentMethod = payment_method || 'cash';
+    let p_cash = 0;
+    let p_card = 0;
+    let p_wallet = 0;
+    let p_bank = 0;
+    let cleanSplits = null;
+
+    if (Array.isArray(parsedSplits) && parsedSplits.length > 0) {
+      cleanSplits = [];
+      for (const s of parsedSplits) {
+        const rawMethod = String(s.method || '').toLowerCase().trim();
+        const amt = roundCurrency(Math.max(0, Number(s.amount || 0)));
+        if (amt <= 0 && rawMethod !== 'debt') continue;
+
+        let normM = rawMethod;
+        if (['cash', 'نقدي', 'كاش'].includes(rawMethod)) normM = 'cash';
+        else if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawMethod)) normM = 'card';
+        else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(rawMethod)) normM = 'bank_transfer';
+        else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawMethod)) normM = 'wallet';
+        else if (['debt', 'credit_customer', 'آجل'].includes(rawMethod)) normM = 'debt';
+
+        cleanSplits.push({ method: normM, amount: amt });
+
+        if (normM === 'cash') p_cash = roundCurrency(p_cash + amt);
+        else if (normM === 'card') p_card = roundCurrency(p_card + amt);
+        else if (normM === 'bank_transfer') p_bank = roundCurrency(p_bank + amt);
+        else if (normM === 'wallet') p_wallet = roundCurrency(p_wallet + amt);
+      }
+
+      if (cleanSplits.length > 1) {
+        finalPaymentMethod = 'split';
+      } else if (cleanSplits.length === 1) {
+        finalPaymentMethod = cleanSplits[0].method;
+      }
+    }
+
     const roundedPaid = Math.max(0, roundCurrency(Number(paid_amount || 0)));
-    const roundedChange = roundCurrency(Math.max(0, roundedPaid - finalTotalAmount));
+
+    if (!cleanSplits || cleanSplits.length === 0) {
+      const rawMethod = String(payment_method || 'cash').toLowerCase().trim();
+      if (['cash', 'نقدي', 'كاش'].includes(rawMethod)) {
+        finalPaymentMethod = 'cash';
+        p_cash = roundedPaid;
+      } else if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawMethod)) {
+        finalPaymentMethod = 'card';
+        p_card = roundedPaid;
+      } else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(rawMethod)) {
+        finalPaymentMethod = 'bank_transfer';
+        p_bank = roundedPaid;
+      } else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawMethod)) {
+        finalPaymentMethod = 'wallet';
+        p_wallet = roundedPaid;
+      } else if (['debt', 'credit_customer', 'آجل'].includes(rawMethod)) {
+        finalPaymentMethod = 'debt';
+      } else {
+        finalPaymentMethod = rawMethod;
+      }
+    }
+
+    const effectivePaid = cleanSplits && cleanSplits.length > 0 ? roundCurrency(p_cash + p_card + p_wallet + p_bank) : roundedPaid;
+    const effectiveChange = roundCurrency(Math.max(0, effectivePaid - finalTotalAmount));
+    if (cleanSplits && cleanSplits.length > 0) {
+      if (effectiveChange > 0 && effectiveChange > p_cash) {
+        const err = new Error('لا يمكن صرف باقي نقدي يتجاوز المبلغ النقدي المستلم');
+        err.statusCode = 400;
+        throw err;
+      }
+    } else if (finalPaymentMethod !== 'cash' && effectiveChange > 0) {
+      const err = new Error('لا يمكن صرف باقي نقدي لعمليات الدفع غير النقدية');
+      err.statusCode = 400;
+      throw err;
+    }
+    const netCash = roundCurrency(Math.max(0, p_cash - effectiveChange));
+    const netPaid = roundCurrency(Math.min(effectivePaid, finalTotalAmount));
+    const paymentSplitsJson = cleanSplits && cleanSplits.length > 1 ? JSON.stringify(cleanSplits) : null;
 
     // 5. Create the Order
     const orderResult = await tx.query(
-      `INSERT INTO orders (customer_id, total_amount, order_date, branch_id, payment_method, seller_id, paid_amount, change_amount, invoice_discount, invoice_discount_type, branch_invoice_number, offline_uuid) 
-       VALUES ($1, $2, ${CAIRO_NOW_SQL}, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, branch_invoice_number`,
-      [customerId, finalTotalAmount, b_id, p_method, sellerId, roundedPaid, roundedChange, invDiscountVal, invDiscountType, nextBranchInvoiceNumber, orderOfflineUuid]
+      `INSERT INTO orders (
+        customer_id, total_amount, order_date, branch_id, payment_method,
+        seller_id, paid_amount, change_amount, invoice_discount, invoice_discount_type,
+        branch_invoice_number, offline_uuid,
+        cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits
+      ) 
+       VALUES ($1, $2, ${CAIRO_NOW_SQL}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       RETURNING id, branch_invoice_number`,
+      [
+        customerId, finalTotalAmount, b_id, finalPaymentMethod,
+        sellerId, netPaid, effectiveChange, invDiscountVal, invDiscountType,
+        nextBranchInvoiceNumber, orderOfflineUuid,
+        netCash, p_card, p_wallet, p_bank, paymentSplitsJson
+      ]
     );
     const newOrderId = orderResult.rows[0].id;
 
@@ -404,13 +521,18 @@ async function createOrder(body, user, req) {
       order: {
         total_amount: finalTotalAmount,
         branch_id: b_id,
-        payment_method: p_method,
+        payment_method: finalPaymentMethod,
         seller_id: sellerId,
-        paid_amount: roundedPaid,
-        change_amount: roundedChange,
+        paid_amount: netPaid,
+        change_amount: effectiveChange,
         invoice_discount: invDiscountVal,
         invoice_discount_type: invDiscountType,
         branch_invoice_number: nextBranchInvoiceNumber,
+        cash_amount: netCash,
+        card_amount: p_card,
+        wallet_amount: p_wallet,
+        bank_transfer_amount: p_bank,
+        payment_splits: cleanSplits,
       },
       items: processedOrderItems.map((item) => ({
         inventory_id: item.inventory_id,
@@ -421,7 +543,19 @@ async function createOrder(body, user, req) {
       })),
     });
 
-    return { orderId: newOrderId, customerId, branchInvoiceNumber: nextBranchInvoiceNumber };
+    return {
+      orderId: newOrderId,
+      customerId,
+      branchInvoiceNumber: nextBranchInvoiceNumber,
+      payment_method: finalPaymentMethod,
+      payment_splits: cleanSplits,
+      cash_amount: netCash,
+      card_amount: p_card,
+      wallet_amount: p_wallet,
+      bank_transfer_amount: p_bank,
+      paid_amount: effectivePaid,
+      change_amount: effectiveChange,
+    };
   });
 
   return {
@@ -430,10 +564,18 @@ async function createOrder(body, user, req) {
     id: orderData.orderId,
     branch_invoice_number: orderData.branchInvoiceNumber,
     customer_id: orderData.customerId,
+    payment_method: orderData.payment_method,
+    payment_splits: orderData.payment_splits,
+    cash_amount: orderData.cash_amount,
+    card_amount: orderData.card_amount,
+    wallet_amount: orderData.wallet_amount,
+    bank_transfer_amount: orderData.bank_transfer_amount,
+    paid_amount: orderData.paid_amount,
+    change_amount: orderData.change_amount,
   };
 }
 
-async function payRemaining(id, amount, paymentMethod, user) {
+async function payRemaining(id, amount, paymentMethod, user, req) {
   const safeAmount = roundCurrency(Number(amount));
   if (!safeAmount || safeAmount <= 0) {
     const err = new Error('مبلغ الدفع غير صحيح');
@@ -450,7 +592,7 @@ async function payRemaining(id, amount, paymentMethod, user) {
 
   return await db.transaction(async (tx) => {
     const { rows } = await tx.query(
-      'SELECT id, total_amount, paid_amount, branch_id, status FROM orders WHERE id = $1 FOR UPDATE',
+      'SELECT id, total_amount, paid_amount, branch_id, status, payment_method, cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits, offline_uuid FROM orders WHERE id = $1 FOR UPDATE',
       [resolvedId]
     );
     if (rows.length === 0) {
@@ -490,9 +632,66 @@ async function payRemaining(id, amount, paymentMethod, user) {
 
     const newPaidAmount = roundCurrency(currentPaid + safeAmount);
 
+    // Normalize payment method for remaining payment
+    const rawMethod = String(paymentMethod || 'cash').toLowerCase().trim();
+    let normM = 'cash';
+    if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawMethod)) normM = 'card';
+    else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل'].includes(rawMethod)) normM = 'bank_transfer';
+    else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawMethod)) normM = 'wallet';
+
+    let newCash = roundCurrency(Number(order.cash_amount || 0));
+    let newCard = roundCurrency(Number(order.card_amount || 0));
+    let newWallet = roundCurrency(Number(order.wallet_amount || 0));
+    let newBank = roundCurrency(Number(order.bank_transfer_amount || 0));
+
+    if (normM === 'cash') newCash = roundCurrency(newCash + safeAmount);
+    else if (normM === 'card') newCard = roundCurrency(newCard + safeAmount);
+    else if (normM === 'bank_transfer') newBank = roundCurrency(newBank + safeAmount);
+    else if (normM === 'wallet') newWallet = roundCurrency(newWallet + safeAmount);
+
+    let splits = [];
+    if (Array.isArray(order.payment_splits)) {
+      splits = [...order.payment_splits];
+    } else if (typeof order.payment_splits === 'string' && order.payment_splits.trim()) {
+      try { splits = JSON.parse(order.payment_splits); } catch {}
+    }
+    if (!Array.isArray(splits) || splits.length === 0) {
+      const origMethod = order.payment_method || 'cash';
+      if (currentPaid > 0 && origMethod !== 'debt') {
+        splits.push({ method: origMethod, amount: currentPaid });
+      }
+    }
+    splits.push({ method: normM, amount: safeAmount, date: new Date().toISOString(), type: 'remaining_payment' });
+
+    // Determine final payment method name
+    const distinctMethods = new Set();
+    if (newCash > 0) distinctMethods.add('cash');
+    if (newCard > 0) distinctMethods.add('card');
+    if (newBank > 0) distinctMethods.add('bank_transfer');
+    if (newWallet > 0) distinctMethods.add('wallet');
+
+    let newPaymentMethod = order.payment_method;
+    if (distinctMethods.size > 1) {
+      newPaymentMethod = 'split';
+    } else if (distinctMethods.size === 1) {
+      newPaymentMethod = Array.from(distinctMethods)[0];
+    } else {
+      newPaymentMethod = normM;
+    }
+
+    const splitsJson = splits.length > 0 ? JSON.stringify(splits) : null;
+
     await tx.query(
-      'UPDATE orders SET paid_amount = $1 WHERE id = $2',
-      [newPaidAmount, resolvedId]
+      `UPDATE orders 
+       SET paid_amount = $1, 
+           cash_amount = $2, 
+           card_amount = $3, 
+           wallet_amount = $4, 
+           bank_transfer_amount = $5, 
+           payment_splits = $6, 
+           payment_method = $7 
+       WHERE id = $8`,
+      [newPaidAmount, newCash, newCard, newWallet, newBank, splitsJson, newPaymentMethod, resolvedId]
     );
 
     if (user) {
@@ -500,13 +699,34 @@ async function payRemaining(id, amount, paymentMethod, user) {
         user.id,
         user.username,
         'تسجيل دفعة متبقية',
-        `تم دفع ${safeAmount} ج.م للطلب #${resolvedId} (الإجمالي المدفوع: ${newPaidAmount} ج.م)`,
+        `تم دفع ${safeAmount} ج.م للطلب #${resolvedId} بـ (${normM}) (الإجمالي المدفوع: ${newPaidAmount} ج.م)`,
         'POS',
         order.branch_id
       );
     }
 
-    return { message: 'تم تسجيل الدفعة بنجاح', newPaidAmount, remainingAmount: roundCurrency(totalAmount - newPaidAmount) };
+    await queueSyncOperation(tx, req, 'order', 'update', resolvedId, order.branch_id, {
+      offline_uuid: order.offline_uuid,
+      paid_amount: newPaidAmount,
+      cash_amount: newCash,
+      card_amount: newCard,
+      wallet_amount: newWallet,
+      bank_transfer_amount: newBank,
+      payment_splits: splits,
+      payment_method: newPaymentMethod,
+    });
+
+    return {
+      message: 'تم تسجيل الدفعة بنجاح',
+      newPaidAmount,
+      remainingAmount: roundCurrency(totalAmount - newPaidAmount),
+      payment_method: newPaymentMethod,
+      cash_amount: newCash,
+      bank_transfer_amount: newBank,
+      card_amount: newCard,
+      wallet_amount: newWallet,
+      payment_splits: splits
+    };
   });
 }
 
@@ -557,6 +777,7 @@ async function getOrderDetails(id, user) {
 
   return {
     ...order,
+    payment_splits: typeof order.payment_splits === 'string' ? (() => { try { return JSON.parse(order.payment_splits); } catch { return null; } })() : order.payment_splits,
     items: itemRows,
   };
 }
@@ -825,9 +1046,60 @@ async function updateOrder(id, body, user) {
       }
     }
 
-    // Safe paid and change handling
-    const safePaid = Math.max(0, roundCurrency(Number(paid_amount !== undefined ? paid_amount : (currentOrder.paid_amount || 0))));
-    const safeChange = roundCurrency(Math.max(0, safePaid - recalculatedTotal));
+    // Calculate method breakdowns & splits if provided, otherwise preserve or update from payment_method
+    let cleanSplits = null;
+    let p_cash = 0;
+    let p_card = 0;
+    let p_wallet = 0;
+    let p_bank = 0;
+    let finalPaymentMethod = payment_method || currentOrder.payment_method || 'cash';
+
+    if (Array.isArray(body?.payment_splits)) {
+      cleanSplits = body.payment_splits;
+    } else if (typeof body?.payment_splits === 'string' && body.payment_splits.trim()) {
+      try { cleanSplits = JSON.parse(body.payment_splits); } catch {}
+    }
+
+    const rawPaid = Math.max(0, roundCurrency(Number(paid_amount !== undefined ? paid_amount : (currentOrder.paid_amount || 0))));
+
+    if (Array.isArray(cleanSplits) && cleanSplits.length > 0) {
+      for (const s of cleanSplits) {
+        const rawM = String(s.method || '').toLowerCase().trim();
+        const amt = roundCurrency(Math.max(0, Number(s.amount || 0)));
+        if (['cash', 'نقدي', 'كاش'].includes(rawM)) p_cash = roundCurrency(p_cash + amt);
+        else if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawM)) p_card = roundCurrency(p_card + amt);
+        else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل'].includes(rawM)) p_bank = roundCurrency(p_bank + amt);
+        else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawM)) p_wallet = roundCurrency(p_wallet + amt);
+      }
+      if (cleanSplits.length > 1) finalPaymentMethod = 'split';
+      else if (cleanSplits.length === 1) finalPaymentMethod = cleanSplits[0].method;
+    } else {
+      const rawM = String(finalPaymentMethod).toLowerCase().trim();
+      if (['cash', 'نقدي', 'كاش'].includes(rawM)) { p_cash = rawPaid; finalPaymentMethod = 'cash'; }
+      else if (['card', 'visa', 'بطاقة', 'فيزا'].includes(rawM)) { p_card = rawPaid; finalPaymentMethod = 'card'; }
+      else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل'].includes(rawM)) { p_bank = rawPaid; finalPaymentMethod = 'bank_transfer'; }
+      else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawM)) { p_wallet = rawPaid; finalPaymentMethod = 'wallet'; }
+      else if (['debt', 'credit_customer', 'آجل'].includes(rawM)) { finalPaymentMethod = 'debt'; }
+    }
+
+    const effectivePaid = cleanSplits && cleanSplits.length > 0
+      ? roundCurrency(p_cash + p_card + p_wallet + p_bank)
+      : rawPaid;
+    const safeChange = roundCurrency(Math.max(0, effectivePaid - recalculatedTotal));
+    if (cleanSplits && cleanSplits.length > 0) {
+      if (safeChange > 0 && safeChange > p_cash) {
+        const err = new Error('لا يمكن صرف باقي نقدي يتجاوز المبلغ النقدي المستلم');
+        err.statusCode = 400;
+        throw err;
+      }
+    } else if (finalPaymentMethod !== 'cash' && safeChange > 0) {
+      const err = new Error('لا يمكن صرف باقي نقدي لعمليات الدفع غير النقدية');
+      err.statusCode = 400;
+      throw err;
+    }
+    const netCash = roundCurrency(Math.max(0, p_cash - safeChange));
+    const netPaid = roundCurrency(Math.min(effectivePaid, recalculatedTotal));
+    const splitsJson = cleanSplits && cleanSplits.length > 1 ? JSON.stringify(cleanSplits) : null;
 
     // Update order record
     await tx.query(
@@ -836,20 +1108,30 @@ async function updateOrder(id, body, user) {
            invoice_discount = $2, 
            invoice_discount_type = $3,
            customer_id = $4,
-           payment_method = COALESCE($5, payment_method),
+           payment_method = $5,
            seller_id = COALESCE($6, seller_id),
            paid_amount = $7,
-           change_amount = $8
-       WHERE id = $9`,
+           change_amount = $8,
+           cash_amount = $9,
+           card_amount = $10,
+           wallet_amount = $11,
+           bank_transfer_amount = $12,
+           payment_splits = $13
+       WHERE id = $14`,
       [
         recalculatedTotal,
         invDiscountVal,
         invDiscountType,
         finalCustomerId,
-        payment_method || null,
+        finalPaymentMethod,
         seller_id || null,
-        safePaid,
+        netPaid,
         safeChange,
+        netCash,
+        p_card,
+        p_wallet,
+        p_bank,
+        splitsJson,
         resolvedId,
       ]
     );

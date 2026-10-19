@@ -25,6 +25,8 @@ const expensesRoutes = require('./modules/expenses/expenses.routes');
 const reportsRoutes = require('./modules/reports/reports.routes');
 const syncRoutes = require('./modules/sync/sync.routes');
 const wornRoutes = require('./modules/worn/worn.routes');
+const notificationsRoutes = require('./modules/notifications/notifications.routes');
+const searchRoutes = require('./modules/search/search.routes');
 
 const app = express();
 
@@ -184,6 +186,8 @@ app.use('/api', expensesRoutes);
 app.use('/api', reportsRoutes);
 app.use('/api', syncRoutes);
 app.use('/api', wornRoutes);
+app.use('/api', notificationsRoutes);
+app.use('/api', searchRoutes);
 
 // SPA client fallback for HTML5 History API
 app.use((req, res, next) => {

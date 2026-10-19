@@ -144,6 +144,11 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       invoice_discount REAL DEFAULT 0,
       invoice_discount_type TEXT DEFAULT 'amount',
       branch_invoice_number TEXT,
+      cash_amount REAL DEFAULT 0,
+      card_amount REAL DEFAULT 0,
+      wallet_amount REAL DEFAULT 0,
+      bank_transfer_amount REAL DEFAULT 0,
+      payment_splits TEXT,
       offline_uuid TEXT UNIQUE,
       order_source TEXT DEFAULT 'pos',
       pending_sync INTEGER DEFAULT 1
@@ -350,7 +355,22 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       to_branch_id INTEGER,
       quantity INTEGER NOT NULL,
       transfer_date TEXT DEFAULT CURRENT_TIMESTAMP,
-      status TEXT DEFAULT 'completed'
+      status TEXT DEFAULT 'completed',
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_reads (
+      notification_id TEXT PRIMARY KEY,
+      user_id INTEGER,
+      read_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      is_dismissed INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS branch_heartbeats (
+      branch_id INTEGER PRIMARY KEY,
+      last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      is_online INTEGER DEFAULT 1,
+      meta TEXT
     );
 
     CREATE TABLE IF NOT EXISTS supply_records (
@@ -422,6 +442,52 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try {
     sqlite.exec("ALTER TABLE orders ADD COLUMN invoice_discount_type TEXT DEFAULT 'amount'");
   } catch {}
+  try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN cash_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN card_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN wallet_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN bank_transfer_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE orders ADD COLUMN payment_splits TEXT");
+  } catch {}
+
+  try {
+    sqlite.exec(`
+      UPDATE orders
+      SET cash_amount = MAX(0, paid_amount - COALESCE(change_amount, 0))
+      WHERE (payment_method IN ('cash', 'نقدي', 'كاش') OR payment_method IS NULL)
+        AND (cash_amount IS NULL OR cash_amount = 0)
+        AND paid_amount > 0
+    `);
+    sqlite.exec(`
+      UPDATE orders
+      SET card_amount = paid_amount
+      WHERE payment_method IN ('card', 'visa', 'فيزا', 'بطاقة')
+        AND (card_amount IS NULL OR card_amount = 0)
+        AND paid_amount > 0
+    `);
+    sqlite.exec(`
+      UPDATE orders
+      SET wallet_amount = paid_amount
+      WHERE payment_method IN ('wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة')
+        AND (wallet_amount IS NULL OR wallet_amount = 0)
+        AND paid_amount > 0
+    `);
+    sqlite.exec(`
+      UPDATE orders
+      SET bank_transfer_amount = paid_amount
+      WHERE payment_method IN ('bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل')
+        AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
+        AND paid_amount > 0
+    `);
+  } catch {}
 
   try {
     sqlite.exec("ALTER TABLE expenses ADD COLUMN payment_method TEXT DEFAULT 'cash'");
@@ -446,6 +512,9 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   } catch {}
   try {
     sqlite.exec("ALTER TABLE expenses ADD COLUMN deleted_at TEXT");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE notification_reads ADD COLUMN is_dismissed INTEGER DEFAULT 0");
   } catch {}
 
   try {

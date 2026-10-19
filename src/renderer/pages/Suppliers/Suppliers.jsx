@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Package,
   Plus,
@@ -70,15 +71,19 @@ export function Suppliers() {
   const { user, isAdmin } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
+  const [searchParams] = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory' | 'suppliers'
+  const initialTab = searchParams.get('tab') === 'suppliers' ? 'suppliers' : 'inventory';
+  const initialSearch = searchParams.get('search') || '';
+
+  const [activeTab, setActiveTab] = useState(initialTab); // 'inventory' | 'suppliers'
 
   // INVENTORY STATE
   const [products, setProducts] = useState([]);
   const [categoriesList, setCategoriesList] = useState(BASE_CATEGORIES);
   const [categoryCounts, setCategoryCounts] = useState({});
   const [loadingProducts, setLoadingProducts] = useState(true);
-  const [productSearch, setProductSearch] = useState('');
+  const [productSearch, setProductSearch] = useState(initialTab === 'inventory' ? initialSearch : '');
   const [selectedCategory, setSelectedCategory] = useState('الكل');
   const [stockStatusFilter, setStockStatusFilter] = useState('all');
   const [sortOrder, setSortOrder] = useState('latest');
@@ -315,13 +320,30 @@ export function Suppliers() {
   // SUPPLIERS STATE
   const [suppliers, setSuppliers] = useState([]);
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
-  const [supplierSearch, setSupplierSearch] = useState('');
+  const [supplierSearch, setSupplierSearch] = useState(initialTab === 'suppliers' ? initialSearch : '');
   const [supplierPagination, setSupplierPagination] = useState({
     page: 1,
     limit: 50,
     total: 0,
     totalPages: 1,
   });
+
+  // Sync when searchParams change from header navigation
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const searchParam = searchParams.get('search');
+    if (tabParam === 'suppliers') {
+      setActiveTab('suppliers');
+      if (searchParam !== null && searchParam !== undefined) {
+        setSupplierSearch(searchParam);
+      }
+    } else if (tabParam === 'inventory' || searchParam !== null) {
+      if (tabParam) setActiveTab('inventory');
+      if (searchParam !== null && searchParam !== undefined) {
+        setProductSearch(searchParam);
+      }
+    }
+  }, [searchParams]);
 
   // Add / Edit Supplier Modal
   const [showSupplierModal, setShowSupplierModal] = useState(false);
@@ -1143,14 +1165,14 @@ export function Suppliers() {
   return (
     <div className="space-y-5 max-w-[1700px] mx-auto select-none" style={{ direction: 'rtl' }}>
       {/* Top Header & Navigation Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm no-print">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FFFDF9] p-4 rounded-3xl border border-[#E6DECD] shadow-[0_2px_10px_rgba(36,34,31,0.03)] no-print">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setActiveTab('inventory')}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
               activeTab === 'inventory'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                : 'text-slate-600 hover:bg-slate-100'
+                ? 'bg-[#151515] text-white shadow-md'
+                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
             }`}
           >
             <Package className="w-4 h-4" />
@@ -1161,8 +1183,8 @@ export function Suppliers() {
             onClick={() => setActiveTab('suppliers')}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
               activeTab === 'suppliers'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                : 'text-slate-600 hover:bg-slate-100'
+                ? 'bg-[#151515] text-white shadow-md'
+                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
             }`}
           >
             <Building2 className="w-4 h-4" />
@@ -1195,7 +1217,6 @@ export function Suppliers() {
                 variant="primary"
                 icon={Plus}
                 onClick={openCreateProduct}
-                className="!bg-indigo-600 hover:!bg-indigo-700"
               >
                 إضافة منتج جديد
               </Button>
@@ -1216,7 +1237,6 @@ export function Suppliers() {
                 variant="primary"
                 icon={Plus}
                 onClick={openCreateSupplier}
-                className="!bg-indigo-600 hover:!bg-indigo-700"
               >
                 إضافة مورد جديد
               </Button>
@@ -1292,7 +1312,7 @@ export function Suppliers() {
               action={
                 <div className="flex items-center gap-2">
                   <div className="relative w-64">
-                    <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266] pointer-events-none" />
                     <input
                       type="text"
                       value={productSearch}
@@ -1301,7 +1321,7 @@ export function Suppliers() {
                         setInventoryPagination((prev) => ({ ...prev, page: 1 }));
                       }}
                       placeholder="ابحث بالاسم، الكود، الباركود..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-8 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 focus:bg-white transition-all"
+                      className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-8 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-all"
                     />
                     {productSearch.trim() && (
                       <button
@@ -1310,7 +1330,7 @@ export function Suppliers() {
                           setProductSearch('');
                           setInventoryPagination((prev) => ({ ...prev, page: 1 }));
                         }}
-                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#777266] hover:text-[#24221F] cursor-pointer"
                         title="مسح البحث"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -1325,7 +1345,7 @@ export function Suppliers() {
             />
 
             {/* Inventory Filter Bar */}
-            <div className="border-b border-slate-100 bg-slate-50/70 p-4 space-y-3">
+            <div className="border-b border-[#E6DECD] bg-[#FAF6ED]/70 p-4 space-y-3">
               {/* Row 1: Horizontal Quick Category Pills with Real Counts */}
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
                 {categoriesList.map((cat) => {
@@ -1342,15 +1362,15 @@ export function Suppliers() {
                       }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
                         isSelected
-                          ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-200'
-                          : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200/80 hover:border-slate-300'
+                          ? 'bg-[#151515] text-white shadow-sm ring-2 ring-[#151515]/20'
+                          : 'bg-[#FFFDF9] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F] border border-[#E6DECD]'
                       }`}
                     >
                       <span>{cat === 'الكل' ? 'كل الأصناف' : displayName}</span>
                       {typeof count === 'number' && (
                         <span
                           className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
-                            isSelected ? 'bg-indigo-700/60 text-white' : 'bg-slate-100 text-slate-600'
+                            isSelected ? 'bg-white/20 text-white' : 'bg-[#FAF6ED] text-[#777266] border border-[#E6DECD]/70'
                           }`}
                         >
                           {count.toLocaleString()}
@@ -1371,7 +1391,7 @@ export function Suppliers() {
                       setSelectedCategory(e.target.value);
                       setInventoryPagination((prev) => ({ ...prev, page: 1 }));
                     }}
-                    className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
+                    className="w-full h-10 pr-9 pl-8 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-all appearance-none cursor-pointer text-right"
                     aria-label="التصنيف / الفئة"
                   >
                     {categoriesList.map((cat) => {
@@ -1384,8 +1404,8 @@ export function Suppliers() {
                       );
                     })}
                   </select>
-                  <Tag className="w-4 h-4 text-indigo-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <ChevronDown className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Tag className="w-4 h-4 text-[#151515] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="w-4 h-4 text-[#777266] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
 
                 {/* Stock Status Dropdown */}
@@ -1396,7 +1416,7 @@ export function Suppliers() {
                       setStockStatusFilter(e.target.value);
                       setInventoryPagination((prev) => ({ ...prev, page: 1 }));
                     }}
-                    className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
+                    className="w-full h-10 pr-9 pl-8 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-all appearance-none cursor-pointer text-right"
                     aria-label="حالة المخزون"
                   >
                     <option value="all">كل حالات التوفر</option>
@@ -1643,7 +1663,7 @@ export function Suppliers() {
               <div className="overflow-x-auto">
                 <table className="w-full text-right text-sm">
                   <thead>
-                    <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
+                    <tr className="border-b border-[#E6DECD] text-[#777266] text-xs font-black uppercase">
                       <th className="pb-3 pr-4">الصورة</th>
                       <th className="pb-3">الاسم والكود</th>
                       <th className="pb-3">التصنيف</th>
@@ -1656,7 +1676,7 @@ export function Suppliers() {
                       <th className="pb-3 pl-4 text-center">إجراءات</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium">
+                  <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
                     {products.map((p) => {
                       const stock = Number(p.stock_level ?? p.stock_quantity ?? p.stock ?? 0);
                       const minStock = Number(p.min_stock_level ?? 5);
@@ -1666,9 +1686,9 @@ export function Suppliers() {
                       const hasDepletedSizes = Array.isArray(p.sizes) && p.sizes.length > 0 && p.sizes.some((s) => Number(s.stock_level ?? 0) <= 0);
 
                       return (
-                        <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
+                        <tr key={p.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                           <td className="py-3 pr-4">
-                            <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] overflow-hidden flex items-center justify-center">
                               {p.image_url ? (
                                 <img
                                   src={p.image_url}
@@ -1676,14 +1696,14 @@ export function Suppliers() {
                                   className="w-full h-full object-cover"
                                 />
                               ) : (
-                                <Tag className="w-4 h-4 text-slate-400" />
+                                <Tag className="w-4 h-4 text-[#777266]" />
                               )}
                             </div>
                           </td>
                           <td className="py-3">
-                            <div className="font-bold text-slate-900">{p.name}</div>
-                            <div className="text-[11px] font-mono text-slate-500 mt-0.5 flex items-center gap-1.5">
-                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
+                            <div className="font-bold text-[#24221F]">{p.name}</div>
+                            <div className="text-[11px] font-mono text-[#777266] mt-0.5 flex items-center gap-1.5">
+                              <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] text-[#24221F] font-bold border border-[#E6DECD]">
                                 كود: #{p.id}
                               </span>
                             </div>
@@ -1695,7 +1715,7 @@ export function Suppliers() {
                             <div className="flex flex-col gap-1.5">
                               {p.color && (
                                 <div className="flex items-center gap-1">
-                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200">
+                                  <span className="px-2 py-0.5 rounded-md bg-[#FAF6ED] text-[#24221F] text-xs font-bold border border-[#E6DECD]">
                                     {p.color}
                                   </span>
                                 </div>
@@ -1709,7 +1729,7 @@ export function Suppliers() {
                                         key={sIdx}
                                         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border transition-colors ${
                                           qty > 0
-                                            ? 'bg-slate-50 text-slate-800 border-slate-200'
+                                            ? 'bg-[#FAF6ED] text-[#24221F] border-[#E6DECD]'
                                             : 'bg-rose-50/70 text-rose-600 border-rose-200'
                                         }`}
                                         title={`المقاس: ${s.size_name} | الرصيد: ${qty} قطعة`}
@@ -1717,7 +1737,7 @@ export function Suppliers() {
                                         <span className="font-extrabold">{s.size_name}</span>
                                         <span
                                           className={`px-1.5 py-0.5 rounded text-[11px] font-black ${
-                                            qty > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-rose-100 text-rose-700'
+                                            qty > 0 ? 'bg-[#FFFDF9] text-[#24221F] border border-[#E6DECD]' : 'bg-rose-100 text-rose-700'
                                           }`}
                                         >
                                           {qty}
@@ -1728,17 +1748,17 @@ export function Suppliers() {
                                 </div>
                               ) : (
                                 (p.size_cut || p.size) && (
-                                  <span className="text-xs text-slate-500 font-bold">
+                                  <span className="text-xs text-[#777266] font-bold">
                                     {p.size_cut || p.size}
                                   </span>
                                 )
                               )}
                             </div>
                           </td>
-                          <td className="py-3 font-mono text-xs text-slate-500" dir="ltr">
+                          <td className="py-3 font-mono text-xs text-[#777266]" dir="ltr">
                             {p.barcode || '-'}
                           </td>
-                          <td className="py-3 font-black text-indigo-600">
+                          <td className="py-3 font-black text-[#24221F]">
                             {Number(p.price || 0).toLocaleString()} ج.م
                           </td>
                           {isAdmin && (
@@ -1839,12 +1859,12 @@ export function Suppliers() {
 
             {/* Inventory Pagination Bar */}
             {inventoryPagination.total > 0 && (
-              <div className="p-4 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/50 rounded-b-2xl">
+              <div className="p-4 border-t border-[#E6DECD] flex flex-col md:flex-row items-center justify-between gap-3 bg-[#FAF6ED]/60 rounded-b-3xl">
                 {/* Info summary & Page size */}
-                <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-600">
+                <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-[#777266]">
                   <span>
                     عرض{' '}
-                    <span className="text-indigo-600 font-black">
+                    <span className="text-[#24221F] font-black">
                       {inventoryPagination.limit === 'all'
                         ? `1 - ${inventoryPagination.total}`
                         : `${(inventoryPagination.page - 1) * inventoryPagination.limit + 1} - ${Math.min(
@@ -1853,22 +1873,22 @@ export function Suppliers() {
                           )}`}
                     </span>{' '}
                     من إجمالي{' '}
-                    <span className="text-slate-900 font-black">
+                    <span className="text-[#24221F] font-black">
                       {Number(inventoryPagination.total).toLocaleString()}
                     </span>{' '}
                     صنف
                   </span>
 
                   <div className="flex items-center gap-1.5 mr-2">
-                    <span className="text-slate-400">لكل صفحة:</span>
+                    <span className="text-[#777266]">لكل صفحة:</span>
                     {[30, 50, 100, 200, 'الكل'].map((lim) => (
                       <button
                         key={lim}
                         onClick={() => handleInventoryLimitChange(lim)}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
                           inventoryPagination.limit === lim || (lim === 'الكل' && inventoryPagination.limit === 'all')
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                            ? 'bg-[#151515] text-white shadow-sm'
+                            : 'bg-[#FFFDF9] border border-[#E6DECD] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
                         }`}
                       >
                         {lim}
@@ -2039,7 +2059,7 @@ export function Suppliers() {
             action={
               <div className="flex items-center gap-2">
                 <div className="relative w-64">
-                  <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266]" />
                   <input
                     type="text"
                     value={supplierSearch}
@@ -2048,7 +2068,7 @@ export function Suppliers() {
                       setSupplierPagination((prev) => ({ ...prev, page: 1 }));
                     }}
                     placeholder="ابحث باسم المورد أو الشركة..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                    className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-colors"
                   />
                 </div>
                 <Button variant="outline" onClick={fetchSuppliers} icon={RotateCcw}>
@@ -2059,18 +2079,18 @@ export function Suppliers() {
           />
 
           {loadingSuppliers ? (
-            <div className="py-20 text-center text-slate-400 font-bold text-sm">
+            <div className="py-20 text-center text-[#777266] font-bold text-sm">
               جاري تحميل الموردين...
             </div>
           ) : suppliers.length === 0 ? (
-            <div className="py-20 text-center text-slate-400 font-bold text-sm">
+            <div className="py-20 text-center text-[#777266] font-bold text-sm">
               لا يوجد موردين مسجلين
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-right text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
+                  <tr className="border-b border-[#E6DECD] text-[#777266] text-xs font-black uppercase">
                     <th className="pb-3 pr-4">اسم المورد والكود</th>
                     <th className="pb-3">الشركة / المصنع</th>
                     <th className="pb-3">الهاتف</th>
@@ -2080,19 +2100,19 @@ export function Suppliers() {
                     <th className="pb-3 pl-4 text-center">إجراءات</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 font-medium">
+                <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
                   {suppliers.map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={s.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                       <td className="py-3.5 pr-4">
-                        <div className="font-bold text-slate-900">{s.name}</div>
-                        <div className="text-[10px] font-mono text-slate-400 font-bold">كود: #{s.code || s.id}</div>
+                        <div className="font-bold text-[#24221F]">{s.name}</div>
+                        <div className="text-[10px] font-mono text-[#777266] font-bold">كود: #{s.code || s.id}</div>
                       </td>
-                      <td className="py-3.5 text-slate-600 font-bold text-xs">{s.company_name || s.company || '-'}</td>
-                      <td className="py-3.5 text-slate-500 font-mono text-xs" dir="ltr">
+                      <td className="py-3.5 text-[#565147] font-bold text-xs">{s.company_name || s.company || '-'}</td>
+                      <td className="py-3.5 text-[#777266] font-mono text-xs" dir="ltr">
                         {s.phone || '-'}
                       </td>
-                      <td className="py-3.5 text-slate-500 text-xs">{s.address || '-'}</td>
-                      <td className="py-3.5 font-bold text-slate-800">
+                      <td className="py-3.5 text-[#777266] text-xs">{s.address || '-'}</td>
+                      <td className="py-3.5 font-bold text-[#24221F]">
                         {Number(s.total_purchases || 0).toLocaleString()} ج.م
                       </td>
                       <td className="py-3.5 font-black text-rose-600">
@@ -2103,7 +2123,7 @@ export function Suppliers() {
                           {/* Statement / Ledger */}
                           <button
                             onClick={() => openStatement(s)}
-                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
                             title="كشف حساب المورد"
                           >
                             <FileText className="w-4 h-4" />
@@ -2116,7 +2136,7 @@ export function Suppliers() {
                               setPaymentAmount(s.balance ? s.balance.toString() : '');
                               setShowPaymentModal(true);
                             }}
-                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
                             title="سداد دفعة للمورد"
                           >
                             <DollarSign className="w-4 h-4" />
@@ -2137,7 +2157,7 @@ export function Suppliers() {
                           {/* Edit Supplier */}
                           <button
                             onClick={() => openEditSupplier(s)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
                             title="تعديل بيانات المورد"
                           >
                             <Edit2 className="w-4 h-4" />

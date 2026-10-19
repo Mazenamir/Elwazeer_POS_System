@@ -235,6 +235,42 @@ function formatMoney(amount) {
   return num < 0 ? `\u200E${formatted} ج.م` : `${formatted} ج.م`;
 }
 
+function formatPdfPaymentMethod(item) {
+  if (!item) return '-';
+  const splits = Array.isArray(item.payment_splits)
+    ? item.payment_splits
+    : (typeof item.payment_splits === 'string' ? (() => { try { return JSON.parse(item.payment_splits); } catch { return null; } })() : null);
+
+  if (item.payment_method === 'split' || (splits && splits.length > 1)) {
+    if (splits && splits.length > 0) {
+      const parts = splits.map(s => {
+        const m = String(s.method || '').toLowerCase();
+        let mName = 'نقدي';
+        if (['visa', 'card', 'بطاقة', 'فيزا'].includes(m)) mName = 'فيزا';
+        else if (['bank_transfer', 'instapay', 'bank', 'انستاباي', 'تحويل بنكي'].includes(m)) mName = 'انستاباي';
+        else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(m)) mName = 'محفظة';
+        else if (['debt', 'آجل'].includes(m)) mName = 'آجل';
+        return `${mName}: ${Number(s.amount || 0).toLocaleString('en-US')}`;
+      });
+      return `مجزأ (${parts.join(' + ')})`;
+    }
+    const parts = [];
+    if (Number(item.cash_amount) > 0) parts.push(`نقدي: ${item.cash_amount}`);
+    if (Number(item.bank_transfer_amount) > 0) parts.push(`انستاباي: ${item.bank_transfer_amount}`);
+    if (Number(item.card_amount) > 0) parts.push(`فيزا: ${item.card_amount}`);
+    if (Number(item.wallet_amount) > 0) parts.push(`محفظة: ${item.wallet_amount}`);
+    return parts.length > 0 ? `مجزأ (${parts.join(' + ')})` : 'مجزأ';
+  }
+
+  const m = String(item.payment_method || '').toLowerCase();
+  if (m === 'cash' || m === 'نقدي' || m === 'كاش') return 'نقدي';
+  if (m === 'visa' || m === 'card' || m === 'فيزا' || m === 'بطاقة') return 'فيزا';
+  if (['bank_transfer', 'bank', 'transfer', 'instapay', 'انستاباي', 'تحويل بنكي'].includes(m)) return 'تحويل بنكي / انستاباي';
+  if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(m)) return 'فودافون كاش / محفظة';
+  if (m === 'debt' || m === 'آجل') return 'آجل';
+  return item.payment_method || '-';
+}
+
 /**
  * 1. Daily Reports History PDF HTML
  */
@@ -760,7 +796,7 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
       <td class="center font-mono font-bold">#${inv.invoice_number || '-'}</td>
       <td class="center font-mono">${inv.created_date || '-'}</td>
       <td>${inv.cashier_name || '-'}</td>
-      <td class="center">${inv.payment_method === 'cash' ? 'نقدي' : (inv.payment_method === 'visa' ? 'فيزا' : inv.payment_method || '-')}</td>
+      <td class="center">${formatPdfPaymentMethod(inv)}</td>
       <td class="num font-bold">${formatMoney(inv.amount)}</td>
       <td class="num">${formatMoney(inv.paid_amount)}</td>
       <td class="num text-rose-600">${formatMoney(inv.remainder)}</td>
@@ -892,7 +928,7 @@ function generateSalesPdfHtml(salesData, options = {}) {
     totalPaid += paid;
     totalRemainder += remainder;
 
-    const pMethod = o.payment_method === 'cash' ? 'نقدي' : (o.payment_method === 'visa' ? 'فيزا' : (o.payment_method || '-'));
+    const pMethod = formatPdfPaymentMethod(o);
     const statusLabel = o.status === 'completed'
       ? 'مكتملة'
       : o.status === 'partially_returned'
@@ -943,12 +979,20 @@ function generateSalesPdfHtml(salesData, options = {}) {
         <div class="kpi-value">${formatMoney(summary.total_amount || totalAmount)}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">المحصل نقداً</div>
-        <div class="kpi-value">${formatMoney(summary.cash_paid || 0)}</div>
+        <div class="kpi-title">المحصل بالدرج (كاش)</div>
+        <div class="kpi-value" style="color: #047857;">${formatMoney(summary.cash_paid || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المحصل انستاباي / تحويل</div>
+        <div class="kpi-value" style="color: #4338ca;">${formatMoney(summary.bank_transfer_paid || 0)}</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-title">المحصل فيزا</div>
         <div class="kpi-value">${formatMoney(summary.visa_paid || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">المحصل محافظ</div>
+        <div class="kpi-value">${formatMoney(summary.wallet_paid || 0)}</div>
       </div>
     </div>
 

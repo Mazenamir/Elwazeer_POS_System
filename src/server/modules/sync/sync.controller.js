@@ -1,8 +1,14 @@
 const config = require('../../config/env');
 const db = require('../../database/connection');
 const syncService = require('./sync.service');
+const notificationsService = require('../notifications/notifications.service');
 
 async function ping(req, res) {
+  const branchId = req.query?.branch_id || req.headers['x-branch-id'];
+  if (branchId) {
+    notificationsService.recordHeartbeat(branchId, 'online');
+  }
+
   let dbOk = false;
   try {
     dbOk = await db.isPrimaryDbAvailable();
@@ -32,6 +38,10 @@ async function apply(req, res, next) {
   const operation = req.body;
   if (!operation || !operation.operation_uuid || !operation.entity_type || !operation.payload) {
     return res.status(400).json({ error: 'Invalid sync operation' });
+  }
+
+  if (operation.branch_id) {
+    notificationsService.recordHeartbeat(operation.branch_id, 'online');
   }
 
   try {
@@ -81,6 +91,9 @@ async function getCatalog(req, res, next) {
   }
 
   try {
+    if (req.query?.branch_id) {
+      notificationsService.recordHeartbeat(req.query.branch_id, 'online');
+    }
     const catalog = await syncService.exportCatalogForBranch(req.query?.branch_id);
     res.json(catalog);
   } catch (err) {

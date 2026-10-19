@@ -438,21 +438,21 @@ export function ExpensesManager({ isCashierTab = false }) {
   return (
     <div className="space-y-4" style={{ direction: 'rtl' }}>
       {/* Top Header Card */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-[#FFFDF9] p-5 sm:p-6 rounded-3xl border border-[#E6DECD] shadow-[0_2px_10px_rgba(36,34,31,0.03)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shadow-sm shrink-0">
+          <div className="w-12 h-12 rounded-2xl bg-[#FCEBF4] border border-[#F1B6D8]/50 flex items-center justify-center text-[#931D4E] shadow-sm shrink-0">
             <Wallet className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              <h2 className="text-xl sm:text-2xl font-black text-[#24221F] tracking-tight">
                 {isCashierTab ? 'المصروفات ونثريات الكاشير' : 'إدارة المصروفات التشغيلية'}
               </h2>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-rose-100 text-rose-800">
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-[#FCEBF4] text-[#931D4E] border border-[#F1B6D8]/40">
                 خزينة الفرع
               </span>
             </div>
-            <p className="text-xs font-semibold text-slate-500 mt-0.5">
+            <p className="text-xs font-semibold text-[#777266] mt-0.5">
               قيد فوري للمصروفات، ومتابعة حركة النقدية الصادرة من درج الكاشير
             </p>
           </div>
@@ -501,15 +501,15 @@ export function ExpensesManager({ isCashierTab = false }) {
       </div>
 
       {/* Smart Filters Card */}
-      <Card className="!p-4 bg-slate-50/70 border border-slate-200/80">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-200/60 mb-3">
+      <Card className="!p-5 bg-[#FAF6ED]/70 border border-[#E6DECD]">
+        <div className="flex items-center justify-between pb-3 border-b border-[#E6DECD] mb-3">
           <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-indigo-600" />
-            <span className="text-xs font-black text-slate-800">فلاتر البحث الذكي للمصروفات</span>
+            <Filter className="w-4 h-4 text-[#151515]" />
+            <span className="text-xs font-black text-[#24221F]">فلاتر البحث الذكي للمصروفات</span>
           </div>
           <button
             onClick={clearFilters}
-            className="text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1 transition-colors"
+            className="text-xs font-bold text-[#777266] hover:text-[#24221F] flex items-center gap-1 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             إعادة تعيين الفلاتر
@@ -519,22 +519,22 @@ export function ExpensesManager({ isCashierTab = false }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
           {/* Keyword Search */}
           <div className="lg:col-span-2">
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">بحث في البيان / الكاشير</label>
+            <label className="block text-[11px] font-bold text-[#777266] mb-1">بحث في البيان / الكاشير</label>
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+              <Search className="w-4 h-4 text-[#777266] absolute right-3 top-3 pointer-events-none" />
               <input
                 type="text"
                 placeholder="ابحث بالبيان، الملاحظات..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full h-10 pr-9 pl-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm"
+                className="w-full h-10 pr-9 pl-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
               />
             </div>
           </div>
 
           {/* Date From */}
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">من تاريخ</label>
+            <label className="block text-[11px] font-bold text-[#777266] mb-1">من تاريخ</label>
             <input
               type="date"
               value={dateFrom}
@@ -542,13 +542,13 @@ export function ExpensesManager({ isCashierTab = false }) {
                 setDateFrom(e.target.value);
                 setPagination((p) => ({ ...p, page: 1 }));
               }}
-              className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm"
+              className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
             />
           </div>
 
           {/* Date To */}
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">إلى تاريخ</label>
+            <label className="block text-[11px] font-bold text-[#777266] mb-1">إلى تاريخ</label>
             <input
               type="date"
               value={dateTo}
@@ -556,20 +556,20 @@ export function ExpensesManager({ isCashierTab = false }) {
                 setDateTo(e.target.value);
                 setPagination((p) => ({ ...p, page: 1 }));
               }}
-              className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm"
+              className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
             />
           </div>
 
           {/* Category Filter */}
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">الفئة / البند</label>
+            <label className="block text-[11px] font-bold text-[#777266] mb-1">الفئة / البند</label>
             <select
               value={filterCategory}
               onChange={(e) => {
                 setFilterCategory(e.target.value);
                 setPagination((p) => ({ ...p, page: 1 }));
               }}
-              className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm"
+              className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
             >
               <option value="all">كل الفئات</option>
               {EXPENSE_CATEGORIES.map((c) => (
@@ -582,14 +582,14 @@ export function ExpensesManager({ isCashierTab = false }) {
 
           {/* Payment Method Filter */}
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">طريقة الصرف</label>
+            <label className="block text-[11px] font-bold text-[#777266] mb-1">طريقة الصرف</label>
             <select
               value={filterPaymentMethod}
               onChange={(e) => {
                 setFilterPaymentMethod(e.target.value);
                 setPagination((p) => ({ ...p, page: 1 }));
               }}
-              className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm"
+              className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
             >
               <option value="all">كل الطرق</option>
               {PAYMENT_METHODS.map((p) => (
@@ -602,14 +602,14 @@ export function ExpensesManager({ isCashierTab = false }) {
 
           {/* Cashier Filter */}
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">الكاشير / القائم بالصرف</label>
+            <label className="block text-[11px] font-bold text-[#777266] mb-1">الكاشير / القائم بالصرف</label>
             <select
               value={filterCashier}
               onChange={(e) => {
                 setFilterCashier(e.target.value);
                 setPagination((p) => ({ ...p, page: 1 }));
               }}
-              className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm"
+              className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
             >
               <option value="all">كل الكاشيرات</option>
               {cashiersList.map((u) => (
@@ -623,14 +623,14 @@ export function ExpensesManager({ isCashierTab = false }) {
           {/* Branch Filter (Only if Admin & not cashier tab) */}
           {!isCashierTab && isAdmin && (
             <div>
-              <label className="block text-[11px] font-bold text-slate-500 mb-1">الفرع</label>
+              <label className="block text-[11px] font-bold text-[#777266] mb-1">الفرع</label>
               <select
                 value={filterBranch}
                 onChange={(e) => {
                   setFilterBranch(e.target.value);
                   setPagination((p) => ({ ...p, page: 1 }));
                 }}
-                className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm"
+                className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
               >
                 <option value="all">كل الفروع</option>
                 {branches.map((b) => (
@@ -645,19 +645,19 @@ export function ExpensesManager({ isCashierTab = false }) {
       </Card>
 
       {/* Expenses Table Card */}
-      <Card className="!p-0 overflow-hidden border border-slate-200/80 shadow-sm">
-        <div className="p-4 bg-white border-b border-slate-100 flex items-center justify-between">
+      <Card className="!p-0 overflow-hidden border border-[#E6DECD] shadow-sm">
+        <div className="p-4 bg-[#FFFDF9] border-b border-[#E6DECD] flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Receipt className="w-5 h-5 text-indigo-600" />
-            <h3 className="text-base font-black text-slate-900">سجل المصروفات والنثريات</h3>
-            <span className="text-xs font-bold text-slate-400">({expenses.length} حركة معروضة)</span>
+            <Receipt className="w-5 h-5 text-[#151515]" />
+            <h3 className="text-base font-black text-[#24221F]">سجل المصروفات والنثريات</h3>
+            <span className="text-xs font-bold text-[#777266]">({expenses.length} حركة معروضة)</span>
           </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-right border-collapse">
             <thead>
-              <tr className="bg-slate-900 text-white text-xs font-black">
+              <tr className="bg-[#151515] text-white text-xs font-black">
                 <th className="py-3.5 px-4 whitespace-nowrap">التاريخ والوقت</th>
                 {(!isCashierTab || isAdmin) && <th className="py-3.5 px-4 whitespace-nowrap">الفرع</th>}
                 <th className="py-3.5 px-4 whitespace-nowrap">البند / الفئة</th>
@@ -697,10 +697,10 @@ export function ExpensesManager({ isCashierTab = false }) {
                   const canAct = canModify(exp);
 
                   return (
-                    <tr key={exp.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={exp.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                       {/* Date & Time */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <div className="font-black text-slate-900 text-xs">
+                        <div className="font-black text-[#24221F] text-xs">
                           {formatDateTime(exp.expense_date, exp.created_at)}
                         </div>
                       </td>
@@ -708,7 +708,7 @@ export function ExpensesManager({ isCashierTab = false }) {
                       {/* Branch */}
                       {(!isCashierTab || isAdmin) && (
                         <td className="py-3.5 px-4 whitespace-nowrap">
-                          <span className="text-xs font-extrabold text-slate-700">
+                          <span className="text-xs font-extrabold text-[#565147]">
                             {exp.branch_name || 'الفرع الرئيسي'}
                           </span>
                         </td>
@@ -743,14 +743,14 @@ export function ExpensesManager({ isCashierTab = false }) {
 
                       {/* Cashier / User */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                          <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#565147]">
+                          <User className="w-3.5 h-3.5 text-[#777266] shrink-0" />
                           <span>{exp.created_by_name || exp.cashier_name || 'النظام'}</span>
                         </div>
                       </td>
 
                       {/* Notes / Description */}
-                      <td className="py-3.5 px-4 text-xs font-semibold text-slate-600 max-w-xs break-words">
+                      <td className="py-3.5 px-4 text-xs font-semibold text-[#777266] max-w-xs break-words">
                         {cleanNotes(exp.notes) || '-'}
                       </td>
 
@@ -761,7 +761,7 @@ export function ExpensesManager({ isCashierTab = false }) {
                             onClick={() => handleOpenEdit(exp)}
                             disabled={!canAct}
                             title={canAct ? 'تعديل المصروف' : 'غير مصرح بتعديل مصروفات الآخرين'}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                            className="p-1.5 rounded-lg text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] transition-colors disabled:opacity-30 disabled:pointer-events-none"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
@@ -769,7 +769,7 @@ export function ExpensesManager({ isCashierTab = false }) {
                             onClick={() => setExpenseToDelete(exp)}
                             disabled={!canAct}
                             title={canAct ? 'حذف المصروف' : 'غير مصرح بحذف مصروفات الآخرين'}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                            className="p-1.5 rounded-lg text-[#777266] hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -785,8 +785,8 @@ export function ExpensesManager({ isCashierTab = false }) {
 
         {/* Pagination Footer */}
         {pagination.totalPages > 1 && (
-          <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
-            <span className="text-xs font-bold text-slate-500">
+          <div className="p-4 border-t border-[#E6DECD] flex items-center justify-between bg-[#FAF6ED]/60">
+            <span className="text-xs font-bold text-[#777266]">
               صفحة {pagination.page} من {pagination.totalPages} (إجمالي {pagination.total} حركة)
             </span>
             <div className="flex items-center gap-1.5">

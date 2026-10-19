@@ -20,6 +20,11 @@ export function ThermalReceipt({
   customerPhone = '',
   sellerName = '',
   paymentMethod = 'cash',
+  paymentSplits = null,
+  cashAmount = 0,
+  bankTransferAmount = 0,
+  cardAmount = 0,
+  walletAmount = 0,
   branchName = '',
   storePhone = '',
   storeAddress = '',
@@ -65,7 +70,11 @@ export function ThermalReceipt({
       : 'فاتورة بيع');
 
   const formattedDateTime = formatReceiptDate(date);
-  const paymentMethodLabel = getPaymentMethodArabic(paymentMethod);
+  const normalizedSplits = Array.isArray(paymentSplits)
+    ? paymentSplits
+    : (typeof paymentSplits === 'string' ? (() => { try { return JSON.parse(paymentSplits); } catch { return []; } })() : []);
+  const isSplit = paymentMethod === 'split' || (normalizedSplits && normalizedSplits.length > 1);
+  const paymentMethodLabel = isSplit ? 'دفع مجزأ' : getPaymentMethodArabic(paymentMethod);
 
   // Auto-render CODE128 vector barcode safely
   useEffect(() => {
@@ -416,6 +425,50 @@ export function ThermalReceipt({
             <div className="flex justify-between items-center text-slate-700 font-medium">
               <span>المدفوع:</span>
               <span dir="ltr">{numPaid.toFixed(2)} ج.م</span>
+            </div>
+          )}
+
+          {/* Split Payment Breakdown */}
+          {type !== 'return' && isSplit && (
+            <div className="bg-slate-50 border border-slate-200 rounded p-1.5 my-1 text-[11px] space-y-1">
+              <div className="text-[10px] font-bold text-slate-600 border-b border-slate-200 pb-0.5">
+                تفاصيل طرق الدفع (دفع مجزأ):
+              </div>
+              {normalizedSplits && normalizedSplits.length > 0 ? (
+                normalizedSplits.map((s, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-slate-700">
+                    <span>{getPaymentMethodArabic(s.method || s.payment_method)}:</span>
+                    <span dir="ltr" className="font-semibold text-slate-900">{Number(s.amount || 0).toFixed(2)} ج.م</span>
+                  </div>
+                ))
+              ) : (
+                <>
+                  {Number(cashAmount) > 0 && (
+                    <div className="flex justify-between items-center text-slate-700">
+                      <span>نقداً (بالدرج):</span>
+                      <span dir="ltr" className="font-semibold text-slate-900">{Number(cashAmount).toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+                  {Number(bankTransferAmount) > 0 && (
+                    <div className="flex justify-between items-center text-slate-700">
+                      <span>انستاباي / تحويل بنكي:</span>
+                      <span dir="ltr" className="font-semibold text-slate-900">{Number(bankTransferAmount).toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+                  {Number(cardAmount) > 0 && (
+                    <div className="flex justify-between items-center text-slate-700">
+                      <span>بطاقة بنكية (فيزا):</span>
+                      <span dir="ltr" className="font-semibold text-slate-900">{Number(cardAmount).toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+                  {Number(walletAmount) > 0 && (
+                    <div className="flex justify-between items-center text-slate-700">
+                      <span>محفظة إلكترونية:</span>
+                      <span dir="ltr" className="font-semibold text-slate-900">{Number(walletAmount).toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 

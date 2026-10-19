@@ -417,7 +417,37 @@ async function applyOperation(operation) {
       const orderData = payload.order || payload;
       const orderOfflineUuid = payload.offline_uuid || orderData.offline_uuid;
       const exists = await tx.query('SELECT id FROM orders WHERE offline_uuid = $1', [orderOfflineUuid]);
-      if (exists.rows.length) return;
+      if (exists.rows.length) {
+        if (operation.action === 'update') {
+          const splitsToSave = orderData.payment_splits
+            ? (typeof orderData.payment_splits === 'object' ? JSON.stringify(orderData.payment_splits) : orderData.payment_splits)
+            : null;
+          await tx.query(
+            `UPDATE orders 
+             SET paid_amount = $1, 
+                 change_amount = $2, 
+                 payment_method = $3,
+                 cash_amount = $4, 
+                 card_amount = $5, 
+                 wallet_amount = $6, 
+                 bank_transfer_amount = $7, 
+                 payment_splits = $8
+             WHERE id = $9`,
+            [
+              orderData.paid_amount || 0,
+              orderData.change_amount || 0,
+              orderData.payment_method || 'cash',
+              Number(orderData.cash_amount || 0),
+              Number(orderData.card_amount || 0),
+              Number(orderData.wallet_amount || 0),
+              Number(orderData.bank_transfer_amount || 0),
+              splitsToSave,
+              exists.rows[0].id
+            ]
+          );
+        }
+        return;
+      }
       const branchId = orderData.branch_id || operation.branch_id || 1;
       const customer = payload.customer || {};
       if (customer.phone) {
@@ -438,10 +468,10 @@ async function applyOperation(operation) {
       }
       await tx.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [4001, branchId]);
       const invoiceRes = await tx.query(
-        "SELECT COALESCE(MAX(branch_invoice_number), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
+        "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
         [branchId]
       );
-      const nextBranchInvoiceNumber = invoiceRes.rows[0].next_no;
+      const nextBranchInvoiceNumber = Number(invoiceRes.rows[0].next_no) || 1;
 
       let sellerId = orderData.seller_id || null;
       if (sellerId) {
@@ -449,10 +479,29 @@ async function applyOperation(operation) {
         if (!empCheck.rows.length) sellerId = null;
       }
 
+      const splitsToSave = orderData.payment_splits
+        ? (typeof orderData.payment_splits === 'object' ? JSON.stringify(orderData.payment_splits) : orderData.payment_splits)
+        : null;
+
       const insertOrderRes = await tx.query(
-        `INSERT INTO orders (customer_id, total_amount, order_date, branch_id, payment_method, seller_id, paid_amount, change_amount, invoice_discount, invoice_discount_type, branch_invoice_number, offline_uuid)
-         VALUES ($1, $2, COALESCE($12::timestamp, timezone('utc', now())), $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-        [customerId, orderData.total_amount || 0, branchId, orderData.payment_method || 'cash', sellerId, orderData.paid_amount || 0, orderData.change_amount || 0, orderData.invoice_discount || 0, orderData.invoice_discount_type || 'amount', nextBranchInvoiceNumber, orderOfflineUuid, orderData.order_date || null]
+        `INSERT INTO orders (
+          customer_id, total_amount, order_date, branch_id, payment_method,
+          seller_id, paid_amount, change_amount, invoice_discount, invoice_discount_type,
+          branch_invoice_number, offline_uuid,
+          cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits
+        )
+         VALUES ($1, $2, COALESCE($12::timestamp, timezone('utc', now())), $3, $4, $5, $6, $7, $8, $9, $10, $11, $13, $14, $15, $16, $17) RETURNING id`,
+        [
+          customerId, orderData.total_amount || 0, branchId, orderData.payment_method || 'cash',
+          sellerId, orderData.paid_amount || 0, orderData.change_amount || 0, orderData.invoice_discount || 0,
+          orderData.invoice_discount_type || 'amount', nextBranchInvoiceNumber, orderOfflineUuid,
+          orderData.order_date || null,
+          Number(orderData.cash_amount || 0),
+          Number(orderData.card_amount || 0),
+          Number(orderData.wallet_amount || 0),
+          Number(orderData.bank_transfer_amount || 0),
+          splitsToSave
+        ]
       );
       const orderId = insertOrderRes.rows[0].id;
 
@@ -670,11 +719,26 @@ async function applyOperation(operation) {
           await tx.query("UPDATE orders SET order_source = 'rental_sale', branch_invoice_number = NULL WHERE id = $1", [existingOrder.rows[0].id]);
           await tx.query("UPDATE rentals SET sale_order_id = $1 WHERE id = $2", [existingOrder.rows[0].id, rental.id]);
         } else {
+          const pMethod = payload.payment_method || rental.payment_method || 'cash';
+          let r_cash = 0;
+          let r_card = 0;
+          let r_wallet = 0;
+          let r_bank = 0;
+          const normRPM = String(pMethod).toLowerCase();
+          if (['cash', 'نقدي', 'كاش'].includes(normRPM)) r_cash = sellPrice;
+          else if (['card', 'visa', 'بطاقة', 'فيزا'].includes(normRPM)) r_card = sellPrice;
+          else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(normRPM)) r_wallet = sellPrice;
+          else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(normRPM)) r_bank = sellPrice;
+
           const orderRes = await tx.query(
-            `INSERT INTO orders (customer_id, total_amount, order_date, branch_id, payment_method, seller_id, paid_amount, change_amount, order_source, branch_invoice_number, offline_uuid)
-             VALUES ($1, $2, COALESCE($7::timestamp, timezone('utc', now())), $3, $4, $5, $2, 0, 'rental_sale', NULL, $6)
+            `INSERT INTO orders (
+              customer_id, total_amount, order_date, branch_id, payment_method, seller_id,
+              paid_amount, change_amount, order_source, branch_invoice_number, offline_uuid,
+              cash_amount, card_amount, wallet_amount, bank_transfer_amount
+            )
+             VALUES ($1, $2, COALESCE($7::timestamp, timezone('utc', now())), $3, $4, $5, $2, 0, 'rental_sale', NULL, $6, $8, $9, $10, $11)
              RETURNING id`,
-            [rental.customer_id, sellPrice, rental.branch_id, payload.payment_method || rental.payment_method || 'cash', rental.seller_id || null, orderOfflineUuid, payload.order_date || null]
+            [rental.customer_id, sellPrice, rental.branch_id, pMethod, rental.seller_id || null, orderOfflineUuid, payload.order_date || null, r_cash, r_card, r_wallet, r_bank]
           );
           await tx.query(
             'INSERT INTO order_items (order_id, inventory_id, quantity, price_at_time) VALUES ($1, $2, 1, $3)',
@@ -1217,11 +1281,15 @@ async function checkCentralConnectivity(timeoutMs = 5000) {
   }
 
   try {
-    const pingRes = await fetchWithTimeout(`${targetUrl}/api/sync/ping`, {
+    const pingUrl = config.BRANCH_ID
+      ? `${targetUrl}/api/sync/ping?branch_id=${encodeURIComponent(config.BRANCH_ID)}`
+      : `${targetUrl}/api/sync/ping`;
+    const pingRes = await fetchWithTimeout(pingUrl, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
         ...(config.SYNC_API_KEY ? { 'x-sync-key': config.SYNC_API_KEY } : {}),
+        ...(config.BRANCH_ID ? { 'x-branch-id': String(config.BRANCH_ID) } : {}),
       },
     }, timeoutMs);
 

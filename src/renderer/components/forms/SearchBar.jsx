@@ -11,23 +11,23 @@ export function SearchBar({
 }) {
   return (
     <div className={`relative flex items-center ${containerClassName}`}>
-      <div className="absolute right-3.5 text-slate-400 pointer-events-none">
-        <Search className="w-5 h-5" />
+      <div className="absolute right-2 w-7 h-7 rounded-full bg-[#F1B6D8] text-[#24221F] flex items-center justify-center pointer-events-none shadow-sm">
+        <Search className="w-3.5 h-3.5" />
       </div>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`w-full bg-slate-50 border-2 border-slate-200 rounded-xl pr-11 pl-10 py-2.5 text-sm font-semibold text-slate-800 placeholder:text-slate-400 focus:bg-white focus:border-indigo-600 focus:ring-4 focus:ring-indigo-50 transition-all outline-none ${className}`}
+        className={`w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-full pr-11 pl-10 py-2 text-xs sm:text-sm font-semibold text-[#24221F] placeholder:text-[#9E988B] focus:bg-white focus:border-[#151515] focus:ring-2 focus:ring-black/5 transition-all outline-none shadow-sm ${className}`}
       />
       {value && (
         <button
           type="button"
           onClick={() => (onClear ? onClear() : onChange(''))}
-          className="absolute left-3 text-slate-400 hover:text-slate-600 transition-colors p-1"
+          className="absolute left-3 text-[#9E988B] hover:text-[#24221F] transition-colors p-1"
         >
-          <X className="w-4 h-4" />
+          <X className="w-3.5 h-3.5" />
         </button>
       )}
     </div>

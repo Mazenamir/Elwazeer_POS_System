@@ -165,7 +165,7 @@ export function Alterations() {
           size="lg"
           icon={Plus}
           onClick={() => setShowCreateModal(true)}
-          className="!bg-indigo-600 hover:!bg-indigo-700 shadow-md shadow-indigo-600/20"
+          className="!bg-[#151515] hover:!bg-[#24221F] text-white shadow-sm"
         >
           طلب تعديل جديد
         </Button>
@@ -179,20 +179,20 @@ export function Alterations() {
           action={
             <div className="flex flex-wrap items-center gap-2.5">
               <div className="relative w-64">
-                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266]" />
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="ابحث بالعميل، القطعة، الفاتورة..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-1.5 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
                 />
               </div>
 
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 cursor-pointer"
+                className="bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F] cursor-pointer"
               >
                 <option value="all">كل الحالات</option>
                 <option value="pending">تحت التنفيذ</option>
@@ -219,17 +219,17 @@ export function Alterations() {
           <div className="overflow-x-auto">
             <table className="w-full text-right text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-slate-400 text-xs font-black uppercase">
-                  <th className="pb-3 pr-2">رقم التعديل</th>
-                  <th className="pb-3">العميل / الفاتورة</th>
-                  <th className="pb-3">القطعة</th>
-                  <th className="pb-3">تفاصيل التعديل</th>
-                  <th className="pb-3">موعد التسليم</th>
-                  <th className="pb-3">الحالة</th>
-                  <th className="pb-3 pl-2">إجراءات</th>
+                <tr className="bg-[#151515] text-white text-xs font-bold">
+                  <th className="py-3 px-3 rounded-r-xl">رقم التعديل</th>
+                  <th className="py-3 px-2">العميل / الفاتورة</th>
+                  <th className="py-3 px-2">القطعة</th>
+                  <th className="py-3 px-2">تفاصيل التعديل</th>
+                  <th className="py-3 px-2">موعد التسليم</th>
+                  <th className="py-3 px-2">الحالة</th>
+                  <th className="py-3 px-3 rounded-l-xl">إجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
+              <tbody className="divide-y divide-[#E6DECD]/60 font-medium">
                 {alterations.map((alt) => {
                   const statusInfo = STATUS_MAP[alt.status] || {
                     label: alt.status,
@@ -237,7 +237,7 @@ export function Alterations() {
                   };
 
                   return (
-                    <tr key={alt.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={alt.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                       <td className="py-3.5 pr-2 font-bold text-slate-900 font-mono">
                         #{alt.id}
                       </td>
@@ -346,7 +346,7 @@ export function Alterations() {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="مثال: تقصير البنطلون 2 سم وتضييق الجاكيت من الظهر، رفع أكمام البدلة..."
-              className="w-full bg-white border-2 border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-600"
+              className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl p-3 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
               required
             />
           </div>
@@ -366,7 +366,7 @@ export function Alterations() {
               variant="primary"
               size="lg"
               isLoading={submitting}
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black text-base"
+              className="flex-1 !bg-[#151515] hover:!bg-[#24221F] text-white font-black text-base shadow-sm"
             >
               حفظ أمر التعديل
             </Button>
@@ -396,7 +396,7 @@ export function Alterations() {
             <select
               value={newStatus}
               onChange={(e) => setNewStatus(e.target.value)}
-              className="w-full bg-white border-2 border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-600"
+              className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl p-3 text-xs font-bold outline-none focus:border-[#151515] text-[#24221F]"
             >
               <option value="pending">تحت التنفيذ</option>
               <option value="in_progress">جاري العمل</option>
@@ -410,7 +410,7 @@ export function Alterations() {
               type="submit"
               variant="primary"
               size="lg"
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+              className="flex-1 !bg-[#151515] hover:!bg-[#24221F] text-white font-black shadow-sm"
             >
               حفظ الحالة
             </Button>
@@ -491,7 +491,7 @@ export function Alterations() {
                 size="lg"
                 icon={Printer}
                 onClick={() => printElement('alteration-ticket', `تيكت تعديل #${selectedTicketAlt.id}`)}
-                className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+                className="flex-1 !bg-[#151515] hover:!bg-[#24221F] text-white font-black shadow-sm"
               >
                 طباعة التيكت
               </Button>

@@ -34,25 +34,56 @@ export function formatReceiptDate(dateInput) {
  * Translate payment method code to clean Arabic label
  *
  * @param {string} method
+ * @param {Array} splits
  * @returns {string}
  */
-export function getPaymentMethodArabic(method) {
-  switch (String(method || '').toLowerCase()) {
+export function getPaymentMethodArabic(method, splits = null) {
+  const norm = String(method || '').toLowerCase().trim();
+
+  const parsedSplits = Array.isArray(splits)
+    ? splits
+    : (typeof splits === 'string' ? (() => { try { return JSON.parse(splits); } catch { return null; } })() : null);
+
+  if (norm === 'split' || norm === 'mixed' || (parsedSplits && parsedSplits.length > 1)) {
+    if (parsedSplits && parsedSplits.length > 0) {
+      const parts = parsedSplits.map((s) => {
+        const mLabel = getPaymentMethodArabic(s.method);
+        const amt = Number(s.amount || 0).toLocaleString('ar-EG');
+        return `${mLabel}: ${amt} ج.م`;
+      });
+      return `مجزأ (${parts.join(' + ')})`;
+    }
+    return 'دفع مجزأ';
+  }
+
+  switch (norm) {
     case 'cash':
-      return 'كاش';
+    case 'نقدي':
+    case 'كاش':
+      return 'نقدي (كاش)';
     case 'card':
     case 'visa':
     case 'credit':
+    case 'بطاقة':
+    case 'فيزا':
       return 'فيزا / بطاقة';
+    case 'bank_transfer':
+    case 'bank':
+    case 'instapay':
+    case 'انستاباي':
+    case 'تحويل بنكي':
+      return 'تحويل بنكي / انستاباي';
     case 'wallet':
-      return 'محفظة إلكترونية';
+    case 'mobile_wallet':
+    case 'فودافون كاش':
+    case 'محفظة':
+      return 'فودافون كاش / محفظة';
     case 'debt':
     case 'credit_customer':
-      return 'آجل';
-    case 'mixed':
-      return 'دفع متعدد';
+    case 'آجل':
+      return 'آجل / مديونية';
     default:
-      return method || 'كاش';
+      return method || 'نقدي (كاش)';
   }
 }
 

@@ -383,7 +383,7 @@ export function Settings() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-white shadow-sm">
+            <div className="w-12 h-12 rounded-2xl bg-[#151515] border border-[#24221F] flex items-center justify-center text-white shadow-sm">
               <SettingsIcon className="w-6 h-6" />
             </div>
             <div>
@@ -410,13 +410,13 @@ export function Settings() {
       </div>
 
       {/* Tabs Bar */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto">
+      <div className="flex items-center gap-2 border-b border-[#E6DECD] pb-3 overflow-x-auto">
         <button
           onClick={() => setActiveTab('store')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
             activeTab === 'store'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              ? 'bg-[#151515] text-white shadow-sm'
+              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
           }`}
         >
           <Store className="w-4 h-4" />
@@ -427,8 +427,8 @@ export function Settings() {
           onClick={() => setActiveTab('branches')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
             activeTab === 'branches'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              ? 'bg-[#151515] text-white shadow-sm'
+              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
           }`}
         >
           <Building className="w-4 h-4" />
@@ -439,8 +439,8 @@ export function Settings() {
           onClick={() => setActiveTab('users')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
             activeTab === 'users'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              ? 'bg-[#151515] text-white shadow-sm'
+              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
           }`}
         >
           <Users className="w-4 h-4" />
@@ -451,8 +451,8 @@ export function Settings() {
           onClick={() => setActiveTab('backup')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
             activeTab === 'backup'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              ? 'bg-[#151515] text-white shadow-sm'
+              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
           }`}
         >
           <Database className="w-4 h-4" />
@@ -612,12 +612,12 @@ export function Settings() {
               />
               <div className="p-6 space-y-4">
                 <textarea
-                  className="w-full p-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full p-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] min-h-[100px] focus:outline-none focus:border-[#151515]"
                   value={settings.cashier_footer}
                   onChange={(e) => setSettings({ ...settings, cashier_footer: e.target.value })}
                 />
 
-                <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-300 text-center">
+                <div className="p-4 rounded-xl bg-[#FAF6ED] border border-dashed border-[#E6DECD] text-center">
                   <span className="text-[10px] font-bold text-slate-400 block mb-1">
                     معاينة شكل الكعب على الإيصال:
                   </span>
@@ -635,12 +635,12 @@ export function Settings() {
               />
               <div className="p-6 space-y-4">
                 <textarea
-                  className="w-full p-3 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full p-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] min-h-[100px] focus:outline-none focus:border-[#151515]"
                   value={settings.rental_footer}
                   onChange={(e) => setSettings({ ...settings, rental_footer: e.target.value })}
                 />
 
-                <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-300 text-center">
+                <div className="p-4 rounded-xl bg-[#FAF6ED] border border-dashed border-[#E6DECD] text-center">
                   <span className="text-[10px] font-bold text-slate-400 block mb-1">
                     معاينة شكل الكعب على الإيصال:
                   </span>
@@ -669,7 +669,7 @@ export function Settings() {
                 <div className="p-5 space-y-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700 font-black">
+                      <div className="w-10 h-10 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] flex items-center justify-center text-[#24221F] font-black">
                         <Building className="w-5 h-5" />
                       </div>
                       <div>
@@ -741,14 +741,14 @@ export function Settings() {
           <div className="overflow-x-auto">
             <table className="w-full text-right border-collapse">
               <thead>
-                <tr className="bg-slate-900 text-white text-xs font-black">
-                  <th className="py-3.5 px-4">اسم المستخدم</th>
-                  <th className="py-3.5 px-4">نوع الصلاحية</th>
-                  <th className="py-3.5 px-4">الفرع المخصص</th>
-                  <th className="py-3.5 px-4 text-center">إجراءات</th>
+                <tr className="bg-[#151515] text-white text-xs font-bold">
+                  <th className="py-3 px-4 rounded-r-xl">اسم المستخدم</th>
+                  <th className="py-3 px-4">نوع الصلاحية</th>
+                  <th className="py-3 px-4">الفرع المخصص</th>
+                  <th className="py-3 px-4 text-center rounded-l-xl">إجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
+              <tbody className="divide-y divide-[#E6DECD]/60 text-sm">
                 {loadingUsers ? (
                   <tr>
                     <td colSpan={4} className="py-12 text-center text-slate-400 font-bold">
@@ -763,7 +763,7 @@ export function Settings() {
                   </tr>
                 ) : (
                   branchUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={u.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                       <td className="py-3.5 px-4 font-black text-slate-900">{u.username}</td>
                       <td className="py-3.5 px-4">
                         <span
@@ -839,7 +839,7 @@ export function Settings() {
                   return (
                     <label
                       key={key}
-                      className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer"
+                      className="flex items-center gap-2 p-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] cursor-pointer hover:bg-[#FAF6ED] transition-colors"
                     >
                       <input
                         type="checkbox"

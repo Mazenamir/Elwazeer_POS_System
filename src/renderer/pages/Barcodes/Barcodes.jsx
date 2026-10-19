@@ -211,7 +211,7 @@ export function Barcodes() {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-white shadow-sm">
+            <div className="w-12 h-12 rounded-2xl bg-[#151515] border border-[#24221F] flex items-center justify-center text-white shadow-sm">
               <Barcode className="w-6 h-6" />
             </div>
             <div>
@@ -227,8 +227,8 @@ export function Barcodes() {
 
         <div className="flex flex-wrap items-center gap-3">
           {/* Paper / Label Type Selector */}
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm">
-            <Printer className="w-4 h-4 text-indigo-600" />
+          <div className="flex items-center gap-2 bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3 py-2 shadow-sm">
+            <Printer className="w-4 h-4 text-[#24221F]" />
             <label
               htmlFor="barcode-paper-select"
               className="text-xs font-bold text-slate-600 whitespace-nowrap"
@@ -271,8 +271,8 @@ export function Barcodes() {
                 onClick={() => setInventoryType('sales')}
                 className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
                   inventoryType === 'sales'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#151515] text-white shadow-sm'
+                    : 'bg-[#FAF6ED] text-[#777266] hover:bg-[#F3ECE0]'
                 }`}
               >
                 بضاعة البيع
@@ -282,8 +282,8 @@ export function Barcodes() {
                 onClick={() => setInventoryType('rental')}
                 className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
                   inventoryType === 'rental'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#151515] text-white shadow-sm'
+                    : 'bg-[#FAF6ED] text-[#777266] hover:bg-[#F3ECE0]'
                 }`}
               >
                 قطع التأجير
@@ -291,7 +291,7 @@ export function Barcodes() {
             </div>
 
             <div className="flex items-center gap-3 text-xs">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#FFF9EC] text-[#24221F] font-bold border border-[#E6DECD]">
                 <Printer className="w-3.5 h-3.5" />
                 <span>
                   النوع الحالي:{' '}
@@ -337,8 +337,8 @@ export function Barcodes() {
         <div className="overflow-x-auto">
           <table className="w-full text-right border-collapse">
             <thead>
-              <tr className="bg-slate-900 text-white text-xs font-black">
-                <th className="py-3.5 px-4 w-12 text-center">
+              <tr className="bg-[#151515] text-white text-xs font-bold">
+                <th className="py-3 px-4 w-12 text-center rounded-r-xl">
                   <button
                     type="button"
                     onClick={toggleSelectAll}
@@ -352,15 +352,15 @@ export function Barcodes() {
                     )}
                   </button>
                 </th>
-                <th className="py-3.5 px-4">المنتج والتفاصيل</th>
-                <th className="py-3.5 px-4">رقم الباركود</th>
-                <th className="py-3.5 px-4">السعر الحالي</th>
-                <th className="py-3.5 px-4 w-36">السعر بعد الخصم</th>
-                <th className="py-3.5 px-4 w-32">عدد الملصقات</th>
-                <th className="py-3.5 px-4 text-center">طباعة فردية</th>
+                <th className="py-3 px-4">المنتج والتفاصيل</th>
+                <th className="py-3 px-4">رقم الباركود</th>
+                <th className="py-3 px-4">السعر الحالي</th>
+                <th className="py-3 px-4 w-36">السعر بعد الخصم</th>
+                <th className="py-3 px-4 w-32">عدد الملصقات</th>
+                <th className="py-3 px-4 text-center rounded-l-xl">طباعة فردية</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
+            <tbody className="divide-y divide-[#E6DECD]/60 text-sm">
               {loading ? (
                 <tr>
                   <td
@@ -388,7 +388,7 @@ export function Barcodes() {
                     <tr
                       key={p.id}
                       className={`transition-colors ${
-                        isSelected ? 'bg-slate-50' : 'hover:bg-slate-50/60'
+                        isSelected ? 'bg-[#FAF6ED]' : 'hover:bg-[#FAF6ED]/60'
                       }`}
                     >
                       <td className="py-3 px-4 text-center">

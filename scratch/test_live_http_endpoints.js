@@ -1,4 +1,6 @@
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const app = require('../src/server/app');
 const config = require('../src/server/config/env');
@@ -86,6 +88,18 @@ async function runLiveEndpointTests() {
   let passed = 0;
   let failed = 0;
 
+  const { getCairoDateTimeParts } = require('../src/shared/utils/date');
+  const today = getCairoDateTimeParts().date;
+  let activeSellerId = 1;
+  const sellerCheck = await db.query("SELECT id FROM employees WHERE branch_id = 1 LIMIT 1");
+  if (sellerCheck.rows.length) {
+    activeSellerId = sellerCheck.rows[0].id;
+  } else {
+    const ins = await db.query("INSERT INTO employees (name, phone, position, basic_salary, branch_id, join_date) VALUES ('Live Cashier', '01000998877', 'كاشير', 4000, 1, CURRENT_DATE) RETURNING id");
+    activeSellerId = ins.rows[0].id;
+  }
+  await db.query("INSERT INTO attendance (employee_id, date, check_in) VALUES ($1, $2, '09:00:00') ON CONFLICT (employee_id, date) DO UPDATE SET check_in = EXCLUDED.check_in, check_out = NULL", [activeSellerId, today]);
+
   async function check(name, testFn) {
     try {
       await testFn();
@@ -120,16 +134,20 @@ async function runLiveEndpointTests() {
     console.log(`  ✅ GET / -> 200 OK (${res.duration}ms, ${res.body.length} bytes)`);
   });
 
-  await check('GET /login.html', async () => {
+  await check('GET /login.html (redirects to /login in SPA mode)', async () => {
     const res = await request(TEST_PORT, { path: '/login.html' });
-    if (res.statusCode !== 200) throw new Error(`Status ${res.statusCode}`);
-    console.log(`  ✅ GET /login.html -> 200 OK (${res.duration}ms)`);
+    if (res.statusCode !== 200 && res.statusCode !== 302) throw new Error(`Status ${res.statusCode}`);
+    console.log(`  ✅ GET /login.html -> ${res.statusCode} (${res.duration}ms)`);
   });
 
-  await check('GET /assets/index-DKOfMkHJ.js (bundled Vite assets)', async () => {
-    const res = await request(TEST_PORT, { path: '/assets/index-DKOfMkHJ.js' });
+  await check('GET bundled Vite JS asset', async () => {
+    const assetsDir = path.resolve('dist/renderer/assets');
+    const jsFiles = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir).filter(f => f.endsWith('.js')) : [];
+    if (!jsFiles.length) throw new Error('No bundled JS found in dist/renderer/assets');
+    const assetPath = `/assets/${jsFiles[0]}`;
+    const res = await request(TEST_PORT, { path: assetPath });
     if (res.statusCode !== 200) throw new Error(`Status ${res.statusCode}`);
-    console.log(`  ✅ GET /assets/index-DKOfMkHJ.js -> 200 OK (${res.duration}ms, ${res.body.length} bytes)`);
+    console.log(`  ✅ GET ${assetPath} -> 200 OK (${res.duration}ms, ${res.body.length} bytes)`);
   });
 
   // 2. Authenticated Endpoints
@@ -242,7 +260,7 @@ async function runLiveEndpointTests() {
 
     const orderPayload = {
       branch_id: 1,
-      seller_id: 24,
+      seller_id: activeSellerId,
       customer_id: null,
       customer_name: 'عميل تجريبي HTTP',
       customer_phone: '01099998888',
@@ -311,7 +329,7 @@ async function runLiveEndpointTests() {
   await check('POST /api/tailoring-orders (create tailoring order)', async () => {
     const tailorPayload = {
       branch_id: 1,
-      seller_id: 24,
+      seller_id: activeSellerId,
       customer_name: 'عميل تفصيل HTTP',
       customer_phone: '01122334455',
       product_description: 'بدلة رجالي كحلي تفصيل خاص',
@@ -373,7 +391,7 @@ async function runLiveEndpointTests() {
       total_price: 250,
       deposit: 100,
       remaining: 150,
-      seller_id: 24,
+      seller_id: activeSellerId,
       payment_method: 'cash'
     };
 
@@ -410,7 +428,7 @@ async function runLiveEndpointTests() {
       path: `/api/rentals/${testRentalId}/return`,
       method: 'PUT',
       headers: authHeader,
-    }, { damage_fine: 0, deposit_action: 'refund' });
+    }, { damage_fine: 0, deposit_action: 'refund', settlement_action: 'collect', paid_amount: 150 });
 
     if (res.statusCode !== 200) {
       throw new Error(`Rental return failed with ${res.statusCode}: ${res.body}`);
