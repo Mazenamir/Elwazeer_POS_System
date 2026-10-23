@@ -1,7 +1,14 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { setupAutoUpdater, stopAutoUpdater } = require('./updater');
+const {
+  setupAutoUpdater,
+  stopAutoUpdater,
+  checkForUpdates,
+  downloadUpdate,
+  quitAndInstall,
+  getStatus: getUpdaterStatus,
+} = require('./updater.service');
 const ServerSupervisor = require('./server-supervisor');
 const { createSystemTray } = require('./tray');
 
@@ -44,18 +51,21 @@ const isDev = !app.isPackaged && (process.argv.includes('--dev') || process.env.
 const isExternalServer = process.argv.includes('--external-server');
 const devClientPort = Number(process.env.VITE_DEV_PORT || 5173);
 
-function validateSender(senderFrame) {
+function validateSender(event) {
+  const senderFrame = event && event.senderFrame ? event.senderFrame : event;
   if (!senderFrame || !senderFrame.url) return false;
   try {
     const parsed = new URL(senderFrame.url);
     const port = process.env.PORT || '6253';
-    const allowedOrigins = [
+    const allowedOrigins = new Set([
       `http://127.0.0.1:${port}`,
       `http://localhost:${port}`,
       `http://127.0.0.1:${devClientPort}`,
       `http://localhost:${devClientPort}`,
-    ];
-    return allowedOrigins.includes(parsed.origin);
+    ]);
+    if (allowedOrigins.has(parsed.origin)) return true;
+    if (parsed.protocol === 'file:') return true;
+    return false;
   } catch {
     return false;
   }
@@ -71,7 +81,7 @@ app.on('second-instance', () => {
 
 // Fix input focus freezing after modal alert/confirm
 ipcMain.on('fix-focus', (event) => {
-  if (!validateSender(event.senderFrame)) {
+  if (!validateSender(event)) {
     log('Security: Rejected fix-focus IPC from untrusted sender frame');
     return;
   }
@@ -81,9 +91,53 @@ ipcMain.on('fix-focus', (event) => {
   }
 });
 
+// Auto-updater IPC channels with sender validation
+ipcMain.handle('updater-check', async (event) => {
+  if (!validateSender(event)) {
+    log('Security: Rejected updater-check IPC from untrusted sender frame');
+    return { success: false, error: 'Unauthorized sender frame origin' };
+  }
+  try {
+    const res = await checkForUpdates();
+    return { success: true, result: res };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('updater-download', async (event) => {
+  if (!validateSender(event)) {
+    log('Security: Rejected updater-download IPC from untrusted sender frame');
+    return { success: false, error: 'Unauthorized sender frame origin' };
+  }
+  try {
+    const res = await downloadUpdate();
+    return { success: true, result: res };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('updater-quit-install', (event) => {
+  if (!validateSender(event)) {
+    log('Security: Rejected updater-quit-install IPC from untrusted sender frame');
+    return { success: false, error: 'Unauthorized sender frame origin' };
+  }
+  quitAndInstall();
+  return { success: true };
+});
+
+ipcMain.handle('updater-status', (event) => {
+  if (!validateSender(event)) {
+    log('Security: Rejected updater-status IPC from untrusted sender frame');
+    return { success: false, error: 'Unauthorized sender frame origin' };
+  }
+  return { success: true, status: getUpdaterStatus() };
+});
+
 // Export report or thermal labels to PDF via offscreen printToPDF
 ipcMain.handle('export-pdf', async (event, payload) => {
-  if (!validateSender(event.senderFrame)) {
+  if (!validateSender(event)) {
     log('Security: Rejected export-pdf IPC from untrusted sender frame');
     return { success: false, error: 'Unauthorized sender frame origin' };
   }

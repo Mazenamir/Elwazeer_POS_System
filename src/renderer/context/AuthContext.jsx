@@ -45,6 +45,8 @@ export function AuthProvider({ children }) {
         sessionStorage.removeItem('auth_token');
       sessionStorage.clear();
       localStorage.removeItem('bebyoon_active_branch_id');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('token');
       } catch {}
       setUser(null);
     });
@@ -72,6 +74,8 @@ export function AuthProvider({ children }) {
       sessionStorage.removeItem('auth_token');
       sessionStorage.clear();
       localStorage.removeItem('bebyoon_active_branch_id');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('token');
     } catch {}
     try {
       await api.post('/logout');

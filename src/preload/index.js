@@ -12,6 +12,28 @@ try {
       return nextZoom;
     },
     isElectron: true,
+    updater: {
+      checkForUpdates: () => ipcRenderer.invoke('updater-check'),
+      downloadUpdate: () => ipcRenderer.invoke('updater-download'),
+      quitAndInstall: () => ipcRenderer.invoke('updater-quit-install'),
+      getStatus: () => ipcRenderer.invoke('updater-status'),
+      onStatus: (callback) => {
+        const channels = [
+          'updater:checking',
+          'updater:available',
+          'updater:not-available',
+          'updater:progress',
+          'updater:downloaded',
+          'updater:error',
+        ];
+        const subs = channels.map((ch) => {
+          const handler = (_event, data) => callback(ch, data);
+          ipcRenderer.on(ch, handler);
+          return () => ipcRenderer.removeListener(ch, handler);
+        });
+        return () => subs.forEach((unsub) => unsub());
+      },
+    },
   });
 } catch (e) {
   // If contextBridge is not enabled or fails, fallback to window assignment
@@ -26,6 +48,28 @@ try {
       return nextZoom;
     },
     isElectron: true,
+    updater: {
+      checkForUpdates: () => ipcRenderer.invoke('updater-check'),
+      downloadUpdate: () => ipcRenderer.invoke('updater-download'),
+      quitAndInstall: () => ipcRenderer.invoke('updater-quit-install'),
+      getStatus: () => ipcRenderer.invoke('updater-status'),
+      onStatus: (callback) => {
+        const channels = [
+          'updater:checking',
+          'updater:available',
+          'updater:not-available',
+          'updater:progress',
+          'updater:downloaded',
+          'updater:error',
+        ];
+        const subs = channels.map((ch) => {
+          const handler = (_event, data) => callback(ch, data);
+          ipcRenderer.on(ch, handler);
+          return () => ipcRenderer.removeListener(ch, handler);
+        });
+        return () => subs.forEach((unsub) => unsub());
+      },
+    },
   };
 }
 

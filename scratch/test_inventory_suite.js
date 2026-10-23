@@ -60,10 +60,11 @@ async function runInventorySuite() {
   const testSupplierId = suppRes.rows[0].id;
 
   // 1. PRODUCT CREATION WITH MULTI-COLOR VARIANTS
+  const testProductName = 'بدلة توكسيدو فاخرة للتجربة ' + Date.now();
   let multiColorProductId = null;
   await test('INV-01: Create multi-variant product with distinct colors and sizes across branches', async () => {
     const p = await inventoryService.createProduct({
-      name: 'بدلة توكسيدو فاخرة للتجربة',
+      name: testProductName,
       category: 'TUXEDO SUIT',
       branch_id: 1,
       price: 1500,
@@ -335,7 +336,7 @@ async function runInventorySuite() {
   await test('INV-10: searchInventory restricts branch_user to their assigned branch', async () => {
     // branchUser2 (branch_id: 2) attempts to query branch_id 1
     const results = await inventoryService.searchInventory({
-      query: 'بدلة توكسيدو فاخرة للتجربة',
+      query: testProductName,
       branch_id: '1',
     }, branchUser2);
 
@@ -347,7 +348,7 @@ async function runInventorySuite() {
 
     // Admin can see branch 1 stock (9)
     const adminResults = await inventoryService.searchInventory({
-      query: 'بدلة توكسيدو فاخرة للتجربة',
+      query: testProductName,
       branch_id: '1',
     }, adminUser);
     const adminP = adminResults.find(r => Number(r.id) === multiColorProductId);
