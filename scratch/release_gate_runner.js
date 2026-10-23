@@ -10,7 +10,7 @@
  * Exit code: 0 on complete pass across all 4 steps; non-zero on any step failure.
  */
 
-const { spawnSync, execSync } = require('child_process');
+const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -31,15 +31,13 @@ const gateSteps = [
   {
     step: 1,
     name: 'Master Regression Suite Execution (12 Core Suites)',
-    command: process.execPath,
-    args: [path.resolve(ROOT_DIR, 'scratch/run_all_audit_suites.js')],
+    execCmd: `"${process.execPath}" scratch/run_all_audit_suites.js`,
     validate: null,
   },
   {
     step: 2,
     name: 'Vite Production Client Build (npm run build)',
-    command: process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    args: ['run', 'build'],
+    execCmd: 'npm run build',
     validate: () => {
       const htmlPath = path.resolve(ROOT_DIR, 'dist/renderer/index.html');
       if (!fs.existsSync(htmlPath)) {
@@ -54,8 +52,7 @@ const gateSteps = [
   {
     step: 3,
     name: 'Package & Runtime Dependencies Integrity Audit',
-    command: process.execPath,
-    args: [path.resolve(ROOT_DIR, 'scratch/verify_package.js')],
+    execCmd: `"${process.execPath}" scratch/verify_package.js`,
     validate: null,
   },
   {
@@ -123,19 +120,20 @@ for (const s of gateSteps) {
       printSummaryAndExit(1);
     }
   } else {
-    const res = spawnSync(s.command, s.args, {
-      cwd: ROOT_DIR,
-      stdio: 'inherit',
-      env: { ...process.env },
-    });
+    try {
+      execSync(s.execCmd, {
+        cwd: ROOT_DIR,
+        stdio: 'inherit',
+        env: { ...process.env },
+      });
+    } catch (cmdErr) {
+      const stepDurationSec = ((Date.now() - stepStart) / 1000).toFixed(2);
+      console.error(`❌ [STEP ${s.step}/4] FAILED (${stepDurationSec}s, error: ${cmdErr.message})`);
+      stepResults.push({ step: s.step, name: s.name, status: 'FAIL', durationSec: stepDurationSec, exitCode: cmdErr.status || 1 });
+      printSummaryAndExit(cmdErr.status || 1);
+    }
 
     const stepDurationSec = ((Date.now() - stepStart) / 1000).toFixed(2);
-
-    if (res.status !== 0) {
-      console.error(`❌ [STEP ${s.step}/4] FAILED (${stepDurationSec}s, exit code: ${res.status})`);
-      stepResults.push({ step: s.step, name: s.name, status: 'FAIL', durationSec: stepDurationSec, exitCode: res.status });
-      printSummaryAndExit(res.status || 1);
-    }
 
     if (s.validate) {
       try {
