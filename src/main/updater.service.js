@@ -86,35 +86,35 @@ class AutoUpdateManager extends EventEmitter {
     this.updater.autoDownload = false;
     this.updater.autoInstallOnAppQuit = true;
 
-    this.updater.on('checking-for-update', () => {
+    this._onChecking = () => {
       this.lastCheckStatus = 'checking';
       this.log('[UPDATER] Checking for published updates...');
       this.emit('status', 'updater:checking');
-    });
+    };
 
-    this.updater.on('update-available', (info) => {
+    this._onAvailable = (info) => {
       this.lastCheckStatus = 'available';
       this.isDownloading = true;
       const ver = info && info.version ? info.version : 'unknown';
       this.log(`[UPDATER] Update available: ${ver}.`);
       this.emit('status', 'updater:available', info);
-    });
+    };
 
-    this.updater.on('update-not-available', (info) => {
+    this._onNotAvailable = (info) => {
       this.lastCheckStatus = 'up-to-date';
       this.isDownloading = false;
       const ver = info && info.version ? info.version : 'current';
       this.log(`[UPDATER] Application is up-to-date. Current release: ${ver}`);
       this.emit('status', 'updater:not-available', info);
-    });
+    };
 
-    this.updater.on('download-progress', (progress) => {
+    this._onProgress = (progress) => {
       const pct = progress && progress.percent ? Math.round(progress.percent) : 0;
       this.log(`[UPDATER] Background download progress: ${pct}%`);
       this.emit('status', 'updater:progress', progress);
-    });
+    };
 
-    this.updater.on('update-downloaded', (info) => {
+    this._onDownloaded = (info) => {
       this.isDownloading = false;
       this.updateDownloaded = true;
       this.lastCheckStatus = 'downloaded';
@@ -142,15 +142,22 @@ class AutoUpdateManager extends EventEmitter {
           this.log(`[UPDATER] Could not display update dialog: ${e.message}`);
         }
       }
-    });
+    };
 
-    this.updater.on('error', (err) => {
+    this._onError = (err) => {
       this.isDownloading = false;
       this.lastCheckStatus = 'error';
       const safeMsg = this.sanitizeErrorMessage(err ? err.message : 'Unknown error');
       this.log(`[UPDATER] Update error: ${safeMsg}`);
       this.emit('status', 'updater:error', { error: safeMsg });
-    });
+    };
+
+    this.updater.on('checking-for-update', this._onChecking);
+    this.updater.on('update-available', this._onAvailable);
+    this.updater.on('update-not-available', this._onNotAvailable);
+    this.updater.on('download-progress', this._onProgress);
+    this.updater.on('update-downloaded', this._onDownloaded);
+    this.updater.on('error', this._onError);
   }
 
   sanitizeErrorMessage(msg) {
@@ -171,13 +178,13 @@ class AutoUpdateManager extends EventEmitter {
     let delayMs = customDelayMs;
     if (delayMs === null) {
       if (this.consecutiveFailures > 0) {
-        // Bounded exponential backoff: base * (2 ^ (failures - 1))
-        const backoffMultiplier = Math.pow(2, Math.min(this.consecutiveFailures - 1, 6));
-        delayMs = Math.min(this.maxBackoffMs, Math.round(this.baseBackoffMs * backoffMultiplier));
+        // Bounded exponential backoff: baseline doubles each failure (40m, 80m, 120m) up to 120 min max
+        const backoffMultiplier = Math.pow(2, this.consecutiveFailures);
+        delayMs = Math.min(this.maxBackoffMs, this.checkIntervalMs * backoffMultiplier);
       } else {
-        // Regular interval + jitter (±5 min / 300,000 ms)
-        const jitter = Math.floor(Math.random() * this.maxJitterMs);
-        delayMs = this.checkIntervalMs + jitter;
+        // Regular interval + symmetric random jitter (±5 min / ±300,000 ms, range [15m, 25m])
+        const jitter = Math.floor(Math.random() * (this.maxJitterMs * 2 + 1)) - this.maxJitterMs;
+        delayMs = Math.max(this.minIntervalMs, this.checkIntervalMs + jitter);
       }
     }
 
@@ -254,6 +261,16 @@ class AutoUpdateManager extends EventEmitter {
 
   destroy() {
     this.stop();
+    if (this.updater && typeof this.updater.removeListener === 'function') {
+      if (this._onChecking) this.updater.removeListener('checking-for-update', this._onChecking);
+      if (this._onAvailable) this.updater.removeListener('update-available', this._onAvailable);
+      if (this._onNotAvailable) this.updater.removeListener('update-not-available', this._onNotAvailable);
+      if (this._onProgress) this.updater.removeListener('download-progress', this._onProgress);
+      if (this._onDownloaded) this.updater.removeListener('update-downloaded', this._onDownloaded);
+      if (this._onError) this.updater.removeListener('error', this._onError);
+    }
+    this.listenersAttached = false;
+    this.removeAllListeners();
   }
 
   getStatus() {
