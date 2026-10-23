@@ -31,7 +31,7 @@ class AutoUpdateManager {
     
     // Configuration
     const envIntervalMin = parseInt(process.env.UPDATE_CHECK_INTERVAL_MINUTES, 10);
-    const defaultIntervalMin = !isNaN(envIntervalMin) && envIntervalMin >= 5 ? envIntervalMin : 15;
+    const defaultIntervalMin = !isNaN(envIntervalMin) && envIntervalMin >= 5 ? envIntervalMin : 20;
     
     this.checkIntervalMs = (options.checkIntervalMinutes || defaultIntervalMin) * 60 * 1000;
     this.minIntervalMs = 5 * 60 * 1000; // Enforce minimum 5 minutes
@@ -40,11 +40,11 @@ class AutoUpdateManager {
     }
 
     this.initialDelayMs = options.initialDelayMs !== undefined ? options.initialDelayMs : 25 * 1000; // 25s startup delay
-    this.maxJitterMs = options.maxJitterMs !== undefined ? options.maxJitterMs : 60 * 1000; // 0-60s jitter
+    this.maxJitterMs = options.maxJitterMs !== undefined ? options.maxJitterMs : 5 * 60 * 1000; // ±5 min jitter (300,000 ms)
     
     // Bounded backoff settings
     this.baseBackoffMs = 5 * 60 * 1000; // 5 minutes initial failure backoff
-    this.maxBackoffMs = 60 * 60 * 1000; // 1 hour max backoff
+    this.maxBackoffMs = 120 * 60 * 1000; // 120 minutes max backoff (7,200,000 ms)
 
     // State tracking
     this.timer = null;
@@ -77,7 +77,8 @@ class AutoUpdateManager {
     if (this.listenersAttached || !this.updater) return;
     this.listenersAttached = true;
 
-    this.updater.autoDownload = true;
+    // Decouple check from binary download per Requirement R5
+    this.updater.autoDownload = false;
     this.updater.autoInstallOnAppQuit = true;
 
     this.updater.on('checking-for-update', () => {
@@ -90,6 +91,12 @@ class AutoUpdateManager {
       this.isDownloading = true;
       const ver = info && info.version ? info.version : 'unknown';
       this.log(`[UPDATER] Update available: ${ver}. Download initiated in background.`);
+      if (typeof this.updater.downloadUpdate === 'function') {
+        this.updater.downloadUpdate().catch((err) => {
+          this.isDownloading = false;
+          this.log(`[UPDATER] Download error: ${this.sanitizeErrorMessage(err ? err.message : '')}`);
+        });
+      }
     });
 
     this.updater.on('update-not-available', (info) => {

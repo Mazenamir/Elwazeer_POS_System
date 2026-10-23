@@ -43,6 +43,8 @@ export function AuthProvider({ children }) {
     registerUnauthorizedHandler(() => {
       try {
         sessionStorage.removeItem('auth_token');
+      sessionStorage.clear();
+      localStorage.removeItem('bebyoon_active_branch_id');
       } catch {}
       setUser(null);
     });
@@ -68,6 +70,8 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     try {
       sessionStorage.removeItem('auth_token');
+      sessionStorage.clear();
+      localStorage.removeItem('bebyoon_active_branch_id');
     } catch {}
     try {
       await api.post('/logout');
