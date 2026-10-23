@@ -28,10 +28,26 @@ import {
   Store,
 } from 'lucide-react';
 
+const PRESET_LOGOS = [
+  { id: 'antalya', label: 'فرع أنطاليا (Antalya)', url: '/logos/Antalya logo.png' },
+  { id: 'elwazer', label: 'فرع الوزير (El Wazer)', url: '/logos/elwazer.png' },
+  { id: 'app-icon', label: 'الشعار الرئيسي (ببيون BEBYOON)', url: '/logos/app-icon.png' },
+  { id: 'men', label: 'فرع رجالي (بدل رجالي)', url: '/logos/men.png' },
+  { id: 'women', label: 'فرع حريمي (فساتين حريمي)', url: '/logos/women.png' },
+];
+
 export function Settings() {
   const { user } = useAuth();
   const { branches, reloadBranches } = useBranch();
   const { toast } = useToast();
+
+  const isAhmedUser = Boolean(
+    user?.username &&
+    (user.username.trim().toLowerCase() === 'احمد' ||
+     user.username.trim().toLowerCase() === 'ahmed' ||
+     user.username.includes('احمد') ||
+     user.username.toLowerCase().includes('ahmed'))
+  );
 
   const [activeTab, setActiveTab] = useState('store'); // 'store' | 'branches' | 'users' | 'backup'
   const [loading, setLoading] = useState(true);
@@ -52,6 +68,7 @@ export function Settings() {
     rental_fine_per_day: '50',
     currency: 'ج.م',
     salary_password: '',
+    profit_password: '',
     invoice_edit_password: '',
   });
 
@@ -76,6 +93,8 @@ export function Settings() {
     name: '',
     phone: '',
     address: '',
+    location: '',
+    logo_url: '',
     is_main_warehouse: false,
     invoice_logo_height: 160,
     invoice_logo_spacing: 8,
@@ -147,7 +166,11 @@ export function Settings() {
     if (e) e.preventDefault();
     try {
       setSaving(true);
-      await client.post('/settings', settings);
+      const payload = { ...settings };
+      if (!isAhmedUser) {
+        delete payload.profit_password;
+      }
+      await client.post('/settings', payload);
       toast({
         title: 'تم الحفظ',
         message: 'تم حفظ وتحديث إعدادات النظام بنجاح',
@@ -172,6 +195,8 @@ export function Settings() {
       name: '',
       phone: '',
       address: '',
+      location: '',
+      logo_url: '',
       is_main_warehouse: false,
       invoice_logo_height: 160,
       invoice_logo_spacing: 8,
@@ -182,10 +207,13 @@ export function Settings() {
   const handleOpenEditBranch = (b) => {
     setIsEditingBranch(true);
     setEditingBranchId(b.id);
+    const loc = b.location || b.address || '';
     setBranchForm({
       name: b.name || '',
       phone: b.phone || '',
-      address: b.address || '',
+      address: loc,
+      location: loc,
+      logo_url: b.logo_url || '',
       is_main_warehouse: Boolean(b.is_main_warehouse),
       invoice_logo_height: b.invoice_logo_height || 160,
       invoice_logo_spacing: b.invoice_logo_spacing || 8,
@@ -193,16 +221,61 @@ export function Settings() {
     setShowBranchModal(true);
   };
 
+  const handleLogoFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast({ title: 'خطأ', message: 'يرجى اختيار ملف صورة صالح', variant: 'danger' });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        // Proportionally downscale large logos to fit nicely within 600x300
+        const maxW = 600;
+        const maxH = 300;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxW || h > maxH) {
+          const ratio = Math.min(maxW / w, maxH / h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        const compressedDataUrl = canvas.toDataURL('image/png', 0.92);
+        setBranchForm((prev) => ({ ...prev, logo_url: compressedDataUrl }));
+      };
+      img.onerror = () => {
+        setBranchForm((prev) => ({ ...prev, logo_url: reader.result }));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSaveBranch = async (e) => {
     e.preventDefault();
     if (!branchForm.name.trim()) return;
 
     try {
+      const payload = {
+        ...branchForm,
+        location: branchForm.location || branchForm.address || '',
+        address: branchForm.location || branchForm.address || '',
+        logo_url: branchForm.logo_url || null,
+      };
+
       if (isEditingBranch) {
-        await client.put(`/branches/${editingBranchId}`, branchForm);
+        await client.put(`/branches/${editingBranchId}`, payload);
         toast({ title: 'تم التحديث', message: 'تم تحديث الفرع بنجاح', variant: 'success' });
       } else {
-        await client.post('/branches', branchForm);
+        await client.post('/branches', payload);
         toast({ title: 'تمت الإضافة', message: 'تم إضافة الفرع الجديد بنجاح', variant: 'success' });
       }
       setShowBranchModal(false);
@@ -573,9 +646,9 @@ export function Settings() {
           <Card>
             <CardHeader
               title="كلمات مرور الحماية والصلاحيات الحساسة"
-              subtitle="حماية كشوفات الرواتب وعمليات تعديل فواتير الكاشير"
+              subtitle="حماية كشوفات الرواتب وعمليات تعديل فواتير الكاشير وعرض صافي الأرباح"
             />
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1.5">
                   الرقم السري لكشوف الرواتب والموظفين
@@ -600,6 +673,33 @@ export function Settings() {
                     setSettings({ ...settings, invoice_edit_password: e.target.value })
                   }
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1.5 flex items-center justify-between">
+                  <span>كلمة سر عرض صافي الأرباح</span>
+                  {!isAhmedUser && (
+                    <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md font-black border border-amber-200">
+                      لحساب (احمد) فقط 🔒
+                    </span>
+                  )}
+                </label>
+                <Input
+                  type="password"
+                  placeholder={isAhmedUser ? "كلمة المرور الحالية أو الجديدة" : "محمية - متاح تعديلها لحساب أحمد فقط"}
+                  value={isAhmedUser ? (settings.profit_password || '') : '••••••••'}
+                  disabled={!isAhmedUser}
+                  onChange={(e) => {
+                    if (isAhmedUser) {
+                      setSettings({ ...settings, profit_password: e.target.value });
+                    }
+                  }}
+                />
+                <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                  {isAhmedUser
+                    ? "كلمة المرور المستخدمة لإلغاء قفل وإظهار صافي الأرباح في التقارير"
+                    : "تعديل كلمة سر الأرباح متاح حصرياً للمستخدم (احمد)"}
+                </p>
               </div>
             </div>
           </Card>
@@ -669,8 +769,19 @@ export function Settings() {
                 <div className="p-5 space-y-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] flex items-center justify-center text-[#24221F] font-black">
-                        <Building className="w-5 h-5" />
+                      <div className="w-11 h-11 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] flex items-center justify-center text-[#24221F] font-black overflow-hidden shrink-0 shadow-xs">
+                        {b.logo_url ? (
+                          <img
+                            src={b.logo_url}
+                            alt=""
+                            className="w-full h-full object-contain p-1"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <Building className="w-5 h-5" />
+                        )}
                       </div>
                       <div>
                         <h3 className="font-black text-slate-900 text-base">{b.name}</h3>
@@ -692,7 +803,7 @@ export function Settings() {
                     </p>
                     <p className="flex justify-between">
                       <span className="text-slate-400">العنوان:</span>
-                      <span className="max-w-[180px] truncate">{b.address || '-'}</span>
+                      <span className="max-w-[180px] truncate">{b.location || b.address || '-'}</span>
                     </p>
                   </div>
 
@@ -948,8 +1059,101 @@ export function Settings() {
             <Input
               placeholder="العنوان التفصيلي"
               value={branchForm.address}
-              onChange={(e) => setBranchForm({ ...branchForm, address: e.target.value })}
+              onChange={(e) => setBranchForm({ ...branchForm, address: e.target.value, location: e.target.value })}
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-black text-slate-700 mb-1.5 flex items-center justify-between">
+              <span>شعار الفرع (للفواتير وملصقات الباركود)</span>
+              {branchForm.logo_url && (
+                <button
+                  type="button"
+                  onClick={() => setBranchForm({ ...branchForm, logo_url: '' })}
+                  className="text-[10px] text-red-600 hover:underline font-bold"
+                >
+                  إزالة الشعار (استخدام الافتراضي)
+                </button>
+              )}
+            </label>
+
+            {/* Live Logo Preview Box */}
+            <div className="p-3 mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center gap-3">
+              <div className="w-14 h-14 rounded-lg bg-white border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
+                {branchForm.logo_url ? (
+                  <img
+                    src={branchForm.logo_url}
+                    alt="معاينة الشعار"
+                    className="w-full h-full object-contain p-1"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <Store className="w-6 h-6 text-slate-400" />
+                )}
+              </div>
+              <div className="text-xs">
+                <div className="font-bold text-slate-800">
+                  {branchForm.logo_url ? 'تم تحديد شعار خاص بالفرع' : 'يتم استخدام الشعار الافتراضي للنظام'}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  يظهر هذا الشعار تلقائياً على فواتير الكاشير وملصقات الباركود الخاصة بهذا الفرع
+                </div>
+              </div>
+            </div>
+
+            {/* Presets */}
+            <div className="space-y-1.5 mb-2">
+              <div className="text-[11px] font-bold text-slate-500">اختر شعار جاهز أو ارفع صورة خاصة:</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {PRESET_LOGOS.map((p) => {
+                  const isSelected = branchForm.logo_url === p.url;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setBranchForm({ ...branchForm, logo_url: p.url })}
+                      className={`flex items-center gap-2 p-2 rounded-lg border text-right text-xs font-bold transition-all ${
+                        isSelected
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-600'
+                          : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                      }`}
+                    >
+                      <img
+                        src={p.url}
+                        alt=""
+                        className="w-5 h-5 object-contain rounded"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                      <span className="truncate">{p.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Upload or Custom Path */}
+            <div className="flex gap-2">
+              <Input
+                placeholder="رابط أو مسار الشعار (اختياري)..."
+                value={branchForm.logo_url}
+                onChange={(e) => setBranchForm({ ...branchForm, logo_url: e.target.value })}
+                className="text-xs"
+              />
+              <label className="cursor-pointer shrink-0 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 flex items-center gap-1.5">
+                <Upload className="w-3.5 h-3.5" />
+                <span>رفع صورة</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoFileUpload}
+                />
+              </label>
+            </div>
           </div>
 
           <label className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">

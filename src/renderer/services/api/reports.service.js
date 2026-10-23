@@ -45,9 +45,32 @@ export const reportsService = {
     const qs = new URLSearchParams(params).toString();
     return api.get(`/reports/daily${qs ? `?${qs}` : ''}`);
   },
+  getExtendedDaily: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/extended-daily${qs ? `?${qs}` : ''}`);
+  },
+  getMonthlyOhda: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/ohda${qs ? `?${qs}` : ''}`);
+  },
+  getMonthlySalarySheet: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/salary-sheet${qs ? `?${qs}` : ''}`);
+  },
+  getSalesKpi: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/kpi${qs ? `?${qs}` : ''}`);
+  },
+  quickLogAttendance: (data) => {
+    return api.post('/reports/attendance-quick-log', data);
+  },
   exportExcel: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return api.get(`/reports/export/excel${qs ? `?${qs}` : ''}`, { responseType: 'blob' });
+  },
+  exportConsolidatedExcel: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/export/consolidated-excel${qs ? `?${qs}` : ''}`, { responseType: 'blob' });
   },
   exportPdfHtml: (params = {}) => {
     const qs = new URLSearchParams(params).toString();

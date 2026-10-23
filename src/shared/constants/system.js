@@ -20,6 +20,9 @@ const DEFAULT_SETTINGS = {
   rental_footer: 'شكراً لزيارتكم',
   rental_fine_per_day: '50',
   currency: 'ج.م',
+  profit_password: '123',
+  salary_password: '123',
+  invoice_edit_password: '123456',
 };
 
 const DEFAULT_RENTAL_FINE_PER_DAY = 50;

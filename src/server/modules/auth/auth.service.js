@@ -177,6 +177,19 @@ async function verifyInvoiceEditPassword(password) {
   return String(password).trim() === String(invoicePassword).trim();
 }
 
+async function verifyProfitPassword(password) {
+  if (!password) return false;
+  let profitPassword = '123';
+  if (config.IS_BRANCH_MODE) {
+    const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'profit_password'").get();
+    if (row?.value) profitPassword = row.value;
+  } else {
+    const { rows } = await db.query("SELECT value FROM settings WHERE key = 'profit_password'");
+    if (rows.length > 0 && rows[0].value) profitPassword = rows[0].value;
+  }
+  return String(password).trim() === String(profitPassword).trim();
+}
+
 async function updateOwnAccount(userId, { username, password }) {
   const cleanUsername = String(username || '').trim();
   if (!cleanUsername) {
@@ -301,6 +314,7 @@ module.exports = {
   authenticateUser,
   verifySalaryPassword,
   verifyInvoiceEditPassword,
+  verifyProfitPassword,
   updateOwnAccount,
   createBranchUser,
   listBranchUsers,

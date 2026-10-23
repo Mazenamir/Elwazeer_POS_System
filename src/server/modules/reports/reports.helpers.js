@@ -34,7 +34,7 @@ function canViewReportProfit(user) {
 }
 
 function stripReportProfit(row) {
-  const { net_profit, profit, cogs, total_inventory_value, ...rest } = row || {};
+  const { net_profit, profit, cogs, total_inventory_value, today_profit, month_profit, ...rest } = row || {};
   return rest;
 }
 
@@ -54,15 +54,27 @@ function employeeTransactionRemainingDeltaSql(alias = 'et') {
   END`;
 }
 
+function normalizePaymentMethod(raw) {
+  const norm = String(raw || 'cash').toLowerCase().trim();
+  if (['cash', 'نقدي', 'كاش', 'نقدي (كاش)', 'كاش (بالدرج)'].includes(norm)) return 'cash';
+  if (['visa', 'card', 'credit', 'بطاقة', 'فيزا', 'بطاقة (فيزا)', 'فيزا / بطاقة', 'فيزا / بطاقات'].includes(norm)) return 'card';
+  if (['bank_transfer', 'bank', 'transfer', 'instapay', 'انستاباي', 'تحويل بنكي', 'تحويل', 'انستاباي / تحويل بنكي', 'تحويل بنكي / انستاباي', 'انستاباي / بنكي'].includes(norm)) return 'bank_transfer';
+  if (['wallet', 'mobile_wallet', 'smart_wallet', 'فودافون كاش', 'فودافون', 'vodafone', 'vodafone_cash', 'vodafone cash', 'vodafonecash', 'محفظة', 'محفظه', 'محافظ', 'محافظ إلكترونية', 'محفظة إلكترونية', 'فودافون كاش / محفظة'].includes(norm)) return 'wallet';
+  if (['split', 'مجزأ', 'mixed', 'دفع مجزأ'].includes(norm)) return 'split';
+  if (['debt', 'credit_customer', 'آجل', 'آجل / مديونية'].includes(norm)) return 'debt';
+  return 'cash';
+}
+
 function normalizedPaymentMethodSql(column = 'payment_method') {
+  const normCol = `LOWER(TRIM(COALESCE(${column}::text, 'cash')))`;
   return `CASE
-    WHEN COALESCE(${column}, 'cash') IN ('cash', 'نقدي', 'كاش') THEN 'cash'
-    WHEN COALESCE(${column}, 'cash') IN ('visa', 'card', 'بطاقة', 'فيزا') THEN 'visa'
-    WHEN COALESCE(${column}, 'cash') IN ('wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة') THEN 'wallet'
-    WHEN COALESCE(${column}, 'cash') IN ('bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي') THEN 'bank_transfer'
-    WHEN COALESCE(${column}, 'cash') IN ('split', 'مجزأ', 'mixed') THEN 'split'
-    WHEN COALESCE(${column}, 'cash') IN ('debt', 'credit_customer', 'آجل') THEN 'debt'
-    ELSE COALESCE(${column}, 'cash')
+    WHEN ${normCol} IN ('cash', 'نقدي', 'كاش', 'نقدي (كاش)', 'كاش (بالدرج)') THEN 'cash'
+    WHEN ${normCol} IN ('visa', 'card', 'credit', 'بطاقة', 'فيزا', 'بطاقة (فيزا)', 'فيزا / بطاقة', 'فيزا / بطاقات') THEN 'visa'
+    WHEN ${normCol} IN ('wallet', 'mobile_wallet', 'smart_wallet', 'فودافون كاش', 'فودافون', 'vodafone', 'vodafone_cash', 'vodafone cash', 'vodafonecash', 'محفظة', 'محفظه', 'محافظ', 'محافظ إلكترونية', 'محفظة إلكترونية', 'فودافون كاش / محفظة') THEN 'wallet'
+    WHEN ${normCol} IN ('bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل', 'انستاباي / تحويل بنكي', 'تحويل بنكي / انستاباي', 'انستاباي / بنكي') THEN 'bank_transfer'
+    WHEN ${normCol} IN ('split', 'مجزأ', 'mixed', 'دفع مجزأ') THEN 'split'
+    WHEN ${normCol} IN ('debt', 'credit_customer', 'آجل', 'آجل / مديونية') THEN 'debt'
+    ELSE 'cash'
   END`;
 }
 
@@ -179,6 +191,7 @@ module.exports = {
   stripReportProfit,
   employeeTransactionReportAmountSql,
   employeeTransactionRemainingDeltaSql,
+  normalizePaymentMethod,
   normalizedPaymentMethodSql,
   rowsByBranch,
   getDayRange,

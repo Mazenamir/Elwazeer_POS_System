@@ -11,7 +11,8 @@ async function listBranches() {
 }
 
 async function createBranch(data) {
-  const { name, location, phone, type, is_main_warehouse, logo_url } = data;
+  const { name, phone, type, is_main_warehouse, logo_url } = data;
+  const branchLocation = data.location !== undefined ? data.location : (data.address ?? null);
   if (!name) {
     const err = new Error('اسم الفرع مطلوب');
     err.statusCode = 400;
@@ -33,7 +34,7 @@ async function createBranch(data) {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const info = stmt.run(
-        name, location, phone, branchType, isMain ? 1 : 0, logo_url || null,
+        name, branchLocation, phone, branchType, isMain ? 1 : 0, logo_url || null,
         logoSettings.invoice_logo_height, logoSettings.invoice_logo_spacing, logoSettings.invoice_logo_filter,
         logoSettings.invoice_logo_bg_enabled ? 1 : 0, logoSettings.invoice_logo_bg_start, logoSettings.invoice_logo_bg_end,
         allowedGender
@@ -56,7 +57,7 @@ async function createBranch(data) {
       RETURNING *`,
       [
         name,
-        location,
+        branchLocation,
         phone,
         branchType,
         isMain,
@@ -83,7 +84,8 @@ async function createBranch(data) {
 }
 
 async function updateBranch(id, data) {
-  const { name, location, phone, type, logo_url } = data;
+  const { name, phone, type, logo_url } = data;
+  const branchLocation = data.location !== undefined ? data.location : (data.address ?? null);
   const logoSettings = normalizeBranchInvoiceLogoSettings(data);
 
   if (config.IS_BRANCH_MODE) {
@@ -95,7 +97,7 @@ async function updateBranch(id, data) {
       WHERE id = ?
     `);
     stmt.run(
-      name, location, phone, type || 'men', logo_url || null,
+      name, branchLocation, phone, type || 'men', logo_url || null,
       logoSettings.invoice_logo_height, logoSettings.invoice_logo_spacing, logoSettings.invoice_logo_filter,
       logoSettings.invoice_logo_bg_enabled ? 1 : 0, logoSettings.invoice_logo_bg_start, logoSettings.invoice_logo_bg_end,
       id
@@ -121,7 +123,7 @@ async function updateBranch(id, data) {
      RETURNING *`,
     [
       name,
-      location,
+      branchLocation,
       phone,
       type || 'men',
       logo_url || null,

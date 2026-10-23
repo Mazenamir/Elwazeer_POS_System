@@ -91,7 +91,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       notes TEXT,
       gender_category TEXT DEFAULT 'مشترك',
       is_active INTEGER DEFAULT 1,
-      status TEXT DEFAULT 'active'
+      status TEXT DEFAULT 'active',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS customers (
@@ -310,6 +311,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       branch_id INTEGER,
       payment_date TEXT DEFAULT CURRENT_TIMESTAMP,
       is_remainder INTEGER DEFAULT 0,
+      payment_method TEXT DEFAULT 'cash',
       offline_uuid TEXT UNIQUE,
       pending_sync INTEGER DEFAULT 1
     );
@@ -356,7 +358,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       quantity INTEGER NOT NULL,
       transfer_date TEXT DEFAULT CURRENT_TIMESTAMP,
       status TEXT DEFAULT 'completed',
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      sizes_data TEXT
     );
 
     CREATE TABLE IF NOT EXISTS notification_reads (
@@ -516,6 +519,37 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try {
     sqlite.exec("ALTER TABLE notification_reads ADD COLUMN is_dismissed INTEGER DEFAULT 0");
   } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN cash_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN card_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN wallet_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN bank_transfer_amount REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN payment_splits TEXT");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN custom_items TEXT");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE tailoring_payments ADD COLUMN payment_method TEXT DEFAULT 'cash'");
+  } catch {}
+
+  try {
+    sqlite.exec("ALTER TABLE suppliers ADD COLUMN created_at TEXT");
+  } catch {}
+  try {
+    sqlite.exec("UPDATE suppliers SET created_at = datetime('now') WHERE created_at IS NULL");
+  } catch {}
+  try {
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_suppliers_created_at ON suppliers(created_at DESC)");
+  } catch {}
 
   try {
     sqlite.exec(`
@@ -536,12 +570,15 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
         inventory_id INTEGER NOT NULL,
         size_id INTEGER,
         size_name TEXT NOT NULL,
+        color_name TEXT DEFAULT '',
+        barcode TEXT,
         stock_level INTEGER DEFAULT 0,
         branch_id INTEGER DEFAULT 1,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(inventory_id, size_name, branch_id)
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_sizes_unique 
+        ON inventory_sizes (inventory_id, LOWER(TRIM(size_name)), LOWER(TRIM(COALESCE(color_name, ''))), COALESCE(branch_id, 1));
     CREATE TABLE IF NOT EXISTS sync_queue (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       operation_uuid TEXT UNIQUE NOT NULL,
@@ -562,8 +599,51 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   } catch (e) {
     console.warn('Error ensuring auxiliary SQLite tables:', e.message);
   }
+
+  // Migrate legacy inventory_sizes if it has the single-color UNIQUE constraint
+  try {
+    const tableDef = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='inventory_sizes'").get();
+    if (tableDef && tableDef.sql && tableDef.sql.includes('UNIQUE(inventory_id, size_name, branch_id)')) {
+      const cols = sqlite.prepare("PRAGMA table_info('inventory_sizes')").all().map((c) => c.name);
+      const hasColor = cols.includes('color_name');
+      const hasBarcode = cols.includes('barcode');
+      const selectColor = hasColor ? "COALESCE(color_name, '')" : "''";
+      const selectBarcode = hasBarcode ? "barcode" : "NULL";
+
+      sqlite.exec(`
+        CREATE TABLE inventory_sizes_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          inventory_id INTEGER NOT NULL,
+          size_id INTEGER,
+          size_name TEXT NOT NULL,
+          color_name TEXT DEFAULT '',
+          barcode TEXT,
+          stock_level INTEGER DEFAULT 0,
+          branch_id INTEGER DEFAULT 1,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT OR IGNORE INTO inventory_sizes_new (id, inventory_id, size_id, size_name, color_name, barcode, stock_level, branch_id, created_at, updated_at)
+        SELECT id, inventory_id, size_id, size_name, ${selectColor}, ${selectBarcode}, stock_level, branch_id, created_at, updated_at
+        FROM inventory_sizes;
+        DROP TABLE inventory_sizes;
+        ALTER TABLE inventory_sizes_new RENAME TO inventory_sizes;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_sizes_unique 
+          ON inventory_sizes (inventory_id, LOWER(TRIM(size_name)), LOWER(TRIM(COALESCE(color_name, ''))), COALESCE(branch_id, 1));
+      `);
+    }
+  } catch (err) {
+    console.warn('Error migrating legacy inventory_sizes in SQLite:', err.message);
+  }
+
   try {
     sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN color_name TEXT');
+  } catch {}
+  try {
+    sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN barcode TEXT');
+  } catch {}
+  try {
+    sqlite.exec('CREATE INDEX IF NOT EXISTS idx_inventory_sizes_barcode ON inventory_sizes(barcode)');
   } catch {}
   try {
     sqlite.exec(`
@@ -571,6 +651,9 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       SET color_name = (SELECT color FROM inventory WHERE inventory.id = inventory_sizes.inventory_id)
       WHERE color_name IS NULL OR TRIM(color_name) = ''
     `);
+  } catch {}
+  try {
+    sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN sizes_data TEXT');
   } catch {}
 
   // Seed initial users & branches into branch SQLite if empty
@@ -605,12 +688,24 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
               b.allowed_gender || 'both'
             );
           }
-          console.log(`🌱 Seeded ${seedData.branches.length} initial branches into branch SQLite.`);
         }
       }
     }
   } catch (err) {
     console.warn('Could not seed initial users into SQLite:', err.message);
+  }
+
+  // Always ensure clean static logo URLs for standard branches in SQLite
+  try {
+    sqlite.exec(`
+      UPDATE branches SET logo_url = '/logos/app-icon.png' WHERE id = 1;
+      UPDATE branches SET logo_url = '/logos/Antalya logo.png' WHERE id = 2;
+      UPDATE branches SET logo_url = '/logos/elwazer.png' WHERE id = 3;
+      UPDATE branches SET logo_url = '/logos/men.png' WHERE id IN (4, 5, 6, 7, 8, 9);
+      UPDATE branches SET logo_url = '/logos/women.png' WHERE id = 10;
+    `);
+  } catch (err) {
+    console.warn('Could not update static branch logos in SQLite:', err.message);
   }
 
   console.log('✨ Branch SQLite schema initialized successfully.');

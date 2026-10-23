@@ -59,32 +59,68 @@ async function getPublicSettings() {
   return result;
 }
 
-async function getSettings() {
+function isAhmedUser(user) {
+  if (!user || !user.username) return false;
+  const u = String(user.username).trim().toLowerCase();
+  return u === 'احمد' || u === 'ahmed' || u.includes('احمد') || u.includes('ahmed');
+}
+
+async function getSettings(user = null) {
   const result = { ...DEFAULT_SETTINGS };
   if (config.IS_BRANCH_MODE) {
     const rows = db.sqlite.prepare('SELECT key, value FROM settings').all();
     for (const r of rows) result[r.key] = r.value;
-    return result;
+  } else {
+    const { rows } = await db.query('SELECT key, value FROM settings');
+    for (const r of rows) result[r.key] = r.value;
   }
-  const { rows } = await db.query('SELECT key, value FROM settings');
-  for (const r of rows) result[r.key] = r.value;
+
+  // If user is not 'احمد', do not expose the profit_password
+  if (user && !isAhmedUser(user)) {
+    result.profit_password = '';
+  }
+
   return result;
 }
 
-async function saveSettings(settingsObj) {
+async function saveSettings(settingsObj, user = null) {
+  const entriesToSave = { ...settingsObj };
+
+  // Only user 'احمد' is authorized to change profit_password
+  if (entriesToSave.profit_password !== undefined) {
+    if (!isAhmedUser(user)) {
+      let currentProfitPassword = '123';
+      if (config.IS_BRANCH_MODE) {
+        const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'profit_password'").get();
+        if (row?.value) currentProfitPassword = row.value;
+      } else {
+        const { rows } = await db.query("SELECT value FROM settings WHERE key = 'profit_password'");
+        if (rows.length > 0 && rows[0].value) currentProfitPassword = rows[0].value;
+      }
+
+      if (String(entriesToSave.profit_password).trim() !== String(currentProfitPassword).trim()) {
+        const err = new Error('تعديل كلمة سر عرض الأرباح متاح حصرياً لحساب المستخدم (احمد)');
+        err.statusCode = 403;
+        throw err;
+      } else {
+        delete entriesToSave.profit_password;
+      }
+    }
+  }
+
   if (config.IS_BRANCH_MODE) {
     const stmt = db.sqlite.prepare(`
       INSERT INTO settings (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `);
-    for (const [key, value] of Object.entries(settingsObj)) {
+    for (const [key, value] of Object.entries(entriesToSave)) {
       stmt.run(key, String(value ?? ''));
     }
     return { success: true };
   }
 
   await db.transaction(async (tx) => {
-    for (const [key, value] of Object.entries(settingsObj)) {
+    for (const [key, value] of Object.entries(entriesToSave)) {
       await tx.query(
         `INSERT INTO settings (key, value) VALUES ($1, $2)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,

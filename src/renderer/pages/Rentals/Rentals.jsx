@@ -20,6 +20,12 @@ import {
   Ban,
   PackageCheck,
   Eye,
+  Building2,
+  ArrowRightLeft,
+  Trash2,
+  Shirt,
+  RefreshCw,
+  Barcode,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
@@ -55,9 +61,30 @@ export function Rentals() {
   const [rentalInventory, setRentalInventory] = useState([]);
   const [employees, setEmployees] = useState([]);
 
-  // Filters
+  // Filters & Tabs
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [activeTab, setActiveTab] = useState('all'); // 'all' | 'today_all' | 'today_pickup' | 'today_return' | 'upcoming'
+
+  // Barcode Scanner in Booking Modal
+  const [barcodeScanInput, setBarcodeScanInput] = useState('');
+
+  // Status Change Modal State
+  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [selectedRentalForStatus, setSelectedRentalForStatus] = useState(null);
+  const [statusNewValue, setStatusNewValue] = useState('booked');
+  const [statusNotes, setStatusNotes] = useState('');
+  const [statusSubmitting, setStatusSubmitting] = useState(false);
+
+  // Cairo Today Date String (YYYY-MM-DD)
+  const cairoTodayStr = useMemo(() => {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  }, []);
 
   // New Booking Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -66,7 +93,15 @@ export function Rentals() {
   const [customerPhone, setCustomerPhone] = useState('');
   const [nationalId, setNationalId] = useState('');
   const [hasIdGuarantee, setHasIdGuarantee] = useState(true);
-  const [selectedItemId, setSelectedItemId] = useState('');
+
+  // Multi-Item Rental Booking State
+  const [bookingItems, setBookingItems] = useState([]);
+  const [selectedInventoryItemId, setSelectedInventoryItemId] = useState('');
+  const [customItemName, setCustomItemName] = useState('');
+  const [customItemCategory, setCustomItemCategory] = useState('قميص');
+  const [customItemPrice, setCustomItemPrice] = useState('');
+  const [showCustomItemInput, setShowCustomItemInput] = useState(false);
+
   const [pickupDate, setPickupDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [returnDate, setReturnDate] = useState(() => {
     const d = new Date();
@@ -78,6 +113,14 @@ export function Rentals() {
   const [paidAmount, setPaidAmount] = useState('');
   const [sellerId, setSellerId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
+
+  // Split Payment State (Dual payment channels)
+  const [isSplitPayment, setIsSplitPayment] = useState(false);
+  const [splitMethod1, setSplitMethod1] = useState('cash');
+  const [splitAmount1, setSplitAmount1] = useState('');
+  const [splitMethod2, setSplitMethod2] = useState('bank_transfer');
+  const [splitAmount2, setSplitAmount2] = useState('');
+
   const [notes, setNotes] = useState('');
 
   // Customer auto-suggestions
@@ -131,7 +174,7 @@ export function Rentals() {
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (statusFilter !== 'all') query.append('status', statusFilter);
-      if (search.trim()) query.append('name', search.trim());
+      if (search.trim()) query.append('search', search.trim());
 
       const data = await api.get(`/rentals?${query.toString()}`);
       setRentals(Array.isArray(data) ? data : (data?.rentals || data?.data || data?.items || []));
@@ -147,25 +190,48 @@ export function Rentals() {
     fetchSummary();
   }, [fetchRentals, fetchSummary]);
 
-  // Load Rental Inventory for creation
-  useEffect(() => {
-    async function loadLookups() {
-      try {
-        const invUrl = `/rental-inventory${(activeBranchId && activeBranchId !== 'all') ? `?branch_id=${activeBranchId}` : ''}`;
-        const empUrl = `/employees${(activeBranchId && activeBranchId !== 'all') ? `?branch_id=${activeBranchId}` : ''}`;
-        const [invRes, empRes] = await Promise.all([
-          api.get(invUrl),
-          api.get(empUrl),
-        ]);
-        setRentalInventory(Array.isArray(invRes) ? invRes : (invRes?.items || invRes?.data || []));
-        if (Array.isArray(empRes)) {
-          setEmployees(empRes);
-          if (empRes.length > 0 && !sellerId) setSellerId(empRes[0].id.toString());
-        }
-      } catch {}
+  // Load Lookups (Rental Inventory and Employees)
+  const loadLookups = useCallback(async () => {
+    try {
+      const branchParam = (activeBranchId && activeBranchId !== 'all') ? `?branch_id=${activeBranchId}` : '';
+      const invUrl = `/rental-inventory${branchParam}`;
+      const optUrl = `/employees/options${branchParam}`;
+      const empUrl = `/employees${branchParam}`;
+
+      const [invRes, optRes] = await Promise.all([
+        api.get(invUrl).catch(() => []),
+        api.get(optUrl).catch(() => null),
+      ]);
+
+      setRentalInventory(Array.isArray(invRes) ? invRes : (invRes?.items || invRes?.data || []));
+
+      let empList = [];
+      if (Array.isArray(optRes) && optRes.length > 0) {
+        empList = optRes;
+      } else {
+        const empRes = await api.get(empUrl).catch(() => []);
+        empList = Array.isArray(empRes) ? empRes : (empRes?.items || empRes?.employees || empRes?.data || []);
+      }
+
+      setEmployees(empList);
+      if (empList.length > 0 && !sellerId) {
+        setSellerId(empList[0].id.toString());
+      }
+    } catch (err) {
+      console.error('Failed to load lookups:', err);
     }
+  }, [activeBranchId, sellerId]);
+
+  useEffect(() => {
     loadLookups();
-  }, [activeBranchId]);
+  }, [loadLookups]);
+
+  // When new booking modal opens, ensure lookups are loaded
+  useEffect(() => {
+    if (showCreateModal && (!employees.length || !rentalInventory.length)) {
+      loadLookups();
+    }
+  }, [showCreateModal, employees.length, rentalInventory.length, loadLookups]);
 
   // Search customers on typing
   const searchCustomers = async (query) => {
@@ -185,21 +251,140 @@ export function Rentals() {
     }
   };
 
-  // Select Item updates default price and deposit
-  const handleItemSelect = (itemId) => {
-    setSelectedItemId(itemId);
-    const item = rentalInventory.find((i) => i.id.toString() === itemId.toString());
-    if (item) {
-      setTotalPrice(item.rental_price ? item.rental_price.toString() : '');
-      setDeposit(item.deposit ? item.deposit.toString() : '500');
+  // Helper to recalculate total price and deposit from booking items
+  const recalcTotals = (items) => {
+    const sum = items.reduce((acc, it) => acc + (Number(it.price) || 0), 0);
+    setTotalPrice(sum > 0 ? sum.toString() : '');
+    if (!deposit || deposit === '0' || deposit === '500') {
+      const hasSuit = items.some(
+        (it) => (it.category || '').toLowerCase().includes('suit') || (it.category || '').includes('بدل')
+      );
+      setDeposit(hasSuit ? '500' : '200');
     }
+  };
+
+  // Add Item from Rental Inventory
+  const handleAddInventoryItem = (itemId) => {
+    const targetId = itemId || selectedInventoryItemId;
+    if (!targetId) return;
+    const item = rentalInventory.find((i) => i.id.toString() === targetId.toString());
+    if (!item) return;
+
+    const newItem = {
+      id: item.id,
+      rental_inventory_id: item.id,
+      name: item.name,
+      category: item.category || 'بدلة تأجير',
+      color: item.color,
+      size_cut: item.size_cut,
+      barcode: item.barcode,
+      price: Number(item.rental_price || item.price || 0),
+      is_custom: false,
+    };
+
+    setBookingItems((prev) => {
+      const updated = [...prev, newItem];
+      recalcTotals(updated);
+      return updated;
+    });
+    setSelectedInventoryItemId('');
+  };
+
+  // Quick Add Standard Accessory Preset
+  const handleQuickAddAccessory = (accName, accCategory, accPrice) => {
+    const newItem = {
+      id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      name: accName,
+      category: accCategory,
+      price: Number(accPrice || 0),
+      is_custom: true,
+    };
+
+    setBookingItems((prev) => {
+      const updated = [...prev, newItem];
+      recalcTotals(updated);
+      return updated;
+    });
+  };
+
+  // Add Custom Accessory from input
+  const handleAddCustomAccessory = () => {
+    if (!customItemName.trim()) {
+      toast.error('الرجاء إدخال اسم القطعة أو الملحق');
+      return;
+    }
+    const price = Number(customItemPrice) || 0;
+    const newItem = {
+      id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      name: customItemName.trim(),
+      category: customItemCategory || 'إكسسوار',
+      price,
+      is_custom: true,
+    };
+
+    setBookingItems((prev) => {
+      const updated = [...prev, newItem];
+      recalcTotals(updated);
+      return updated;
+    });
+
+    setCustomItemName('');
+    setCustomItemPrice('');
+    setShowCustomItemInput(false);
+  };
+
+  // Remove Item from Booking
+  const handleRemoveBookingItem = (index) => {
+    setBookingItems((prev) => {
+      const updated = prev.filter((_, i) => i !== index);
+      recalcTotals(updated);
+      return updated;
+    });
+  };
+
+  // Update Item Price in Booking
+  const handleUpdateItemPrice = (index, newPrice) => {
+    setBookingItems((prev) => {
+      const updated = prev.map((item, i) =>
+        i === index ? { ...item, price: Math.max(0, Number(newPrice) || 0) } : item
+      );
+      recalcTotals(updated);
+      return updated;
+    });
+  };
+
+  // Handle Split Amounts
+  const handleSplitAmount1Change = (val) => {
+    setSplitAmount1(val);
+    const a1 = Number(val) || 0;
+    const a2 = Number(splitAmount2) || 0;
+    setPaidAmount((a1 + a2).toString());
+  };
+
+  const handleSplitAmount2Change = (val) => {
+    setSplitAmount2(val);
+    const a1 = Number(splitAmount1) || 0;
+    const a2 = Number(val) || 0;
+    setPaidAmount((a1 + a2).toString());
+  };
+
+  const handleFillRemainderToSplit2 = () => {
+    const target = Number(paidAmount) || Number(totalPrice) || 0;
+    const a1 = Number(splitAmount1) || 0;
+    const remainder = Math.max(0, target - a1);
+    setSplitAmount2(remainder.toString());
+    setPaidAmount((a1 + remainder).toString());
   };
 
   // Submit New Rental Booking
   const handleCreateSubmit = async (e) => {
     e.preventDefault();
-    if (!customerName.trim() || !customerPhone.trim() || !selectedItemId) {
-      toast.error('الرجاء إدخال بيانات العميل واختيار قطعة التأجير');
+    if (!customerName.trim() || !customerPhone.trim()) {
+      toast.error('الرجاء إدخال بيانات العميل ورقم الهاتف');
+      return;
+    }
+    if (bookingItems.length === 0) {
+      toast.error('الرجاء إضافة قطعة تأجير واحدة على الأقل للحجز (بدلة، قميص، أو إكسسوار)');
       return;
     }
 
@@ -207,15 +392,50 @@ export function Rentals() {
     try {
       const price = Number(totalPrice) || 0;
       const dep = Number(deposit) || 0;
-      const paid = Number(paidAmount) || 0;
+      let paid = Number(paidAmount) || 0;
+      let finalMethod = paymentMethod;
+      let splitsArray = null;
+
+      if (isSplitPayment) {
+        const a1 = Number(splitAmount1) || 0;
+        const a2 = Number(splitAmount2) || 0;
+        if (a1 <= 0 || a2 <= 0) {
+          toast.error('يرجى إدخال مبالغ صحيحة للوسيلتين في الدفع المجزأ');
+          setSubmitting(false);
+          return;
+        }
+        if (splitMethod1 === splitMethod2) {
+          toast.error('لا يمكن اختيار نفس وسيلة الدفع مرتين في الدفع المجزأ');
+          setSubmitting(false);
+          return;
+        }
+        finalMethod = 'split';
+        paid = a1 + a2;
+        splitsArray = [
+          { method: splitMethod1, amount: a1 },
+          { method: splitMethod2, amount: a2 },
+        ];
+      }
+
       const remaining = Math.max(0, price - paid);
+
+      // Separate inventory items from custom accessories
+      const invItems = bookingItems.filter((it) => !it.is_custom && it.id);
+      const customItems = bookingItems.filter((it) => it.is_custom || !it.id);
 
       const payload = {
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
         national_id: nationalId.trim(),
-        branch_id: (activeBranchId && activeBranchId !== 'all') ? Number(activeBranchId) : (branches[0]?.id || 1),
-        rental_inventory_id: Number(selectedItemId),
+        branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
+        rental_inventory_id: invItems[0]?.id || null,
+        items: invItems.map((it) => ({ id: it.id, name: it.name, category: it.category, price: it.price })),
+        custom_items: customItems.map((it) => ({
+          name: it.name,
+          category: it.category,
+          price: it.price,
+          is_custom: true,
+        })),
         pickup_date: pickupDate,
         return_date: returnDate,
         total_price: price,
@@ -224,7 +444,8 @@ export function Rentals() {
         remaining,
         id_card_guarantee: hasIdGuarantee,
         seller_id: sellerId ? Number(sellerId) : null,
-        payment_method: paymentMethod,
+        payment_method: finalMethod,
+        payment_splits: splitsArray ? JSON.stringify(splitsArray) : null,
         notes: notes.trim(),
       };
 
@@ -236,22 +457,101 @@ export function Rentals() {
       setCustomerName('');
       setCustomerPhone('');
       setNationalId('');
-      setSelectedItemId('');
+      setBookingItems([]);
+      setSelectedInventoryItemId('');
       setTotalPrice('');
       setDeposit('');
       setPaidAmount('');
+      setIsSplitPayment(false);
+      setSplitAmount1('');
+      setSplitAmount2('');
       setNotes('');
 
       fetchRentals();
       fetchSummary();
 
-      // Show receipt
-      setSelectedReceiptRental(res);
+      // Show receipt with all booking items and payment details
+      setSelectedReceiptRental({
+        ...res,
+        items: bookingItems,
+        payment_method: finalMethod,
+        payment_splits: splitsArray,
+        paid_amount: paid,
+        total_price: price,
+        remaining,
+        deposit: dep,
+      });
       setShowReceiptModal(true);
     } catch (err) {
       toast.error(err.message || 'فشل تسجيل الحجز');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Handle Barcode Scan or Search in New Booking Modal
+  const handleBarcodeScanOrSearch = async (e) => {
+    if (e && e.key && e.key !== 'Enter') return;
+    if (e && e.preventDefault) e.preventDefault();
+    const code = barcodeScanInput.trim();
+    if (!code) return;
+
+    // 1. Match local loaded inventory
+    let found = rentalInventory.find(
+      (it) =>
+        (it.barcode && it.barcode.toLowerCase() === code.toLowerCase()) ||
+        it.id.toString() === code ||
+        (it.name && it.name.toLowerCase().includes(code.toLowerCase()))
+    );
+
+    // 2. If not found in loaded page, query backend
+    if (!found) {
+      try {
+        const branchParam = (activeBranchId && activeBranchId !== 'all') ? `&branch_id=${activeBranchId}` : '';
+        const res = await api.get(`/rental-inventory?search=${encodeURIComponent(code)}${branchParam}`);
+        const items = Array.isArray(res) ? res : (res?.items || res?.data || []);
+        if (items.length > 0) {
+          found = items[0];
+          setRentalInventory((prev) => [found, ...prev.filter((p) => p.id !== found.id)]);
+        }
+      } catch {}
+    }
+
+    if (found) {
+      handleAddInventoryItem(found.id);
+      setBarcodeScanInput('');
+      toast.success(`تمت إضافة "${found.name}" بنجاح!`);
+    } else {
+      toast.error(`عفواً، لم يتم العثور على بدلة بالباركود (${code})`);
+    }
+  };
+
+  // Open Status Change Modal
+  const openStatusModal = (rental) => {
+    setSelectedRentalForStatus(rental);
+    setStatusNewValue(rental.status || 'booked');
+    setStatusNotes('');
+    setShowStatusModal(true);
+  };
+
+  // Submit Status Change
+  const handleUpdateStatus = async (e) => {
+    if (e) e.preventDefault();
+    if (!selectedRentalForStatus) return;
+    try {
+      setStatusSubmitting(true);
+      await api.put(`/rentals/${selectedRentalForStatus.id}/status`, {
+        status: statusNewValue,
+        notes: statusNotes,
+      });
+      toast.success('تم تعديل حالة الحجز بنجاح!');
+      setShowStatusModal(false);
+      fetchRentals();
+      fetchSummary();
+    } catch (err) {
+      toast.error(err.message || 'فشل تعديل حالة الحجز');
+    } finally {
+      setStatusSubmitting(false);
     }
   };
 
@@ -470,7 +770,9 @@ export function Rentals() {
           title="محجوزة"
           value={summary.booked || 0}
           icon={Clock}
-          subtitle="حجوزات قادمة ومؤكدة"
+          subtitle={summary.upcoming ? `${summary.upcoming} حجز قادم من اليوم` : 'حجوزات قادمة ومؤكدة'}
+          onClick={() => setStatusFilter(statusFilter === 'upcoming' ? 'all' : 'upcoming')}
+          className="cursor-pointer hover:ring-2 hover:ring-amber-400/50 transition-all"
         />
 
         <StatCard
@@ -504,19 +806,90 @@ export function Rentals() {
 
       {/* Main Table Card */}
       <Card>
+        {/* Navigation Tabs for Daily Operations */}
+        <div className="px-6 pt-3 pb-3 border-b border-[#E6DECD]/70 flex flex-wrap items-center justify-between gap-2.5 bg-[#FAF8F5]/80">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setActiveTab('all'); setStatusFilter('all'); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                statusFilter === 'all'
+                  ? 'bg-[#151515] text-white shadow-xs'
+                  : 'bg-white border border-[#E6DECD] text-[#565147] hover:bg-[#F3ECE1]'
+              }`}
+            >
+              <span>📋 كل الحجوزات</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('today_pickup'); setStatusFilter('today_pickup'); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                statusFilter === 'today_pickup'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-blue-50 border border-blue-200 text-blue-900 hover:bg-blue-100'
+              }`}
+              title="البدل المجدول استلام العميل لها اليوم وبانتظار الخروج للمناسبة"
+            >
+              <span>📦 استلام اليوم (خروج للعميل)</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                statusFilter === 'today_pickup' ? 'bg-white text-blue-800' : 'bg-blue-200 text-blue-900'
+              }`}>
+                {summary.today_pickups || 0}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('today_return'); setStatusFilter('today_return'); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                statusFilter === 'today_return'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-emerald-50 border border-emerald-200 text-emerald-900 hover:bg-emerald-100'
+              }`}
+              title="البدل المجدول تسليمها للمحل اليوم وبانتظار الإرجاع والتسوية"
+            >
+              <span>↩️ تسليم اليوم (عودة للمحل)</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                statusFilter === 'today_return' ? 'bg-white text-emerald-800' : 'bg-emerald-200 text-emerald-900'
+              }`}>
+                {summary.today_returns || 0}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('upcoming'); setStatusFilter('upcoming'); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                statusFilter === 'upcoming'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-indigo-50 border border-indigo-200 text-indigo-900 hover:bg-indigo-100'
+              }`}
+              title="الحجوزات المستقبلية القادمة مرتبة تصاعدياً بالأقرب موعداً"
+            >
+              <span>⏳ حجوزات قادمة</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                statusFilter === 'upcoming' ? 'bg-white text-indigo-800' : 'bg-indigo-200 text-indigo-900'
+              }`}>
+                {summary.upcoming || 0}
+              </span>
+            </button>
+          </div>
+        </div>
+
         <CardHeader
           title="سجل الحجوزات"
           subtitle="استعراض وتحديث حالات الإيجارات"
           action={
             <div className="flex flex-wrap items-center gap-2.5">
               {/* Search */}
-              <div className="relative w-64">
+              <div className="relative w-72">
                 <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#777266]" />
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="ابحث باسم العميل أو الهاتف..."
+                  placeholder="ابحث بالعميل، الهاتف، رقم الحجز، أو باركود البدلة..."
                   className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-colors"
                 />
               </div>
@@ -524,17 +897,23 @@ export function Rentals() {
               {/* Status Filter */}
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setActiveTab(e.target.value);
+                }}
                 className="bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] cursor-pointer transition-colors"
               >
                 <option value="all">كل الحالات</option>
-                <option value="booked">محجوزة</option>
-                <option value="active">تم الاستلام</option>
-                <option value="returned">مُرجعة (الكل)</option>
-                <option value="returned_debt">مرتجع (غير خالص / عليه متبقي)</option>
+                <option value="today_pickup">📦 استلام اليوم (خروج للعميل - {summary.today_pickups || 0})</option>
+                <option value="today_return">↩️ تسليم اليوم (عودة للمحل - {summary.today_returns || 0})</option>
+                <option value="upcoming">⏳ حجوزات قادمة ({summary.upcoming || 0})</option>
+                <option value="booked">محجوزة (الكل - {summary.booked || 0})</option>
+                <option value="active">تم الاستلام (مع العميل - {summary.active || 0})</option>
+                <option value="returned">مُرجعة (الكل - {summary.returned || 0})</option>
+                <option value="returned_debt">مرتجع (عليه متبقي - {summary.returned_debt || 0})</option>
                 <option value="returned_settled">تم الإرجاع (خالص)</option>
                 <option value="sold">محولة لبيع</option>
-                <option value="cancelled">ملغي</option>
+                <option value="cancelled">ملغي ({summary.cancelled || 0})</option>
               </select>
 
               <Button variant="outline" size="sm" onClick={fetchRentals} icon={RotateCcw}>
@@ -550,7 +929,13 @@ export function Rentals() {
           </div>
         ) : rentals.length === 0 ? (
           <div className="py-20 text-center text-[#777266] font-bold text-sm">
-            لا توجد حجوزات مسجلة مطابقة للبحث
+            {statusFilter === 'today_pickup'
+              ? 'لا توجد بدل بانتظار استلام العميل لها اليوم 🎉'
+              : statusFilter === 'today_return'
+                ? 'لا توجد بدل بانتظار تسليمها ورجوعها للمحل اليوم ✨'
+                : statusFilter === 'upcoming'
+                  ? 'لا توجد حجوزات مستقبلية قادمة'
+                  : 'لا توجد حجوزات مسجلة مطابقة للبحث أو الفلتر المحدد'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -595,29 +980,51 @@ export function Rentals() {
                         </div>
                       </td>
                       <td className="py-3.5">
-                        <div className="font-bold text-[#24221F]">
-                          {r.inventory_name || 'قطعة تأجير'}
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[11px] text-[#777266] font-bold mt-0.5">
-                          {r.rental_inventory_id && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD] text-[#24221F] font-mono text-[10px]">
-                              كود: #{r.rental_inventory_id}
-                            </span>
-                          )}
-                          {r.inventory_barcode && (
-                            <span className="font-mono text-[#777266]">#{r.inventory_barcode}</span>
-                          )}
-                          {r.inventory_color && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD]">
-                              {r.inventory_color}
-                            </span>
-                          )}
-                          {r.inventory_size && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD]">
-                              {r.inventory_size}
+                        <div className="font-bold text-[#24221F] flex items-center gap-1.5">
+                          <span>{r.inventory_name || r.items?.[0]?.name || 'قطعة تأجير'}</span>
+                          {Array.isArray(r.items) && r.items.length > 1 && (
+                            <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-black">
+                              +{r.items.length - 1} ملحقات
                             </span>
                           )}
                         </div>
+                        {Array.isArray(r.items) && r.items.length > 1 ? (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {r.items.map((it, idx) => (
+                              <span
+                                key={idx}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                  it.is_custom
+                                    ? 'bg-amber-50 border border-amber-200 text-amber-800'
+                                    : 'bg-[#FAF6ED] border border-[#E6DECD] text-[#24221F]'
+                                }`}
+                              >
+                                {it.name || it.product_name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-[11px] text-[#777266] font-bold mt-0.5">
+                            {r.rental_inventory_id && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD] text-[#24221F] font-mono text-[10px]">
+                                كود: #{r.rental_inventory_id}
+                              </span>
+                            )}
+                            {r.inventory_barcode && (
+                              <span className="font-mono text-[#777266]">#{r.inventory_barcode}</span>
+                            )}
+                            {r.inventory_color && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD]">
+                                {r.inventory_color}
+                              </span>
+                            )}
+                            {r.inventory_size && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#FAF6ED] border border-[#E6DECD]">
+                                {r.inventory_size}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 text-xs text-[#565147]">
                         <div className="flex items-center gap-1">
@@ -635,10 +1042,25 @@ export function Rentals() {
                             تأخير {r.delay_days} يوم!
                           </div>
                         )}
+                        {r.status === 'booked' && r.pickup_date && String(r.pickup_date).slice(0, 10) === cairoTodayStr && (
+                          <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-black mt-1">
+                            <span>📦 موعد استلام العميل اليوم</span>
+                          </div>
+                        )}
+                        {r.status === 'active' && r.return_date && String(r.return_date).slice(0, 10) === cairoTodayStr && (
+                          <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black mt-1">
+                            <span>↩️ موعد تسليم البدلة للمحل اليوم</span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5">
-                        <div className="font-black text-[#24221F] text-sm">
-                          {Number(r.total_price || 0).toLocaleString()} ج.م
+                        <div className="font-black text-[#24221F] text-sm flex items-center gap-1.5">
+                          <span>{Number(r.total_price || 0).toLocaleString()} ج.م</span>
+                          {r.payment_method === 'split' && (
+                            <span className="px-1.5 py-0.2 rounded bg-purple-50 border border-purple-200 text-purple-700 text-[10px] font-black">
+                              دفع مجزأ
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-[#777266] font-bold mt-0.5">
                           تأمين: {Number(r.deposit || 0).toLocaleString()} ج.م
@@ -654,9 +1076,16 @@ export function Rentals() {
                         )}
                       </td>
                       <td className="py-3.5">
-                        <Badge variant={statusInfo.variant} dot>
-                          {statusInfo.label}
-                        </Badge>
+                        <button
+                          type="button"
+                          onClick={() => openStatusModal(r)}
+                          className="cursor-pointer group text-right block"
+                          title="اضغط لتغيير حالة هذا الحجز"
+                        >
+                          <Badge variant={statusInfo.variant} dot className="group-hover:ring-2 group-hover:ring-indigo-400 transition-all">
+                            {statusInfo.label}
+                          </Badge>
+                        </button>
                       </td>
                       <td className="py-3.5 pl-2">
                         <div className="flex items-center gap-1.5">
@@ -717,6 +1146,17 @@ export function Rentals() {
                               سداد متبقي
                             </Button>
                           )}
+
+                          {/* Change Status Button - Always available on EVERY row */}
+                          <button
+                            type="button"
+                            onClick={() => openStatusModal(r)}
+                            className="px-2 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors flex items-center gap-1 shrink-0 shadow-2xs"
+                            title="تعديل وتغيير حالة الحجز"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>تغيير الحالة</span>
+                          </button>
 
                           {/* Print Receipt */}
                           <button
@@ -815,24 +1255,217 @@ export function Rentals() {
             </div>
           </div>
 
-          {/* Rental Item Selection */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700">قطعة التأجير (المخزون) *</label>
-            <select
-              value={selectedItemId}
-              onChange={(e) => handleItemSelect(e.target.value)}
-              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-800 outline-none focus:border-indigo-600"
-              required
-            >
-              <option value="">اختر القطعة المراد حجزها...</option>
-              {rentalInventory.map((item) => (
-                <option key={item.id} value={item.id.toString()}>
-                  #{item.id} - {item.name} {item.category ? `(${item.category})` : ''} {item.color ? `(${item.color})` : ''}{' '}
-                  {item.size_cut ? `[${item.size_cut}]` : ''} - سعر الإيجار:{' '}
-                  {Number(item.rental_price || 0).toLocaleString()} ج.م
-                </option>
-              ))}
-            </select>
+          {/* MULTI-ITEM RENTAL SELECTION & ACCESSORIES */}
+          <div className="space-y-3 p-3.5 bg-slate-50/80 border-2 border-slate-200/80 rounded-2xl">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span>قطع التأجير والملحقات المضافة للحجز *</span>
+                {bookingItems.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-white text-[11px] font-bold">
+                    {bookingItems.length} قطع
+                  </span>
+                )}
+              </label>
+              <span className="text-[11px] text-slate-500 font-medium">يمكنك حجز بدلة وإضافة قميص وإكسسوارات</span>
+            </div>
+
+            {/* Quick Barcode Scan for Suit / Rental Item */}
+            <div className="flex gap-2 items-center bg-white p-2 rounded-xl border border-dashed border-indigo-300">
+              <div className="relative flex-1">
+                <Barcode className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-indigo-500" />
+                <input
+                  type="text"
+                  value={barcodeScanInput}
+                  onChange={(e) => setBarcodeScanInput(e.target.value)}
+                  onKeyDown={handleBarcodeScanOrSearch}
+                  placeholder="امسح باركود البدلة بالمسدس أو اكتب الكود واضغط Enter للإضافة السريعة..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg pr-9 pl-3 py-1.5 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 focus:bg-white"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                icon={Search}
+                onClick={() => handleBarcodeScanOrSearch({ key: 'Enter', preventDefault: () => {} })}
+                className="text-xs font-bold shrink-0"
+              >
+                بحث وإضافة
+              </Button>
+            </div>
+
+            {/* Selector from Rental Inventory */}
+            <div className="flex gap-2">
+              <select
+                value={selectedInventoryItemId}
+                onChange={(e) => {
+                  setSelectedInventoryItemId(e.target.value);
+                  if (e.target.value) handleAddInventoryItem(e.target.value);
+                }}
+                className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
+              >
+                <option value="">اختر بدلة / قطعة من مخزون التأجير للإضافة...</option>
+                {rentalInventory.map((item) => (
+                  <option key={item.id} value={item.id.toString()}>
+                    #{item.id} - {item.name} {item.barcode ? `[باركود: ${item.barcode}]` : ''} {item.category ? `(${item.category})` : ''} {item.color ? `(${item.color})` : ''}{' '}
+                    {item.size_cut ? `[${item.size_cut}]` : ''} - سعر الإيجار: {Number(item.rental_price || item.price || 0).toLocaleString()} ج.م
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                icon={Plus}
+                onClick={() => handleAddInventoryItem()}
+                disabled={!selectedInventoryItemId}
+                className="!bg-indigo-600 hover:!bg-indigo-700 font-bold text-xs"
+              >
+                إضافة القطعة
+              </Button>
+            </div>
+
+            {/* Quick Add Accessories Presets */}
+            <div className="space-y-1.5 pt-1">
+              <div className="text-[11px] font-bold text-slate-600 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Shirt className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>إضافة ملحقات سريعة (إكسسوارات / قمصان):</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowCustomItemInput((prev) => !prev)}
+                  className="text-indigo-600 hover:text-indigo-800 text-[11px] font-bold underline cursor-pointer"
+                >
+                  {showCustomItemInput ? 'إخفاء الإضافة المخصصة' : '+ إضافة ملحق باسم مخصص'}
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { name: 'قميص أبيض كلاسيك', category: 'قميص', price: 150 },
+                  { name: 'قميص أسود كلاسيك', category: 'قميص', price: 150 },
+                  { name: 'بيبيون ستان أسود', category: 'بيبيون', price: 50 },
+                  { name: 'كرافتة ستان كلاسيك', category: 'كرافت', price: 75 },
+                  { name: 'حذاء كلاسيك أسود', category: 'حذاء', price: 200 },
+                  { name: 'صدرية بدلة كلاسيك', category: 'صدرية', price: 150 },
+                  { name: 'منديل جيب ستان', category: 'إكسسوار', price: 30 },
+                ].map((acc, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleQuickAddAccessory(acc.name, acc.category, acc.price)}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 text-[11px] font-bold text-slate-700 transition-all flex items-center gap-1 shadow-2xs cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3 text-indigo-600" />
+                    <span>{acc.name}</span>
+                    <span className="text-slate-400 font-normal">({acc.price} ج.م)</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Inline Custom Accessory Input */}
+              {showCustomItemInput && (
+                <div className="flex flex-wrap sm:flex-nowrap gap-2 p-2.5 bg-white border border-indigo-200 rounded-xl mt-2 animate-fadeIn">
+                  <input
+                    type="text"
+                    value={customItemName}
+                    onChange={(e) => setCustomItemName(e.target.value)}
+                    placeholder="اسم الملحق (مثال: بروش، حزام جلد، كبك)..."
+                    className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  />
+                  <select
+                    value={customItemCategory}
+                    onChange={(e) => setCustomItemCategory(e.target.value)}
+                    className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-indigo-600"
+                  >
+                    <option value="قميص">قميص</option>
+                    <option value="بيبيون">بيبيون</option>
+                    <option value="كرافت">كرافت</option>
+                    <option value="حذاء">حذاء</option>
+                    <option value="صدرية">صدرية</option>
+                    <option value="إكسسوار">إكسسوار</option>
+                    <option value="أخرى">أخرى</option>
+                  </select>
+                  <input
+                    type="number"
+                    value={customItemPrice}
+                    onChange={(e) => setCustomItemPrice(e.target.value)}
+                    placeholder="السعر (ج.م)..."
+                    className="w-24 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={handleAddCustomAccessory}
+                    className="!bg-indigo-600 text-xs font-bold"
+                  >
+                    إضافة
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* List of currently selected items */}
+            {bookingItems.length === 0 ? (
+              <div className="py-4 text-center text-slate-400 text-xs font-bold border border-dashed border-slate-300 rounded-xl bg-white/60">
+                لم يتم إضافة أي قطع بعد. اختر بدلة تأجير أو أضف ملحقاً من الأزرار أعلاه.
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl p-1.5">
+                {bookingItems.map((item, idx) => (
+                  <div key={item.id || idx} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-lg transition-colors gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-5 h-5 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold text-[10px]">
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate flex items-center gap-1.5">
+                          <span>{item.name}</span>
+                          {item.is_custom ? (
+                            <span className="px-1.5 py-0.2 rounded bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-bold">
+                              ملحق إضافي
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 text-[9px] font-bold">
+                              مخزون تأجير
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1.5 mt-0.5">
+                          <span>{item.category}</span>
+                          {item.color && <span>• لون: {item.color}</span>}
+                          {item.size_cut && <span>• مقاس: {item.size_cut}</span>}
+                          {item.barcode && <span className="font-mono">#{item.barcode}</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-slate-500 font-medium">سعر الإيجار:</span>
+                        <input
+                          type="number"
+                          value={item.price}
+                          onChange={(e) => handleUpdateItemPrice(idx, e.target.value)}
+                          className="w-20 px-2 py-1 text-xs font-mono font-bold text-right border border-slate-200 rounded-lg outline-none focus:border-indigo-600 bg-slate-50"
+                        />
+                        <span className="text-[10px] text-slate-500">ج.م</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveBookingItem(idx)}
+                        className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 hover:text-rose-700 transition-colors cursor-pointer"
+                        title="إزالة من الحجز"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Dates */}
@@ -866,7 +1499,7 @@ export function Rentals() {
               required
             />
             <Input
-              label="مبلغ التأمين (ج.م) *"
+              label="مبلغ التأمين المسترد (ج.م) *"
               type="number"
               value={deposit}
               onChange={(e) => setDeposit(e.target.value)}
@@ -877,41 +1510,190 @@ export function Rentals() {
               label="المدفوع مقدماً (ج.م)"
               type="number"
               value={paidAmount}
-              onChange={(e) => setPaidAmount(e.target.value)}
+              onChange={(e) => {
+                setPaidAmount(e.target.value);
+                if (isSplitPayment) {
+                  const p = Number(e.target.value) || 0;
+                  const half = Math.round(p / 2);
+                  setSplitMethod1('cash');
+                  setSplitAmount1(half.toString());
+                  setSplitMethod2('bank_transfer');
+                  setSplitAmount2((p - half).toString());
+                }
+              }}
               placeholder="0"
             />
           </div>
 
-          {/* Seller & Payment Method */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">الموظف المسؤول</label>
-              <select
-                value={sellerId}
-                onChange={(e) => setSellerId(e.target.value)}
-                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
-              >
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id.toString()}>
-                    {emp.name}
-                  </option>
-                ))}
-              </select>
+          {/* SELLER & PAYMENT METHOD (WITH DUAL / SPLIT PAYMENT) */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">الموظف المسؤول</label>
+                <select
+                  value={sellerId}
+                  onChange={(e) => setSellerId(e.target.value)}
+                  className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+                >
+                  <option value="">اختر الموظف...</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id.toString()}>
+                      {emp.name} {emp.position ? `(${emp.position})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
+                  {/* Split Payment Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !isSplitPayment;
+                      setIsSplitPayment(next);
+                      if (next) {
+                        const target = Number(paidAmount) || Number(totalPrice) || 0;
+                        const half = Math.round(target / 2);
+                        setSplitMethod1('cash');
+                        setSplitAmount1(half > 0 ? half.toString() : '');
+                        setSplitMethod2('bank_transfer');
+                        setSplitAmount2((target - half) > 0 ? (target - half).toString() : '');
+                        setPaidAmount(target > 0 ? target.toString() : '');
+                      }
+                    }}
+                    className={`px-2.5 py-0.5 rounded-lg font-bold text-[11px] transition-all flex items-center gap-1 cursor-pointer ${
+                      isSplitPayment
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <ArrowRightLeft className="w-3 h-3" />
+                    <span>{isSplitPayment ? 'دفع مجزأ مفعل ✓' : 'دفع مجزأ بطريقتين (Split)'}</span>
+                  </button>
+                </div>
+
+                {!isSplitPayment ? (
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+                  >
+                    <option value="cash">نقدي (كاش بالدرج)</option>
+                    <option value="bank_transfer">انستاباي / بنكي</option>
+                    <option value="card">بطاقة (فيزا)</option>
+                    <option value="wallet">فودافون كاش</option>
+                    <option value="debt">آجل / متبقي</option>
+                  </select>
+                ) : (
+                  <div className="text-[11px] font-bold text-purple-700 bg-purple-50 px-3 py-2 rounded-xl border border-purple-200">
+                    تم تفعيل الدفع المجزأ بين وسيلتين (حدد الوسائل والمبالغ بالأسفل)
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
-              >
-                <option value="cash">نقدي (كاش)</option>
-                <option value="card">بطاقة (فيزا)</option>
-                <option value="wallet">فودافون كاش</option>
-                <option value="debt">آجل / متبقي</option>
-              </select>
-            </div>
+            {/* Split Payment Breakdown Box */}
+            {isSplitPayment && (
+              <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-2xl space-y-2.5 animate-fadeIn">
+                <div className="text-xs font-black text-purple-950 flex items-center justify-between">
+                  <span>توزيع الدفع المجزأ بين وسيلتين:</span>
+                  <span className="text-[11px] font-bold text-purple-800 font-mono">
+                    إجمالي المدفوع: {((Number(splitAmount1) || 0) + (Number(splitAmount2) || 0)).toLocaleString()} ج.م
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Method 1 */}
+                  <div className="p-2.5 bg-white border border-purple-100 rounded-xl space-y-1.5 shadow-2xs">
+                    <span className="text-xs font-bold text-slate-700">الوسيلة الأولى:</span>
+                    <div className="grid grid-cols-2 gap-1">
+                      {[
+                        { id: 'cash', label: 'كاش' },
+                        { id: 'bank_transfer', label: 'انستاباي' },
+                        { id: 'card', label: 'فيزا' },
+                        { id: 'wallet', label: 'فودافون كاش' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSplitMethod1(m.id);
+                            if (splitMethod2 === m.id) {
+                              setSplitMethod2(m.id === 'cash' ? 'bank_transfer' : 'cash');
+                            }
+                          }}
+                          className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                            splitMethod1 === m.id
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="number"
+                      value={splitAmount1}
+                      onChange={(e) => handleSplitAmount1Change(e.target.value)}
+                      placeholder="المبلغ (ج.م)..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold outline-none focus:border-purple-600"
+                      required
+                    />
+                  </div>
+
+                  {/* Method 2 */}
+                  <div className="p-2.5 bg-white border border-purple-100 rounded-xl space-y-1.5 shadow-2xs">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                      <span>الوسيلة الثانية:</span>
+                      <button
+                        type="button"
+                        onClick={handleFillRemainderToSplit2}
+                        className="text-[10px] text-purple-700 hover:underline font-bold cursor-pointer"
+                      >
+                        ملء باقي المبلغ
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      {[
+                        { id: 'cash', label: 'كاش' },
+                        { id: 'bank_transfer', label: 'انستاباي' },
+                        { id: 'card', label: 'فيزا' },
+                        { id: 'wallet', label: 'فودافون كاش' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSplitMethod2(m.id);
+                            if (splitMethod1 === m.id) {
+                              setSplitMethod1(m.id === 'cash' ? 'bank_transfer' : 'cash');
+                            }
+                          }}
+                          className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                            splitMethod2 === m.id
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="number"
+                      value={splitAmount2}
+                      onChange={(e) => handleSplitAmount2Change(e.target.value)}
+                      placeholder="المبلغ (ج.م)..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold outline-none focus:border-purple-600"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Notes */}
@@ -1125,8 +1907,9 @@ export function Rentals() {
                       className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-600"
                     >
                       <option value="cash">نقدي (كاش)</option>
+                      <option value="bank_transfer">انستاباي / تحويل بنكي</option>
                       <option value="card">بطاقة (فيزا)</option>
-                      <option value="wallet">فودافون كاش / محفظة</option>
+                      <option value="wallet">فودافون كاش</option>
                     </select>
                   </div>
                 </div>
@@ -1289,8 +2072,9 @@ export function Rentals() {
               className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-600"
             >
               <option value="cash">نقدي (كاش)</option>
+              <option value="bank_transfer">انستاباي / تحويل بنكي</option>
               <option value="card">بطاقة (فيزا)</option>
-              <option value="wallet">فودافون كاش / محفظة</option>
+              <option value="wallet">فودافون كاش</option>
             </select>
           </div>
 
@@ -1342,21 +2126,36 @@ export function Rentals() {
           <ThermalReceipt
             id="printable-rental-receipt"
             type="rental"
+            branchId={selectedReceiptRental.branch_id || activeBranchId}
+            branchLogo={branches.find((b) => b.id?.toString() === (selectedReceiptRental.branch_id || activeBranchId)?.toString())?.logo_url}
             title="إيصال حجز وتأجير"
             orderNumber={`RNT-${selectedReceiptRental.id}`}
             date={selectedReceiptRental.created_at || new Date()}
             customerName={selectedReceiptRental.customer_name}
             customerPhone={selectedReceiptRental.customer_phone}
-            sellerName="مسؤول التأجير"
-            paymentMethod="كاش"
-            branchName={branches.find((b) => b.id?.toString() === activeBranchId?.toString())?.name || 'الفرع الرئيسي'}
-            items={[
-              {
-                name: selectedReceiptRental.inventory_name || 'قطعة تأجير',
-                quantity: 1,
-                price: Number(selectedReceiptRental.total_price || 0),
-              },
-            ]}
+            sellerName={selectedReceiptRental.seller_name || 'مسؤول التأجير'}
+            paymentMethod={selectedReceiptRental.payment_method || 'cash'}
+            paymentSplits={selectedReceiptRental.payment_splits}
+            cashAmount={Number(selectedReceiptRental.cash_amount || 0)}
+            cardAmount={Number(selectedReceiptRental.card_amount || 0)}
+            walletAmount={Number(selectedReceiptRental.wallet_amount || 0)}
+            bankTransferAmount={Number(selectedReceiptRental.bank_transfer_amount || 0)}
+            branchName={branches.find((b) => b.id?.toString() === (selectedReceiptRental.branch_id || activeBranchId)?.toString())?.name || 'الفرع الرئيسي'}
+            items={
+              Array.isArray(selectedReceiptRental.items) && selectedReceiptRental.items.length > 0
+                ? selectedReceiptRental.items.map((it) => ({
+                    name: `${it.item_type && it.item_type !== 'suit' ? `[${it.item_type}] ` : ''}${it.name || it.product_name || 'قطعة تأجير'}${it.size ? ` (${it.size})` : ''}`,
+                    quantity: 1,
+                    price: Number(it.price || it.rental_price || 0),
+                  }))
+                : [
+                    {
+                      name: selectedReceiptRental.inventory_name || 'قطعة تأجير',
+                      quantity: 1,
+                      price: Number(selectedReceiptRental.total_price || 0),
+                    },
+                  ]
+            }
             subtotal={Number(selectedReceiptRental.total_price || 0)}
             deposit={Number(selectedReceiptRental.deposit || 0)}
             totalAmount={Number(selectedReceiptRental.total_price || 0)}
@@ -1369,6 +2168,109 @@ export function Rentals() {
             onClose={() => setShowReceiptModal(false)}
           />
         )}
+      </Modal>
+
+      {/* STATUS CHANGE MODAL */}
+      <Modal
+        isOpen={showStatusModal}
+        onClose={() => setShowStatusModal(false)}
+        title="تغيير وتعديل حالة الحجز 🔄"
+        subtitle={
+          selectedRentalForStatus
+            ? `حجز رقم #${selectedRentalForStatus.id} - العميل: ${selectedRentalForStatus.customer_name}`
+            : ''
+        }
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleUpdateStatus} className="space-y-4">
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-bold">الصنف / البدلة:</span>
+              <span className="font-black text-slate-800">{selectedRentalForStatus?.inventory_name || 'بدلة تأجير'}</span>
+            </div>
+            {selectedRentalForStatus?.inventory_barcode && (
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-bold">باركود القطعة:</span>
+                <span className="font-mono font-bold bg-white px-2 py-0.5 rounded border border-slate-200 text-indigo-700">
+                  {selectedRentalForStatus.inventory_barcode}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-bold">فترة الحجز:</span>
+              <span className="font-mono text-slate-700 font-bold">
+                {selectedRentalForStatus?.pickup_date} ⬅ {selectedRentalForStatus?.return_date}
+              </span>
+            </div>
+            <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+              <span className="text-slate-500 font-bold">الحالة الحالية:</span>
+              <Badge variant={STATUS_MAP[selectedRentalForStatus?.status]?.variant || 'default'} dot>
+                {STATUS_MAP[selectedRentalForStatus?.status]?.label || selectedRentalForStatus?.status}
+              </Badge>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-800">اختر الحالة الجديدة:</label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'booked', label: 'محجوزة', desc: 'في المحل (بانتظار التسليم)', color: 'border-amber-300 bg-amber-50/60 text-amber-900', active: 'ring-2 ring-amber-500 bg-amber-100/80 font-black' },
+                { id: 'active', label: 'تم الاستلام', desc: 'خارج المحل (مع العميل)', color: 'border-blue-300 bg-blue-50/60 text-blue-900', active: 'ring-2 ring-blue-500 bg-blue-100/80 font-black' },
+                { id: 'returned', label: 'تم الإرجاع (خالص)', desc: 'عادت للمحل وانتهى الحجز', color: 'border-emerald-300 bg-emerald-50/60 text-emerald-900', active: 'ring-2 ring-emerald-500 bg-emerald-100/80 font-black' },
+                { id: 'cancelled', label: 'ملغي', desc: 'إلغاء الحجز وإعادة القطعة', color: 'border-rose-300 bg-rose-50/60 text-rose-900', active: 'ring-2 ring-rose-500 bg-rose-100/80 font-black' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setStatusNewValue(opt.id)}
+                  className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer ${
+                    statusNewValue === opt.id ? opt.active : `${opt.color} opacity-70 hover:opacity-100`
+                  }`}
+                >
+                  <div className="font-bold text-xs">{opt.label}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">
+              ملاحظات تغيير الحالة (اختياري)
+            </label>
+            <input
+              type="text"
+              value={statusNotes}
+              onChange={(e) => setStatusNotes(e.target.value)}
+              placeholder="سبب التعديل أو أي تفاصيل..."
+              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-600"
+            />
+          </div>
+
+          <div className="p-2.5 bg-amber-50/80 border border-amber-200 rounded-xl text-[11px] text-amber-800 font-medium leading-relaxed">
+            💡 ملاحظة: تحديث الحالة إلى "تم الاستلام" يسجل خروج القطعة من المخزون، وتحديثها إلى "محجوزة" أو "تم الإرجاع" أو "ملغي" يضمن تواجد القطعة في مخزون الفرع.
+          </div>
+
+          <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={statusSubmitting}
+              className="flex-1 !rounded-2xl !bg-indigo-600 hover:!bg-indigo-700 font-black text-white"
+            >
+              حفظ وتأكيد الحالة
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowStatusModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       {/* SALE CONVERSION MODAL */}
@@ -1403,8 +2305,9 @@ export function Rentals() {
               className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
             >
               <option value="cash">نقدي (كاش)</option>
+              <option value="bank_transfer">انستاباي / تحويل بنكي</option>
               <option value="card">بطاقة (فيزا)</option>
-              <option value="wallet">فودافون كاش / محفظة</option>
+              <option value="wallet">فودافون كاش</option>
             </select>
           </div>
 
@@ -1444,6 +2347,8 @@ export function Rentals() {
           <ThermalReceipt
             id="printable-sale-receipt"
             type="rental-sale"
+            branchId={saleInvoiceData.branch_id || activeBranchId}
+            branchLogo={branches.find((b) => b.id?.toString() === (saleInvoiceData.branch_id || activeBranchId)?.toString())?.logo_url}
             title="فاتورة بيع (تحويل تأجير)"
             orderNumber={saleInvoiceData.order_number}
             date={saleInvoiceData.created_at || new Date()}
@@ -1451,7 +2356,7 @@ export function Rentals() {
             customerPhone={saleInvoiceData.customer_phone}
             sellerName="مسؤول التأجير"
             paymentMethod={saleInvoiceData.payment_method || 'كاش'}
-            branchName={branches.find((b) => b.id?.toString() === activeBranchId?.toString())?.name || 'الفرع الرئيسي'}
+            branchName={branches.find((b) => b.id?.toString() === (saleInvoiceData.branch_id || activeBranchId)?.toString())?.name || 'الفرع الرئيسي'}
             items={[
               {
                 name: saleInvoiceData.inventory_name || 'قطعة تأجير محولة لبيع',

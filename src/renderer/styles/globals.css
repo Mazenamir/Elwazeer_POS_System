@@ -195,4 +195,18 @@
   .print-hide {
     display: none !important;
   }
+  .receipt-card,
+  #printable-receipt,
+  #printable-return-receipt,
+  #printable-rental-receipt,
+  #printable-sale-receipt,
+  #tailoring-receipt-ticket {
+    max-width: 70mm !important;
+    width: 70mm !important;
+    margin: 0 auto !important;
+    padding: 2.5mm 3.5mm !important;
+    border: none !important;
+    box-shadow: none !important;
+    box-sizing: border-box !important;
+  }
 }

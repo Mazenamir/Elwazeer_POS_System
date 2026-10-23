@@ -1,4 +1,5 @@
 const express = require('express');
+const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
@@ -30,12 +31,22 @@ const searchRoutes = require('./modules/search/search.routes');
 
 const app = express();
 
+// High-performance response compression (Gzip / Deflate / Brotli)
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+}));
 
 // Security headers (Tailwind runtime and Alpine need inline styles/eval)
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+  originAgentCluster: false,
 }));
 
 // CORS configuration - strict local, LAN, and same-host origin verification

@@ -110,6 +110,66 @@ async function getInventoryReport(req, res, next) {
   }
 }
 
+async function getExtendedDailyReport(req, res, next) {
+  try {
+    const report = await reportsService.getExtendedDailyReport(req.query, req.user);
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getMonthlyOhdaReport(req, res, next) {
+  try {
+    const report = await reportsService.getMonthlyOhdaReport(req.query, req.user);
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getMonthlySalarySheet(req, res, next) {
+  try {
+    const report = await reportsService.getMonthlySalarySheet(req.query, req.user);
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getSalesKpiReport(req, res, next) {
+  try {
+    const report = await reportsService.getSalesKpiReport(req.query, req.user);
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateDailyAttendanceQuick(req, res, next) {
+  try {
+    const result = await reportsService.updateDailyAttendanceQuick(req.body, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function exportConsolidatedExcel(req, res, next) {
+  try {
+    const buffer = await reportsExcel.generateConsolidatedBranchExcel(req.query, req.user);
+    const month = (req.query.month || new Date().toISOString().slice(0, 7));
+    const branchId = req.query.branch_id || 'branch';
+    const fileName = `consolidated-report-${branchId}-${month}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    next(err);
+  }
+}
+
 /**
  * Excel Export Endpoint (.xlsx)
  * GET /api/reports/export/excel?type=daily_history|monthly_history|profit|top_products|daily_details|sales|rentals|expenses|summary|inventory
@@ -200,6 +260,31 @@ async function exportExcel(req, res, next) {
         const data = await reportsService.getInventoryReport(req.query, req.user);
         buffer = await reportsExcel.generateInventoryReportExcel(data, { branchName, period: 'جرد المخزون الحالي' });
         fileName = `inventory-report-${new Date().toISOString().split('T')[0]}.xlsx`;
+        break;
+      }
+      case 'ohda': {
+        const data = await reportsService.getMonthlyOhdaReport(req.query, req.user);
+        buffer = await reportsExcel.generateOhdaReportExcel(data, { branchName, period: req.query.month || '-' });
+        fileName = `ohda-report-${req.query.month || new Date().toISOString().slice(0, 7)}.xlsx`;
+        break;
+      }
+      case 'salary': {
+        const data = await reportsService.getMonthlySalarySheet(req.query, req.user);
+        buffer = await reportsExcel.generateSalaryReportExcel(data, { branchName, period: req.query.month || '-' });
+        fileName = `salary-report-${req.query.month || new Date().toISOString().slice(0, 7)}.xlsx`;
+        break;
+      }
+      case 'kpi': {
+        const data = await reportsService.getSalesKpiReport(req.query, req.user);
+        buffer = await reportsExcel.generateKpiReportExcel(data, { branchName, period: req.query.month || '-' });
+        fileName = `kpi-report-${req.query.month || new Date().toISOString().slice(0, 7)}.xlsx`;
+        break;
+      }
+      case 'consolidated': {
+        buffer = await reportsExcel.generateConsolidatedBranchExcel(req.query, req.user);
+        const month = (req.query.month || new Date().toISOString().slice(0, 7));
+        const branchId = req.query.branch_id || 'branch';
+        fileName = `consolidated-report-${branchId}-${month}.xlsx`;
         break;
       }
       default: {
@@ -294,6 +379,30 @@ async function exportPdfHtml(req, res, next) {
         html = reportsPdf.generateInventoryPdfHtml(data, { branchName, period: 'جرد المخزون الحالي' });
         break;
       }
+      case 'ohda': {
+        const data = await reportsService.getMonthlyOhdaReport(req.query, req.user);
+        html = reportsPdf.generateOhdaPdfHtml(data, { branchName, period: req.query.month || '-' });
+        break;
+      }
+      case 'salary': {
+        const data = await reportsService.getMonthlySalarySheet(req.query, req.user);
+        html = reportsPdf.generateSalaryPdfHtml(data, { branchName, period: req.query.month || '-' });
+        break;
+      }
+      case 'kpi': {
+        const data = await reportsService.getSalesKpiReport(req.query, req.user);
+        html = reportsPdf.generateKpiPdfHtml(data, { branchName, period: req.query.month || '-' });
+        break;
+      }
+      case 'consolidated': {
+        const [ohda, salary, kpi] = await Promise.all([
+          reportsService.getMonthlyOhdaReport(req.query, req.user),
+          reportsService.getMonthlySalarySheet(req.query, req.user),
+          reportsService.getSalesKpiReport(req.query, req.user),
+        ]);
+        html = reportsPdf.generateConsolidatedPdfHtml({ ohda, salary, kpi }, { branchName, period: req.query.month || '-' });
+        break;
+      }
       default: {
         return res.status(400).json({ error: `نوع التقرير غير معروف: ${type}` });
       }
@@ -319,6 +428,12 @@ module.exports = {
   getRentalsReport,
   getExpensesReport,
   getInventoryReport,
+  getExtendedDailyReport,
+  getMonthlyOhdaReport,
+  getMonthlySalarySheet,
+  getSalesKpiReport,
+  updateDailyAttendanceQuick,
+  exportConsolidatedExcel,
   exportExcel,
   exportPdfHtml,
 };

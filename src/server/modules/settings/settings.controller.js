@@ -11,7 +11,7 @@ async function getPublicSettings(req, res, next) {
 
 async function getSettings(req, res, next) {
   try {
-    const settings = await settingsService.getSettings();
+    const settings = await settingsService.getSettings(req.user);
     res.json(settings);
   } catch (err) {
     next(err);
@@ -20,7 +20,7 @@ async function getSettings(req, res, next) {
 
 async function saveSettings(req, res, next) {
   try {
-    const result = await settingsService.saveSettings(req.body);
+    const result = await settingsService.saveSettings(req.body, req.user);
     res.json(result);
   } catch (err) {
     next(err);

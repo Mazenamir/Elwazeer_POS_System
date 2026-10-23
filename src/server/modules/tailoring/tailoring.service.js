@@ -5,6 +5,7 @@ const { parsePagination, appendPagination, paginatedPayload } = require('../../.
 const { resolveOrderId } = require('../sales/sales.helpers');
 const { roundCurrency } = require('../../../shared/utils/numbers');
 const { logActivity } = require('../../database/sync.helpers');
+const { normalizePaymentMethod } = require('../reports/reports.helpers');
 
 // ==========================================
 // ALTERATIONS
@@ -251,6 +252,35 @@ async function listTailoringOrders(query = {}, user = null, req = null) {
     db.query(`SELECT COUNT(*)::int AS total FROM tailoring_orders t${whereClause}`, params),
   ]);
 
+  const orderIds = dataRes.rows.map(r => r.id);
+  if (orderIds.length > 0) {
+    const pmRes = await db.query(
+      `SELECT tailoring_order_id, id, amount, payment_date, is_remainder, payment_method
+       FROM tailoring_payments
+       WHERE tailoring_order_id = ANY($1::int[])
+       ORDER BY payment_date ASC, id ASC`,
+      [orderIds]
+    );
+    const pmByOrder = new Map();
+    for (const p of pmRes.rows) {
+      if (!pmByOrder.has(p.tailoring_order_id)) pmByOrder.set(p.tailoring_order_id, []);
+      pmByOrder.get(p.tailoring_order_id).push({
+        ...p,
+        amount: Number(p.amount || 0),
+        payment_method: normalizePaymentMethod(p.payment_method),
+      });
+    }
+    for (const row of dataRes.rows) {
+      row.payments = pmByOrder.get(row.id) || [];
+      if (row.payments.length > 1) {
+        const distinct = new Set(row.payments.map(p => normalizePaymentMethod(p.payment_method)));
+        if (distinct.size > 1) {
+          row.payment_method = 'split';
+        }
+      }
+    }
+  }
+
   return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
 }
 
@@ -261,7 +291,7 @@ async function createTailoringOrder(body, user) {
   const measurements = String(body?.measurements || '').trim();
   const paidAmount = roundCurrency(Number(body?.paid_amount));
   const remainingAmount = roundCurrency(Number(body?.remaining_amount || 0));
-  const paymentMethod = String(body?.payment_method || 'cash').trim() || 'cash';
+  const paymentMethod = normalizePaymentMethod(body?.payment_method || 'cash');
   const sellerId = Number.parseInt(body?.seller_id || 0, 10) || null;
 
   if (!customerName || !customerPhone || !productDescription || !measurements) {
@@ -326,6 +356,14 @@ async function createTailoringOrder(body, user) {
 
     const totalAmount = roundCurrency(paidAmount + remainingAmount);
 
+    const incomingSplits = Array.isArray(body?.payment_splits)
+      ? body.payment_splits
+      : (typeof body?.payment_splits === 'string' ? (() => { try { return JSON.parse(body.payment_splits); } catch { return null; } })() : null);
+    const hasSplits = incomingSplits && incomingSplits.length > 0;
+    const finalOrderMethod = hasSplits
+      ? (new Set(incomingSplits.map(s => normalizePaymentMethod(s.method || s.payment_method || 'cash'))).size > 1 ? 'split' : normalizePaymentMethod(incomingSplits[0].method || incomingSplits[0].payment_method || 'cash'))
+      : paymentMethod;
+
     const { rows } = await tx.query(
       `INSERT INTO tailoring_orders
         (invoice_number, customer_name, customer_phone, product_description, measurements, total_amount,
@@ -342,7 +380,7 @@ async function createTailoringOrder(body, user) {
         totalAmount,
         paidAmount,
         remainingAmount,
-        paymentMethod,
+        finalOrderMethod,
         sellerId,
         branchId,
         user.id,
@@ -371,12 +409,40 @@ async function createTailoringOrder(body, user) {
       }
     }
 
-    if (paidAmount > 0) {
-      await tx.query(
-        `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder)
-         VALUES ($1, $2, $3, $4, FALSE)`,
-        [order.id, paidAmount, branchId, order.created_at]
+    if (hasSplits) {
+      const inserted = [];
+      for (const s of incomingSplits) {
+        const sAmt = roundCurrency(Number(s.amount || 0));
+        const sMethod = normalizePaymentMethod(s.method || s.payment_method || 'cash');
+        if (sAmt > 0) {
+          const pmRes = await tx.query(
+            `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method)
+             VALUES ($1, $2, $3, $4, FALSE, $5)
+             RETURNING id, tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method`,
+            [order.id, sAmt, branchId, order.created_at, sMethod]
+          );
+          inserted.push(...pmRes.rows);
+        }
+      }
+      order.payments = inserted.map(p => ({
+        ...p,
+        amount: Number(p.amount || 0),
+        payment_method: normalizePaymentMethod(p.payment_method),
+      }));
+    } else if (paidAmount > 0) {
+      const pmRes = await tx.query(
+        `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method)
+         VALUES ($1, $2, $3, $4, FALSE, $5)
+         RETURNING id, tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method`,
+        [order.id, paidAmount, branchId, order.created_at, paymentMethod]
       );
+      order.payments = pmRes.rows.map(p => ({
+        ...p,
+        amount: Number(p.amount || 0),
+        payment_method: normalizePaymentMethod(p.payment_method),
+      }));
+    } else {
+      order.payments = [];
     }
 
     return order;
@@ -469,8 +535,26 @@ async function payRemainingTailoringOrder(id, user, body = {}) {
       throw err;
     }
 
+    const incomingSplits = Array.isArray(body?.payment_splits)
+      ? body.payment_splits
+      : (typeof body?.payment_splits === 'string' ? (() => { try { return JSON.parse(body.payment_splits); } catch { return null; } })() : null);
+    const hasSplits = incomingSplits && incomingSplits.length > 0;
+
     let paymentToApply = remaining;
-    if (body?.amount !== undefined && body?.amount !== null && body?.amount !== '') {
+    if (hasSplits) {
+      const sumSplits = incomingSplits.reduce((acc, s) => acc + roundCurrency(Number(s.amount || 0)), 0);
+      if (sumSplits <= 0) {
+        const err = new Error('إجمالي مبالغ الدفع يجب أن يكون أكبر من صفر');
+        err.statusCode = 400;
+        throw err;
+      }
+      if (sumSplits > remaining) {
+        const err = new Error(`المبلغ المدفوع (${sumSplits}) يتجاوز الباقي المستحق (${remaining})`);
+        err.statusCode = 400;
+        throw err;
+      }
+      paymentToApply = sumSplits;
+    } else if (body?.amount !== undefined && body?.amount !== null && body?.amount !== '') {
       const requestedAmount = roundCurrency(Number(body.amount));
       if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
         const err = new Error('مبلغ السداد غير صالح');
@@ -490,15 +574,40 @@ async function payRemainingTailoringOrder(id, user, body = {}) {
     const newRemainingAmount = roundCurrency(Math.max(0, remaining - paymentToApply));
     const isRemainder = newRemainingAmount === 0;
 
-    await tx.query(
-      'UPDATE tailoring_orders SET paid_amount = $1, remaining_amount = $2 WHERE id = $3',
-      [newPaidAmount, newRemainingAmount, orderId]
+    const rawMethod = body?.payment_method || order.payment_method || 'cash';
+    const paymentMethod = normalizePaymentMethod(rawMethod);
+
+    if (hasSplits) {
+      for (const s of incomingSplits) {
+        const sAmt = roundCurrency(Number(s.amount || 0));
+        const sMethod = normalizePaymentMethod(s.method || s.payment_method || 'cash');
+        if (sAmt > 0) {
+          await tx.query(
+            `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method)
+             VALUES ($1, $2, $3, ${CAIRO_NOW_SQL}, $4, $5)`,
+            [orderId, sAmt, order.branch_id, isRemainder, sMethod]
+          );
+        }
+      }
+    } else {
+      await tx.query(
+        `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method)
+         VALUES ($1, $2, $3, ${CAIRO_NOW_SQL}, $4, $5)`,
+        [orderId, paymentToApply, order.branch_id, isRemainder, paymentMethod]
+      );
+    }
+
+    // Check all payments to see if multiple payment methods were used
+    const prevPaymentsRes = await tx.query(
+      'SELECT payment_method FROM tailoring_payments WHERE tailoring_order_id = $1',
+      [orderId]
     );
+    const allMethods = new Set(prevPaymentsRes.rows.map(r => normalizePaymentMethod(r.payment_method)));
+    const finalOrderPaymentMethod = allMethods.size > 1 ? 'split' : (hasSplits ? normalizePaymentMethod(incomingSplits[0].method || incomingSplits[0].payment_method) : paymentMethod);
 
     await tx.query(
-      `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder)
-       VALUES ($1, $2, $3, ${CAIRO_NOW_SQL}, $4)`,
-      [orderId, paymentToApply, order.branch_id, isRemainder]
+      'UPDATE tailoring_orders SET paid_amount = $1, remaining_amount = $2, payment_method = $3 WHERE id = $4',
+      [newPaidAmount, newRemainingAmount, finalOrderPaymentMethod, orderId]
     );
 
     if (user) {
@@ -512,7 +621,7 @@ async function payRemainingTailoringOrder(id, user, body = {}) {
       );
     }
 
-    return { message: 'تم الدفع بنجاح', newPaidAmount, remainingAmount: newRemainingAmount };
+    return { message: 'تم الدفع بنجاح', newPaidAmount, remainingAmount: newRemainingAmount, paymentMethod: finalOrderPaymentMethod };
   });
 }
 

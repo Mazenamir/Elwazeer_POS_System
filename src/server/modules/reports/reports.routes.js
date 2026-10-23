@@ -21,8 +21,16 @@ router.get('/reports/rentals', requirePermission('Reports.html'), reportsControl
 router.get('/reports/expenses', requirePermission('Reports.html'), reportsController.getExpensesReport);
 router.get('/reports/inventory', requirePermission('Reports.html'), reportsController.getInventoryReport);
 
+// Extended Excel-modeled branch reports
+router.get('/reports/extended-daily', requirePermission('Reports.html'), reportsController.getExtendedDailyReport);
+router.get('/reports/ohda', requirePermission('Reports.html'), reportsController.getMonthlyOhdaReport);
+router.get('/reports/salary-sheet', requirePermission('Reports.html'), reportsController.getMonthlySalarySheet);
+router.get('/reports/kpi', requirePermission('Reports.html'), reportsController.getSalesKpiReport);
+router.post('/reports/attendance-quick-log', requirePermission('Reports.html'), reportsController.updateDailyAttendanceQuick);
+
 // Exports (.xlsx and printable HTML)
 router.get('/reports/export/excel', requirePermission('Reports.html'), reportsController.exportExcel);
+router.get('/reports/export/consolidated-excel', requirePermission('Reports.html'), reportsController.exportConsolidatedExcel);
 router.get('/reports/export/pdf-html', requirePermission('Reports.html'), reportsController.exportPdfHtml);
 
 module.exports = router;

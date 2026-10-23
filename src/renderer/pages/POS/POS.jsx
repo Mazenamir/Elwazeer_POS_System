@@ -33,6 +33,10 @@ import {
   Filter,
   Wallet,
   ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 import ExpensesManager from '../../components/expenses/ExpensesManager';
 import { useAuth } from '../../context/AuthContext';
@@ -86,7 +90,7 @@ function playErrorSound() {
 
 export function POS() {
   const { user, isAdmin } = useAuth();
-  const { activeBranchId, branches } = useBranch();
+  const { activeBranchId, branches, activeBranch } = useBranch();
   const toast = useToast();
   const [searchParams] = useSearchParams();
 
@@ -123,9 +127,17 @@ export function POS() {
   const currentDiscount = invoiceDiscounts[activeCartId] || { value: 0, type: 'amount' };
   const [activeDiscountItemId, setActiveDiscountItemId] = useState(null);
 
-  // Data & State
-  const [inventory, setInventory] = useState([]);
+  // Data & State (Cached for instant load over WAN/Network)
+  const [inventory, setInventory] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`pos_catalog_${activeBranchId || 'all'}`);
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [employees, setEmployees] = useState([]);
+  const hasInventoryRef = useRef(false);
 
   // Load Metadata categories, colors, sizes
   const [metadataColors, setMetadataColors] = useState([]);
@@ -154,7 +166,14 @@ export function POS() {
     cashier_footer: 'شكراً لزيارتكم',
   });
   const [nextOrderId, setNextOrderId] = useState('...');
-  const [loadingInventory, setLoadingInventory] = useState(false);
+  const [loadingInventory, setLoadingInventory] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`pos_catalog_${activeBranchId || 'all'}`);
+      return cached ? JSON.parse(cached).length === 0 : false;
+    } catch {
+      return false;
+    }
+  });
 
   // Determine the effective branch for cashier checkout & invoice generation
   const effectiveBranchId = useMemo(() => {
@@ -169,13 +188,24 @@ export function POS() {
   }, [activeBranchId, user?.branch_id, branches]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('الكل');
-  const [stockFilter, setStockFilter] = useState('all'); // 'all' | 'in_branch' | 'in_any_branch' | 'out_of_stock' | 'low_stock'
+  const defaultStockFilter = activeBranchId && activeBranchId !== 'all' ? 'in_branch' : 'all';
+  const [stockFilter, setStockFilter] = useState(() => (activeBranchId && activeBranchId !== 'all' ? 'in_branch' : 'all'));
+
+  // Sync stockFilter when activeBranchId changes
+  useEffect(() => {
+    if (activeBranchId && activeBranchId !== 'all') {
+      setStockFilter('in_branch');
+    } else {
+      setStockFilter(defaultStockFilter);
+    }
+  }, [activeBranchId]);
   const [selectedSize, setSelectedSize] = useState('all');
   const [selectedColor, setSelectedColor] = useState('all');
   const [sortBy, setSortBy] = useState('default'); // 'default' | 'stock_desc' | 'stock_asc' | 'price_asc' | 'price_desc' | 'name_asc'
 
   // Checkout Modal State
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [checkoutBranchId, setCheckoutBranchId] = useState('');
   const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -339,6 +369,14 @@ export function POS() {
     loadMetadata();
   }, [effectiveBranchId]);
 
+  // Filter employees for checkout based on chosen checkout branch
+  const checkoutEmployees = useMemo(() => {
+    const targetBranch = checkoutBranchId || (activeBranchId !== 'all' ? activeBranchId : null);
+    if (!targetBranch) return employees;
+    const filtered = employees.filter((e) => !e.branch_id || e.branch_id.toString() === targetBranch.toString());
+    return filtered.length > 0 ? filtered : employees;
+  }, [employees, checkoutBranchId, activeBranchId]);
+
   // Fetch employees for branch
   useEffect(() => {
     async function loadEmployees() {
@@ -355,10 +393,16 @@ export function POS() {
     loadEmployees();
   }, [activeBranchId]);
 
-  // Fetch Inventory items
+  useEffect(() => {
+    hasInventoryRef.current = Array.isArray(inventory) && inventory.length > 0;
+  }, [inventory]);
+
+  // Fetch Inventory items with background revalidation & caching
   const fetchInventory = useCallback(async () => {
     try {
-      setLoadingInventory(true);
+      if (!hasInventoryRef.current) {
+        setLoadingInventory(true);
+      }
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') {
         query.append('branch_id', activeBranchId);
@@ -366,16 +410,31 @@ export function POS() {
       // Always fetch full catalog for cashier to ensure instant offline-grade search and complete categories
       query.append('all', 'true');
       const data = await api.get(`/inventory?${query.toString()}`);
-      if (Array.isArray(data)) {
-        setInventory(data);
-      } else if (data && Array.isArray(data.items)) {
-        setInventory(data.items);
+      const items = Array.isArray(data) ? data : (data?.items || []);
+      if (Array.isArray(items) && items.length > 0) {
+        setInventory(items);
+        try {
+          sessionStorage.setItem(`pos_catalog_${activeBranchId || 'all'}`, JSON.stringify(items));
+        } catch {}
       }
     } catch (err) {
       console.error('Failed to load inventory:', err);
     } finally {
       setLoadingInventory(false);
     }
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem(`pos_catalog_${activeBranchId || 'all'}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setInventory(parsed);
+          setLoadingInventory(false);
+        }
+      }
+    } catch {}
   }, [activeBranchId]);
 
   useEffect(() => {
@@ -521,13 +580,15 @@ export function POS() {
                 id: s.id || item.id,
                 size_name: s.size_name,
                 stock_level: Number(s.stock_level ?? 0),
-                barcode: item.barcode,
+                barcode: s.barcode || item.barcode,
+                color_name: s.color_name || item.color || '',
               }))
             : (baseSizeName ? [{
                 id: item.id,
                 size_name: baseSizeName,
                 stock_level: Number(item.stock_level ?? 0),
                 barcode: item.barcode,
+                color_name: item.color || '',
               }] : []),
           total_stock: Number(item.total_stock ?? item.stock_level ?? 0),
           stock_level: Number(item.stock_level ?? 0),
@@ -563,6 +624,7 @@ export function POS() {
               size_name: sizeName,
               stock_level: Number(item.stock_level ?? 0),
               barcode: item.barcode,
+              color_name: item.color || '',
             });
           } else {
             existingSize.stock_level += Number(item.stock_level ?? 0);
@@ -674,17 +736,17 @@ export function POS() {
   const hasActiveFilters = useMemo(() => {
     return (
       (selectedCategory && selectedCategory !== 'الكل' && selectedCategory !== 'all') ||
-      stockFilter !== 'all' ||
+      stockFilter !== defaultStockFilter ||
       selectedSize !== 'all' ||
       selectedColor !== 'all' ||
       sortBy !== 'default' ||
       searchQuery.trim() !== ''
     );
-  }, [selectedCategory, stockFilter, selectedSize, selectedColor, sortBy, searchQuery]);
+  }, [selectedCategory, stockFilter, defaultStockFilter, selectedSize, selectedColor, sortBy, searchQuery]);
 
   const resetAllFilters = useCallback(() => {
     setSelectedCategory('الكل');
-    setStockFilter('all');
+    setStockFilter(defaultStockFilter);
     setSelectedSize('all');
     setSelectedColor('all');
     setSortBy('default');
@@ -699,20 +761,81 @@ export function POS() {
     }, 0);
   }, [filteredProducts, activeBranchId]);
 
-  // Helper to get available stock for current branch or globally
-  const getProductAvailableStock = useCallback((product, sizeName = null) => {
-    if (!product) return 0;
-    if (sizeName && Array.isArray(product.sizes)) {
-      const sObj = product.sizes.find((s) => s.size_name === sizeName);
-      if (sObj && sObj.stock_level !== undefined) {
-        return Number(sObj.stock_level || 0);
+  // Helper to resolve inventory product for any cart item (handling backward compatibility for stored carts)
+  const findProductForCartItem = useCallback(
+    (item) => {
+      if (!item) return null;
+      const targetId = Number(item.productId || item.id);
+      const direct = inventory.find((p) => Number(p.id) === targetId);
+      if (direct) return direct;
+      const bySize = inventory.find(
+        (p) => Array.isArray(p.sizes) && p.sizes.some((s) => Number(s.id) === Number(item.id))
+      );
+      if (bySize) return bySize;
+      return (
+        inventory.find(
+          (p) =>
+            (p.barcode && item.barcode && p.barcode.toLowerCase() === item.barcode.toLowerCase()) ||
+            (p.name && item.name && p.name.trim().toLowerCase() === item.name.trim().toLowerCase()) ||
+            (Array.isArray(p.sizes) &&
+              p.sizes.some(
+                (s) => s.barcode && item.barcode && s.barcode.toLowerCase() === item.barcode.toLowerCase()
+              ))
+        ) || null
+      );
+    },
+    [inventory]
+  );
+
+  // Helper to get available stock for current branch or globally with color awareness
+  const getProductAvailableStock = useCallback(
+    (product, sizeName = null, colorName = null) => {
+      if (!product) return 0;
+
+      if (Array.isArray(product.sizes) && product.sizes.length > 0) {
+        if (sizeName) {
+          const cleanSize = String(sizeName).trim().toLowerCase();
+          const cleanColor = colorName ? String(colorName).trim().toLowerCase() : null;
+
+          // 1. Try exact match on size + color
+          if (cleanColor) {
+            const matchBoth = product.sizes.find(
+              (s) =>
+                String(s.size_name || '').trim().toLowerCase() === cleanSize &&
+                String(s.color_name || '').trim().toLowerCase() === cleanColor
+            );
+            if (matchBoth && matchBoth.stock_level !== undefined) {
+              return Number(matchBoth.stock_level || 0);
+            }
+          }
+
+          // 2. Try match on size name alone
+          const matchingSizes = product.sizes.filter(
+            (s) => String(s.size_name || '').trim().toLowerCase() === cleanSize
+          );
+          if (matchingSizes.length > 0) {
+            const sumStock = matchingSizes.reduce((sum, s) => sum + Number(s.stock_level || 0), 0);
+            return sumStock;
+          }
+        }
       }
-    }
-    const isAll = !activeBranchId || activeBranchId === 'all';
-    return isAll
-      ? Number(product.total_stock ?? product.stock_level ?? 0)
-      : Number(product.stock_level ?? 0);
-  }, [activeBranchId]);
+
+      const isAll = !activeBranchId || activeBranchId === 'all';
+      const baseStock = isAll
+        ? Number(product.total_stock ?? product.stock_level ?? 0)
+        : Number(product.stock_level ?? 0);
+
+      if (baseStock > 0) return baseStock;
+
+      if (Array.isArray(product.sizes) && product.sizes.length > 0) {
+        const sizesSum = product.sizes.reduce((sum, s) => sum + Number(s.stock_level || 0), 0);
+        if (sizesSum > 0) return sizesSum;
+      }
+
+      return 0;
+    },
+    [activeBranchId]
+  );
 
   // Barcode Scan / Exact Match on Enter
   const handleBarcodeSubmit = async (e) => {
@@ -746,6 +869,23 @@ export function POS() {
           return;
         }
 
+        // Check if barcode specifically matched an individual size/variant
+        const specificSize = Array.isArray(matched.sizes)
+          ? matched.sizes.find((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase())
+          : null;
+
+        if (specificSize) {
+          const sizeStock = Number(specificSize.stock_level ?? 0);
+          if (sizeStock <= 0) {
+            playErrorSound();
+            toast.error(`عفواً، المقاس "${specificSize.size_name}" (${specificSize.color_name || ''}) نفد من المخزون.`);
+            return;
+          }
+          addToCart(matched, specificSize.size_name, specificSize);
+          setSearchQuery('');
+          return;
+        }
+
         if (matched.sizes && Array.isArray(matched.sizes) && matched.sizes.length > 1) {
           const hasAnyInStock = matched.sizes.some((s) => Number(s.stock_level || 0) > 0);
           if (!hasAnyInStock) {
@@ -760,6 +900,7 @@ export function POS() {
           addToCart(matched);
           setSearchQuery('');
         }
+      } else {
         playErrorSound();
         toast.warning(`لم يتم العثور على منتج بهذا الباركود: ${code}`);
       }
@@ -769,32 +910,31 @@ export function POS() {
   // Add Item to Current Cart with optional selectedSize
   const addToCart = (product, selectedSize = null, selectedSizeObj = null) => {
     let itemSize = selectedSize;
-    let chosenId = product.id;
     let chosenBarcode = product.barcode;
 
     if (selectedSizeObj) {
       itemSize = selectedSizeObj.size_name;
-      if (selectedSizeObj.id) chosenId = selectedSizeObj.id;
       if (selectedSizeObj.barcode) chosenBarcode = selectedSizeObj.barcode;
     } else if (itemSize && Array.isArray(product.sizes)) {
-      const foundSize = product.sizes.find((s) => s.size_name === itemSize);
-      if (foundSize) {
-        if (foundSize.id) chosenId = foundSize.id;
-        if (foundSize.barcode) chosenBarcode = foundSize.barcode;
+      const foundSize = product.sizes.find(
+        (s) => String(s.size_name || '').trim().toLowerCase() === String(itemSize).trim().toLowerCase()
+      );
+      if (foundSize && foundSize.barcode) {
+        chosenBarcode = foundSize.barcode;
       }
     }
 
     if (!itemSize) {
       if (product.sizes && Array.isArray(product.sizes) && product.sizes.length === 1) {
         itemSize = product.sizes[0].size_name;
-        if (product.sizes[0].id) chosenId = product.sizes[0].id;
         if (product.sizes[0].barcode) chosenBarcode = product.sizes[0].barcode;
       } else {
         itemSize = product.size_cut || product.size || '';
       }
     }
 
-    const availableStock = getProductAvailableStock(product, itemSize);
+    const itemColor = selectedSizeObj?.color_name || product.color || '';
+    const availableStock = getProductAvailableStock(product, itemSize, itemColor);
     if (availableStock <= 0) {
       playErrorSound();
       const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
@@ -802,12 +942,14 @@ export function POS() {
       return;
     }
 
-    const cartItemId = `${chosenId}_${itemSize || 'default'}`;
+    const cartItemId = `${product.id}_${itemSize || 'default'}_${itemColor}`;
 
     setCarts((prev) => {
       const items = prev[activeCartId] || [];
       const existingIndex = items.findIndex((i) =>
-        i.cartItemId ? i.cartItemId === cartItemId : (i.id === chosenId && (i.size || '') === (itemSize || ''))
+        i.cartItemId
+          ? i.cartItemId === cartItemId
+          : (Number(i.productId || i.id) === Number(product.id) && (i.size || '') === (itemSize || '') && (i.color || '') === itemColor)
       );
 
       if (existingIndex > -1) {
@@ -827,11 +969,13 @@ export function POS() {
       } else {
         const newItem = {
           cartItemId,
-          id: chosenId,
+          id: product.id,
+          productId: product.id,
+          size_row_id: selectedSizeObj?.id || null,
           name: product.name,
-          barcode: chosenBarcode,
+          barcode: chosenBarcode || product.barcode,
           price: Number(product.price || 0),
-          color: product.color || '',
+          color: itemColor,
           size: itemSize,
           image_url: product.image_url || '',
           quantity: 1,
@@ -874,11 +1018,13 @@ export function POS() {
       const items = prev[activeCartId] || [];
       const updated = items
         .map((item) => {
-          const matches = (item.cartItemId && item.cartItemId === cartKey) || (!item.cartItemId && item.id === cartKey);
+          const matches =
+            (item.cartItemId && item.cartItemId === cartKey) ||
+            (!item.cartItemId && (item.id === cartKey || item.productId === cartKey));
           if (matches) {
             if (delta > 0) {
-              const prod = inventory.find((p) => p.id === item.id);
-              const maxStock = getProductAvailableStock(prod, item.size) || item.maxStock || Infinity;
+              const prod = findProductForCartItem(item);
+              const maxStock = getProductAvailableStock(prod, item.size, item.color) || item.maxStock || Infinity;
               if (item.quantity + delta > maxStock) {
                 playErrorSound();
                 toast.warning(`الكمية المتاحة في المخزون هي ${maxStock} قطعة فقط.`);
@@ -899,7 +1045,11 @@ export function POS() {
     setCarts((prev) => ({
       ...prev,
       [activeCartId]: (prev[activeCartId] || []).filter(
-        (i) => !((i.cartItemId && i.cartItemId === cartKey) || (!i.cartItemId && i.id === cartKey))
+        (i) =>
+          !(
+            (i.cartItemId && i.cartItemId === cartKey) ||
+            (!i.cartItemId && (i.id === cartKey || i.productId === cartKey))
+          )
       ),
     }));
   };
@@ -1003,11 +1153,21 @@ export function POS() {
     }
 
     for (const item of currentCart) {
-      const prod = inventory.find((p) => p.id === item.id);
-      const available = getProductAvailableStock(prod, item.size);
+      const prod = findProductForCartItem(item);
+      const available = getProductAvailableStock(prod, item.size, item.color);
       if (available <= 0) {
         playErrorSound();
-        toast.error(`لا يمكن المتابعة: الصنف "${item.name}" غير متوفر بالمخزون حالياً`);
+        const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك الحالي';
+        const otherWithStock = (prod?.available_branches || [])
+          .filter((b) => Number(b.stock_level || 0) > 0 && b.branch_id.toString() !== activeBranchId?.toString())
+          .map((b) => `${b.branch_name} (${b.stock_level} قطعة)`)
+          .join('، ');
+
+        const errorMsg = otherWithStock
+          ? `لا يمكن المتابعة: الصنف "${item.name}" غير متوفر في ${branchName} حالياً، ولكنه متوفر في: ${otherWithStock}. يرجى التبديل للفرع المتوفر به الصنف.`
+          : `لا يمكن المتابعة: الصنف "${item.name}" غير متوفر بالمخزون حالياً`;
+
+        toast.error(errorMsg);
         return;
       }
       if (item.quantity > available) {
@@ -1016,6 +1176,19 @@ export function POS() {
         return;
       }
     }
+
+    let targetBranch = activeBranchId && activeBranchId !== 'all' ? activeBranchId : effectiveBranchId;
+    if (!activeBranchId || activeBranchId === 'all') {
+      for (const item of currentCart) {
+        const prod = findProductForCartItem(item);
+        const branchWithStock = prod?.available_branches?.find((b) => Number(b.stock_level || 0) >= item.quantity);
+        if (branchWithStock) {
+          targetBranch = branchWithStock.branch_id.toString();
+          break;
+        }
+      }
+    }
+    setCheckoutBranchId(targetBranch ? targetBranch.toString() : '1');
 
     setPaidAmount(grandTotal.toString());
     setIsSplitPayment(false);
@@ -1039,8 +1212,8 @@ export function POS() {
     }
 
     for (const item of currentCart) {
-      const prod = inventory.find((p) => p.id === item.id);
-      const available = getProductAvailableStock(prod, item.size);
+      const prod = findProductForCartItem(item);
+      const available = getProductAvailableStock(prod, item.size, item.color);
       if (available <= 0 || item.quantity > available) {
         playErrorSound();
         toast.error(`لا يمكن إتمام الفاتورة: الصنف "${item.name}" غير متوفر بالكمية المطلوبة (المتاح: ${available})`);
@@ -1101,7 +1274,13 @@ export function POS() {
       toast.error('لا يمكن صرف باقي نقدي لعمليات الدفع غير النقدية');
       return;
     }
-    const chosenBranchId = Number(effectiveBranchId) || 1;
+    const sellerObj = employees.find((e) => e.id.toString() === sellerId?.toString());
+    const chosenBranchId =
+      checkoutBranchId && checkoutBranchId !== 'all'
+        ? Number(checkoutBranchId)
+        : activeBranchId && activeBranchId !== 'all'
+        ? Number(activeBranchId)
+        : Number(sellerObj?.branch_id || effectiveBranchId || 1);
 
     setCheckoutSubmitting(true);
     try {
@@ -1121,14 +1300,18 @@ export function POS() {
         change_amount: change,
         invoice_discount: invoiceDiscountTotal,
         invoice_discount_type: currentDiscount.type,
-        items: currentCart.map((i) => ({
-          id: i.id,
-          size: i.size || null,
-          quantity: i.quantity,
-          price: i.price,
-          discount: i.discount || 0,
-          discount_type: i.discount_type || 'amount',
-        })),
+        items: currentCart.map((i) => {
+          const prod = findProductForCartItem(i);
+          return {
+            id: Number(prod?.id || i.productId || i.id),
+            size: i.size || null,
+            color: i.color || null,
+            quantity: i.quantity,
+            price: i.price,
+            discount: i.discount || 0,
+            discount_type: i.discount_type || 'amount',
+          };
+        }),
         needs_alteration: needsAlteration,
         alteration_due_date: needsAlteration ? alterationDueDate : null,
       };
@@ -1138,19 +1321,23 @@ export function POS() {
       toast.success('تم تسجيل وحفظ الفاتورة بنجاح! 🎉');
       setShowCheckoutModal(false);
 
+      const actualBranchId = res.branchId || res.branch_id || chosenBranchId || user?.branch_id;
+      const chosenBranchObj = branches.find((b) => b.id?.toString() === actualBranchId?.toString());
       setCompletedOrder({
-        order_number: res.branch_invoice_number || res.order_number || res.id || nextOrderId,
+        order_number: res.branchInvoiceNumber || res.branch_invoice_number || res.order_number || res.orderId || res.id || nextOrderId,
         created_at: new Date().toISOString(),
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
         seller_name: employees.find((e) => e.id.toString() === sellerId)?.name || 'الكاشير',
+        branch_id: actualBranchId,
         branch_name:
-          branches.find((b) => b.id.toString() === chosenBranchId.toString())?.name ||
+          chosenBranchObj?.name ||
           (activeBranchId && activeBranchId !== 'all'
             ? branches.find((b) => b.id.toString() === activeBranchId.toString())?.name
             : '') ||
           settings.store_name ||
           '',
+        branch_logo: chosenBranchObj?.logo_url,
         subtotal,
         discount: totalDiscount,
         total_amount: grandTotal,
@@ -1189,6 +1376,17 @@ export function POS() {
     }
   };
 
+  // Helpers to update filters and reset pagination to page 1
+  const updateHistoryFilter = (key, value) => {
+    setHistoryFilters((prev) => ({ ...prev, [key]: value }));
+    setHistoryPagination((prev) => ({ ...prev, page: 1 }));
+  };
+
+  const updateReturnFilter = (key, value) => {
+    setReturnFilters((prev) => ({ ...prev, [key]: value }));
+    setReturnsPagination((prev) => ({ ...prev, page: 1 }));
+  };
+
   // Load Sales History with multi-filters
   const fetchHistory = useCallback(async () => {
     try {
@@ -1207,13 +1405,21 @@ export function POS() {
       query.append('limit', historyPagination.limit.toString());
 
       const data = await api.get(`/orders?${query.toString()}`);
-      if (Array.isArray(data)) {
-        setHistoryOrders(data);
-      } else if (data?.orders) {
-        setHistoryOrders(data.orders);
-        if (data.pagination) {
-          setHistoryPagination((prev) => ({ ...prev, ...data.pagination }));
-        }
+      const list = Array.isArray(data) ? data : (data?.orders || data?.items || data?.data || []);
+      setHistoryOrders(list);
+
+      if (data?.pagination) {
+        setHistoryPagination((prev) => ({
+          ...prev,
+          total: data.pagination.total ?? prev.total,
+          totalPages: data.pagination.totalPages || 1,
+        }));
+      } else if (typeof data?.total === 'number') {
+        setHistoryPagination((prev) => ({
+          ...prev,
+          total: data.total,
+          totalPages: Math.max(1, Math.ceil(data.total / (prev.limit || 30))),
+        }));
       }
     } catch (err) {
       console.error('Failed to load history:', err);
@@ -1236,8 +1442,14 @@ export function POS() {
       if (activeBranchId && activeBranchId !== 'all') {
         query.append('branch_id', activeBranchId);
       }
-      if (returnFilters.returnId) query.append('returnId', returnFilters.returnId);
-      if (returnFilters.orderId) query.append('orderId', returnFilters.orderId);
+      if (returnFilters.returnId) {
+        query.append('returnId', returnFilters.returnId);
+        query.append('return_id', returnFilters.returnId);
+      }
+      if (returnFilters.orderId) {
+        query.append('orderId', returnFilters.orderId);
+        query.append('order_id', returnFilters.orderId);
+      }
       if (returnFilters.customer) query.append('customer', returnFilters.customer);
       if (returnFilters.phone) query.append('phone', returnFilters.phone);
       if (returnFilters.date) query.append('date', returnFilters.date);
@@ -1246,13 +1458,21 @@ export function POS() {
       query.append('limit', returnsPagination.limit.toString());
 
       const data = await api.get(`/returns?${query.toString()}`);
-      if (Array.isArray(data)) {
-        setReturnsList(data);
-      } else if (data?.returns) {
-        setReturnsList(data.returns);
-        if (data.pagination) {
-          setReturnsPagination((prev) => ({ ...prev, ...data.pagination }));
-        }
+      const list = Array.isArray(data) ? data : (data?.returns || data?.items || data?.data || []);
+      setReturnsList(list);
+
+      if (data?.pagination) {
+        setReturnsPagination((prev) => ({
+          ...prev,
+          total: data.pagination.total ?? prev.total,
+          totalPages: data.pagination.totalPages || 1,
+        }));
+      } else if (typeof data?.total === 'number') {
+        setReturnsPagination((prev) => ({
+          ...prev,
+          total: data.total,
+          totalPages: Math.max(1, Math.ceil(data.total / (prev.limit || 30))),
+        }));
       }
     } catch (err) {
       console.error('Failed to load returns:', err);
@@ -1465,7 +1685,7 @@ export function POS() {
       setSearchingReturnOrders(true);
       const branchParam = activeBranchId && activeBranchId !== 'all' ? `&branch_id=${activeBranchId}` : '';
       const data = await api.get(`/orders/search?query=${encodeURIComponent(query)}${branchParam}`);
-      setReturnFoundOrders(Array.isArray(data) ? data : data?.orders || []);
+      setReturnFoundOrders(Array.isArray(data) ? data : (data?.orders || data?.items || data?.data || []));
     } catch {
       setReturnFoundOrders([]);
     } finally {
@@ -1586,6 +1806,8 @@ export function POS() {
         const financials = getItemReturnFinancials(selectedReturnOrder, item);
         return {
           id: item.inventory_id || item.id,
+          size: item.size || null,
+          color: item.color || null,
           quantity: Number(returnQuantities[item.id]),
           price: financials.effectiveUnitPrice,
         };
@@ -1613,6 +1835,7 @@ export function POS() {
       toast.success('تم تسجيل وحفظ المرتجع بنجاح! 🔄');
       setShowProcessReturnModal(false);
 
+      const chosenBranchObj = branches.find((b) => b.id.toString() === chosenBranchId.toString());
       setCompletedReturn({
         return_id: res.returnId || res.id,
         original_order_id: selectedReturnOrder.id,
@@ -1620,7 +1843,9 @@ export function POS() {
         customer_name: selectedReturnOrder.customer_name || 'عميل نقدي',
         customer_phone: selectedReturnOrder.customer_phone || '-',
         seller_name: employees.find((e) => e.id.toString() === sellerId)?.name || 'الكاشير',
-        branch_name: branches.find((b) => b.id.toString() === chosenBranchId.toString())?.name || 'الفرع الرئيسي',
+        branch_id: chosenBranchId,
+        branch_name: chosenBranchObj?.name || 'الفرع الرئيسي',
+        branch_logo: chosenBranchObj?.logo_url,
         items: returnItems.map((ri) => {
           const original = selectedReturnOrder.items.find((oi) => (oi.inventory_id || oi.id) === ri.id);
           return {
@@ -1668,6 +1893,7 @@ export function POS() {
         to_branch_id: targetBranch,
         quantity: Number(requestQuantity),
         notes: `طلب بضاعة من الفرع الآخر (${branches.find((b) => b.id.toString() === requestSourceBranchId)?.name})`,
+        is_request: true,
       });
 
       toast.success('تم إرسال طلب نقل البضاعة بنجاح! 🚚');
@@ -1812,16 +2038,29 @@ export function POS() {
                     value={stockFilter}
                     onChange={(e) => setStockFilter(e.target.value)}
                     className={`w-full bg-slate-50 text-xs font-bold rounded-xl px-2.5 py-2 border outline-none cursor-pointer transition-all ${
-                      stockFilter !== 'all'
+                      stockFilter !== defaultStockFilter
                         ? 'border-emerald-500 bg-emerald-50/50 text-emerald-900 font-black ring-1 ring-emerald-300'
                         : 'border-slate-200 text-slate-700 hover:border-slate-300 focus:border-emerald-500 focus:bg-white'
                     }`}
                   >
-                    <option value="all">كل حالات المخزن</option>
-                    <option value="in_branch">المتوفر بفرعي فقط</option>
-                    <option value="in_any_branch">المتوفر في أي فرع</option>
-                    <option value="out_of_stock">نفد من المخزون (0)</option>
-                    <option value="low_stock">رصيد منخفض (≤ 5)</option>
+                    {activeBranchId && activeBranchId !== 'all' ? (
+                      <>
+                        <option value="in_branch">
+                          {activeBranch?.name ? `المتوفر في (${activeBranch.name}) فقط` : 'المتوفر بالفرع فقط'}
+                        </option>
+                        <option value="all">كل حالات المخزن (كل الفروع والمنتهي)</option>
+                        <option value="in_any_branch">المتوفر في أي فرع</option>
+                        <option value="low_stock">نواقص الفرع (≤ 5)</option>
+                        <option value="out_of_stock">المنتهي من الفرع (0)</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="all">كل حالات المخزن (الإجمالي)</option>
+                        <option value="in_any_branch">المتوفر في أي فرع (له رصيد)</option>
+                        <option value="out_of_stock">نفد من المخزون (0)</option>
+                        <option value="low_stock">رصيد منخفض (≤ 5)</option>
+                      </>
+                    )}
                   </select>
                 </div>
 
@@ -1916,16 +2155,18 @@ export function POS() {
                     </span>
                   )}
 
-                  {stockFilter !== 'all' && (
+                  {stockFilter !== defaultStockFilter && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
                       {stockFilter === 'in_branch'
-                        ? 'المتوفر بفرعي'
+                        ? (activeBranch?.name ? `المتوفر في (${activeBranch.name})` : 'المتوفر بالفرع')
                         : stockFilter === 'in_any_branch'
                         ? 'المتوفر بأي فرع'
                         : stockFilter === 'out_of_stock'
                         ? 'نفد بالمخزن'
-                        : 'رصيد منخفض'}
-                      <button onClick={() => setStockFilter('all')} className="hover:text-rose-600 transition-colors">
+                        : stockFilter === 'low_stock'
+                        ? 'رصيد منخفض'
+                        : 'كل حالات المخزن'}
+                      <button onClick={() => setStockFilter(defaultStockFilter)} className="hover:text-rose-600 transition-colors">
                         <X className="w-3 h-3" />
                       </button>
                     </span>
@@ -2327,7 +2568,7 @@ export function POS() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50 px-1 py-0.2 rounded">
-                              #{item.id}
+                              #{item.productId || (findProductForCartItem(item)?.id) || item.id}
                             </span>
                             <h5 className="text-xs sm:text-sm font-black text-slate-900 truncate">
                               {item.name}
@@ -2540,27 +2781,27 @@ export function POS() {
             <Input
               placeholder="رقم الفاتورة..."
               value={historyFilters.id}
-              onChange={(e) => setHistoryFilters({ ...historyFilters, id: e.target.value })}
+              onChange={(e) => updateHistoryFilter('id', e.target.value)}
             />
             <Input
               placeholder="اسم العميل..."
               value={historyFilters.customer}
-              onChange={(e) => setHistoryFilters({ ...historyFilters, customer: e.target.value })}
+              onChange={(e) => updateHistoryFilter('customer', e.target.value)}
             />
             <Input
               placeholder="رقم الهاتف..."
               value={historyFilters.phone}
-              onChange={(e) => setHistoryFilters({ ...historyFilters, phone: e.target.value })}
+              onChange={(e) => updateHistoryFilter('phone', e.target.value)}
             />
             <input
               type="date"
               value={historyFilters.date}
-              onChange={(e) => setHistoryFilters({ ...historyFilters, date: e.target.value })}
+              onChange={(e) => updateHistoryFilter('date', e.target.value)}
               className="bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-indigo-600"
             />
             <select
               value={historyFilters.status}
-              onChange={(e) => setHistoryFilters({ ...historyFilters, status: e.target.value })}
+              onChange={(e) => updateHistoryFilter('status', e.target.value)}
               className="bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-indigo-600 cursor-pointer"
             >
               <option value="">جميع الحالات</option>
@@ -2585,6 +2826,7 @@ export function POS() {
                   <tr className="border-b border-slate-200 bg-slate-900 text-white text-xs font-black uppercase">
                     <th className="py-3.5 pr-4">رقم الفاتورة</th>
                     <th className="py-3.5">التاريخ والوقت</th>
+                    {(!activeBranchId || activeBranchId === 'all') && <th className="py-3.5">الفرع</th>}
                     <th className="py-3.5">العميل</th>
                     <th className="py-3.5">الهاتف</th>
                     <th className="py-3.5">البائع</th>
@@ -2612,6 +2854,11 @@ export function POS() {
                             timeStyle: 'short',
                           })}
                         </td>
+                        {(!activeBranchId || activeBranchId === 'all') && (
+                          <td className="py-3.5 text-xs font-bold text-slate-700">
+                            {order.branch_name || `فرع #${order.branch_id}`}
+                          </td>
+                        )}
                         <td className="py-3.5 font-bold text-slate-800">
                           {order.customer_name || 'عميل نقدي'}
                         </td>
@@ -2636,7 +2883,7 @@ export function POS() {
                                 : 'bg-slate-100 text-slate-800'
                             }`}
                           >
-                            {getPaymentMethodArabic(order.payment_method, order.payment_splits)}
+                            {getPaymentMethodArabic(order.payment_method, order.payment_splits || order)}
                           </span>
                         </td>
                         <td className="py-3.5 font-bold text-xs">
@@ -2685,13 +2932,16 @@ export function POS() {
                                 const totalDisc = itemsDisc + invDisc;
                                 const calculatedSub = itemsBaseSubtotal > 0 ? itemsBaseSubtotal : (Number(order.total_amount || 0) + totalDisc);
 
+                                const orderBranch = branches.find((b) => b.id?.toString() === order.branch_id?.toString() || b.name === order.branch_name);
                                 setCompletedOrder({
                                   order_number: order.branch_invoice_number || order.id,
                                   created_at: order.created_at || order.order_date,
                                   customer_name: order.customer_name,
                                   customer_phone: order.customer_phone,
                                   seller_name: order.seller_name,
-                                  branch_name: order.branch_name,
+                                  branch_id: order.branch_id,
+                                  branch_name: order.branch_name || orderBranch?.name,
+                                  branch_logo: order.branch_logo_url || order.branch_logo || orderBranch?.logo_url,
                                   items: orderItems,
                                   subtotal: calculatedSub,
                                   discount: totalDisc,
@@ -2753,6 +3003,91 @@ export function POS() {
               </table>
             </div>
           )}
+
+          {/* History Pagination Bar */}
+          {historyPagination.total > 0 && (
+            <div className="p-4 border-t border-slate-200 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50 rounded-b-2xl">
+              <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500">
+                <span>
+                  عرض{' '}
+                  <span className="text-slate-900 font-black">
+                    {(historyPagination.page - 1) * historyPagination.limit + 1} -{' '}
+                    {Math.min(historyPagination.page * historyPagination.limit, historyPagination.total)}
+                  </span>{' '}
+                  من إجمالي{' '}
+                  <span className="text-slate-900 font-black">
+                    {Number(historyPagination.total).toLocaleString()}
+                  </span>{' '}
+                  فاتورة
+                </span>
+
+                <div className="flex items-center gap-1.5 mr-2">
+                  <span className="text-slate-400">لكل صفحة:</span>
+                  {[30, 50, 100].map((lim) => (
+                    <button
+                      key={lim}
+                      onClick={() => setHistoryPagination((prev) => ({ ...prev, limit: lim, page: 1 }))}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                        historyPagination.limit === lim
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {lim}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {historyPagination.totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={historyPagination.page <= 1}
+                    onClick={() => setHistoryPagination((prev) => ({ ...prev, page: 1 }))}
+                    title="الصفحة الأولى"
+                    className="!px-2"
+                  >
+                    <ChevronsRight className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={historyPagination.page <= 1}
+                    onClick={() => setHistoryPagination((prev) => ({ ...prev, page: prev.page - 1 }))}
+                    className="!text-xs !py-1"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                    السابق
+                  </Button>
+                  <span className="px-3 text-xs font-bold text-slate-600">
+                    صفحة {historyPagination.page} من {historyPagination.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={historyPagination.page >= historyPagination.totalPages}
+                    onClick={() => setHistoryPagination((prev) => ({ ...prev, page: prev.page + 1 }))}
+                    className="!text-xs !py-1"
+                  >
+                    التالي
+                    <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={historyPagination.page >= historyPagination.totalPages}
+                    onClick={() => setHistoryPagination((prev) => ({ ...prev, page: prev.totalPages }))}
+                    title="الصفحة الأخيرة"
+                    className="!px-2"
+                  >
+                    <ChevronsLeft className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
@@ -2788,27 +3123,27 @@ export function POS() {
             <Input
               placeholder="رقم المرتجع..."
               value={returnFilters.returnId}
-              onChange={(e) => setReturnFilters({ ...returnFilters, returnId: e.target.value })}
+              onChange={(e) => updateReturnFilter('returnId', e.target.value)}
             />
             <Input
               placeholder="رقم الطلب الأصلي..."
               value={returnFilters.orderId}
-              onChange={(e) => setReturnFilters({ ...returnFilters, orderId: e.target.value })}
+              onChange={(e) => updateReturnFilter('orderId', e.target.value)}
             />
             <Input
               placeholder="اسم العميل..."
               value={returnFilters.customer}
-              onChange={(e) => setReturnFilters({ ...returnFilters, customer: e.target.value })}
+              onChange={(e) => updateReturnFilter('customer', e.target.value)}
             />
             <Input
               placeholder="رقم الهاتف..."
               value={returnFilters.phone}
-              onChange={(e) => setReturnFilters({ ...returnFilters, phone: e.target.value })}
+              onChange={(e) => updateReturnFilter('phone', e.target.value)}
             />
             <input
               type="date"
               value={returnFilters.date}
-              onChange={(e) => setReturnFilters({ ...returnFilters, date: e.target.value })}
+              onChange={(e) => updateReturnFilter('date', e.target.value)}
               className="bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-indigo-600"
             />
           </div>
@@ -2829,6 +3164,7 @@ export function POS() {
                     <th className="py-3.5 pr-4">رقم المرتجع</th>
                     <th className="py-3.5">رقم الطلب الأصلي</th>
                     <th className="py-3.5">تاريخ الإرجاع</th>
+                    {(!activeBranchId || activeBranchId === 'all') && <th className="py-3.5">الفرع</th>}
                     <th className="py-3.5">العميل</th>
                     <th className="py-3.5">الهاتف</th>
                     <th className="py-3.5">البائع</th>
@@ -2843,7 +3179,7 @@ export function POS() {
                         RET-{ret.id}
                       </td>
                       <td className="py-3.5 font-bold text-slate-800">
-                        #{ret.original_order_id || ret.order_id}
+                        #{ret.original_branch_invoice_number || ret.original_order_id || ret.order_id}
                       </td>
                       <td className="py-3.5 text-xs text-slate-500" dir="ltr">
                         {new Date(ret.return_date || ret.created_at).toLocaleString('ar-EG', {
@@ -2851,6 +3187,11 @@ export function POS() {
                           timeStyle: 'short',
                         })}
                       </td>
+                      {(!activeBranchId || activeBranchId === 'all') && (
+                        <td className="py-3.5 text-xs font-bold text-slate-700">
+                          {ret.branch_name || `فرع #${ret.branch_id}`}
+                        </td>
+                      )}
                       <td className="py-3.5 font-bold text-slate-800">
                         {ret.customer_name || 'عميل نقدي'}
                       </td>
@@ -2871,6 +3212,7 @@ export function POS() {
                             icon={Printer}
                             title="طباعة إيصال المرتجع"
                             onClick={() => {
+                              const retBranch = branches.find((b) => b.id?.toString() === ret.branch_id?.toString() || b.name === ret.branch_name);
                               setCompletedReturn({
                                 return_id: ret.id,
                                 original_order_id: ret.original_order_id || ret.order_id,
@@ -2878,7 +3220,9 @@ export function POS() {
                                 customer_name: ret.customer_name,
                                 customer_phone: ret.customer_phone,
                                 seller_name: ret.seller_name,
-                                branch_name: ret.branch_name,
+                                branch_id: ret.branch_id,
+                                branch_name: ret.branch_name || retBranch?.name,
+                                branch_logo: ret.branch_logo_url || ret.branch_logo || retBranch?.logo_url,
                                 items: ret.items || [],
                                 total_return_amount: Number(ret.total_return_amount || 0),
                               });
@@ -2901,6 +3245,91 @@ export function POS() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Returns Pagination Bar */}
+          {returnsPagination.total > 0 && (
+            <div className="p-4 border-t border-slate-200 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50 rounded-b-2xl">
+              <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500">
+                <span>
+                  عرض{' '}
+                  <span className="text-slate-900 font-black">
+                    {(returnsPagination.page - 1) * returnsPagination.limit + 1} -{' '}
+                    {Math.min(returnsPagination.page * returnsPagination.limit, returnsPagination.total)}
+                  </span>{' '}
+                  من إجمالي{' '}
+                  <span className="text-slate-900 font-black">
+                    {Number(returnsPagination.total).toLocaleString()}
+                  </span>{' '}
+                  مرتجع
+                </span>
+
+                <div className="flex items-center gap-1.5 mr-2">
+                  <span className="text-slate-400">لكل صفحة:</span>
+                  {[30, 50, 100].map((lim) => (
+                    <button
+                      key={lim}
+                      onClick={() => setReturnsPagination((prev) => ({ ...prev, limit: lim, page: 1 }))}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                        returnsPagination.limit === lim
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {lim}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {returnsPagination.totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={returnsPagination.page <= 1}
+                    onClick={() => setReturnsPagination((prev) => ({ ...prev, page: 1 }))}
+                    title="الصفحة الأولى"
+                    className="!px-2"
+                  >
+                    <ChevronsRight className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={returnsPagination.page <= 1}
+                    onClick={() => setReturnsPagination((prev) => ({ ...prev, page: prev.page - 1 }))}
+                    className="!text-xs !py-1"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                    السابق
+                  </Button>
+                  <span className="px-3 text-xs font-bold text-slate-600">
+                    صفحة {returnsPagination.page} من {returnsPagination.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={returnsPagination.page >= returnsPagination.totalPages}
+                    onClick={() => setReturnsPagination((prev) => ({ ...prev, page: prev.page + 1 }))}
+                    className="!text-xs !py-1"
+                  >
+                    التالي
+                    <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={returnsPagination.page >= returnsPagination.totalPages}
+                    onClick={() => setReturnsPagination((prev) => ({ ...prev, page: prev.totalPages }))}
+                    title="الصفحة الأخيرة"
+                    className="!px-2"
+                  >
+                    <ChevronsLeft className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </Card>
@@ -3188,7 +3617,7 @@ export function POS() {
               <option value="cash">نقدي (كاش بالدرج)</option>
               <option value="bank_transfer">انستاباي / تحويل بنكي</option>
               <option value="card">بطاقة (فيزا)</option>
-              <option value="wallet">فودافون كاش / محفظة</option>
+              <option value="wallet">فودافون كاش</option>
             </select>
           </div>
 
@@ -3536,6 +3965,8 @@ export function POS() {
           <ThermalReceipt
             id="printable-return-receipt"
             type="return"
+            branchId={completedReturn.branch_id || (activeBranchId !== 'all' ? activeBranchId : null) || user?.branch_id}
+            branchLogo={completedReturn.branch_logo || completedReturn.branch_logo_url}
             orderNumber={`RET-${completedReturn.return_id}`}
             originalOrderId={completedReturn.original_order_id}
             date={completedReturn.created_at}
@@ -3543,9 +3974,24 @@ export function POS() {
             customerPhone={completedReturn.customer_phone}
             sellerName={completedReturn.seller_name}
             paymentMethod="كاش"
-            branchName={completedReturn.branch_name || settings.store_address}
-            storePhone={settings.store_phone}
-            storeAddress={settings.store_address}
+            branchName={
+              completedReturn.branch_name ||
+              (activeBranchId && activeBranchId !== 'all'
+                ? branches.find((b) => b.id.toString() === activeBranchId.toString())?.name
+                : '') ||
+              settings.store_name ||
+              settings.store_address
+            }
+            storePhone={
+              branches.find((b) => b.name === completedReturn.branch_name || b.id?.toString() === completedReturn.branch_id?.toString())?.phone ||
+              settings.store_phone ||
+              ''
+            }
+            storeAddress={
+              branches.find((b) => b.name === completedReturn.branch_name || b.id?.toString() === completedReturn.branch_id?.toString())?.location ||
+              settings.store_address ||
+              ''
+            }
             items={completedReturn.items}
             subtotal={completedReturn.total_return_amount}
             totalReturnAmount={completedReturn.total_return_amount}
@@ -3567,8 +4013,8 @@ export function POS() {
           setShowSizeModal(false);
           setPendingProduct(null);
         }}
-        title="اختيار مقاس المنتج 📏"
-        subtitle="حتاخد أنهي مقاس لإضافته للفاتورة؟"
+        title="اختيار اللون والمقاس 🎨📏"
+        subtitle="اختر اللون والمقاس المطلوب لإضافته للفاتورة"
         maxWidth="max-w-md"
       >
         {pendingProduct && (
@@ -3604,12 +4050,12 @@ export function POS() {
               </div>
             </div>
 
-            {/* Sizes selection */}
+            {/* Sizes and Colors selection */}
             <div className="space-y-2">
               <label className="text-xs font-black text-slate-700 block">
-                حتاخد أنهي مقاس؟ (اضغط على المقاس لإضافته مباشرة للكاشير):
+                اختر اللون والمقاس المطلوب لإضافته للفاتورة:
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto p-1">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto p-1">
                 {(pendingProduct.sizes || []).map((s, idx) => {
                   const qty = Number(s.stock_level ?? 0);
                   const isOutOfStock = qty <= 0;
@@ -3624,21 +4070,26 @@ export function POS() {
                         setShowSizeModal(false);
                         setPendingProduct(null);
                       }}
-                      className={`p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                      className={`p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
                         isOutOfStock
                           ? 'bg-slate-50 border-slate-200 opacity-50 cursor-not-allowed'
                           : 'bg-white border-slate-200 hover:border-indigo-600 hover:bg-indigo-50/50 hover:shadow-sm'
                       }`}
                     >
+                      {s.color_name && (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {s.color_name}
+                        </span>
+                      )}
                       <span className="text-base font-black text-slate-900">{s.size_name}</span>
                       <span
-                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                           isOutOfStock
                             ? 'bg-rose-50 text-rose-600 border border-rose-200'
                             : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         }`}
                       >
-                        {isOutOfStock ? 'نفذت الكمية (0)' : `${qty} قطعة متوفرة`}
+                        {isOutOfStock ? 'نفذت الكمية (0)' : `${qty} متوفر`}
                       </span>
                     </button>
                   );
@@ -3715,6 +4166,27 @@ export function POS() {
             />
           </div>
 
+          {isAdmin && (!activeBranchId || activeBranchId === 'all') && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">فرع إصدار الفاتورة *</label>
+              <select
+                value={checkoutBranchId}
+                onChange={(e) => {
+                  setCheckoutBranchId(e.target.value);
+                  setSellerId('');
+                }}
+                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-800 outline-none focus:border-indigo-600 transition-colors"
+                required
+              >
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id.toString()}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-700">الموظف البائع *</label>
             <select
@@ -3724,7 +4196,7 @@ export function POS() {
               required
             >
               <option value="">اختر الموظف البائع...</option>
-              {employees.map((emp) => (
+              {checkoutEmployees.map((emp) => (
                 <option key={emp.id} value={emp.id.toString()}>
                   {emp.name} {emp.job_title ? `(${emp.job_title})` : ''}
                 </option>
@@ -3766,7 +4238,7 @@ export function POS() {
                   { id: 'cash', label: 'نقدي (كاش بالدرج)', icon: DollarSign },
                   { id: 'bank_transfer', label: 'انستاباي / بنكي', icon: Building2 },
                   { id: 'card', label: 'بطاقة (فيزا)', icon: CreditCard },
-                  { id: 'wallet', label: 'محفظة إلكترونية', icon: Phone },
+                  { id: 'wallet', label: 'فودافون كاش', icon: Phone },
                   { id: 'debt', label: 'آجل / مديونية', icon: Clock },
                 ].map((m) => (
                   <button
@@ -3802,7 +4274,7 @@ export function POS() {
                         { id: 'cash', label: 'كاش (بالدرج)' },
                         { id: 'bank_transfer', label: 'انستاباي / بنكي' },
                         { id: 'card', label: 'فيزا' },
-                        { id: 'wallet', label: 'محفظة' },
+                        { id: 'wallet', label: 'فودافون كاش' },
                       ].map((m) => (
                         <button
                           key={m.id}
@@ -3863,7 +4335,7 @@ export function POS() {
                         { id: 'cash', label: 'كاش (بالدرج)' },
                         { id: 'bank_transfer', label: 'انستاباي / بنكي' },
                         { id: 'card', label: 'فيزا' },
-                        { id: 'wallet', label: 'محفظة' },
+                        { id: 'wallet', label: 'فودافون كاش' },
                       ].map((m) => (
                         <button
                           key={m.id}
@@ -4061,6 +4533,8 @@ export function POS() {
           <ThermalReceipt
             id="printable-receipt"
             type="sale"
+            branchId={completedOrder.branch_id || (activeBranchId !== 'all' ? activeBranchId : null) || user?.branch_id}
+            branchLogo={completedOrder.branch_logo || completedOrder.branch_logo_url}
             orderNumber={completedOrder.order_number}
             date={completedOrder.created_at}
             customerName={completedOrder.customer_name}

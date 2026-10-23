@@ -25,6 +25,7 @@ import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
+import ProductBarcodePrintModal from '../../components/modals/ProductBarcodePrintModal';
 
 const BASE_CATEGORIES = ['الكل', 'TUXEDO SUIT', 'FORMAL SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'أخرى'];
 
@@ -49,6 +50,11 @@ export function RentalInventory() {
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Barcode Print Modal State
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
+  const [selectedRentalForBarcode, setSelectedRentalForBarcode] = useState(null);
+  const [isBarcodeNewlyCreated, setIsBarcodeNewlyCreated] = useState(false);
 
   // Form State
   const [name, setName] = useState('');
@@ -194,8 +200,24 @@ export function RentalInventory() {
         await api.put(`/rental-inventory/${editingItem.id}`, payload);
         toast.success('تم تحديث بيانات القطعة بنجاح! ✅');
       } else {
-        await api.post('/rental-inventory', payload);
+        const res = await api.post('/rental-inventory', payload);
         toast.success('تمت إضافة قطعة التأجير للمخزون بنجاح! 👗');
+
+        const createdRental = {
+          ...(res || {}),
+          id: res?.id || Date.now(),
+          name: name.trim(),
+          category,
+          color: color.trim(),
+          size: sizeCut.trim(),
+          size_cut: sizeCut.trim(),
+          barcode: res?.barcode || barcode.trim() || '',
+          rental_price: Number(res?.rental_price) || Number(rentalPrice) || 0,
+          price: Number(res?.rental_price) || Number(rentalPrice) || Number(res?.price) || 0,
+        };
+        setSelectedRentalForBarcode(createdRental);
+        setIsBarcodeNewlyCreated(true);
+        setShowBarcodeModal(true);
       }
 
       setShowModal(false);
@@ -362,6 +384,17 @@ export function RentalInventory() {
                     </td>
                     <td className="py-3 pl-2">
                       <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedRentalForBarcode(item);
+                            setIsBarcodeNewlyCreated(false);
+                            setShowBarcodeModal(true);
+                          }}
+                          className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                          title="طباعة باركود القطعة"
+                        >
+                          <Barcode className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => openEditModal(item)}
                           className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
@@ -581,6 +614,22 @@ export function RentalInventory() {
           </div>
         </form>
       </Modal>
+
+      {/* RENTAL PRODUCT BARCODE PRINT MODAL */}
+      <ProductBarcodePrintModal
+        isOpen={showBarcodeModal}
+        onClose={() => {
+          setShowBarcodeModal(false);
+          setSelectedRentalForBarcode(null);
+          setIsBarcodeNewlyCreated(false);
+        }}
+        product={selectedRentalForBarcode}
+        storeName={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.name || ''}
+        logoUrl={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.logo_url}
+        branchLogo={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.logo_url}
+        branchId={activeBranchId}
+        isNewlyCreated={isBarcodeNewlyCreated}
+      />
     </div>
   );
 }

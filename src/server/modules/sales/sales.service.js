@@ -7,6 +7,8 @@ const { parsePositiveInt, roundCurrency } = require('../../../shared/utils/numbe
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { resolveOrderId } = require('./sales.helpers');
+const { normalizePaymentMethod } = require('../reports/reports.helpers');
+const { adjustInventoryStock } = require('../inventory/inventory.helpers');
 
 async function getNextOrderId(branchId, user = null) {
   let b_id = branchId;
@@ -47,7 +49,8 @@ async function listOrders(query = {}, user = null, req = null) {
   const pagination = parsePagination(req || { query }, 50, 200, true);
 
   let selectQuery = `
-    SELECT o.*, c.name as customer_name, c.phone as customer_phone, e.name as seller_name,
+    SELECT o.*, c.name as customer_name, c.phone as customer_phone, e.name as seller_name, b.name as branch_name,
+           b.logo_url as branch_logo_url, b.phone as branch_phone, b.location as branch_location,
            json_agg(json_build_object(
              'id', i.id,
              'name', i.name,
@@ -63,6 +66,7 @@ async function listOrders(query = {}, user = null, req = null) {
            )) FILTER (WHERE oi.id IS NOT NULL) as items
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
+    LEFT JOIN branches b ON o.branch_id = b.id
     LEFT JOIN employees e ON o.seller_id = e.id
     LEFT JOIN order_items oi ON o.id = oi.order_id
     LEFT JOIN inventory i ON oi.inventory_id = i.id
@@ -87,7 +91,7 @@ async function listOrders(query = {}, user = null, req = null) {
   }
 
   if (query.id) {
-    params.push(likePattern(String(query.id).replace(/^cashier-/i, '')));
+    params.push(likePattern(String(query.id).replace(/^cashier-/i, '').replace(/^#/i, '').trim()));
     where.push(`(o.id::text ILIKE $${params.length} OR o.branch_invoice_number::text ILIKE $${params.length})`);
   }
 
@@ -106,11 +110,22 @@ async function listOrders(query = {}, user = null, req = null) {
     where.push(`o.order_date >= $${params.length}::date AND o.order_date < ($${params.length}::date + INTERVAL '1 day')`);
   }
 
+  if (query.status === 'completed') {
+    where.push(`o.status = 'completed'`);
+  } else if (query.status === 'deferred') {
+    where.push(`(o.paid_amount < o.total_amount AND o.status <> 'returned')`);
+  } else if (query.status === 'returned') {
+    where.push(`o.status IN ('returned', 'partially_returned')`);
+  } else if (query.status && query.status !== 'all') {
+    params.push(query.status);
+    where.push(`o.status = $${params.length}`);
+  }
+
   const whereClause = ` WHERE ${where.join(' AND ')}`;
   selectQuery += whereClause;
   countQuery += whereClause;
 
-  selectQuery += ' GROUP BY o.id, c.name, c.phone, e.name ORDER BY o.order_date DESC, o.id DESC';
+  selectQuery += ' GROUP BY o.id, c.name, c.phone, e.name, b.name, b.logo_url, b.phone, b.location ORDER BY o.order_date DESC, o.id DESC';
 
   const queryParams = [...params];
 
@@ -124,7 +139,7 @@ async function listOrders(query = {}, user = null, req = null) {
       ...r,
       payment_splits: typeof r.payment_splits === 'string' ? (() => { try { return JSON.parse(r.payment_splits); } catch { return null; } })() : r.payment_splits,
     }));
-    return paginatedPayload(parsedRows, countRes.rows[0]?.total || 0, pagination);
+    return paginatedPayload(parsedRows, countRes.rows[0]?.total || 0, pagination, 'orders');
   }
 
   selectQuery += ' LIMIT 100';
@@ -153,7 +168,7 @@ async function createOrder(body, user, req) {
 
   const orderOfflineUuid = newUuid(offline_uuid);
 
-  if (user && user.role === 'branch_user') {
+  if (user && (user.role === 'branch_user' || user.role === 'cashier') && user.branch_id) {
     branch_id = user.branch_id;
   }
   const b_id = parseInt(branch_id, 10) || 1;
@@ -307,6 +322,7 @@ async function createOrder(body, user, req) {
       calculatedSubtotal = roundCurrency(calculatedSubtotal + lineNet);
 
       const itemSize = String(item.size || item.size_cut || '').trim() || null;
+      const itemColor = String(item.color || item.color_name || '').trim() || null;
 
       processedOrderItems.push({
         inventory_id: itemId,
@@ -316,6 +332,7 @@ async function createOrder(body, user, req) {
         discount_type: discountType,
         line_net: lineNet,
         size: itemSize,
+        color: itemColor,
       });
     }
 
@@ -400,13 +417,7 @@ async function createOrder(body, user, req) {
         const amt = roundCurrency(Math.max(0, Number(s.amount || 0)));
         if (amt <= 0 && rawMethod !== 'debt') continue;
 
-        let normM = rawMethod;
-        if (['cash', 'نقدي', 'كاش'].includes(rawMethod)) normM = 'cash';
-        else if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawMethod)) normM = 'card';
-        else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(rawMethod)) normM = 'bank_transfer';
-        else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawMethod)) normM = 'wallet';
-        else if (['debt', 'credit_customer', 'آجل'].includes(rawMethod)) normM = 'debt';
-
+        const normM = normalizePaymentMethod(rawMethod);
         cleanSplits.push({ method: normM, amount: amt });
 
         if (normM === 'cash') p_cash = roundCurrency(p_cash + amt);
@@ -425,23 +436,18 @@ async function createOrder(body, user, req) {
     const roundedPaid = Math.max(0, roundCurrency(Number(paid_amount || 0)));
 
     if (!cleanSplits || cleanSplits.length === 0) {
-      const rawMethod = String(payment_method || 'cash').toLowerCase().trim();
-      if (['cash', 'نقدي', 'كاش'].includes(rawMethod)) {
-        finalPaymentMethod = 'cash';
+      const normM = normalizePaymentMethod(payment_method);
+      finalPaymentMethod = normM;
+      if (normM === 'cash') {
         p_cash = roundedPaid;
-      } else if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawMethod)) {
-        finalPaymentMethod = 'card';
+      } else if (normM === 'card') {
         p_card = roundedPaid;
-      } else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(rawMethod)) {
-        finalPaymentMethod = 'bank_transfer';
+      } else if (normM === 'bank_transfer') {
         p_bank = roundedPaid;
-      } else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawMethod)) {
-        finalPaymentMethod = 'wallet';
+      } else if (normM === 'wallet') {
         p_wallet = roundedPaid;
-      } else if (['debt', 'credit_customer', 'آجل'].includes(rawMethod)) {
+      } else if (normM === 'debt') {
         finalPaymentMethod = 'debt';
-      } else {
-        finalPaymentMethod = rawMethod;
       }
     }
 
@@ -488,27 +494,14 @@ async function createOrder(body, user, req) {
         [newOrderId, item.inventory_id, item.quantity, item.price_at_time, item.discount, item.discount_type, item.size]
       );
 
-      // Decrement branch stock
-      await tx.query(
-        'UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3',
-        [item.quantity, item.inventory_id, b_id]
-      );
-
-      // Decrement specific size stock if size was specified
-      if (item.size) {
-        await tx.query(
-          `UPDATE inventory_sizes 
-           SET stock_level = GREATEST(stock_level - $1, 0), updated_at = CURRENT_TIMESTAMP
-           WHERE inventory_id = $2 AND branch_id = $3 AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))`,
-          [item.quantity, item.inventory_id, b_id, item.size]
-        );
-      }
-
-      // Decrement global stock atomically
-      await tx.query(
-        'UPDATE inventory SET stock_level = stock_level - $1 WHERE id = $2',
-        [item.quantity, item.inventory_id]
-      );
+      // Decrement inventory stock across sizes, branch, and global canonical level
+      await adjustInventoryStock(tx, {
+        inventoryId: item.inventory_id,
+        branchId: b_id,
+        quantityDelta: -item.quantity,
+        size: item.size,
+        color: item.color,
+      });
     }
 
     if (user) {
@@ -540,12 +533,15 @@ async function createOrder(body, user, req) {
         price: item.price_at_time,
         discount: item.discount,
         discount_type: item.discount_type,
+        size: item.size || null,
+        color: item.color || null,
       })),
     });
 
     return {
       orderId: newOrderId,
       customerId,
+      branchId: b_id,
       branchInvoiceNumber: nextBranchInvoiceNumber,
       payment_method: finalPaymentMethod,
       payment_splits: cleanSplits,
@@ -562,6 +558,7 @@ async function createOrder(body, user, req) {
     success: true,
     orderId: orderData.orderId,
     id: orderData.orderId,
+    branch_id: orderData.branchId,
     branch_invoice_number: orderData.branchInvoiceNumber,
     customer_id: orderData.customerId,
     payment_method: orderData.payment_method,
@@ -633,11 +630,7 @@ async function payRemaining(id, amount, paymentMethod, user, req) {
     const newPaidAmount = roundCurrency(currentPaid + safeAmount);
 
     // Normalize payment method for remaining payment
-    const rawMethod = String(paymentMethod || 'cash').toLowerCase().trim();
-    let normM = 'cash';
-    if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawMethod)) normM = 'card';
-    else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل'].includes(rawMethod)) normM = 'bank_transfer';
-    else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawMethod)) normM = 'wallet';
+    const normM = normalizePaymentMethod(paymentMethod || 'cash');
 
     let newCash = roundCurrency(Number(order.cash_amount || 0));
     let newCard = roundCurrency(Number(order.card_amount || 0));
@@ -739,9 +732,11 @@ async function getOrderDetails(id, user) {
   }
 
   const { rows: orderRows } = await db.query(
-    `SELECT o.*, c.name as customer_name, c.phone as customer_phone
+    `SELECT o.*, c.name as customer_name, c.phone as customer_phone,
+            b.name as branch_name, b.logo_url as branch_logo_url, b.phone as branch_phone, b.location as branch_location
      FROM orders o
      LEFT JOIN customers c ON o.customer_id = c.id
+     LEFT JOIN branches b ON o.branch_id = b.id
      WHERE o.id = $1`,
     [resolvedId]
   );
@@ -862,9 +857,17 @@ async function updateOrder(id, body, user) {
     const { rows: currentItems } = await tx.query('SELECT * FROM order_items WHERE order_id = $1', [resolvedId]);
 
     const oldQtyMap = new Map();
+    const makeVariantKey = (id, size, color) => `${id}::${(size || '').trim().toLowerCase()}::${(color || '').trim().toLowerCase()}`;
+    const variantMap = new Map();
+
     for (const oldItem of currentItems) {
       const iId = Number(oldItem.inventory_id);
       oldQtyMap.set(iId, (oldQtyMap.get(iId) || 0) + Number(oldItem.quantity));
+
+      const vKey = makeVariantKey(iId, oldItem.size, oldItem.color);
+      const existing = variantMap.get(vKey) || { itemId: iId, size: oldItem.size || null, color: oldItem.color || null, oldQ: 0, newQ: 0 };
+      existing.oldQ += Number(oldItem.quantity || 0);
+      variantMap.set(vKey, existing);
     }
 
     const newQtyMap = new Map();
@@ -872,6 +875,11 @@ async function updateOrder(id, body, user) {
       const iId = Number(newItem.id ?? newItem.inventory_id);
       const qty = parsePositiveInt(newItem.quantity, 'quantity');
       newQtyMap.set(iId, (newQtyMap.get(iId) || 0) + qty);
+
+      const vKey = makeVariantKey(iId, newItem.size, newItem.color);
+      const existing = variantMap.get(vKey) || { itemId: iId, size: newItem.size || null, color: newItem.color || null, oldQ: 0, newQ: 0 };
+      existing.newQ += qty;
+      variantMap.set(vKey, existing);
     }
 
     // Combine all unique item IDs and pre-sort ascending to prevent deadlocks
@@ -919,28 +927,18 @@ async function updateOrder(id, body, user) {
       }
     }
 
-    // Apply stock delta adjustments atomically
-    for (const itemId of allItemIds) {
-      const oldQ = oldQtyMap.get(itemId) || 0;
-      const newQ = newQtyMap.get(itemId) || 0;
-      const diff = newQ - oldQ;
-
+    // Apply stock delta adjustments atomically per variant
+    const variantEntries = Array.from(variantMap.values()).sort((a, b) => a.itemId - b.itemId);
+    for (const v of variantEntries) {
+      const diff = v.newQ - v.oldQ;
       if (diff !== 0) {
-        if (diff < 0) {
-          await tx.query(
-            `INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) VALUES ($1, $2, 0)
-             ON CONFLICT (inventory_id, branch_id) DO NOTHING`,
-            [itemId, branchId]
-          );
-        }
-        await tx.query(
-          'UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3',
-          [diff, itemId, branchId]
-        );
-        await tx.query(
-          'UPDATE inventory SET stock_level = stock_level - $1 WHERE id = $2',
-          [diff, itemId]
-        );
+        await adjustInventoryStock(tx, {
+          inventoryId: v.itemId,
+          branchId,
+          quantityDelta: -diff,
+          size: v.size,
+          color: v.color,
+        });
       }
     }
 
@@ -973,6 +971,7 @@ async function updateOrder(id, body, user) {
         price_at_time: canonicalPrice,
         discount: discountVal,
         discount_type: discountType,
+        size: item.size || null,
       });
     }
 
@@ -1064,22 +1063,23 @@ async function updateOrder(id, body, user) {
 
     if (Array.isArray(cleanSplits) && cleanSplits.length > 0) {
       for (const s of cleanSplits) {
-        const rawM = String(s.method || '').toLowerCase().trim();
+        const normM = normalizePaymentMethod(s.method);
         const amt = roundCurrency(Math.max(0, Number(s.amount || 0)));
-        if (['cash', 'نقدي', 'كاش'].includes(rawM)) p_cash = roundCurrency(p_cash + amt);
-        else if (['card', 'visa', 'بطاقة', 'فيزا', 'credit'].includes(rawM)) p_card = roundCurrency(p_card + amt);
-        else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل'].includes(rawM)) p_bank = roundCurrency(p_bank + amt);
-        else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawM)) p_wallet = roundCurrency(p_wallet + amt);
+        if (normM === 'cash') p_cash = roundCurrency(p_cash + amt);
+        else if (normM === 'card') p_card = roundCurrency(p_card + amt);
+        else if (normM === 'bank_transfer') p_bank = roundCurrency(p_bank + amt);
+        else if (normM === 'wallet') p_wallet = roundCurrency(p_wallet + amt);
       }
       if (cleanSplits.length > 1) finalPaymentMethod = 'split';
       else if (cleanSplits.length === 1) finalPaymentMethod = cleanSplits[0].method;
     } else {
-      const rawM = String(finalPaymentMethod).toLowerCase().trim();
-      if (['cash', 'نقدي', 'كاش'].includes(rawM)) { p_cash = rawPaid; finalPaymentMethod = 'cash'; }
-      else if (['card', 'visa', 'بطاقة', 'فيزا'].includes(rawM)) { p_card = rawPaid; finalPaymentMethod = 'card'; }
-      else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي', 'تحويل'].includes(rawM)) { p_bank = rawPaid; finalPaymentMethod = 'bank_transfer'; }
-      else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(rawM)) { p_wallet = rawPaid; finalPaymentMethod = 'wallet'; }
-      else if (['debt', 'credit_customer', 'آجل'].includes(rawM)) { finalPaymentMethod = 'debt'; }
+      const normM = normalizePaymentMethod(finalPaymentMethod);
+      finalPaymentMethod = normM;
+      if (normM === 'cash') { p_cash = rawPaid; }
+      else if (normM === 'card') { p_card = rawPaid; }
+      else if (normM === 'bank_transfer') { p_bank = rawPaid; }
+      else if (normM === 'wallet') { p_wallet = rawPaid; }
+      else if (normM === 'debt') { finalPaymentMethod = 'debt'; }
     }
 
     const effectivePaid = cleanSplits && cleanSplits.length > 0
@@ -1141,9 +1141,9 @@ async function updateOrder(id, body, user) {
 
     for (const item of processedNewItems) {
       await tx.query(
-        `INSERT INTO order_items (order_id, inventory_id, quantity, price_at_time, discount, discount_type) 
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [resolvedId, item.inventory_id, item.quantity, item.price_at_time, item.discount, item.discount_type]
+        `INSERT INTO order_items (order_id, inventory_id, quantity, price_at_time, discount, discount_type, size) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [resolvedId, item.inventory_id, item.quantity, item.price_at_time, item.discount, item.discount_type, item.size || null]
       );
     }
   });
@@ -1170,14 +1170,15 @@ async function searchOrders(queryStr, branchId, user) {
     }
 
     const { rows } = await db.query(
-      `SELECT o.*, c.name as customer_name, c.phone as customer_phone,
+      `SELECT o.*, c.name as customer_name, c.phone as customer_phone, b.name as branch_name,
+              b.logo_url as branch_logo_url, b.phone as branch_phone, b.location as branch_location,
               json_agg(json_build_object(
                 'id', i.id,
                 'name', i.name,
                 'category', i.category,
                 'barcode', i.barcode,
                 'color', i.color,
-                'size', i.size_cut,
+                'size', COALESCE(oi.size, i.size_cut),
                 'image_url', i.image_url,
                 'quantity', oi.quantity, 
                 'price_at_time', oi.price_at_time,
@@ -1186,10 +1187,11 @@ async function searchOrders(queryStr, branchId, user) {
               )) as items
        FROM orders o
        LEFT JOIN customers c ON o.customer_id = c.id
+       LEFT JOIN branches b ON o.branch_id = b.id
        LEFT JOIN order_items oi ON o.id = oi.order_id
        LEFT JOIN inventory i ON oi.inventory_id = i.id
        WHERE ${offWhere.join(' AND ')}
-       GROUP BY o.id, c.name, c.phone
+       GROUP BY o.id, c.name, c.phone, b.name, b.logo_url, b.phone, b.location
        ORDER BY o.order_date DESC
        LIMIT 10`,
       offParams
@@ -1197,9 +1199,10 @@ async function searchOrders(queryStr, branchId, user) {
     return rows;
   }
 
-  const params = [queryStr, likePattern(queryStr), likePattern(queryStr)];
+  const cleanQuery = typeof queryStr === 'string' ? queryStr.replace(/^cashier-/i, '').replace(/^#/i, '').trim() : String(queryStr || '');
+  const params = [cleanQuery, likePattern(cleanQuery), likePattern(cleanQuery)];
   const where = [
-    `(o.id::text = $1 OR c.name ILIKE $2 OR c.phone LIKE $3)`,
+    `(o.id::text = $1 OR o.branch_invoice_number::text = $1 OR c.name ILIKE $2 OR c.phone LIKE $3)`,
     `COALESCE(o.order_source, 'cashier') = 'cashier'`,
   ];
 
@@ -1212,14 +1215,15 @@ async function searchOrders(queryStr, branchId, user) {
   }
 
   const { rows } = await db.query(
-    `SELECT o.*, c.name as customer_name, c.phone as customer_phone,
+    `SELECT o.*, c.name as customer_name, c.phone as customer_phone, b.name as branch_name,
+            b.logo_url as branch_logo_url, b.phone as branch_phone, b.location as branch_location,
             json_agg(json_build_object(
               'id', i.id,
               'name', i.name,
               'category', i.category,
                'barcode', i.barcode,
                'color', i.color,
-               'size', i.size_cut,
+               'size', COALESCE(oi.size, i.size_cut),
                'image_url', i.image_url,
                'quantity', oi.quantity, 
                'price_at_time', oi.price_at_time,
@@ -1228,10 +1232,11 @@ async function searchOrders(queryStr, branchId, user) {
             )) as items
      FROM orders o
      LEFT JOIN customers c ON o.customer_id = c.id
+     LEFT JOIN branches b ON o.branch_id = b.id
      LEFT JOIN order_items oi ON o.id = oi.order_id
      LEFT JOIN inventory i ON oi.inventory_id = i.id
      WHERE ${where.join(' AND ')}
-     GROUP BY o.id, c.name, c.phone
+     GROUP BY o.id, c.name, c.phone, b.name, b.logo_url, b.phone, b.location
      ORDER BY o.order_date DESC
      LIMIT 10`,
     params
@@ -1421,6 +1426,7 @@ async function createReturn(body, user, req) {
         quantity: qty,
         price: effectiveUnitPrice,
         size: item.size || origItem.size || null,
+        color: item.color || null,
       });
 
       // Lock global inventory and branch stock rows in ascending order
@@ -1455,27 +1461,14 @@ async function createReturn(body, user, req) {
         [returnId, item.id, item.quantity, item.price]
       );
 
-      // Return stock to branch
-      await tx.query(
-        'UPDATE inventory_branches SET stock_level = stock_level + $1 WHERE inventory_id = $2 AND branch_id = $3',
-        [item.quantity, item.id, branch_id]
-      );
-
-      // Return stock to size
-      if (item.size) {
-        await tx.query(
-          `UPDATE inventory_sizes 
-           SET stock_level = stock_level + $1, updated_at = CURRENT_TIMESTAMP
-           WHERE inventory_id = $2 AND branch_id = $3 AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))`,
-          [item.quantity, item.id, branch_id, item.size]
-        );
-      }
-
-      // Return stock to global inventory
-      await tx.query(
-        'UPDATE inventory SET stock_level = stock_level + $1 WHERE id = $2',
-        [item.quantity, item.id]
-      );
+      // Return stock across sizes, branch, and global canonical level
+      await adjustInventoryStock(tx, {
+        inventoryId: item.id,
+        branchId: branch_id,
+        quantityDelta: item.quantity,
+        size: item.size,
+        color: item.color,
+      });
     }
 
     // 5. Update Order Status (full vs partial return)
@@ -1508,6 +1501,8 @@ async function createReturn(body, user, req) {
         inventory_id: item.id,
         quantity: item.quantity,
         price: item.price,
+        size: item.size || null,
+        color: item.color || null,
       })),
     });
 
@@ -1521,7 +1516,9 @@ async function listReturns(query = {}, user = null, req = null) {
   const pagination = parsePagination(req || { query }, 50, 200, true);
 
   let selectQuery = `
-    SELECT r.*, o.id as original_order_id, c.name as customer_name, c.phone as customer_phone, e.name as seller_name,
+    SELECT r.*, o.id as original_order_id, o.branch_invoice_number as original_branch_invoice_number,
+           c.name as customer_name, c.phone as customer_phone, e.name as seller_name, b.name as branch_name,
+           b.logo_url as branch_logo_url, b.phone as branch_phone, b.location as branch_location,
            json_agg(json_build_object(
              'id', i.id,
              'name', i.name,
@@ -1535,6 +1532,7 @@ async function listReturns(query = {}, user = null, req = null) {
            )) FILTER (WHERE ri.id IS NOT NULL) as items
     FROM returns r
     LEFT JOIN orders o ON r.order_id = o.id
+    LEFT JOIN branches b ON r.branch_id = b.id
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN employees e ON r.seller_id = e.id
     LEFT JOIN return_items ri ON r.id = ri.return_id
@@ -1554,25 +1552,27 @@ async function listReturns(query = {}, user = null, req = null) {
 
   if (user && user.role === 'branch_user') {
     params.push(user.branch_id);
-    where.push(`o.branch_id = $${params.length}`);
+    where.push(`COALESCE(r.branch_id, o.branch_id) = $${params.length}`);
   } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
-    where.push(`o.branch_id = $${params.length}`);
+    where.push(`COALESCE(r.branch_id, o.branch_id) = $${params.length}`);
   }
 
   if (query.search) {
     params.push(likePattern(query.search));
-    where.push(`(o.id::text ILIKE $${params.length} OR c.name ILIKE $${params.length} OR c.phone ILIKE $${params.length})`);
+    where.push(`(o.id::text ILIKE $${params.length} OR o.branch_invoice_number::text ILIKE $${params.length} OR c.name ILIKE $${params.length} OR c.phone ILIKE $${params.length})`);
   }
 
-  if (query.return_id) {
-    params.push(likePattern(String(query.return_id).replace(/^ret-/i, '')));
+  const returnIdFilter = query.return_id || query.returnId;
+  if (returnIdFilter) {
+    params.push(likePattern(String(returnIdFilter).replace(/^ret-/i, '').replace(/^#/i, '').trim()));
     where.push(`r.id::text ILIKE $${params.length}`);
   }
 
-  if (query.order_id) {
-    params.push(likePattern(String(query.order_id).replace(/^cashier-/i, '')));
-    where.push(`o.id::text ILIKE $${params.length}`);
+  const orderIdFilter = query.order_id || query.orderId;
+  if (orderIdFilter) {
+    params.push(likePattern(String(orderIdFilter).replace(/^cashier-/i, '').replace(/^#/i, '').trim()));
+    where.push(`(o.id::text ILIKE $${params.length} OR o.branch_invoice_number::text ILIKE $${params.length})`);
   }
 
   if (query.customer) {
@@ -1596,7 +1596,7 @@ async function listReturns(query = {}, user = null, req = null) {
     countQuery += whereClause;
   }
 
-  selectQuery += ' GROUP BY r.id, o.id, c.name, c.phone, e.name ORDER BY r.return_date DESC';
+  selectQuery += ' GROUP BY r.id, o.id, o.branch_invoice_number, c.name, c.phone, e.name, b.name, b.logo_url, b.phone, b.location ORDER BY r.return_date DESC';
 
   const queryParams = [...params];
 
@@ -1606,7 +1606,7 @@ async function listReturns(query = {}, user = null, req = null) {
       db.query(selectQuery, queryParams),
       db.query(countQuery, params),
     ]);
-    return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
+    return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination, 'returns');
   }
 
   const { rows } = await db.query(selectQuery, queryParams);

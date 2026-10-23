@@ -49,9 +49,21 @@ const ALL_NAV_ITEMS = [
 
 export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePin }) {
   const { user, logout, isAdmin } = useAuth();
-  const { activeBranch } = useBranch();
+  const { activeBranch, branches } = useBranch();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = React.useRef(null);
+
+  const displayBranch = React.useMemo(() => {
+    if (activeBranch) return activeBranch;
+    const targetId = user?.branch_id;
+    if (targetId && branches?.length) {
+      return branches.find((b) => b.id?.toString() === targetId.toString()) || null;
+    }
+    return branches?.find((b) => b.is_main_warehouse) || branches?.[0] || null;
+  }, [activeBranch, user?.branch_id, branches]);
+
+  const branchLogo = displayBranch?.logo_url || '/logos/app-icon.png';
+  const branchName = displayBranch?.name || 'Bebyoon Center';
 
   const handleMouseEnter = () => {
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
@@ -127,11 +139,16 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
               title={isPinned ? 'إلغاء تثبيت القائمة (فتح عند التحويم)' : 'تثبيت القائمة مفتوحة دائماً'}
             >
               <img
-                src="/logos/app-icon.png"
-                alt="Logo"
+                src={branchLogo}
+                alt={branchName}
                 className="w-full h-full object-contain"
                 onError={(e) => {
-                  e.target.style.display = 'none';
+                  if (!e.currentTarget.dataset.fallback) {
+                    e.currentTarget.dataset.fallback = 'true';
+                    e.currentTarget.src = '/logos/app-icon.png';
+                  } else {
+                    e.currentTarget.style.display = 'none';
+                  }
                 }}
               />
             </button>
@@ -139,11 +156,11 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
             {isExpanded && (
               <div className="whitespace-nowrap overflow-hidden select-none flex-1">
                 <h1 className="text-base font-extrabold tracking-tight text-white font-display flex items-center gap-1.5">
-                  <span>Bebyoon Center</span>
+                  <span>{branchName}</span>
                   <span className="w-2 h-2 rounded-full bg-[#F1B6D8] inline-block shadow-sm"></span>
                 </h1>
                 <p className="text-[11px] font-medium text-neutral-400 truncate">
-                  {activeBranch?.name || 'المركز الرئيسي'}
+                  {displayBranch ? (displayBranch.is_main_warehouse ? 'المخزن الرئيسي' : (displayBranch.location || displayBranch.name)) : 'المركز الرئيسي'}
                 </p>
               </div>
             )}

@@ -109,6 +109,22 @@ async function verifyInvoiceEditPassword(req, res, next) {
   }
 }
 
+
+async function verifyProfitPassword(req, res, next) {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+
+    const ok = await authService.verifyProfitPassword(password);
+    if (!ok) {
+      return res.status(400).json({ ok: false, error: 'كلمة مرور الأرباح غير صحيحة' });
+    }
+    res.json({ ok: true, message: 'تم التحقق بنجاح' });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function updateOwnAccount(req, res, next) {
   try {
     const userId = req.user.id;
@@ -198,6 +214,7 @@ module.exports = {
   getMe,
   verifySalaryPassword,
   verifyInvoiceEditPassword,
+  verifyProfitPassword,
   updateOwnAccount,
   createBranchUser,
   listBranchUsers,

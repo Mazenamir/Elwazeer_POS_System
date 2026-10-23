@@ -63,6 +63,7 @@ export function BranchProvider({ children }) {
         isMultiBranch: branches.length > 1,
         selectBranch,
         fetchBranches,
+        reloadBranches: fetchBranches,
         loading,
       }}
     >

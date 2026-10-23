@@ -6,24 +6,45 @@ const { dateOnly, daysBetween, getDatabaseCairoNow } = require('../../../shared/
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { clampInt, roundCurrency } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
-const { normalizeBarcodeInput, getAvailableBarcode, assertBarcodeAvailable } = require('../inventory/inventory.helpers');
+const { normalizeBarcodeInput, getAvailableBarcode, assertBarcodeAvailable, adjustInventoryStock } = require('../inventory/inventory.helpers');
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { getRentalAvailability, getRentalGroupRows, getOrCreateSalesInventoryForRental } = require('./rentals.helpers');
+const { normalizePaymentMethod } = require('../reports/reports.helpers');
+
+function isValidIsoDate(str) {
+  if (typeof str !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const [y, m, d] = str.split('-').map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
 
 async function listRentalInventory(query = {}, user = null, req = null) {
   const pagination = parsePagination(req || { query }, 60, 10000, true);
   const canViewAllBranches = hasInventoryAllBranchesAccess(user);
+  const targetRentalBranchId = (!canViewAllBranches && user?.branch_id)
+    ? user.branch_id
+    : (query.branch_id && query.branch_id !== 'all' ? query.branch_id : null);
 
   let branchJoinFilter = '';
   const params = [];
-  if (!canViewAllBranches && user?.branch_id) {
-    params.push(user.branch_id);
-    branchJoinFilter = `AND rib.branch_id = $${params.length}`;
+  if (targetRentalBranchId) {
+    params.push(targetRentalBranchId);
+    branchJoinFilter = `AND rib.branch_id = ${params.length}`;
   }
 
   const where = ['ri.is_deleted = FALSE'];
-  if (!canViewAllBranches && user?.branch_id) {
-    where.push('$1::int IS NOT NULL');
+  if (targetRentalBranchId) {
+    params.push(targetRentalBranchId);
+    const stockFilter = (query.stock_status === 'in_stock' || query.only_branch === 'true' || query.branch_only === 'true')
+      ? 'AND rib_filter.stock_level > 0'
+      : '';
+    where.push(`EXISTS (
+      SELECT 1 FROM rental_inventory_branches rib_filter
+      WHERE rib_filter.rental_inventory_id = ri.id
+        AND rib_filter.branch_id = ${params.length}
+        ${stockFilter}
+    )`);
   }
 
   if (query.search) {
@@ -59,14 +80,7 @@ async function listRentalInventory(query = {}, user = null, req = null) {
     where.push(`ri.size_cut ILIKE $${params.length}`);
   }
 
-  if (query.branch_id && query.branch_id !== 'all' && canViewAllBranches) {
-    params.push(query.branch_id);
-    where.push(`EXISTS (
-      SELECT 1 FROM rental_inventory_branches rib_filter
-      WHERE rib_filter.rental_inventory_id = ri.id
-        AND rib_filter.branch_id = $${params.length}
-    )`);
-  }
+
 
   const whereClause = `WHERE ${where.join(' AND ')}`;
 
@@ -154,13 +168,32 @@ async function checkAvailability(id, branchId, pickupDate, returnDate, user) {
     err.statusCode = 400;
     throw err;
   }
-  if (dateOnly(returnDate) < dateOnly(pickupDate)) {
-    const err = new Error('Return date must be after pickup date');
+  const cleanPickup = dateOnly(pickupDate);
+  const cleanReturn = dateOnly(returnDate);
+  if (!isValidIsoDate(cleanPickup) || !isValidIsoDate(cleanReturn)) {
+    const err = new Error('صيغة التاريخ غير صالحة. الصيغة المطلوبة YYYY-MM-DD');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (cleanReturn < cleanPickup) {
+    const err = new Error('تاريخ الإرجاع يجب أن يكون في نفس يوم الاستلام أو بعده');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (daysBetween(cleanPickup, cleanReturn) > 365) {
+    const err = new Error('لا يمكن أن تتجاوز مدة الحجز سنة واحدة (365 يوماً)');
     err.statusCode = 400;
     throw err;
   }
 
-  return getRentalAvailability(db, id, b_id, pickupDate, returnDate);
+  const itemRes = await db.query('SELECT id FROM rental_inventory WHERE id = $1 AND is_deleted = FALSE', [id]);
+  if (itemRes.rows.length === 0) {
+    const err = new Error('منتج التأجير غير موجود أو تم حذفه');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  return getRentalAvailability(db, id, b_id, cleanPickup, cleanReturn);
 }
 
 async function updateRentalInventory(id, body, user) {
@@ -310,12 +343,14 @@ async function transferFromSales(body, user) {
       );
     }
 
-    // 4. Deduct from sales inventory
-    await tx.query(
-      'UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3',
-      [quantity, inventory_id, from_branch]
-    );
-    await tx.query('UPDATE inventory SET stock_level = stock_level - $1 WHERE id = $2', [quantity, inventory_id]);
+    // 4. Deduct from sales inventory across sizes, branch, and global canonical levels
+    await adjustInventoryStock(tx, {
+      inventoryId: inventory_id,
+      branchId: from_branch,
+      quantityDelta: -quantity,
+      size: invItem.size_cut,
+      color: invItem.color,
+    });
 
     // 5. Add to rental inventory (specific target branch)
     await tx.query(
@@ -341,7 +376,8 @@ async function transferFromSales(body, user) {
   return { success: true };
 }
 
-async function getRentalsSummary(branchId, user) {
+async function getRentalsSummary(branchIdOrQuery, user) {
+  const branchId = (branchIdOrQuery && typeof branchIdOrQuery === 'object') ? branchIdOrQuery.branch_id : branchIdOrQuery;
   const params = [];
   const where = [];
 
@@ -358,10 +394,16 @@ async function getRentalsSummary(branchId, user) {
     `SELECT status, 
             COUNT(*)::int as count,
             COUNT(CASE WHEN status = 'returned' AND remaining > 0 THEN 1 END)::int as returned_debt_count,
-            COUNT(CASE WHEN status = 'returned' AND (remaining IS NULL OR remaining <= 0) THEN 1 END)::int as returned_settled_count
+            COUNT(CASE WHEN status = 'returned' AND (remaining IS NULL OR remaining <= 0) THEN 1 END)::int as returned_settled_count,
+            COUNT(CASE WHEN status = 'booked' AND pickup_date >= ${CAIRO_DATE_SQL} THEN 1 END)::int as upcoming_count,
+            COUNT(CASE WHEN status = 'booked' AND pickup_date = ${CAIRO_DATE_SQL} THEN 1 END)::int as today_pickups_count,
+            COUNT(CASE WHEN status = 'active' AND return_date = ${CAIRO_DATE_SQL} THEN 1 END)::int as today_returns_count,
+            COUNT(CASE WHEN (status = 'booked' AND pickup_date = ${CAIRO_DATE_SQL}) OR (status = 'active' AND return_date = ${CAIRO_DATE_SQL}) THEN 1 END)::int as today_actions_count
      FROM (
        SELECT COALESCE(rental_group_uuid::text, id::text) as rental_group_key, 
               MIN(status) as status,
+              MIN(pickup_date) as pickup_date,
+              MIN(return_date) as return_date,
               SUM(COALESCE(remaining, 0)) as remaining
        FROM rentals
        ${whereClause}
@@ -371,13 +413,31 @@ async function getRentalsSummary(branchId, user) {
     params
   );
 
-  const summary = { booked: 0, active: 0, returned: 0, sold: 0, cancelled: 0, returned_debt: 0, returned_settled: 0 };
+  const summary = {
+    booked: 0,
+    active: 0,
+    returned: 0,
+    sold: 0,
+    cancelled: 0,
+    returned_debt: 0,
+    returned_settled: 0,
+    upcoming: 0,
+    today_pickups: 0,
+    today_returns: 0,
+    today_actions: 0,
+  };
   rows.forEach((row) => {
     summary[row.status] = row.count;
     if (row.status === 'returned') {
       summary.returned_debt = row.returned_debt_count || 0;
       summary.returned_settled = row.returned_settled_count || 0;
     }
+    if (row.status === 'booked') {
+      summary.upcoming += (row.upcoming_count || 0);
+    }
+    summary.today_pickups += (row.today_pickups_count || 0);
+    summary.today_returns += (row.today_returns_count || 0);
+    summary.today_actions += (row.today_actions_count || 0);
   });
   return summary;
 }
@@ -434,13 +494,29 @@ async function listRentals(query = {}, user = null, req = null) {
     where.push(`r.branch_id = $${params.length}`);
   }
 
-  if (query.status === 'returned_debt') {
+  const isUpcomingFilter = query.status === 'upcoming' || query.filter === 'upcoming' || query.upcoming === 'true';
+  const isTodayFilter = query.status === 'today' || query.filter === 'today' || query.tab === 'today';
+
+  if (isUpcomingFilter) {
+    where.push(`r.status = 'booked' AND r.pickup_date >= ${CAIRO_DATE_SQL}`);
+  } else if (query.status === 'today_pickup' || (isTodayFilter && query.today_type === 'pickup')) {
+    where.push(`r.status = 'booked' AND r.pickup_date = ${CAIRO_DATE_SQL}`);
+  } else if (query.status === 'today_return' || (isTodayFilter && query.today_type === 'return')) {
+    where.push(`r.status = 'active' AND r.return_date = ${CAIRO_DATE_SQL}`);
+  } else if (isTodayFilter) {
+    where.push(`((r.status = 'booked' AND r.pickup_date = ${CAIRO_DATE_SQL}) OR (r.status = 'active' AND r.return_date = ${CAIRO_DATE_SQL}))`);
+  } else if (query.status === 'returned_debt') {
     where.push(`r.status = 'returned' AND COALESCE(r.remaining, 0) > 0`);
   } else if (query.status === 'returned_settled') {
     where.push(`r.status = 'returned' AND COALESCE(r.remaining, 0) <= 0`);
-  } else if (query.status) {
+  } else if (query.status && query.status !== 'all') {
     params.push(query.status);
     where.push(`r.status = $${params.length}`);
+  }
+  if (query.search) {
+    params.push(likePattern(query.search));
+    const pIdx = params.length;
+    where.push(`(c.name ILIKE $${pIdx} OR c.phone ILIKE $${pIdx} OR r.id::text ILIKE $${pIdx} OR ri.name ILIKE $${pIdx} OR ri.barcode ILIKE $${pIdx})`);
   }
   if (query.id) {
     params.push(likePattern(query.id));
@@ -484,10 +560,10 @@ async function listRentals(query = {}, user = null, req = null) {
       MIN(national_id) as national_id,
       MIN(branch_id) as branch_id,
       MIN(branch_name) as branch_name,
-      MIN(booking_date) as booking_date,
-      MIN(pickup_date) as pickup_date,
-      MIN(return_date) as return_date,
-      MAX(actual_return_date) as actual_return_date,
+      MIN(booking_date::text) as booking_date,
+      MIN(pickup_date::text) as pickup_date,
+      MIN(return_date::text) as return_date,
+      MAX(actual_return_date::text) as actual_return_date,
       MIN(status) as status,
       SUM(COALESCE(total_price, 0)) as total_price,
       SUM(COALESCE(deposit, 0)) as deposit,
@@ -497,6 +573,13 @@ async function listRentals(query = {}, user = null, req = null) {
       MAX(notes) as notes,
       MAX(daily_fine) as daily_fine,
       MIN(payment_method) as payment_method,
+      MIN(payment_splits::text) as payment_splits,
+      MIN(custom_items::text) as custom_items,
+      SUM(COALESCE(paid_amount, 0)) as paid_amount,
+      SUM(COALESCE(cash_amount, 0)) as cash_amount,
+      SUM(COALESCE(card_amount, 0)) as card_amount,
+      SUM(COALESCE(wallet_amount, 0)) as wallet_amount,
+      SUM(COALESCE(bank_transfer_amount, 0)) as bank_transfer_amount,
       MIN(seller_id) as seller_id,
       MIN(seller_name) as seller_name,
       MIN(sale_order_id) as sale_order_id,
@@ -529,11 +612,14 @@ async function listRentals(query = {}, user = null, req = null) {
         'size', inventory_size,
         'size_cut', inventory_size,
         'image_url', image_url,
-        'status', status
+        'status', status,
+        'price', total_price,
+        'rental_price', total_price,
+        'deposit', deposit
       ) ORDER BY id) as items
     ${selectFrom}
     ${groupedWhereClause}
-    ORDER BY MIN(pickup_date) DESC, MIN(id) DESC
+    ${isUpcomingFilter ? 'ORDER BY MIN(pickup_date) ASC, MIN(id) ASC' : 'ORDER BY MIN(pickup_date) DESC, MIN(id) DESC'}
   `;
 
   const countQuery = `
@@ -547,17 +633,46 @@ async function listRentals(query = {}, user = null, req = null) {
 
   const queryParams = [...params];
 
+  const normalizeRentalRows = (rawRows) => {
+    return (rawRows || []).map((r) => {
+      let customArr = [];
+      if (r.custom_items) {
+        try {
+          customArr = typeof r.custom_items === 'string' ? JSON.parse(r.custom_items) : r.custom_items;
+        } catch {}
+      }
+      const baseItems = Array.isArray(r.items) ? r.items.filter((it) => it && (it.rental_inventory_id || it.product_name)) : [];
+      const allItems = [...baseItems, ...(Array.isArray(customArr) ? customArr : [])];
+      let splits = null;
+      if (r.payment_splits) {
+        try {
+          splits = typeof r.payment_splits === 'string' ? JSON.parse(r.payment_splits) : r.payment_splits;
+        } catch {}
+      }
+      return {
+        ...r,
+        pickup_date: dateOnly(r.pickup_date),
+        return_date: dateOnly(r.return_date),
+        actual_return_date: r.actual_return_date ? dateOnly(r.actual_return_date) : null,
+        items: allItems,
+        item_count: allItems.length,
+        custom_items: customArr,
+        payment_splits: splits,
+      };
+    });
+  };
+
   if (pagination.enabled) {
     queryStr = appendPagination(queryStr, queryParams, pagination);
     const [dataRes, countRes] = await Promise.all([
       db.query(queryStr, queryParams),
       db.query(countQuery, params),
     ]);
-    return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
+    return paginatedPayload(normalizeRentalRows(dataRes.rows), countRes.rows[0]?.total || 0, pagination);
   }
 
   const { rows } = await db.query(queryStr, queryParams);
-  return rows;
+  return normalizeRentalRows(rows);
 }
 
 async function createRental(body, user, req) {
@@ -571,25 +686,72 @@ async function createRental(body, user, req) {
     return_date,
     total_price,
     deposit,
+    paid_amount,
     remaining,
     notes,
     id_card_guarantee,
     daily_fine,
     seller_id,
     payment_method,
+    payment_splits,
+    custom_items,
     offline_uuid,
     rental_group_uuid,
   } = body || {};
 
+  const customItemsList = Array.isArray(custom_items)
+    ? custom_items
+    : (Array.isArray(body?.items) ? body.items.filter((it) => it && (it.is_custom || (!it.rental_inventory_id && !it.id))) : []);
+
   const requestedItems = Array.isArray(body?.items) && body.items.length
     ? body.items.flatMap((item) => {
       const itemId = Number(item?.rental_inventory_id ?? item?.id);
+      if (!itemId || item.is_custom) return [];
       const quantity = clampInt(item?.quantity, 1, 1, 100);
       return Array.from({ length: quantity }, () => itemId);
     })
-    : [Number(rental_inventory_id)];
+    : (rental_inventory_id ? [Number(rental_inventory_id)] : (Array.isArray(body?.rental_item_ids) ? body.rental_item_ids.map(Number) : []));
 
-  const rentalItemIds = requestedItems.filter(Number.isInteger).filter((id) => id > 0);
+  let rentalItemIds = requestedItems.filter(Number.isInteger).filter((id) => id > 0);
+  if (!rentalItemIds.length && customItemsList.length > 0) {
+    rentalItemIds = [null];
+  }
+
+  // Calculate Payment Method & Splits Breakdown
+  let cashAmount = 0;
+  let cardAmount = 0;
+  let walletAmount = 0;
+  let bankTransferAmount = 0;
+  let paymentSplitsJson = null;
+
+  const totalPaid = Math.max(0, Number(paid_amount !== undefined ? paid_amount : (deposit || 0)));
+
+  if (payment_method === 'split') {
+    let splits = payment_splits;
+    if (typeof splits === 'string') {
+      try { splits = JSON.parse(splits); } catch { splits = []; }
+    }
+    if (Array.isArray(splits) && splits.length > 0) {
+      const cleanSplits = [];
+      for (const s of splits) {
+        const amt = Math.max(0, Number(s.amount || 0));
+        const normM = normalizePaymentMethod(s.method || s.id);
+        cleanSplits.push({ method: normM, amount: amt });
+        if (normM === 'cash') cashAmount += amt;
+        else if (normM === 'card') cardAmount += amt;
+        else if (normM === 'wallet') walletAmount += amt;
+        else if (normM === 'bank_transfer') bankTransferAmount += amt;
+      }
+      paymentSplitsJson = JSON.stringify(cleanSplits);
+    }
+  } else {
+    const normM = normalizePaymentMethod(payment_method);
+    if (normM === 'cash') cashAmount = totalPaid;
+    else if (normM === 'card') cardAmount = totalPaid;
+    else if (normM === 'wallet') walletAmount = totalPaid;
+    else if (normM === 'bank_transfer') bankTransferAmount = totalPaid;
+  }
+
   const rentalOfflineUuid = newUuid(offline_uuid);
   const rentalGroupUuid = newUuid(rental_group_uuid);
 
@@ -607,13 +769,25 @@ async function createRental(body, user, req) {
   }
 
   const normalizedCustomerName = typeof customer_name === 'string' ? customer_name.trim() : '';
-  if (!normalizedCustomerName || !customer_phone || !rentalItemIds.length || !pickup_date || !return_date) {
+  if (!normalizedCustomerName || !customer_phone || (!rentalItemIds.length && !customItemsList.length) || !pickup_date || !return_date) {
     const err = new Error('Missing required rental data');
     err.statusCode = 400;
     throw err;
   }
-  if (dateOnly(return_date) < dateOnly(pickup_date)) {
-    const err = new Error('Return date must be after pickup date');
+  const cleanPickupDate = dateOnly(pickup_date);
+  const cleanReturnDate = dateOnly(return_date);
+  if (!isValidIsoDate(cleanPickupDate) || !isValidIsoDate(cleanReturnDate)) {
+    const err = new Error('صيغة التاريخ غير صالحة. الصيغة المطلوبة YYYY-MM-DD');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (cleanReturnDate < cleanPickupDate) {
+    const err = new Error('تاريخ الإرجاع يجب أن يكون في نفس يوم الاستلام أو بعده');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (daysBetween(cleanPickupDate, cleanReturnDate) > 365) {
+    const err = new Error('لا يمكن أن تتجاوز مدة الحجز سنة واحدة (365 يوماً)');
     err.statusCode = 400;
     throw err;
   }
@@ -638,12 +812,27 @@ async function createRental(body, user, req) {
       requestedCounts.set(itemId, (requestedCounts.get(itemId) || 0) + 1);
     }
 
-    // Pre-sort rental item IDs ascending to strictly prevent deadlocks
-    const sortedItemIds = Array.from(requestedCounts.keys()).sort((a, b) => a - b);
+    // Pre-sort rental item IDs ascending to strictly prevent deadlocks (filter out custom null items)
+    const sortedItemIds = Array.from(requestedCounts.keys()).filter((id) => id !== null && id !== undefined).sort((a, b) => a - b);
+
+    if (sortedItemIds.length > 0) {
+      const existingItems = await tx.query(
+        'SELECT id FROM rental_inventory WHERE id = ANY($1::int[]) AND is_deleted = FALSE',
+        [sortedItemIds]
+      );
+      if (existingItems.rows.length !== sortedItemIds.length) {
+        const foundIds = new Set(existingItems.rows.map((r) => Number(r.id)));
+        const missing = sortedItemIds.filter((id) => !foundIds.has(Number(id)));
+        const err = new Error(`أحد منتجات التأجير غير موجود أو تم حذفه (معرف: ${missing.join(', ')})`);
+        err.statusCode = 404;
+        throw err;
+      }
+    }
 
     for (const itemId of sortedItemIds) {
       const requestedQuantity = requestedCounts.get(itemId);
-      const availability = await getRentalAvailability(tx, itemId, b_id, pickup_date, return_date, { lockStockRow: true });
+      await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rental_booking_item:${itemId}:${b_id}`]);
+      const availability = await getRentalAvailability(tx, itemId, b_id, cleanPickupDate, cleanReturnDate, { lockStockRow: true });
       if (availability.available < requestedQuantity) {
         const err = new Error('هذا المنتج غير متاح في الفترة المحددة. اختر تاريخ بعد رجوع الحجز السابق أو منتج آخر.');
         err.statusCode = 400;
@@ -698,26 +887,53 @@ async function createRental(body, user, req) {
       const itemOfflineUuid = index === 0 ? rentalOfflineUuid : newUuid();
       const itemTotal = index === 0 ? Math.max(0, roundCurrency(Number(total_price || 0))) : 0;
       const itemDeposit = index === 0 ? Math.max(0, roundCurrency(Number(deposit || 0))) : 0;
-      const itemRemaining = index === 0 ? Math.max(0, roundCurrency(Number(remaining !== undefined ? remaining : (itemTotal - itemDeposit)))) : 0;
+      const itemPaid = index === 0 ? Math.max(0, roundCurrency(totalPaid)) : 0;
+      const itemRemaining = index === 0 ? Math.max(0, roundCurrency(Number(remaining !== undefined ? remaining : (itemTotal - itemPaid)))) : 0;
+      const itemCash = index === 0 ? cashAmount : 0;
+      const itemCard = index === 0 ? cardAmount : 0;
+      const itemWallet = index === 0 ? walletAmount : 0;
+      const itemBank = index === 0 ? bankTransferAmount : 0;
+      const itemSplits = index === 0 ? paymentSplitsJson : null;
+      const itemCustom = index === 0 && customItemsList.length > 0 ? JSON.stringify(customItemsList) : null;
 
       const { rows } = await tx.query(
-        `INSERT INTO rentals (customer_id, rental_inventory_id, branch_id, pickup_date, return_date, total_price, national_id, deposit, remaining, id_card_guarantee, notes, status, daily_fine, seller_id, payment_method, rental_group_uuid, offline_uuid)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'booked', $12, $13, $14, $15, $16) RETURNING *`,
+        `INSERT INTO rentals (
+           customer_id, rental_inventory_id, branch_id, pickup_date, return_date,
+           total_price, national_id, deposit, remaining, paid_amount,
+           id_card_guarantee, notes, status, daily_fine, seller_id,
+           payment_method, payment_splits, cash_amount, card_amount,
+           wallet_amount, bank_transfer_amount, custom_items,
+           rental_group_uuid, offline_uuid
+         ) VALUES (
+           $1, $2, $3, $4, $5,
+           $6, $7, $8, $9, $10,
+           $11, $12, 'booked', $13, $14,
+           $15, $16, $17, $18,
+           $19, $20, $21,
+           $22, $23
+         ) RETURNING *`,
         [
           customerId,
           itemId,
           b_id,
-          pickup_date,
-          return_date,
+          cleanPickupDate,
+          cleanReturnDate,
           itemTotal,
           national_id,
           itemDeposit,
           itemRemaining,
+          itemPaid,
           Boolean(id_card_guarantee),
           notes,
           Number(daily_fine || 0),
           seller_id || null,
           payment_method || 'cash',
+          itemSplits,
+          itemCash,
+          itemCard,
+          itemWallet,
+          itemBank,
+          itemCustom,
           rentalGroupUuid,
           itemOfflineUuid,
         ]
@@ -730,17 +946,24 @@ async function createRental(body, user, req) {
         rental: {
           rental_inventory_id: itemId,
           branch_id: b_id,
-          pickup_date,
-          return_date,
+          pickup_date: cleanPickupDate,
+          return_date: cleanReturnDate,
           total_price: itemTotal,
           national_id,
           deposit: itemDeposit,
+          paid_amount: itemPaid,
           remaining: itemRemaining,
           id_card_guarantee: Boolean(id_card_guarantee),
           notes,
           daily_fine: Number(daily_fine || 0),
           seller_id: seller_id || null,
           payment_method: payment_method || 'cash',
+          payment_splits: itemSplits,
+          cash_amount: itemCash,
+          card_amount: itemCard,
+          wallet_amount: itemWallet,
+          bank_transfer_amount: itemBank,
+          custom_items: itemCustom,
           rental_group_uuid: rentalGroupUuid,
         },
       });
@@ -868,6 +1091,8 @@ async function returnRental(id, bodyOrFine, user, req) {
 
   let calculatedFine = 0;
   let remainingAfterReturn = 0;
+  let finalPaymentMethod = 'cash';
+  let newPaidAmount = 0;
 
   await db.transaction(async (tx) => {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
@@ -899,6 +1124,13 @@ async function returnRental(id, bodyOrFine, user, req) {
     const currentRemaining = Number(rentals[0].remaining || 0);
     const depositAmount = Number(rentals[0].deposit || 0);
     let noteAppend = '';
+    finalPaymentMethod = rentals[0].payment_method || 'cash';
+    newPaidAmount = Number(rentals[0].paid_amount || 0) || depositAmount;
+    let currentCash = Number(rentals[0].cash_amount || 0);
+    let currentCard = Number(rentals[0].card_amount || 0);
+    let currentWallet = Number(rentals[0].wallet_amount || 0);
+    let currentBank = Number(rentals[0].bank_transfer_amount || 0);
+    let finalSplitsJson = rentals[0].payment_splits ? (typeof rentals[0].payment_splits === 'object' ? JSON.stringify(rentals[0].payment_splits) : rentals[0].payment_splits) : null;
 
     if (currentRemaining > 0) {
       const allowedActions = ['collect', 'deduct_deposit', 'debt'];
@@ -929,6 +1161,47 @@ async function returnRental(id, bodyOrFine, user, req) {
         remainingAfterReturn = Math.max(0, roundCurrency(currentRemaining - paid));
         const method = options.payment_method || 'نقدي';
         noteAppend = `[تم تحصيل ${paid} ج.م من المتبقي عند الإرجاع (${method})]`;
+
+        newPaidAmount = roundCurrency(newPaidAmount + paid);
+
+        if (currentCash === 0 && currentCard === 0 && currentWallet === 0 && currentBank === 0 && (newPaidAmount - paid) > 0) {
+          const oldMethod = normalizePaymentMethod(rentals[0].payment_method || 'cash');
+          if (oldMethod === 'card') currentCard = newPaidAmount - paid;
+          else if (oldMethod === 'bank_transfer') currentBank = newPaidAmount - paid;
+          else if (oldMethod === 'wallet') currentWallet = newPaidAmount - paid;
+          else currentCash = newPaidAmount - paid;
+        }
+
+        if (Array.isArray(options.payment_splits) && options.payment_splits.length > 0) {
+          for (const s of options.payment_splits) {
+            const m = normalizePaymentMethod(s.method || s.payment_method || s.id || 'cash');
+            const a = roundCurrency(Number(s.amount || 0));
+            if (m === 'card') currentCard += a;
+            else if (m === 'bank_transfer') currentBank += a;
+            else if (m === 'wallet') currentWallet += a;
+            else currentCash += a;
+          }
+        } else {
+          const normMethod = normalizePaymentMethod(options.payment_method || 'cash');
+          if (normMethod === 'card') currentCard += paid;
+          else if (normMethod === 'bank_transfer') currentBank += paid;
+          else if (normMethod === 'wallet') currentWallet += paid;
+          else currentCash += paid;
+        }
+
+        const positiveBuckets = [];
+        if (currentCash > 0) positiveBuckets.push({ method: 'cash', amount: roundCurrency(currentCash) });
+        if (currentCard > 0) positiveBuckets.push({ method: 'card', amount: roundCurrency(currentCard) });
+        if (currentBank > 0) positiveBuckets.push({ method: 'bank_transfer', amount: roundCurrency(currentBank) });
+        if (currentWallet > 0) positiveBuckets.push({ method: 'wallet', amount: roundCurrency(currentWallet) });
+
+        if (positiveBuckets.length > 1) {
+          finalPaymentMethod = 'split';
+          finalSplitsJson = JSON.stringify(positiveBuckets);
+        } else if (positiveBuckets.length === 1) {
+          finalPaymentMethod = positiveBuckets[0].method;
+          finalSplitsJson = null;
+        }
       } else if (action === 'deduct_deposit') {
         const availableDeposit = Math.max(0, roundCurrency(depositAmount - calculatedFine));
         if (availableDeposit <= 0) {
@@ -957,12 +1230,32 @@ async function returnRental(id, bodyOrFine, user, req) {
            actual_return_date = ${CAIRO_DATE_SQL},
            fine_amount = CASE WHEN id = $2 THEN $1 ELSE 0 END,
            remaining = CASE WHEN id = $2 THEN $4 ELSE 0 END,
+           paid_amount = CASE WHEN id = $2 THEN $6 ELSE paid_amount END,
+           cash_amount = CASE WHEN id = $2 THEN $7 ELSE cash_amount END,
+           card_amount = CASE WHEN id = $2 THEN $8 ELSE card_amount END,
+           wallet_amount = CASE WHEN id = $2 THEN $9 ELSE wallet_amount END,
+           bank_transfer_amount = CASE WHEN id = $2 THEN $10 ELSE bank_transfer_amount END,
+           payment_method = CASE WHEN id = $2 THEN $11 ELSE payment_method END,
+           payment_splits = CASE WHEN id = $2 THEN $12 ELSE payment_splits END,
            notes = CASE 
              WHEN id = $2 AND $5 <> '' THEN TRIM(COALESCE(notes, '') || ' ' || $5)
              ELSE notes
            END
        WHERE id = ANY($3::int[])`,
-      [calculatedFine, rentals[0].id, rentals.map((r) => r.id), remainingAfterReturn, noteAppend]
+      [
+        calculatedFine,
+        rentals[0].id,
+        rentals.map((r) => r.id),
+        remainingAfterReturn,
+        noteAppend,
+        newPaidAmount,
+        currentCash,
+        currentCard,
+        currentWallet,
+        currentBank,
+        finalPaymentMethod,
+        finalSplitsJson,
+      ]
     );
 
     for (const rental of rentals) {
@@ -978,6 +1271,13 @@ async function returnRental(id, bodyOrFine, user, req) {
       status: 'returned',
       fine_amount: calculatedFine,
       remaining: remainingAfterReturn,
+      paid_amount: newPaidAmount,
+      cash_amount: currentCash,
+      card_amount: currentCard,
+      wallet_amount: currentWallet,
+      bank_transfer_amount: currentBank,
+      payment_method: finalPaymentMethod,
+      payment_splits: finalSplitsJson,
     });
 
     if (user) {
@@ -992,11 +1292,11 @@ async function returnRental(id, bodyOrFine, user, req) {
     }
   });
 
-  return { success: true, fine_amount: calculatedFine, remaining: remainingAfterReturn };
+  return { success: true, fine_amount: calculatedFine, remaining: remainingAfterReturn, paid_amount: newPaidAmount, payment_method: finalPaymentMethod };
 }
 
 async function settleRentalPayment(id, body, user, req) {
-  const { paid_amount, payment_method, notes } = body || {};
+  const { paid_amount, payment_method, payment_splits, notes } = body || {};
   const pay = roundCurrency(Number(paid_amount));
   if (!Number.isFinite(pay) || pay <= 0) {
     const err = new Error('المبلغ المدفوع يجب أن يكون أكبر من الصفر');
@@ -1005,6 +1305,8 @@ async function settleRentalPayment(id, body, user, req) {
   }
 
   let updatedRemaining = 0;
+  let finalPaymentMethod = 'cash';
+  let newPaidAmount = 0;
 
   await db.transaction(async (tx) => {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
@@ -1030,20 +1332,99 @@ async function settleRentalPayment(id, body, user, req) {
     }
 
     updatedRemaining = Math.max(0, roundCurrency(currentRemaining - pay));
+
+    const r0 = rentals[0];
+    const prevPaid = Number(r0.paid_amount || 0) || Number(r0.deposit || 0);
+    newPaidAmount = roundCurrency(prevPaid + pay);
+
+    let currentCash = Number(r0.cash_amount || 0);
+    let currentCard = Number(r0.card_amount || 0);
+    let currentWallet = Number(r0.wallet_amount || 0);
+    let currentBank = Number(r0.bank_transfer_amount || 0);
+
+    // If older record had no breakdown initialized, seed it from prevPaid
+    if (currentCash === 0 && currentCard === 0 && currentWallet === 0 && currentBank === 0 && prevPaid > 0) {
+      const oldMethod = normalizePaymentMethod(r0.payment_method || 'cash');
+      if (oldMethod === 'card') currentCard = prevPaid;
+      else if (oldMethod === 'bank_transfer') currentBank = prevPaid;
+      else if (oldMethod === 'wallet') currentWallet = prevPaid;
+      else currentCash = prevPaid;
+    }
+
+    if (Array.isArray(payment_splits) && payment_splits.length > 0) {
+      for (const s of payment_splits) {
+        const m = normalizePaymentMethod(s.method || s.payment_method || s.id || 'cash');
+        const a = roundCurrency(Number(s.amount || 0));
+        if (m === 'card') currentCard += a;
+        else if (m === 'bank_transfer') currentBank += a;
+        else if (m === 'wallet') currentWallet += a;
+        else currentCash += a;
+      }
+    } else {
+      const normMethod = normalizePaymentMethod(payment_method || 'cash');
+      if (normMethod === 'card') currentCard += pay;
+      else if (normMethod === 'bank_transfer') currentBank += pay;
+      else if (normMethod === 'wallet') currentWallet += pay;
+      else currentCash += pay;
+    }
+
+    const positiveBuckets = [];
+    if (currentCash > 0) positiveBuckets.push({ method: 'cash', amount: roundCurrency(currentCash) });
+    if (currentCard > 0) positiveBuckets.push({ method: 'card', amount: roundCurrency(currentCard) });
+    if (currentBank > 0) positiveBuckets.push({ method: 'bank_transfer', amount: roundCurrency(currentBank) });
+    if (currentWallet > 0) positiveBuckets.push({ method: 'wallet', amount: roundCurrency(currentWallet) });
+
+    let finalSplitsJson = null;
+    if (positiveBuckets.length > 1) {
+      finalPaymentMethod = 'split';
+      finalSplitsJson = JSON.stringify(positiveBuckets);
+    } else if (positiveBuckets.length === 1) {
+      finalPaymentMethod = positiveBuckets[0].method;
+      finalSplitsJson = null;
+    } else {
+      finalPaymentMethod = normalizePaymentMethod(r0.payment_method || 'cash');
+    }
+
     const methodStr = payment_method || 'نقدي';
     const noteMsg = `[سداد دفعة من المتبقي: ${pay} ج.م (${methodStr})${notes ? ` - ${notes}` : ''}]`;
 
     await tx.query(
       `UPDATE rentals
        SET remaining = CASE WHEN id = $1 THEN $2 ELSE 0 END,
+           paid_amount = CASE WHEN id = $1 THEN $4 ELSE paid_amount END,
+           cash_amount = CASE WHEN id = $1 THEN $5 ELSE cash_amount END,
+           card_amount = CASE WHEN id = $1 THEN $6 ELSE card_amount END,
+           wallet_amount = CASE WHEN id = $1 THEN $7 ELSE wallet_amount END,
+           bank_transfer_amount = CASE WHEN id = $1 THEN $8 ELSE bank_transfer_amount END,
+           payment_method = CASE WHEN id = $1 THEN $9 ELSE payment_method END,
+           payment_splits = CASE WHEN id = $1 THEN $10 ELSE payment_splits END,
            notes = TRIM(COALESCE(notes, '') || ' ' || $3)
-       WHERE id = ANY($4::int[])`,
-      [rentals[0].id, updatedRemaining, noteMsg, rentals.map((r) => r.id)]
+       WHERE id = ANY($11::int[])`,
+      [
+        rentals[0].id,
+        updatedRemaining,
+        noteMsg,
+        newPaidAmount,
+        currentCash,
+        currentCard,
+        currentWallet,
+        currentBank,
+        finalPaymentMethod,
+        finalSplitsJson,
+        rentals.map((r) => r.id),
+      ]
     );
 
     await queueSyncOperation(tx, req, 'rental', 'update', rentals[0].id, branchId, {
       id: rentals[0].id,
       remaining: updatedRemaining,
+      paid_amount: newPaidAmount,
+      cash_amount: currentCash,
+      card_amount: currentCard,
+      wallet_amount: currentWallet,
+      bank_transfer_amount: currentBank,
+      payment_method: finalPaymentMethod,
+      payment_splits: finalSplitsJson,
     });
 
     if (user) {
@@ -1051,14 +1432,14 @@ async function settleRentalPayment(id, body, user, req) {
         user.id,
         user.username,
         'سداد متبقي إيجار',
-        `تم سداد ${pay} ج.م للحجز #${id}، المتبقي الحالي: ${updatedRemaining} ج.م`,
+        `تم سداد ${pay} ج.م للحجز #${id} (${finalPaymentMethod})، المتبقي الحالي: ${updatedRemaining} ج.م`,
         'Rental',
         branchId
       );
     }
   });
 
-  return { success: true, remaining: updatedRemaining };
+  return { success: true, remaining: updatedRemaining, paid_amount: newPaidAmount, payment_method: finalPaymentMethod };
 }
 
 async function sellRental(id, sellPrice, paymentMethod, offlineUuid, user, req) {
@@ -1107,16 +1488,15 @@ async function sellRental(id, sellPrice, paymentMethod, offlineUuid, user, req) 
 
     const salesInventoryId = await getOrCreateSalesInventoryForRental(tx, rental.rental_inventory_id, price);
     const orderOfflineUuid = newUuid(offlineUuid);
-    finalPaymentMethod = methodVal || rental.payment_method || 'cash';
+    finalPaymentMethod = normalizePaymentMethod(methodVal || rental.payment_method || 'cash');
     let r_cash = 0;
     let r_card = 0;
     let r_wallet = 0;
     let r_bank = 0;
-    const normRPM = String(finalPaymentMethod).toLowerCase();
-    if (['cash', 'نقدي', 'كاش'].includes(normRPM)) r_cash = price;
-    else if (['card', 'visa', 'بطاقة', 'فيزا'].includes(normRPM)) r_card = price;
-    else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(normRPM)) r_wallet = price;
-    else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(normRPM)) r_bank = price;
+    if (finalPaymentMethod === 'cash') r_cash = price;
+    else if (finalPaymentMethod === 'card') r_card = price;
+    else if (finalPaymentMethod === 'wallet') r_wallet = price;
+    else if (finalPaymentMethod === 'bank_transfer') r_bank = price;
 
     const orderResult = await tx.query(
       `INSERT INTO orders (
@@ -1175,6 +1555,103 @@ async function sellRental(id, sellPrice, paymentMethod, offlineUuid, user, req) 
   };
 }
 
+async function updateRentalStatus(id, newStatus, options = {}, user = null, req = null) {
+  const allowedStatuses = ['booked', 'active', 'returned', 'cancelled'];
+  if (!allowedStatuses.includes(newStatus)) {
+    const err = new Error('الحالة المحددة غير صالحة');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await db.transaction(async (tx) => {
+    const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
+    if (!rentals.length) {
+      const err = new Error('الحجز غير موجود');
+      err.statusCode = 404;
+      throw err;
+    }
+    const branchId = rentals[0].branch_id;
+    if (user && user.role === 'branch_user' && Number(branchId) !== Number(user.branch_id)) {
+      const err = new Error('Unauthorized');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const currentStatus = rentals[0].status;
+    if (currentStatus === newStatus) {
+      return;
+    }
+
+    // Physical stock adjustments based on store presence
+    // 'active' means item is with customer (physically out of store)
+    // 'booked', 'returned', 'cancelled' mean item is physically in store
+    const wasInStore = currentStatus !== 'active';
+    const willBeInStore = newStatus !== 'active';
+
+    if (wasInStore && !willBeInStore) {
+      // Transitioning to 'active': decrement physical stock
+      for (const rental of rentals) {
+        if (!rental.rental_inventory_id) continue;
+        await tx.query(
+          'UPDATE rental_inventory_branches SET stock_level = GREATEST(0, stock_level - 1) WHERE rental_inventory_id = $1 AND branch_id = $2',
+          [rental.rental_inventory_id, rental.branch_id]
+        );
+      }
+    } else if (!wasInStore && willBeInStore) {
+      // Transitioning back to store: increment physical stock
+      for (const rental of rentals) {
+        if (!rental.rental_inventory_id) continue;
+        await tx.query(
+          'UPDATE rental_inventory_branches SET stock_level = stock_level + 1 WHERE rental_inventory_id = $1 AND branch_id = $2',
+          [rental.rental_inventory_id, rental.branch_id]
+        );
+      }
+    }
+
+    const noteAppend = options.notes && typeof options.notes === 'string' && options.notes.trim()
+      ? ` [تعديل الحالة إلى "${newStatus}": ${options.notes.trim()}]`
+      : ` [تعديل الحالة إلى "${newStatus}"]`;
+
+    let returnDateSql = '';
+    if (newStatus === 'returned') {
+      returnDateSql = `, actual_return_date = ${CAIRO_DATE_SQL}`;
+    } else if (newStatus === 'booked' || newStatus === 'active') {
+      returnDateSql = ', actual_return_date = NULL';
+    }
+
+    await tx.query(
+      `UPDATE rentals
+       SET status = $1,
+           notes = TRIM(COALESCE(notes, '') || $2)
+           ${returnDateSql}
+       WHERE id = ANY($3::int[])`,
+      [newStatus, noteAppend, rentals.map((r) => r.id)]
+    );
+
+    if (user) {
+      await logActivity(
+        user.id,
+        user.username,
+        'تعديل حالة حجز',
+        `تم تعديل حالة الحجز #${id} (${rentals.length} منتج) من "${currentStatus}" إلى "${newStatus}"`,
+        'Rental',
+        branchId
+      );
+    }
+
+    for (const rental of rentals) {
+      await queueSyncOperation(tx, req, 'rental_status', 'update', rental.id, rental.branch_id, {
+        rental_id: rental.id,
+        rental_offline_uuid: rental.offline_uuid,
+        status: newStatus,
+        notes: noteAppend,
+      });
+    }
+  });
+
+  return { success: true, newStatus };
+}
+
 module.exports = {
   listRentalInventory,
   createRentalInventory,
@@ -1190,4 +1667,5 @@ module.exports = {
   returnRental,
   settleRentalPayment,
   sellRental,
+  updateRentalStatus,
 };

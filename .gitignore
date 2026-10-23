@@ -13,6 +13,7 @@ Thumbs.db
 programs/
 postgresql/
 backup/*.json
+backup/*.dump
 *.log
 
 # Build & Dist
@@ -24,3 +25,4 @@ dist-branch/
 
 # Scratch directory (temporary test scripts & artifacts)
 scratch/
+.agents/teamwork/

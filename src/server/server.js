@@ -69,7 +69,7 @@ function checkPgCtlStatus(pgCtl, pgData) {
   }
 }
 
-async function waitForPostgresReady(timeoutMs = 60000, pollIntervalMs = 500) {
+async function waitForPostgresReady(timeoutMs = 120000, pollIntervalMs = 500) {
   const startTime = Date.now();
   let lastLogTime = startTime;
 
@@ -217,6 +217,25 @@ async function ensurePostgresRunning() {
     } catch {}
   }
 
+  // Prune historical PostgreSQL log files older than 7 days to avoid fsync delays during crash recovery
+  try {
+    const logDir = path.join(pgData, 'log');
+    if (fs.existsSync(logDir)) {
+      const now = Date.now();
+      const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+      const logFiles = fs.readdirSync(logDir).filter((f) => f.endsWith('.log'));
+      for (const file of logFiles) {
+        const filePath = path.join(logDir, file);
+        try {
+          const stats = fs.statSync(filePath);
+          if (now - stats.mtimeMs > maxAgeMs) {
+            fs.unlinkSync(filePath);
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
   // Ensure ALL required PostgreSQL internal subdirectories exist (handles packaging where empty dirs are omitted)
   const requiredSubdirs = [
     'base', 'global', 'log',
@@ -250,7 +269,7 @@ async function ensurePostgresRunning() {
   p.unref();
 
   // 4. Wait for PostgreSQL to complete WAL crash recovery and become fully ready
-  const isReady = await waitForPostgresReady(45000, 500);
+  const isReady = await waitForPostgresReady(120000, 500);
   if (isReady) {
     console.log(`[Database] PostgreSQL is ready and accepting queries on port ${dbPort}.`);
   } else {
@@ -267,7 +286,7 @@ async function ensurePostgresRunning() {
       }
     } catch {}
     const errDetail = db.getLastDbError && db.getLastDbError() ? ` (${db.getLastDbError()})` : '';
-    throw new Error(`[Database] PostgreSQL failed to accept connections on port ${dbPort} within 45 seconds${errDetail}.${recentLogs}`);
+    throw new Error(`[Database] PostgreSQL failed to accept connections on port ${dbPort} within 120 seconds${errDetail}.${recentLogs}`);
   }
 }
 

@@ -42,7 +42,17 @@ export function ToastProvider({ children }) {
   toastFn.toast = toastFn;
 
   return (
-    <ToastContext.Provider value={{ toast: toastFn, addToast, removeToast }}>
+    <ToastContext.Provider
+      value={{
+        toast: toastFn,
+        success: toastFn.success,
+        error: toastFn.error,
+        warning: toastFn.warning,
+        info: toastFn.info,
+        addToast,
+        removeToast,
+      }}
+    >
       {children}
       {/* Toast Render Container */}
       <div className="fixed bottom-6 left-6 z-[9999] flex flex-col gap-2 max-w-md w-full pointer-events-none">

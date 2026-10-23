@@ -68,19 +68,56 @@ export function printHtml(htmlContent, title = 'طباعة', options = {}) {
         size: 80mm auto;
         margin: 0mm;
       }
-      body {
-        width: 78mm !important;
-        max-width: 78mm !important;
+      html, body {
+        width: 72mm !important;
+        max-width: 72mm !important;
         margin: 0 auto !important;
-        padding: 3mm 1mm !important;
+        padding: 0 !important;
+        box-sizing: border-box !important;
+        overflow-x: hidden !important;
       }
-      .receipt-card, #printable-receipt, #printable-return-receipt, #printable-rental-receipt, #printable-sale-receipt, #tailoring-receipt-ticket {
-        max-width: 78mm !important;
-        width: 78mm !important;
+      .receipt-card,
+      #printable-receipt,
+      #printable-return-receipt,
+      #printable-rental-receipt,
+      #printable-sale-receipt,
+      #tailoring-receipt-ticket,
+      .receipt-wrapper {
+        max-width: 72mm !important;
+        width: 72mm !important;
         margin: 0 auto !important;
-        padding: 2mm 1mm !important;
+        padding: 0.5mm 1.5mm !important;
         border: none !important;
         box-shadow: none !important;
+        box-sizing: border-box !important;
+        line-height: 1.18 !important;
+      }
+      .receipt-card,
+      .receipt-card * {
+        box-sizing: border-box !important;
+      }
+      .receipt-card p,
+      .receipt-card h1,
+      .receipt-card h2,
+      .receipt-card h3,
+      .receipt-card h4 {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+      }
+      .receipt-logo {
+        max-height: 36px !important;
+        max-width: 120px !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+        margin: 0 auto !important;
+        display: block !important;
+      }
+      .receipt-barcode {
+        max-height: 28px !important;
+        width: auto !important;
+        margin: 0 auto !important;
+        display: block !important;
       }
     `;
 
@@ -123,6 +160,7 @@ export function printHtml(htmlContent, title = 'طباعة', options = {}) {
     .no-print, button {
       display: none !important;
     }
+    ${printStyles}
     @media print {
       ${printStyles}
       * {
@@ -171,7 +209,7 @@ export function printHtml(htmlContent, title = 'طباعة', options = {}) {
         }
       };
 
-      const fallbackTimer = setTimeout(doPrint, 500);
+      const fallbackTimer = setTimeout(doPrint, 2500);
 
       // Wait for fonts and images
       const readyPromises = [];
@@ -243,6 +281,7 @@ export function printElement(elementOrId, title = 'طباعة', options = {}) {
     if (origImg && origImg.src) {
       cloneImg.src = origImg.src;
     }
+    cloneImg.setAttribute('onerror', "this.style.display='none';");
   });
 
   const elId = typeof elementOrId === 'string' ? elementOrId : el.id || '';

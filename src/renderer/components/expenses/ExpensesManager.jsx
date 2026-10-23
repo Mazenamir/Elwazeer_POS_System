@@ -74,7 +74,7 @@ export const PAYMENT_METHODS = [
   },
   {
     id: 'wallet',
-    name: 'محفظة إلكترونية',
+    name: 'فودافون كاش',
     icon: Smartphone,
     color: 'text-purple-700 bg-purple-50 border-purple-200',
     drawerEffect: false,
@@ -100,7 +100,7 @@ export function ExpensesManager({ isCashierTab = false }) {
   const [loading, setLoading] = useState(true);
 
   // Filters
-  const [filterBranch, setFilterBranch] = useState(isCashierTab && activeBranchId !== 'all' ? activeBranchId : 'all');
+  const [filterBranch, setFilterBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all'));
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterPaymentMethod, setFilterPaymentMethod] = useState('all');
   const [filterCashier, setFilterCashier] = useState('all');
@@ -112,10 +112,11 @@ export function ExpensesManager({ isCashierTab = false }) {
 
   // Keep branch locked if inside cashier tab
   useEffect(() => {
-    if (isCashierTab && activeBranchId && activeBranchId !== 'all') {
+    if (activeBranchId) {
       setFilterBranch(activeBranchId);
+      setPagination((p) => ({ ...p, page: 1 }));
     }
-  }, [isCashierTab, activeBranchId]);
+  }, [activeBranchId]);
 
   // Pagination
   const [pagination, setPagination] = useState({
@@ -371,7 +372,7 @@ export function ExpensesManager({ isCashierTab = false }) {
   };
 
   const clearFilters = () => {
-    setFilterBranch(isCashierTab && activeBranchId !== 'all' ? activeBranchId : 'all');
+    setFilterBranch(activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all');
     setFilterCategory('all');
     setFilterPaymentMethod('all');
     setFilterCashier('all');
@@ -634,7 +635,7 @@ export function ExpensesManager({ isCashierTab = false }) {
               >
                 <option value="all">كل الفروع</option>
                 {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
+                  <option key={b.id} value={b.id.toString()}>
                     {b.name}
                   </option>
                 ))}
@@ -832,7 +833,7 @@ export function ExpensesManager({ isCashierTab = false }) {
                   required
                 >
                   {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
+                    <option key={b.id} value={b.id.toString()}>
                       {b.name}
                     </option>
                   ))}

@@ -26,6 +26,7 @@ router.get('/server-time', controller.getServerTime);
 router.get('/me', controller.getMe);
 router.post('/verify-password', controller.verifySalaryPassword);
 router.post('/verify-invoice-edit-password', controller.verifyInvoiceEditPassword);
+router.post('/verify-profit-password', controller.verifyProfitPassword);
 router.put('/users/me', controller.updateOwnAccount);
 
 // Admin-managed branch users

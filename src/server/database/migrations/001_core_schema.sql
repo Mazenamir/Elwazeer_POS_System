@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS suppliers (
   balance NUMERIC(10, 2) DEFAULT 0,
   total_purchases NUMERIC(10, 2) DEFAULT 0,
   notes TEXT,
-  gender_category VARCHAR(50) DEFAULT 'مشترك'
+  gender_category VARCHAR(50) DEFAULT 'مشترك',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS customers (

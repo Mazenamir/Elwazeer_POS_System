@@ -5,6 +5,7 @@ const { hasInventoryAdminAccess, isBranchScopedUser } = require('../../../shared
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { clampInt, parsePositiveInt } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
+const { adjustInventoryStock } = require('../inventory/inventory.helpers');
 
 async function getSupplierOptions(query = {}) {
   const params = [];
@@ -69,6 +70,31 @@ async function listSuppliers(query = {}, user = null, req = null) {
 
   const whereClause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
 
+  const SORT_MAP = {
+    latest: 's.created_at DESC, s.id DESC',
+    created_desc: 's.created_at DESC, s.id DESC',
+    'الأحدث أولاً': 's.created_at DESC, s.id DESC',
+    'الأحدث': 's.created_at DESC, s.id DESC',
+    oldest: 's.created_at ASC, s.id ASC',
+    created_asc: 's.created_at ASC, s.id ASC',
+    'الأقدم أولاً': 's.created_at ASC, s.id ASC',
+    'الأقدم': 's.created_at ASC, s.id ASC',
+    balance_desc: 'COALESCE(s.balance, 0) DESC, s.id DESC',
+    balance: 'COALESCE(s.balance, 0) DESC, s.id DESC',
+    'الأعلى رصيداً': 'COALESCE(s.balance, 0) DESC, s.id DESC',
+    'الأعلى رصيداً / مديونية': 'COALESCE(s.balance, 0) DESC, s.id DESC',
+    purchases_desc: 'COALESCE(s.total_purchases, 0) DESC, s.id DESC',
+    purchases: 'COALESCE(s.total_purchases, 0) DESC, s.id DESC',
+    'الأكثر مشتريات': 'COALESCE(s.total_purchases, 0) DESC, s.id DESC',
+    name_asc: 's.name ASC, s.id ASC',
+    name: 's.name ASC, s.id ASC',
+    'الاسم (أ - ي)': 's.name ASC, s.id ASC',
+    'الاسم': 's.name ASC, s.id ASC',
+  };
+  const rawSort = Array.isArray(query.sort) ? query.sort[0] : query.sort;
+  const sortKey = (typeof rawSort === 'string' ? rawSort : 'latest').toLowerCase().trim();
+  const orderByClause = SORT_MAP[sortKey] || 's.created_at DESC, s.id DESC';
+
   let selectQuery = isInventoryAdmin
     ? `SELECT s.*,
          COALESCE((
@@ -81,8 +107,8 @@ async function listSuppliers(query = {}, user = null, req = null) {
            WHERE st.supplier_id = s.id
          ), 0) AS transaction_count,
          COALESCE((SELECT MAX(st.id) FROM supplier_transactions st WHERE st.supplier_id = s.id), 0) AS latest_transaction_id
-       FROM suppliers s${whereClause} ORDER BY s.id`
-    : `SELECT s.id, s.name FROM suppliers s${whereClause} ORDER BY s.id`;
+       FROM suppliers s${whereClause} ORDER BY ${orderByClause}`
+    : `SELECT s.* FROM suppliers s${whereClause} ORDER BY ${orderByClause}`;
 
   const countQuery = `SELECT 
     COUNT(*)::int as total, 
@@ -126,6 +152,7 @@ async function createSupplier(payload) {
     address, city, country, supplier_type, company_name, tax_id,
     payment_method, payment_terms, currency,
     moq, lead_time, rating, notes, status, logo_url, supply_type, gender_category,
+    created_at,
   } = payload || {};
 
   const normalizedName = typeof name === 'string' ? name.trim() : '';
@@ -145,18 +172,32 @@ async function createSupplier(payload) {
     }
   }
 
+  let createdAtVal = null;
+  if (created_at) {
+    if (typeof created_at === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(created_at.trim())) {
+      createdAtVal = `${created_at.trim()}T12:00:00.000Z`;
+    } else {
+      const parsed = new Date(created_at);
+      if (!isNaN(parsed.getTime())) {
+        createdAtVal = parsed.toISOString();
+      }
+    }
+  }
+
   const { rows } = await db.query(
     `INSERT INTO suppliers (
       name, initials, code, contact_person, phone, extra_phone, email, 
       address, city, country, supplier_type, company_name, tax_id,
       payment_method, payment_terms, currency,
-      moq, lead_time, rating, notes, status, logo_url, supply_type, gender_category
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) RETURNING *`,
+      moq, lead_time, rating, notes, status, logo_url, supply_type, gender_category,
+      created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, COALESCE($25::timestamptz, CURRENT_TIMESTAMP)) RETURNING *`,
     [
       normalizedName, initials, code, contact_person, phone, extra_phone, email,
       address, city, country, supplier_type, company_name, tax_id,
       payment_method || 'نقدي', payment_terms || 0, currency || 'ج.م',
       moq || 0, lead_time || 0, rating || 5, notes, status || 'active', logo_url, supply_type, gender_category || 'مشترك',
+      createdAtVal,
     ]
   );
   return rows[0];
@@ -250,7 +291,7 @@ async function listSupplyRecords(req) {
 }
 
 async function createSupplyRecord(payload, user) {
-  let { supplier_id, inventory_id, quantity, cost_price, notes, branch_id } = payload;
+  let { supplier_id, inventory_id, quantity, cost_price, notes, branch_id, size, color } = payload;
   if (isBranchScopedUser(user)) {
     branch_id = user.branch_id;
   }
@@ -264,15 +305,14 @@ async function createSupplyRecord(payload, user) {
       [supplier_id, inventory_id, supplyQty, cost_price, notes, b_id, batchId]
     );
 
-    // Add stock to specific branch
-    await tx.query(`
-      INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) 
-      VALUES ($1, $2, $3) 
-      ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = inventory_branches.stock_level + $3
-    `, [inventory_id, b_id, supplyQty]);
-
-    // Update global stock_level in inventory table as well for legacy compatibility
-    await tx.query('UPDATE inventory SET stock_level = stock_level + $1 WHERE id = $2', [supplyQty, inventory_id]);
+    // Add stock across sizes, branch, and global canonical level
+    await adjustInventoryStock(tx, {
+      inventoryId: inventory_id,
+      branchId: b_id,
+      quantityDelta: supplyQty,
+      size: size || null,
+      color: color || null,
+    });
 
     // Record the purchase transaction for the supplier
     const total_cost = supplyQty * cost_price;
@@ -316,15 +356,14 @@ async function bulkRestock(payload, user) {
         [supplier_id, item.inventory_id, qty, cost, b_id, 'توريد كميات (مجموعة)', batchId]
       );
 
-      // Update branch stock
-      await tx.query(`
-        INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) 
-        VALUES ($1, $2, $3) 
-        ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = inventory_branches.stock_level + $3
-      `, [item.inventory_id, b_id, qty]);
-
-      // Update global stock
-      await tx.query('UPDATE inventory SET stock_level = stock_level + $1 WHERE id = $2', [qty, item.inventory_id]);
+      // Update branch, sizes, and global stock
+      await adjustInventoryStock(tx, {
+        inventoryId: item.inventory_id,
+        branchId: b_id,
+        quantityDelta: qty,
+        size: item.size || null,
+        color: item.color || null,
+      });
     }
 
     const total_cost = totalQty * cost;
@@ -406,27 +445,25 @@ async function processSupplierReturn(payload) {
     // 3. Deduct stock for each item
     for (const item of items) {
       // Deduct from inventory_branches
-      const updateRes = await tx.query(
-        'UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3 AND stock_level >= $1',
-        [item.quantity, item.inventory_id, item.branch_id]
+      const checkRes = await tx.query(
+        'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+        [item.inventory_id, item.branch_id]
       );
-
-      if (updateRes.rowCount === 0) {
-        const checkRes = await tx.query(
-          'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2',
-          [item.inventory_id, item.branch_id]
-        );
-        const currentStock = checkRes.rows[0]?.stock_level || 0;
+      const currentStock = checkRes.rows[0]?.stock_level || 0;
+      if (currentStock < item.quantity) {
         const err = new Error(`المخزون الحالي للمنتج غير كافي. المتاح: ${currentStock} قطعة، المطلوب: ${item.quantity} قطعة`);
         err.statusCode = 400;
         throw err;
       }
 
-      // Update global inventory stock
-      await tx.query(
-        'UPDATE inventory SET stock_level = stock_level - $1 WHERE id = $2',
-        [item.quantity, item.inventory_id]
-      );
+      // Deduct from branch, sizes, and global inventory
+      await adjustInventoryStock(tx, {
+        inventoryId: item.inventory_id,
+        branchId: item.branch_id,
+        quantityDelta: -item.quantity,
+        size: item.size || null,
+        color: item.color || null,
+      });
 
       // 4. Record negative quantity in supply_records with unique return transaction tag
       const uniqueNote = `مرتجع [RTN-${returnTransactionId}] - ${notes || ''}`;

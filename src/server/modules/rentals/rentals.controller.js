@@ -139,6 +139,21 @@ async function sellRental(req, res, next) {
   }
 }
 
+async function updateRentalStatus(req, res, next) {
+  try {
+    const result = await service.updateRentalStatus(
+      req.params.id,
+      req.body.status,
+      { notes: req.body.notes },
+      req.user,
+      req
+    );
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   listRentalInventory,
   createRentalInventory,
@@ -154,4 +169,5 @@ module.exports = {
   returnRental,
   settleRentalPayment,
   sellRental,
+  updateRentalStatus,
 };

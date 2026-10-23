@@ -36,6 +36,7 @@ import StatCard from '../../components/ui/StatCard';
 import { Card, CardHeader } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
+import { SalesTrendChart, TopProductsChart } from '../../components/charts';
 
 const RANGE_OPTIONS = [
   { value: 'today', label: 'اليوم فقط' },
@@ -486,6 +487,52 @@ export function Dashboard() {
             subtitle={kpi.subtitle}
           />
         ))}
+      </div>
+
+      {/* Analytics Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
+        {/* Sales Revenue Trend Chart */}
+        <div className="lg:col-span-8 bg-[#FFFDF9] rounded-3xl border border-[#E6DECD] p-5 shadow-xs">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-base font-extrabold text-[#24221F] font-display flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-[#F4D95B]" />
+                مخطط تحليل المبيعات والنشاط
+              </h3>
+              <p className="text-xs text-[#777266] mt-0.5">
+                توزيع المبيعات خلال الفترة المختارة ({currentRangeLabel})
+              </p>
+            </div>
+            <span className="text-xs font-bold px-3 py-1 bg-[#F4D95B]/20 text-[#24221F] rounded-full border border-[#F4D95B]/40">
+              {currentRangeLabel}
+            </span>
+          </div>
+          <SalesTrendChart trend={dashboardData.revenueTrend} loading={loading} />
+        </div>
+
+        {/* Top 5 Products Chart */}
+        <div className="lg:col-span-4 bg-[#FFFDF9] rounded-3xl border border-[#E6DECD] p-5 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-base font-extrabold text-[#24221F] font-display flex items-center gap-2">
+                  <Package className="w-4 h-4 text-[#AFC77A]" />
+                  أعلى 5 أصناف طلباً
+                </h3>
+                <p className="text-xs text-[#777266] mt-0.5">
+                  الأكثر مبيعاً بالفترة المحددة
+                </p>
+              </div>
+            </div>
+            <TopProductsChart products={dashboardData.topProducts} loading={loading} />
+          </div>
+          <div className="mt-3 pt-3 border-t border-[#E6DECD]/70 flex items-center justify-between text-xs text-[#777266]">
+            <span>إجمالي الكميات المباعة:</span>
+            <span className="font-bold text-[#24221F]">
+              {dashboardData.topProducts?.reduce((sum, p) => sum + Number(p.total_sold || p.quantity || p.sales || 0), 0) || 0} قطعة
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Section Header with View Toggle */}

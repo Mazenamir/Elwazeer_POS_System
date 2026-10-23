@@ -41,16 +41,7 @@ function paginatedPayload(rows, total, pagination, customKey = null) {
     hasPrev: page > 1,
   };
   const payload = {
-    data: rows,
     items: rows,
-    customers: rows,
-    orders: rows,
-    rentals: rows,
-    alterations: rows,
-    suppliers: rows,
-    employees: rows,
-    inventory: rows,
-    expenses: rows,
     pagination: paginationObj,
     total: totalCount,
     page,
@@ -59,7 +50,14 @@ function paginatedPayload(rows, total, pagination, customKey = null) {
     hasNext: paginationObj.hasNext,
     hasPrev: paginationObj.hasPrev,
   };
-  if (customKey && typeof customKey === 'string') {
+
+  // Provide data key for compatibility if not exclusively using items
+  if (customKey !== 'items') {
+    payload.data = rows;
+  }
+
+  // Provide domain-specific alias key only when explicitly requested
+  if (customKey && typeof customKey === 'string' && customKey !== 'items' && customKey !== 'data') {
     payload[customKey] = rows;
   }
   return payload;

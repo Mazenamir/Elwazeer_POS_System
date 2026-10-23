@@ -7,6 +7,8 @@ const { getInitialsFromName, newUuid } = require('../../../shared/utils/string')
 const { parsePositiveInt } = require('../../../shared/utils/numbers');
 const { logActivity } = require('../../database/sync.helpers');
 const offlineStore = require('./offline.store');
+const { normalizePaymentMethod } = require('../reports/reports.helpers');
+const { adjustInventoryStock } = require('../inventory/inventory.helpers');
 
 // Safe SSL configuration: process.env.NODE_TLS_REJECT_UNAUTHORIZED is not disabled globally
 
@@ -114,6 +116,7 @@ async function applyOperation(operation) {
     }
 
     if (operation.entity_type === 'expense') {
+      const normExpenseMethod = normalizePaymentMethod(payload.payment_method || 'cash');
       await tx.query(
         `INSERT INTO expenses (branch_id, category, amount, expense_date, notes, offline_uuid, payment_method, created_by, updated_by, is_deleted, deleted_by)
          VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6, COALESCE($7, 'cash'), $8, $9, COALESCE($10, FALSE), $11)
@@ -136,7 +139,7 @@ async function applyOperation(operation) {
           payload.expense_date || null,
           payload.notes || null,
           payload.offline_uuid,
-          payload.payment_method || 'cash',
+          normExpenseMethod,
           payload.created_by || null,
           payload.updated_by || null,
           Boolean(payload.is_deleted),
@@ -358,6 +361,7 @@ async function applyOperation(operation) {
       const branchId = payload.branch_id || operation.branch_id || 1;
       const paidAmount = Number(payload.paid_amount || 0);
       const remainingAmount = Number(payload.remaining_amount || 0);
+      const normTailoringMethod = normalizePaymentMethod(payload.payment_method || 'cash');
       if (!payload.offline_uuid || !payload.invoice_number || !payload.customer_name || !payload.customer_phone
           || !payload.product_description || !payload.measurements) {
         throw new Error('Missing tailoring order data');
@@ -387,12 +391,13 @@ async function applyOperation(operation) {
         );
         invoiceNumber = String(nextRes.rows[0].next_number);
       }
-      await tx.query(
+      const insertResult = await tx.query(
         `INSERT INTO tailoring_orders
           (invoice_number, customer_name, customer_phone, product_description, measurements, total_amount,
            paid_amount, remaining_amount, payment_method, seller_id, branch_id, created_by, offline_uuid, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamp, timezone('utc', now())))
-         ON CONFLICT (offline_uuid) DO NOTHING`,
+         ON CONFLICT (offline_uuid) DO NOTHING
+         RETURNING id, created_at`,
         [
           invoiceNumber,
           payload.customer_name,
@@ -402,7 +407,7 @@ async function applyOperation(operation) {
           paidAmount + remainingAmount,
           paidAmount,
           remainingAmount,
-          payload.payment_method || 'cash',
+          normTailoringMethod,
           payload.seller_id || null,
           branchId,
           payload.created_by || null,
@@ -410,6 +415,14 @@ async function applyOperation(operation) {
           payload.created_at || null,
         ]
       );
+      const insertedOrder = insertResult.rows[0];
+      if (insertedOrder && paidAmount > 0) {
+        await tx.query(
+          `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method)
+           VALUES ($1, $2, $3, $4, FALSE, $5)`,
+          [insertedOrder.id, paidAmount, branchId, insertedOrder.created_at, normTailoringMethod]
+        );
+      }
       return;
     }
 
@@ -422,6 +435,7 @@ async function applyOperation(operation) {
           const splitsToSave = orderData.payment_splits
             ? (typeof orderData.payment_splits === 'object' ? JSON.stringify(orderData.payment_splits) : orderData.payment_splits)
             : null;
+          const normOrderMethod = normalizePaymentMethod(orderData.payment_method || 'cash');
           await tx.query(
             `UPDATE orders 
              SET paid_amount = $1, 
@@ -436,7 +450,7 @@ async function applyOperation(operation) {
             [
               orderData.paid_amount || 0,
               orderData.change_amount || 0,
-              orderData.payment_method || 'cash',
+              normOrderMethod,
               Number(orderData.cash_amount || 0),
               Number(orderData.card_amount || 0),
               Number(orderData.wallet_amount || 0),
@@ -482,6 +496,7 @@ async function applyOperation(operation) {
       const splitsToSave = orderData.payment_splits
         ? (typeof orderData.payment_splits === 'object' ? JSON.stringify(orderData.payment_splits) : orderData.payment_splits)
         : null;
+      const normOrderMethod = normalizePaymentMethod(orderData.payment_method || 'cash');
 
       const insertOrderRes = await tx.query(
         `INSERT INTO orders (
@@ -492,7 +507,7 @@ async function applyOperation(operation) {
         )
          VALUES ($1, $2, COALESCE($12::timestamp, timezone('utc', now())), $3, $4, $5, $6, $7, $8, $9, $10, $11, $13, $14, $15, $16, $17) RETURNING id`,
         [
-          customerId, orderData.total_amount || 0, branchId, orderData.payment_method || 'cash',
+          customerId, orderData.total_amount || 0, branchId, normOrderMethod,
           sellerId, orderData.paid_amount || 0, orderData.change_amount || 0, orderData.invoice_discount || 0,
           orderData.invoice_discount_type || 'amount', nextBranchInvoiceNumber, orderOfflineUuid,
           orderData.order_date || null,
@@ -553,8 +568,13 @@ async function applyOperation(operation) {
           );
         }
 
-        await tx.query('UPDATE inventory_branches SET stock_level = GREATEST(stock_level - $1, 0) WHERE inventory_id = $2 AND branch_id = $3', [qty, item.inventory_id, branchId]);
-        await tx.query('UPDATE inventory SET stock_level = GREATEST(stock_level - $1, 0) WHERE id = $2', [qty, item.inventory_id]);
+        await adjustInventoryStock(tx, {
+          inventoryId: item.inventory_id,
+          branchId,
+          quantityDelta: -qty,
+          size: item.size || null,
+          color: item.color || null,
+        });
       }
       return;
     }
@@ -602,18 +622,56 @@ async function applyOperation(operation) {
       for (const item of payload.items || []) {
         const qty = parsePositiveInt(item.quantity, 'quantity');
         await tx.query('INSERT INTO return_items (return_id, inventory_id, quantity, price_at_time) VALUES ($1, $2, $3, $4)', [returnId, item.inventory_id, qty, item.price || 0]);
-        await tx.query(
-          `INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) VALUES ($1, $2, $3)
-           ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = inventory_branches.stock_level + $3`,
-          [item.inventory_id, branchId, qty]
-        );
-        await tx.query('UPDATE inventory SET stock_level = stock_level + $1 WHERE id = $2', [qty, item.inventory_id]);
+        await adjustInventoryStock(tx, {
+          inventoryId: item.inventory_id,
+          branchId,
+          quantityDelta: qty,
+          size: item.size || null,
+          color: item.color || null,
+        });
       }
       await tx.query("UPDATE orders SET status = 'returned' WHERE id = $1", [resolvedOrderId]);
       return;
     }
 
     if (operation.entity_type === 'rental') {
+      if (operation.action === 'update') {
+        const rentalId = payload.id;
+        const exists = payload.offline_uuid
+          ? await tx.query('SELECT id FROM rentals WHERE offline_uuid = $1', [payload.offline_uuid])
+          : (rentalId ? await tx.query('SELECT id FROM rentals WHERE id = $1', [rentalId]) : { rows: [] });
+        const targetId = rentalId || exists.rows[0]?.id;
+        if (targetId) {
+          await tx.query(
+            `UPDATE rentals
+             SET remaining = COALESCE($1, remaining),
+                 status = COALESCE($2, status),
+                 fine_amount = COALESCE($3, fine_amount),
+                 paid_amount = COALESCE($4, paid_amount),
+                 cash_amount = COALESCE($5, cash_amount),
+                 card_amount = COALESCE($6, card_amount),
+                 wallet_amount = COALESCE($7, wallet_amount),
+                 bank_transfer_amount = COALESCE($8, bank_transfer_amount),
+                 payment_method = COALESCE($9, payment_method),
+                 payment_splits = COALESCE($10, payment_splits)
+             WHERE id = $11`,
+            [
+              payload.remaining !== undefined ? payload.remaining : null,
+              payload.status || null,
+              payload.fine_amount !== undefined ? payload.fine_amount : null,
+              payload.paid_amount !== undefined ? payload.paid_amount : null,
+              payload.cash_amount !== undefined ? payload.cash_amount : null,
+              payload.card_amount !== undefined ? payload.card_amount : null,
+              payload.wallet_amount !== undefined ? payload.wallet_amount : null,
+              payload.bank_transfer_amount !== undefined ? payload.bank_transfer_amount : null,
+              payload.payment_method ? normalizePaymentMethod(payload.payment_method) : null,
+              payload.payment_splits ? (typeof payload.payment_splits === 'object' ? JSON.stringify(payload.payment_splits) : payload.payment_splits) : null,
+              targetId
+            ]
+          );
+        }
+        return;
+      }
       const exists = await tx.query('SELECT id FROM rentals WHERE offline_uuid = $1', [payload.offline_uuid]);
       if (exists.rows.length) return;
       const branchId = payload.rental?.branch_id || operation.branch_id || 1;
@@ -650,10 +708,26 @@ async function applyOperation(operation) {
         if (!empCheck.rows.length) sellerId = null;
       }
 
+      const rentalSplits = payload.rental?.payment_splits
+        ? (typeof payload.rental.payment_splits === 'object' ? JSON.stringify(payload.rental.payment_splits) : payload.rental.payment_splits)
+        : null;
+      const normRentalMethod = normalizePaymentMethod(payload.rental?.payment_method || 'cash');
+
       await tx.query(
-        `INSERT INTO rentals (customer_id, rental_inventory_id, branch_id, pickup_date, return_date, total_price, national_id, deposit, remaining, id_card_guarantee, notes, status, daily_fine, seller_id, payment_method, rental_group_uuid, offline_uuid)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'booked', $12, $13, $14, $15, $16)`,
-        [customerId, payload.rental?.rental_inventory_id, branchId, payload.rental?.pickup_date, payload.rental?.return_date, payload.rental?.total_price || 0, payload.rental?.national_id || null, payload.rental?.deposit || 0, payload.rental?.remaining || 0, !!payload.rental?.id_card_guarantee, payload.rental?.notes || null, payload.rental?.daily_fine || 0, sellerId, payload.rental?.payment_method || 'cash', payload.rental?.rental_group_uuid || payload.rental_group_uuid || null, payload.offline_uuid]
+        `INSERT INTO rentals (customer_id, rental_inventory_id, branch_id, pickup_date, return_date, total_price, national_id, deposit, remaining, id_card_guarantee, notes, status, daily_fine, seller_id, payment_method, rental_group_uuid, offline_uuid, paid_amount, cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'booked', $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+        [
+          customerId, payload.rental?.rental_inventory_id, branchId, payload.rental?.pickup_date, payload.rental?.return_date,
+          payload.rental?.total_price || 0, payload.rental?.national_id || null, payload.rental?.deposit || 0, payload.rental?.remaining || 0,
+          !!payload.rental?.id_card_guarantee, payload.rental?.notes || null, payload.rental?.daily_fine || 0, sellerId, normRentalMethod,
+          payload.rental?.rental_group_uuid || payload.rental_group_uuid || null, payload.offline_uuid,
+          Number(payload.rental?.paid_amount || 0),
+          Number(payload.rental?.cash_amount || 0),
+          Number(payload.rental?.card_amount || 0),
+          Number(payload.rental?.wallet_amount || 0),
+          Number(payload.rental?.bank_transfer_amount || 0),
+          rentalSplits
+        ]
       );
       return;
     }
@@ -719,16 +793,15 @@ async function applyOperation(operation) {
           await tx.query("UPDATE orders SET order_source = 'rental_sale', branch_invoice_number = NULL WHERE id = $1", [existingOrder.rows[0].id]);
           await tx.query("UPDATE rentals SET sale_order_id = $1 WHERE id = $2", [existingOrder.rows[0].id, rental.id]);
         } else {
-          const pMethod = payload.payment_method || rental.payment_method || 'cash';
+          const pMethod = normalizePaymentMethod(payload.payment_method || rental.payment_method || 'cash');
           let r_cash = 0;
           let r_card = 0;
           let r_wallet = 0;
           let r_bank = 0;
-          const normRPM = String(pMethod).toLowerCase();
-          if (['cash', 'نقدي', 'كاش'].includes(normRPM)) r_cash = sellPrice;
-          else if (['card', 'visa', 'بطاقة', 'فيزا'].includes(normRPM)) r_card = sellPrice;
-          else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(normRPM)) r_wallet = sellPrice;
-          else if (['bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي'].includes(normRPM)) r_bank = sellPrice;
+          if (pMethod === 'card') r_card = sellPrice;
+          else if (pMethod === 'wallet') r_wallet = sellPrice;
+          else if (pMethod === 'bank_transfer') r_bank = sellPrice;
+          else r_cash = sellPrice;
 
           const orderRes = await tx.query(
             `INSERT INTO orders (
@@ -964,11 +1037,11 @@ async function exportCatalogForBranch(branchId = null) {
     db.query('SELECT rental_inventory_id, branch_id, stock_level FROM rental_inventory_branches'),
     db.query('SELECT id, name FROM colors'),
     db.query('SELECT id, name FROM sizes'),
-    db.query('SELECT inventory_id, size_id, size_name, stock_level, branch_id FROM inventory_sizes'),
+    db.query('SELECT inventory_id, size_id, size_name, color_name, barcode, stock_level, branch_id FROM inventory_sizes'),
     db.query('SELECT key, value FROM settings'),
     db.query('SELECT id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid FROM customers'),
     db.query("SELECT id, name, position, branch_id, basic_salary, phone, status FROM employees WHERE status = 'active'"),
-    db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status FROM suppliers'),
+    db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at FROM suppliers'),
   ]);
 
   return {
@@ -1145,13 +1218,41 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       for (const s of catalog.sizes) sStmt.run(s.id, s.name);
     }
     if (Array.isArray(catalog.inventory_sizes)) {
-      const iszStmt = sqlite.prepare(`
-        INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(inventory_id, size_name, branch_id) DO UPDATE SET stock_level = excluded.stock_level
+      try { sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN color_name TEXT'); } catch {}
+      try { sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN barcode TEXT'); } catch {}
+
+      const findStmt = sqlite.prepare(`
+        SELECT id FROM inventory_sizes
+        WHERE inventory_id = ?
+          AND LOWER(TRIM(size_name)) = LOWER(TRIM(?))
+          AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(?))
+          AND (branch_id = ? OR (? = 1 AND branch_id IS NULL))
+        LIMIT 1
       `);
+      const updateStmt = sqlite.prepare(`
+        UPDATE inventory_sizes
+        SET stock_level = ?, barcode = COALESCE(?, barcode), size_id = COALESCE(?, size_id), updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      const insertStmt = sqlite.prepare(`
+        INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, barcode, stock_level, branch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
       for (const isz of catalog.inventory_sizes) {
-        iszStmt.run(isz.inventory_id, isz.size_id || null, isz.size_name, isz.stock_level || 0, isz.branch_id || 1);
+        const sizeName = String(isz.size_name || '').trim();
+        const colorName = String(isz.color_name || '').trim();
+        const branchId = isz.branch_id || 1;
+        const barcode = isz.barcode || null;
+        const stockLevel = Number(isz.stock_level) || 0;
+        const sizeId = isz.size_id || null;
+
+        const existing = findStmt.get(isz.inventory_id, sizeName, colorName, branchId, branchId);
+        if (existing) {
+          updateStmt.run(stockLevel, barcode, sizeId, existing.id);
+        } else {
+          insertStmt.run(isz.inventory_id, sizeId, sizeName, colorName, barcode, stockLevel, branchId);
+        }
       }
     }
 
@@ -1207,8 +1308,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // 11. Suppliers
     if (Array.isArray(catalog.suppliers)) {
       const supStmt = sqlite.prepare(`
-        INSERT INTO suppliers (id, name, initials, category, contact_person, phone, supply_type, balance, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO suppliers (id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           initials = excluded.initials,
@@ -1217,10 +1318,25 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           phone = excluded.phone,
           supply_type = excluded.supply_type,
           balance = excluded.balance,
-          status = excluded.status
+          status = excluded.status,
+          created_at = COALESCE(excluded.created_at, suppliers.created_at)
       `);
       for (const sup of catalog.suppliers) {
-        supStmt.run(sup.id, sup.name, sup.initials || null, sup.category || null, sup.contact_person || null, sup.phone || null, sup.supply_type || null, Number(sup.balance || 0), sup.status || 'active');
+        const createdAtStr = sup.created_at
+          ? (sup.created_at instanceof Date ? sup.created_at.toISOString() : String(sup.created_at))
+          : null;
+        supStmt.run(
+          sup.id,
+          sup.name,
+          sup.initials || null,
+          sup.category || null,
+          sup.contact_person || null,
+          sup.phone || null,
+          sup.supply_type || null,
+          Number(sup.balance || 0),
+          sup.status || 'active',
+          createdAtStr
+        );
       }
     }
 

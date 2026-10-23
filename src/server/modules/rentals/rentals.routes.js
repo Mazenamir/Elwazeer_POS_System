@@ -15,6 +15,7 @@ router.delete('/rental-inventory/:id', controller.deleteRentalInventory);
 router.get('/rentals/summary', controller.getRentalsSummary);
 router.get('/rentals', controller.listRentals);
 router.post('/rentals', controller.createRental);
+router.put('/rentals/:id/status', controller.updateRentalStatus);
 router.put('/rentals/:id/pickup', controller.pickupRental);
 router.put('/rentals/:id/cancel', controller.cancelRental);
 router.put('/rentals/:id/return', controller.returnRental);

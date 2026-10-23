@@ -4,6 +4,7 @@ const { isBranchScopedUser } = require('../../../shared/constants/permissions');
 const { likePattern } = require('../../../shared/utils/string');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { roundCurrency } = require('../../../shared/utils/numbers');
+const { adjustInventoryStock } = require('../inventory/inventory.helpers');
 
 async function getSummary(query, user) {
   const params = [];
@@ -170,17 +171,12 @@ async function createWornProduct(body, user) {
           throw err;
         }
 
-        // 3. Atomic branch stock decrement
-        await tx.query(
-          'UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3',
-          [qty, productId, finalBranchId]
-        );
-
-        // 4. Atomic global inventory decrement (strict lock, avoids unlocked SUM overwrite race)
-        await tx.query(
-          'UPDATE inventory SET stock_level = stock_level - $1 WHERE id = $2',
-          [qty, productId]
-        );
+        // 3. Atomic stock decrement across sizes, branch, and global levels
+        await adjustInventoryStock(tx, {
+          inventoryId: productId,
+          branchId: finalBranchId,
+          quantityDelta: -qty,
+        });
       } else {
         const riRes = await tx.query('SELECT id, name FROM rental_inventory WHERE id = $1', [productId]);
         if (riRes.rows.length === 0) {

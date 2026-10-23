@@ -115,12 +115,22 @@ ipcMain.on('fix-focus', () => {
   }
 });
 
-// Export report to PDF via offscreen printToPDF
-ipcMain.handle('export-pdf', async (event, { html, defaultFileName }) => {
+// Export report or thermal labels to PDF via offscreen printToPDF
+ipcMain.handle('export-pdf', async (event, payload) => {
   try {
+    const {
+      html,
+      defaultFileName,
+      dialogTitle,
+      pageSize = 'A4',
+      preferCSSPageSize = true,
+      marginsType = 1,
+      landscape = false,
+    } = (payload || {});
+
     const parentWin = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
     const { canceled, filePath } = await dialog.showSaveDialog(parentWin, {
-      title: 'حفظ التقرير كملف PDF',
+      title: dialogTitle || 'حفظ كملف PDF',
       defaultPath: defaultFileName || `report-${new Date().toISOString().split('T')[0]}.pdf`,
       filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
     });
@@ -139,11 +149,22 @@ ipcMain.handle('export-pdf', async (event, { html, defaultFileName }) => {
       await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
       // Ensure local & web fonts (Cairo font) are fully loaded before capturing PDF
       await printWin.webContents.executeJavaScript('document.fonts ? document.fonts.ready : Promise.resolve()');
-      const data = await printWin.webContents.printToPDF({
+      const printOptions = {
         printBackground: true,
-        pageSize: 'A4',
-        preferCSSPageSize: true,
-      });
+        preferCSSPageSize: preferCSSPageSize !== false,
+      };
+
+      if (pageSize) {
+        printOptions.pageSize = pageSize;
+      }
+      if (marginsType !== undefined) {
+        printOptions.marginsType = marginsType;
+      }
+      if (landscape) {
+        printOptions.landscape = true;
+      }
+
+      const data = await printWin.webContents.printToPDF(printOptions);
       fs.writeFileSync(filePath, data);
       return { success: true, filePath };
     } finally {

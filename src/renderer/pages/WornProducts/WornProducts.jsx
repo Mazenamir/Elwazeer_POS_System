@@ -25,7 +25,7 @@ import {
 
 export function WornProducts() {
   const { user } = useAuth();
-  const { branches, currentBranchId, isMultiBranch } = useBranch();
+  const { branches, currentBranchId, activeBranchId, isMultiBranch } = useBranch();
   const { toast } = useToast();
 
   const [records, setRecords] = useState([]);
@@ -39,7 +39,14 @@ export function WornProducts() {
 
   // Filters
   const [search, setSearch] = useState('');
-  const [filterBranch, setFilterBranch] = useState('all');
+  const [filterBranch, setFilterBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all'));
+
+  useEffect(() => {
+    if (activeBranchId) {
+      setFilterBranch(activeBranchId);
+      setPagination((prev) => ({ ...prev, page: 1 }));
+    }
+  }, [activeBranchId]);
   const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [pagination, setPagination] = useState({
@@ -355,7 +362,7 @@ export function WornProducts() {
               >
                 <option value="all">كل الفروع</option>
                 {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
+                  <option key={b.id} value={b.id.toString()}>
                     {b.name}
                   </option>
                 ))}
@@ -554,7 +561,7 @@ export function WornProducts() {
                   required
                 >
                   {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
+                    <option key={b.id} value={b.id.toString()}>
                       {b.name}
                     </option>
                   ))}

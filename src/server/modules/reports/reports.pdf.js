@@ -41,15 +41,29 @@ const BASE_PRINT_CSS = `
   ${localFontCss}
   @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
   
-  @page {
-    size: A4 portrait;
-    margin: 12mm 10mm 15mm 10mm;
-    @bottom-center {
-      content: "صفحة " counter(page) " من " counter(pages);
-      font-family: 'Cairo', Tahoma, sans-serif;
-      font-size: 9pt;
-      color: #64748b;
-    }
+  /* Dynamic @page orientation is injected by wrapHtml */
+  .salary-table {
+    width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+  .salary-table th {
+    padding: 5px 2px !important;
+    font-size: 7.5pt !important;
+    font-weight: 800 !important;
+    white-space: nowrap !important;
+    text-align: center !important;
+  }
+  .salary-table td {
+    padding: 4px 2px !important;
+    font-size: 7.5pt !important;
+    white-space: nowrap !important;
+    text-align: center !important;
+  }
+  .salary-table td.num {
+    text-align: left !important;
+    direction: ltr !important;
+    font-family: 'Cairo', Tahoma, monospace !important;
   }
 
   * {
@@ -211,18 +225,54 @@ const BASE_PRINT_CSS = `
   }
 `;
 
-function wrapHtml(title, bodyContent) {
+function wrapHtml(title, bodyContent, options = {}) {
+  const isLandscape = options.orientation === 'landscape' || options.landscape === true;
+  const pageCss = isLandscape
+    ? `@page {
+        size: A4 landscape;
+        margin: 6mm 6mm 8mm 6mm;
+        @bottom-center {
+          content: "صفحة " counter(page) " من " counter(pages);
+          font-family: 'Cairo', Tahoma, sans-serif;
+          font-size: 8pt;
+          color: #64748b;
+        }
+      }`
+    : `@page {
+        size: A4 portrait;
+        margin: 8mm 6mm 10mm 6mm;
+        @bottom-center {
+          content: "صفحة " counter(page) " من " counter(pages);
+          font-family: 'Cairo', Tahoma, sans-serif;
+          font-size: 8pt;
+          color: #64748b;
+        }
+      }`;
+
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
   <title>${title}</title>
-  <style>${BASE_PRINT_CSS}</style>
+  <style>
+    ${pageCss}
+    ${BASE_PRINT_CSS}
+  </style>
 </head>
-<body>
+<body class="${isLandscape ? 'landscape' : 'portrait'}">
   ${bodyContent}
 </body>
 </html>`;
+}
+
+function formatCompactNumber(amount, showDashIfZero = false) {
+  const parsed = Number(amount);
+  const num = Number.isFinite(parsed) ? parsed : 0;
+  if (showDashIfZero && num === 0) return '-';
+  return num.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
 }
 
 function formatMoney(amount) {
@@ -241,15 +291,17 @@ function formatPdfPaymentMethod(item) {
     ? item.payment_splits
     : (typeof item.payment_splits === 'string' ? (() => { try { return JSON.parse(item.payment_splits); } catch { return null; } })() : null);
 
-  if (item.payment_method === 'split' || (splits && splits.length > 1)) {
+  const normMethod = String(item.payment_method || '').toLowerCase().trim();
+  const isSplit = ['split', 'مجزأ', 'mixed', 'دفع مجزأ'].includes(normMethod);
+  if (isSplit || (splits && splits.length > 1) || (Number(item.cash_amount) > 0 && (Number(item.card_amount) > 0 || Number(item.bank_transfer_amount) > 0 || Number(item.wallet_amount) > 0))) {
     if (splits && splits.length > 0) {
       const parts = splits.map(s => {
-        const m = String(s.method || '').toLowerCase();
+        const m = String(s.method || s.payment_method || s.id || '').toLowerCase().trim();
         let mName = 'نقدي';
-        if (['visa', 'card', 'بطاقة', 'فيزا'].includes(m)) mName = 'فيزا';
-        else if (['bank_transfer', 'instapay', 'bank', 'انستاباي', 'تحويل بنكي'].includes(m)) mName = 'انستاباي';
-        else if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(m)) mName = 'محفظة';
-        else if (['debt', 'آجل'].includes(m)) mName = 'آجل';
+        if (['visa', 'card', 'credit', 'بطاقة', 'فيزا', 'بطاقة (فيزا)', 'فيزا / بطاقة'].includes(m)) mName = 'فيزا';
+        else if (['bank_transfer', 'instapay', 'bank', 'انستاباي', 'تحويل بنكي', 'transfer', 'انستاباي / تحويل بنكي', 'تحويل بنكي / انستاباي', 'انستاباي / بنكي'].includes(m)) mName = 'انستاباي';
+        else if (['wallet', 'mobile_wallet', 'smart_wallet', 'فودافون كاش', 'فودافون', 'vodafone', 'vodafone_cash', 'vodafone cash', 'vodafonecash', 'محفظة', 'محفظه', 'محافظ', 'محافظ إلكترونية', 'محفظة إلكترونية', 'فودافون كاش / محفظة'].includes(m)) mName = 'فودافون كاش';
+        else if (['debt', 'آجل', 'credit_customer'].includes(m)) mName = 'آجل';
         return `${mName}: ${Number(s.amount || 0).toLocaleString('en-US')}`;
       });
       return `مجزأ (${parts.join(' + ')})`;
@@ -258,16 +310,16 @@ function formatPdfPaymentMethod(item) {
     if (Number(item.cash_amount) > 0) parts.push(`نقدي: ${item.cash_amount}`);
     if (Number(item.bank_transfer_amount) > 0) parts.push(`انستاباي: ${item.bank_transfer_amount}`);
     if (Number(item.card_amount) > 0) parts.push(`فيزا: ${item.card_amount}`);
-    if (Number(item.wallet_amount) > 0) parts.push(`محفظة: ${item.wallet_amount}`);
+    if (Number(item.wallet_amount) > 0) parts.push(`فودافون كاش: ${item.wallet_amount}`);
     return parts.length > 0 ? `مجزأ (${parts.join(' + ')})` : 'مجزأ';
   }
 
-  const m = String(item.payment_method || '').toLowerCase();
-  if (m === 'cash' || m === 'نقدي' || m === 'كاش') return 'نقدي';
-  if (m === 'visa' || m === 'card' || m === 'فيزا' || m === 'بطاقة') return 'فيزا';
-  if (['bank_transfer', 'bank', 'transfer', 'instapay', 'انستاباي', 'تحويل بنكي'].includes(m)) return 'تحويل بنكي / انستاباي';
-  if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة'].includes(m)) return 'فودافون كاش / محفظة';
-  if (m === 'debt' || m === 'آجل') return 'آجل';
+  const m = String(item.payment_method || '').toLowerCase().trim();
+  if (['cash', 'نقدي', 'كاش', 'نقدي (كاش)', 'كاش (بالدرج)'].includes(m)) return 'نقدي';
+  if (['visa', 'card', 'credit', 'فيزا', 'بطاقة', 'بطاقة (فيزا)', 'فيزا / بطاقة', 'فيزا / بطاقات'].includes(m)) return 'فيزا';
+  if (['bank_transfer', 'bank', 'transfer', 'instapay', 'انستاباي', 'تحويل بنكي', 'انستاباي / تحويل بنكي', 'تحويل بنكي / انستاباي', 'انستاباي / بنكي'].includes(m)) return 'تحويل بنكي / انستاباي';
+  if (['wallet', 'mobile_wallet', 'smart_wallet', 'فودافون كاش', 'فودافون', 'vodafone', 'vodafone_cash', 'vodafone cash', 'vodafonecash', 'محفظة', 'محفظه', 'محافظ', 'محافظ إلكترونية', 'محفظة إلكترونية', 'فودافون كاش / محفظة'].includes(m)) return 'فودافون كاش';
+  if (['debt', 'آجل', 'credit_customer', 'آجل / مديونية'].includes(m)) return 'آجل';
   return item.payment_method || '-';
 }
 
@@ -778,6 +830,9 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
   const branchSales = dailyData.branch_sales || [];
   const salesInvoices = dailyData.sales_invoices || [];
   const rentalInvoices = dailyData.rental_invoices || [];
+  const tailoringInvoices = Array.isArray(dailyData.tailoring?.items)
+    ? dailyData.tailoring.items
+    : (Array.isArray(dailyData.tailoring_invoices) ? dailyData.tailoring_invoices : []);
 
   const bRows = branchSales.map((b) => `
     <tr>
@@ -814,11 +869,29 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
         <td class="center font-mono font-bold">#${r.invoice_number || r.id || '-'}</td>
         <td class="center font-mono">${r.created_date || r.booking_date || '-'}</td>
         <td>${r.cashier_name || '-'}</td>
-        <td class="center">${r.payment_method === 'cash' ? 'نقدي' : (r.payment_method || '-')}</td>
+        <td class="center">${formatPdfPaymentMethod(r)}</td>
         <td class="num font-bold">${formatMoney(r.amount || r.total_price)}</td>
         <td class="num">${formatMoney(r.paid_amount || r.deposit)}</td>
         <td class="num text-rose-600">${formatMoney(rem)}</td>
         <td class="center font-bold" style="font-size: 8pt; color: ${r.status === 'returned' ? (rem > 0 ? '#d97706' : '#15803d') : '#475569'};">${statusLabel}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const tRows = tailoringInvoices.slice(0, 100).map((t) => {
+    const isRemainder = t.is_remainder;
+    const typeLabel = isRemainder ? 'سداد متبقي' : 'عربون / دفعة أولى';
+    return `
+      <tr>
+        <td class="center font-mono font-bold">#${t.invoice_number || '-'}</td>
+        <td class="center font-mono">${t.created_date || '-'}</td>
+        <td>${t.customer_name || '-'}</td>
+        <td>${t.product_description || '-'}</td>
+        <td class="center">${formatPdfPaymentMethod(t)}</td>
+        <td class="num font-bold">${formatMoney(t.amount)}</td>
+        <td class="num">${formatMoney(t.total_amount)}</td>
+        <td class="num text-rose-600">${formatMoney(t.remaining_amount || 0)}</td>
+        <td class="center font-bold" style="font-size: 8pt; color: ${isRemainder ? '#0284c7' : '#d97706'};">${typeLabel}</td>
       </tr>
     `;
   }).join('');
@@ -891,6 +964,27 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
         </thead>
         <tbody>
           ${rRows}
+        </tbody>
+      </table>
+    ` : ''}
+
+    ${tailoringInvoices.length > 0 ? `
+      <h2 style="font-size: 11pt; margin: 20px 0 6px 0; color: #1e293b;">4. متحصلات وعقود التفصيل (${tailoringInvoices.length} دفعة / عقد)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="center" style="width: 10%;">رقم الفاتورة</th>
+            <th class="center" style="width: 14%;">الوقت</th>
+            <th style="width: 16%;">العميل</th>
+            <th style="width: 18%;">وصف القطعة والمقاسات</th>
+            <th class="center" style="width: 12%;">طريقة الدفع</th>
+            <th class="center" style="width: 10%;">المحصل</th>
+            <th class="center" style="width: 10%;">الإجمالي</th>
+            <th class="center" style="width: 10%;">المتبقي</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tRows}
         </tbody>
       </table>
     ` : ''}
@@ -991,7 +1085,7 @@ function generateSalesPdfHtml(salesData, options = {}) {
         <div class="kpi-value">${formatMoney(summary.visa_paid || 0)}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">المحصل محافظ</div>
+        <div class="kpi-title">المحصل فودافون كاش</div>
         <div class="kpi-value">${formatMoney(summary.wallet_paid || 0)}</div>
       </div>
     </div>
@@ -1506,6 +1600,433 @@ function generateInventoryPdfHtml(inventoryData, options = {}) {
   return wrapHtml('تقرير جرد وتقييم المخزون', bodyContent);
 }
 
+
+/**
+ * 13. OHDA Report PDF HTML
+ */
+function generateOhdaPdfHtml(ohdaData, options = {}) {
+  const branchName = options.branchName || (ohdaData.branch_name || 'فرع الرمل');
+  const period = options.period || (ohdaData.month || '-');
+  const cairoTime = formatCairoDateTime();
+  const employees = ohdaData.employees || [];
+  const summary = ohdaData.summary || {
+    total_employees: employees.length,
+    total_attendance: employees.reduce((s, e) => s + (e.total_attendance || 0), 0),
+    total_advances_1_10: employees.reduce((s, e) => s + (e.advances_1_to_10 || 0), 0),
+    total_advances_11_20: employees.reduce((s, e) => s + (e.advances_11_to_20 || 0), 0),
+    total_advances_21_31: employees.reduce((s, e) => s + (e.advances_21_to_31 || 0), 0),
+    total_advances: employees.reduce((s, e) => s + (e.total_advances || 0), 0),
+  };
+
+  const tableRows = employees.map((emp, idx) => `
+    <tr>
+      <td class="center font-bold">${idx + 1}</td>
+      <td class="font-bold">${emp.employee_name || '-'}</td>
+      <td class="center font-bold text-indigo-700">${emp.total_attendance || 0}</td>
+      <td class="num text-rose-600">${formatMoney(emp.advances_1_to_10 || 0)}</td>
+      <td class="num text-rose-600">${formatMoney(emp.advances_11_to_20 || 0)}</td>
+      <td class="num text-rose-600">${formatMoney(emp.advances_21_to_31 || 0)}</td>
+      <td class="num font-black text-rose-700 bg-rose-50">${formatMoney(emp.total_advances || 0)}</td>
+      <td class="num font-bold">${formatMoney(emp.daily_rate || 0)}</td>
+      <td class="num font-black text-emerald-800 bg-emerald-50">${formatMoney(emp.basic_salary || 0)}</td>
+    </tr>
+  `).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير العهدة وحضور وسلف الموظفين (OHDA)</h1>
+        <div class="subtitle">متابعة السلف الدورية ومجموع الحضور الشهري لكل موظف</div>
+      </div>
+      <div class="meta-badge">
+        <div>الفرع: <strong>${branchName}</strong></div>
+        <div>الشهر: <strong>${period}</strong></div>
+        <div>وقت الطباعة: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي سلف الشهر المسحوبة</div>
+        <div class="kpi-value text-rose-700">${formatMoney(summary.total_advances || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">سلف (من 1 إلى 10)</div>
+        <div class="kpi-value">${formatMoney(summary.total_advances_1_10 || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">سلف (من 11 إلى 20)</div>
+        <div class="kpi-value">${formatMoney(summary.total_advances_11_20 || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">سلف (من 21 إلى 31)</div>
+        <div class="kpi-value">${formatMoney(summary.total_advances_21_31 || 0)}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 40px;">#</th>
+          <th>اسم الموظف</th>
+          <th>أيام الحضور</th>
+          <th>سلف (1 إلى 10)</th>
+          <th>سلف (11 إلى 20)</th>
+          <th>سلف (21 إلى 31)</th>
+          <th>مجمع السلف</th>
+          <th>اليومية التقديرية</th>
+          <th>توتال الشهر</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="9" class="center">لا توجد بيانات</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr class="font-black bg-slate-100">
+          <td colspan="2" class="center">الإجمالي</td>
+          <td class="center">${employees.reduce((sum, e) => sum + Number(e.total_attendance || 0), 0)}</td>
+          <td class="num text-rose-600">${formatMoney(summary.total_advances_1_10 || 0)}</td>
+          <td class="num text-rose-600">${formatMoney(summary.total_advances_11_20 || 0)}</td>
+          <td class="num text-rose-600">${formatMoney(summary.total_advances_21_31 || 0)}</td>
+          <td class="num font-black text-rose-800 bg-rose-100">${formatMoney(summary.total_advances || 0)}</td>
+          <td>-</td>
+          <td class="num font-black text-emerald-900 bg-emerald-100">${formatMoney(employees.reduce((sum, e) => sum + Number(e.basic_salary || 0), 0))}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>كشف عهدة وسلف الموظفين - نظام بيبيون والوزير</div>
+      <div>توقيع مسؤول الفرع: _______________________</div>
+    </div>
+  `;
+
+  return wrapHtml('تقرير العهدة وحضور وسلف الموظفين', bodyContent, { orientation: 'landscape' });
+}
+
+/**
+ * 14. SALARY Report PDF HTML
+ */
+function generateSalaryPdfHtml(salaryData, options = {}) {
+  const branchName = options.branchName || (salaryData.branch_name || 'فرع الرمل');
+  const period = options.period || (salaryData.month || '-');
+  const cairoTime = formatCairoDateTime();
+  const employees = salaryData.employees || [];
+  const summary = salaryData.summary || {
+    total_employees: employees.length,
+    total_basic_salaries: employees.reduce((s, e) => s + (e.basic_salary || 0), 0),
+    total_gross_salaries: employees.reduce((s, e) => s + (e.gross_salary || 0), 0),
+    total_net_salary: employees.reduce((s, e) => s + (e.net_salary || 0), 0),
+    total_advances: employees.reduce((s, e) => s + (e.advances || 0), 0),
+    total_absent_deductions: employees.reduce((s, e) => s + (e.absent_deduction || 0), 0),
+    total_leave_deductions: employees.reduce((s, e) => s + (e.leave_deduction || 0), 0),
+    total_delay_deductions: employees.reduce((s, e) => s + (e.delay_deduction || 0), 0),
+  };
+
+  const tableRows = employees.map((emp, idx) => `
+    <tr>
+      <td class="center font-mono">${idx + 1}</td>
+      <td class="font-bold text-right" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${emp.employee_name || '-'}</td>
+      <td class="center font-mono">${Number(emp.actual_hours || 0).toFixed(1)}</td>
+      <td class="center font-mono">${emp.required_hours || 268}</td>
+      <td class="center text-rose-600 font-mono">${emp.delay_hours > 0 ? emp.delay_hours.toFixed(1) : '-'}</td>
+      <td class="center text-emerald-600 font-mono">${emp.overtime_hours > 0 ? emp.overtime_hours.toFixed(1) : '-'}</td>
+      <td class="num">${formatCompactNumber(emp.basic_salary)}</td>
+      <td class="num">${formatCompactNumber(emp.daily_rate)}</td>
+      <td class="num font-bold">${formatCompactNumber(emp.gross_salary)}</td>
+      <td class="num text-rose-600">${formatCompactNumber(emp.advances, true)}</td>
+      <td class="num text-rose-600">${formatCompactNumber(emp.absent_deduction, true)}</td>
+      <td class="num text-rose-600">${formatCompactNumber(emp.leave_deduction, true)}</td>
+      <td class="num text-rose-600">${formatCompactNumber(emp.delay_deduction, true)}</td>
+      <td class="num font-black text-emerald-800" style="background: #f0fdf4 !important;">${formatCompactNumber(emp.net_salary)}</td>
+      <td class="center font-mono" style="border-right: 1px dashed #cbd5e1;"></td>
+    </tr>
+  `).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>مسير رواتب ومستحقات العاملين (SALARY)</h1>
+        <div class="subtitle">كشف تفصيلي بالساعات المحققة، البدلات، الخصومات وصافي القبض (كافة المبالغ بالجنيه المصري ج.م)</div>
+      </div>
+      <div class="meta-badge">
+        <div>الفرع: <strong>${branchName}</strong></div>
+        <div>الشهر: <strong>${period}</strong></div>
+        <div>تاريخ الاستخراج: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي صافي المرتبات للتسليم</div>
+        <div class="kpi-value">${formatMoney(summary.total_net_salary || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي السلف المستقطعة</div>
+        <div class="kpi-value text-rose-600">${formatMoney(summary.total_advances || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي الخصومات والجزاءات</div>
+        <div class="kpi-value text-rose-600">${formatMoney((summary.total_absent_deductions || 0) + (summary.total_delay_deductions || 0))}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">عدد الموظفين بالمسير</div>
+        <div class="kpi-value">${employees.length}</div>
+      </div>
+    </div>
+
+    <table class="salary-table">
+      <colgroup>
+        <col style="width: 3%;" />
+        <col style="width: 14%;" />
+        <col style="width: 6%;" />
+        <col style="width: 5%;" />
+        <col style="width: 5%;" />
+        <col style="width: 5%;" />
+        <col style="width: 7%;" />
+        <col style="width: 6%;" />
+        <col style="width: 8%;" />
+        <col style="width: 6%;" />
+        <col style="width: 6%;" />
+        <col style="width: 6%;" />
+        <col style="width: 6%;" />
+        <col style="width: 9%;" />
+        <col style="width: 8%;" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>اسم الموظف</th>
+          <th>ساعات فعلية</th>
+          <th>مطلوب</th>
+          <th>تأخير</th>
+          <th>إضافي</th>
+          <th>الأساسي</th>
+          <th>اليومية</th>
+          <th>الإجمالي المستحق</th>
+          <th>سلف</th>
+          <th>خصم غياب</th>
+          <th>إجازات زائدة</th>
+          <th>خصم تأخير</th>
+          <th style="background: #15803d !important; color: #fff !important;">صافي القبض</th>
+          <th>توقيع الاستلام</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="15" class="center">لا توجد بيانات موظفين</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr class="font-black bg-slate-100">
+          <td colspan="6" class="center">الإجماليات</td>
+          <td class="num">${formatCompactNumber(summary.total_basic_salaries)}</td>
+          <td>-</td>
+          <td class="num font-bold">${formatCompactNumber(summary.total_gross_salaries)}</td>
+          <td class="num text-rose-600">${formatCompactNumber(summary.total_advances, true)}</td>
+          <td class="num text-rose-600">${formatCompactNumber(summary.total_absent_deductions, true)}</td>
+          <td class="num text-rose-600">${formatCompactNumber(summary.total_leave_deductions, true)}</td>
+          <td class="num text-rose-600">${formatCompactNumber(summary.total_delay_deductions, true)}</td>
+          <td class="num font-black text-emerald-900" style="background: #bbf7d0 !important;">${formatCompactNumber(summary.total_net_salary)}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>مسير الرواتب - نظام بيبيون والوزير لإدارة الفروع</div>
+      <div>اعتماد الإدارة: _______________________</div>
+    </div>
+  `;
+
+  return wrapHtml('مسير الرواتب والمستحقات الشهرية', bodyContent, { orientation: 'landscape' });
+}
+
+/**
+ * 15. KPI Report PDF HTML
+ */
+function generateKpiPdfHtml(kpiData, options = {}) {
+  const branchName = options.branchName || (kpiData.branch_name || 'فرع الرمل');
+  const period = options.period || (kpiData.month || '-');
+  const cairoTime = formatCairoDateTime();
+  const summary = kpiData.summary || {};
+  const sellers = kpiData.sellers || [];
+
+  const tableRows = sellers.map((s, idx) => `
+    <tr>
+      <td class="center font-bold">${idx + 1}</td>
+      <td class="font-bold">${s.seller_name || '-'}</td>
+      <td class="num font-black text-emerald-700">${formatMoney(s.total_sales || 0)}</td>
+      <td class="num font-bold">${formatMoney(s.target || 0)}</td>
+      <td class="center font-black" style="color: ${Number(s.achievement_percentage || 0) >= 100 ? '#15803d' : '#4f46e5'};">
+        ${Number(s.achievement_percentage || 0).toFixed(1)}%
+      </td>
+    </tr>
+  `).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير أداء وتقييم البائعين (KPI)</h1>
+        <div class="subtitle">متابعة مبيعات البائعين ونسب تحقيق المستهدفات الشهرية</div>
+      </div>
+      <div class="meta-badge">
+        <div>الفرع: <strong>${branchName}</strong></div>
+        <div>الشهر: <strong>${period}</strong></div>
+        <div>وقت الطباعة: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي المبيعات المحققة</div>
+        <div class="kpi-value">${formatMoney(summary.total_sales || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">عدد البائعين</div>
+        <div class="kpi-value">${summary.active_sellers || sellers.length}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">متوسط تحقيق المستهدف</div>
+        <div class="kpi-value">${Number(summary.average_achievement || 0).toFixed(1)}%</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">أعلى بائع مبيعاً</div>
+        <div class="kpi-value" style="font-size: 11pt;">${summary.top_seller?.name || '-'}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 50px;">#</th>
+          <th>اسم البائع</th>
+          <th>المبيعات المحققة</th>
+          <th>المستهدف (التارجت)</th>
+          <th>نسبة الإنجاز</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="5" class="center">لا توجد بيانات</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr class="font-black bg-slate-100">
+          <td colspan="2" class="center">الإجمالي</td>
+          <td class="num font-black text-emerald-800">${formatMoney(summary.total_sales || 0)}</td>
+          <td class="num">${formatMoney(sellers.reduce((sum, s) => sum + Number(s.target || 0), 0))}</td>
+          <td class="center">${Number(summary.average_achievement || 0).toFixed(1)}%</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>تقرير تقييم البائعين - نظام بيبيون والوزير</div>
+      <div>تقرير رسمي معتمد</div>
+    </div>
+  `;
+
+  return wrapHtml('تقرير تقييم وأداء البائعين', bodyContent);
+}
+
+/**
+ * 16. Consolidated Branch Overview PDF HTML
+ */
+function generateConsolidatedPdfHtml(data, options = {}) {
+  const branchName = options.branchName || 'فرع الرمل';
+  const period = options.period || '-';
+  const cairoTime = formatCairoDateTime();
+  const { ohda, salary, kpi } = data || {};
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>الملخص المجمع للفرع (Consolidated Monthly Overview)</h1>
+        <div class="subtitle">تقرير شامل لكافة أنشطة الفرع: المبيعات، العهدة، مسير المرتبات، وأداء البائعين</div>
+      </div>
+      <div class="meta-badge">
+        <div>الفرع: <strong>${branchName}</strong></div>
+        <div>الشهر: <strong>${period}</strong></div>
+        <div>وقت الطباعة: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي مبيعات البائعين (KPI)</div>
+        <div class="kpi-value text-emerald-700">${formatMoney(kpi?.summary?.total_sales || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي صافي المرتبات المستحقة</div>
+        <div class="kpi-value text-indigo-700">${formatMoney(salary?.summary?.total_net_salary || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي السلف المسحوبة</div>
+        <div class="kpi-value text-rose-700">${formatMoney(ohda?.summary?.total_advances || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">عدد العاملين بالفرع</div>
+        <div class="kpi-value">${salary?.employees?.length || 0}</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 20px; margin-bottom: 8px;">1. ملخص مسير الرواتب:</h3>
+    <table style="font-size: 8.5pt;">
+      <thead>
+        <tr>
+          <th>اسم الموظف</th>
+          <th>ساعات فعلية</th>
+          <th>تأخير</th>
+          <th>إضافي</th>
+          <th>الأساسي</th>
+          <th>السلف</th>
+          <th>إجمالي الاستقطاعات</th>
+          <th>صافي القبض</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${(salary?.employees || []).map(e => `
+          <tr>
+            <td class="font-bold">${e.employee_name || '-'}</td>
+            <td class="center">${Number(e.actual_hours || 0).toFixed(1)}</td>
+            <td class="center text-rose-600">${e.delay_hours > 0 ? e.delay_hours.toFixed(1) : '-'}</td>
+            <td class="center text-emerald-600">${e.overtime_hours > 0 ? e.overtime_hours.toFixed(1) : '-'}</td>
+            <td class="num">${formatMoney(e.basic_salary || 0)}</td>
+            <td class="num text-rose-600">${formatMoney(e.advances || 0)}</td>
+            <td class="num text-rose-600">${formatMoney((e.absent_deduction || 0) + (e.leave_deduction || 0) + (e.delay_deduction || 0))}</td>
+            <td class="num font-black text-emerald-800">${formatMoney(e.net_salary || 0)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+
+    <h3 style="margin-top: 20px; margin-bottom: 8px;">2. أداء البائعين (KPI):</h3>
+    <table style="font-size: 8.5pt;">
+      <thead>
+        <tr>
+          <th>اسم البائع</th>
+          <th>المبيعات المحققة</th>
+          <th>التارجت</th>
+          <th>نسبة الإنجاز</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${(kpi?.sellers || []).map(s => `
+          <tr>
+            <td class="font-bold">${s.seller_name || '-'}</td>
+            <td class="num font-bold text-emerald-700">${formatMoney(s.total_sales || 0)}</td>
+            <td class="num">${formatMoney(s.target || 0)}</td>
+            <td class="center font-black">${Number(s.achievement_percentage || 0).toFixed(1)}%</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div>الملف المجمع للفرع - نظام بيبيون والوزير</div>
+      <div>تقرير رسمي معتمد</div>
+    </div>
+  `;
+
+  return wrapHtml('التقرير الشهري المجمع للفرع', bodyContent, { orientation: 'landscape' });
+}
 module.exports = {
   BASE_PRINT_CSS,
   wrapHtml,
@@ -1519,5 +2040,8 @@ module.exports = {
   generateExpensesPdfHtml,
   generateSummaryPdfHtml,
   generateInventoryPdfHtml,
+  generateOhdaPdfHtml,
+  generateSalaryPdfHtml,
+  generateKpiPdfHtml,
+  generateConsolidatedPdfHtml,
 };
-

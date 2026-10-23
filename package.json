@@ -20,11 +20,15 @@
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:branch": "electron-builder --config electron-builder.branch.json --win",
-    "verify:package": "node scratch/verify_package.js"
+    "verify:package": "node scratch/verify_package.js",
+    "test:simulator": "electron scratch/test_simulator_suite.js",
+    "test:rentals": "node scratch/test_rentals_barcodes_reservations.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -39,6 +43,7 @@
     "multer": "^2.4.0",
     "pg": "^8.20.0",
     "react": "^19.3.0",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4",
     "tailwind-merge": "^3.7.0"

@@ -1,3 +1,5 @@
+const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
+
 async function getRentalAvailability(queryable, rentalInventoryId, branchId, pickupDate, returnDate, options = {}) {
   if (options.lockStockRow) {
     await queryable.query(
@@ -30,7 +32,13 @@ async function getRentalAvailability(queryable, rentalInventoryId, branchId, pic
        AND r.branch_id = $2
        AND r.status IN ('booked', 'active')
        AND r.pickup_date <= d.day
-       AND r.return_date >= d.day
+       AND (
+         CASE
+           WHEN r.status = 'active' AND r.return_date < ${CAIRO_DATE_SQL}
+           THEN ${CAIRO_DATE_SQL}
+           ELSE r.return_date
+         END
+       ) >= d.day
       GROUP BY d.day
     )
     SELECT

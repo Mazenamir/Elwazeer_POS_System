@@ -51,7 +51,9 @@ export function Employees() {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [filterBranch, setFilterBranch] = useState(searchParams.get('branch_id') || 'all');
+  const [filterBranch, setFilterBranch] = useState(
+    () => searchParams.get('branch_id') || (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all')
+  );
   const [filterPosition, setFilterPosition] = useState('all');
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [filterBonusStatus, setFilterBonusStatus] = useState('all');
@@ -172,6 +174,7 @@ export function Employees() {
   useEffect(() => {
     if (activeBranchId) {
       setFilterBranch(activeBranchId);
+      setPage(1);
     }
   }, [activeBranchId]);
 
@@ -767,7 +770,7 @@ export function Employees() {
             >
               <option value="all">كل الفروع</option>
               {branches.map((b) => (
-                <option key={b.id} value={b.id}>
+                <option key={b.id} value={b.id.toString()}>
                   {b.name}
                 </option>
               ))}
@@ -1236,7 +1239,7 @@ export function Employees() {
                 required
               >
                 {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
+                  <option key={b.id} value={b.id.toString()}>
                     {b.name}
                   </option>
                 ))}

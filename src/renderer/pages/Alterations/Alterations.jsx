@@ -442,7 +442,11 @@ export function Alterations() {
               style={{ direction: 'rtl', maxWidth: '80mm' }}
             >
               <div className="text-center pb-2 border-b-2 border-slate-900 space-y-1">
-                <h1 className="text-base font-black">Bebyoon Center</h1>
+                <h1 className="text-base font-black">
+                  {branches.find((b) => b.id?.toString() === selectedTicketAlt.branch_id?.toString())?.name ||
+                   branches.find((b) => b.id?.toString() === activeBranchId?.toString())?.name ||
+                   'Bebyoon Center'}
+                </h1>
                 <p className="text-xs font-black">تيكت طلب تعديل</p>
                 <div className="text-[11px] font-bold text-slate-600">
                   كود التعديل: #{selectedTicketAlt.id}

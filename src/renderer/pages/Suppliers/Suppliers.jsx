@@ -48,6 +48,8 @@ import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
 import SearchableCombobox from '../../components/forms/SearchableCombobox';
 import { printElement } from '../../utils/print';
+import ProductBarcodePrintModal from '../../components/modals/ProductBarcodePrintModal';
+import MatrixVariantGenerator, { generate12DigitBarcode } from '../../components/forms/MatrixVariantGenerator';
 
 const BASE_CATEGORIES = ['الكل', 'بدل', 'بنطلون', 'FORMAL SUIT', 'TUXEDO SUIT', 'KIDS', 'قميص', 'تيشيرت', 'SUIT', 'WALLET', 'ترنج', 'CASUAL SUIT', 'أخرى'];
 
@@ -65,6 +67,72 @@ const CATEGORY_DISPLAY_MAP = {
   'ترنج': 'ترنج',
   'WALLET': 'محافظ (WALLET)',
   'أخرى': 'بدون تصنيف / أخرى',
+};
+
+const getCairoDateString = (dateVal) => {
+  try {
+    if (!dateVal) {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Cairo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    }
+    if (typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateVal.trim())) {
+      return dateVal.trim();
+    }
+    const normalized = typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(dateVal.trim())
+      ? `${dateVal.trim().replace(' ', 'T')}Z`
+      : dateVal;
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+};
+
+const formatSupplierDate = (dateVal) => {
+  if (!dateVal) return '-';
+  try {
+    if (typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateVal.trim())) {
+      const [y, m, day] = dateVal.trim().split('-');
+      return `${day}/${m}/${y}`;
+    }
+    const normalized = typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(dateVal.trim())
+      ? `${dateVal.trim().replace(' ', 'T')}Z`
+      : dateVal;
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return String(dateVal).slice(0, 10);
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Cairo',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(d);
+  } catch {
+    return String(dateVal).slice(0, 10);
+  }
+};
+
+const getPaginationItems = (current, total) => {
+  if (!total || total <= 1) return [];
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, '...', total];
+  }
+  if (current >= total - 3) {
+    return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, '...', current - 1, current, current + 1, '...', total];
 };
 
 export function Suppliers() {
@@ -88,41 +156,51 @@ export function Suppliers() {
   const [stockStatusFilter, setStockStatusFilter] = useState('all');
   const [sortOrder, setSortOrder] = useState('latest');
   const [supplierFilter, setSupplierFilter] = useState('all');
-  const [inventoryBranchFilter, setInventoryBranchFilter] = useState('all');
+  const [inventoryBranchFilter, setInventoryBranchFilter] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all'));
   const [inventoryPagination, setInventoryPagination] = useState({
     page: 1,
-    limit: 50,
-    total: 0,
+    limit: 100,
+total: 0,
     totalPages: 1,
   });
+
+  // Sync inventoryBranchFilter with active branch selected in Header
+  useEffect(() => {
+    if (activeBranchId) {
+      setInventoryBranchFilter(activeBranchId);
+      setInventoryPagination((prev) => ({ ...prev, page: 1 }));
+    }
+  }, [activeBranchId]);
+
+  const defaultBranch = activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all';
 
   const hasActiveFilters = useMemo(() => {
     return (
       selectedCategory !== 'الكل' ||
       stockStatusFilter !== 'all' ||
       supplierFilter !== 'all' ||
-      inventoryBranchFilter !== 'all' ||
+      inventoryBranchFilter !== defaultBranch ||
       sortOrder !== 'latest' ||
       productSearch.trim().length > 0
     );
-  }, [selectedCategory, stockStatusFilter, supplierFilter, inventoryBranchFilter, sortOrder, productSearch]);
+  }, [selectedCategory, stockStatusFilter, supplierFilter, inventoryBranchFilter, sortOrder, productSearch, defaultBranch]);
 
   const activeFiltersCount = useMemo(() => {
     let count = 0;
     if (selectedCategory !== 'الكل') count++;
     if (stockStatusFilter !== 'all') count++;
     if (supplierFilter !== 'all') count++;
-    if (inventoryBranchFilter !== 'all') count++;
+    if (inventoryBranchFilter !== defaultBranch) count++;
     if (sortOrder !== 'latest') count++;
     if (productSearch.trim().length > 0) count++;
     return count;
-  }, [selectedCategory, stockStatusFilter, supplierFilter, inventoryBranchFilter, sortOrder, productSearch]);
+  }, [selectedCategory, stockStatusFilter, supplierFilter, inventoryBranchFilter, sortOrder, productSearch, defaultBranch]);
 
   const handleResetInventoryFilters = () => {
     setSelectedCategory('الكل');
     setStockStatusFilter('all');
     setSupplierFilter('all');
-    setInventoryBranchFilter('all');
+    setInventoryBranchFilter(defaultBranch);
     setSortOrder('latest');
     setProductSearch('');
     setInventoryPagination((prev) => ({ ...prev, page: 1 }));
@@ -206,6 +284,11 @@ export function Suppliers() {
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [productSubmitting, setProductSubmitting] = useState(false);
+
+  // Barcode Print Modal State
+  const [showBarcodePrintModal, setShowBarcodePrintModal] = useState(false);
+  const [selectedProductForBarcode, setSelectedProductForBarcode] = useState(null);
+  const [isBarcodeNewlyCreated, setIsBarcodeNewlyCreated] = useState(false);
   const [pName, setPName] = useState('');
   const [isNewProductName, setIsNewProductName] = useState(false);
   const [pCategory, setPCategory] = useState('FORMAL SUIT');
@@ -291,9 +374,20 @@ export function Suppliers() {
   // Stock Transfer Modal
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferProduct, setTransferProduct] = useState(null);
+  const [fromBranchId, setFromBranchId] = useState('');
   const [toBranchId, setToBranchId] = useState('');
   const [transferQty, setTransferQty] = useState('1');
+  const [transferDirect, setTransferDirect] = useState(true);
   const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [transferLoadingDetails, setTransferLoadingDetails] = useState(false);
+  const [transferBranchStock, setTransferBranchStock] = useState(0);
+  const [transferSizes, setTransferSizes] = useState([]);
+  const [transferVariantQtys, setTransferVariantQtys] = useState({});
+
+  // Incoming Shipments (Pending receiving)
+  const [incomingShipments, setIncomingShipments] = useState([]);
+  const [loadingShipments, setLoadingShipments] = useState(false);
+  const [receivingTransferId, setReceivingTransferId] = useState(null);
 
   // Transfer to Rental Modal
   const [showRentalTransferModal, setShowRentalTransferModal] = useState(false);
@@ -321,12 +415,14 @@ export function Suppliers() {
   const [suppliers, setSuppliers] = useState([]);
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [supplierSearch, setSupplierSearch] = useState(initialTab === 'suppliers' ? initialSearch : '');
+  const [supplierSort, setSupplierSort] = useState('latest');
   const [supplierPagination, setSupplierPagination] = useState({
     page: 1,
-    limit: 50,
-    total: 0,
+    limit: 100,
+total: 0,
     totalPages: 1,
   });
+  const lastFetchedSupplierQueryRef = useRef('');
 
   // Sync when searchParams change from header navigation
   useEffect(() => {
@@ -354,6 +450,7 @@ export function Suppliers() {
   const [sPhone, setSPhone] = useState('');
   const [sAddress, setSAddress] = useState('');
   const [sNotes, setSNotes] = useState('');
+  const [sCreatedAt, setSCreatedAt] = useState(() => getCairoDateString());
 
   // Supplier Statement Modal
   const [showStatementModal, setShowStatementModal] = useState(false);
@@ -470,38 +567,59 @@ export function Suppliers() {
   }, [isAdmin, inventoryBranchFilter, activeBranchId, productSearch, selectedCategory, stockStatusFilter, sortOrder, supplierFilter, inventoryPagination.page, inventoryPagination.limit]);
 
   // Load Suppliers
-  const fetchSuppliers = useCallback(async () => {
+  const fetchSuppliers = useCallback(async (overrides) => {
     try {
       setLoadingSuppliers(true);
-      const query = new URLSearchParams();
-      if (supplierSearch.trim()) query.append('search', supplierSearch.trim());
+      const isPlainObj = overrides && typeof overrides === 'object' && !('nativeEvent' in overrides) && !('preventDefault' in overrides);
+      const opts = isPlainObj ? overrides : {};
+      const activeSearch = opts.search !== undefined ? opts.search : supplierSearch;
+      const activeSort = opts.sort !== undefined ? opts.sort : supplierSort;
+      const activePage = opts.page !== undefined ? opts.page : supplierPagination.page;
+      const activeLimit = opts.limit !== undefined ? opts.limit : supplierPagination.limit;
 
-      if (supplierPagination.limit === 'all') {
+      const query = new URLSearchParams();
+      if (activeSearch && activeSearch.trim()) query.append('search', activeSearch.trim());
+      if (activeSort) query.append('sort', activeSort);
+
+      if (activeLimit === 'all') {
         query.append('all', 'true');
       } else {
-        query.append('page', supplierPagination.page.toString());
-        query.append('limit', supplierPagination.limit.toString());
+        query.append('page', activePage.toString());
+        query.append('limit', activeLimit.toString());
       }
 
-      const data = await api.get(`/suppliers?${query.toString()}`);
+      const queryString = query.toString();
+      if (!opts.force && queryString === lastFetchedSupplierQueryRef.current) {
+        setLoadingSuppliers(false);
+        return;
+      }
+      lastFetchedSupplierQueryRef.current = queryString;
+
+      const data = await api.get(`/suppliers?${queryString}`);
       const list = Array.isArray(data) ? data : (data?.suppliers || data?.data || data?.items || []);
       setSuppliers(list);
 
       if (data?.pagination) {
         setSupplierPagination((prev) => ({
           ...prev,
+          page: activePage,
+          limit: activeLimit,
           total: data.pagination.total ?? prev.total,
           totalPages: data.pagination.totalPages || 1,
         }));
       } else if (typeof data?.total === 'number') {
         setSupplierPagination((prev) => ({
           ...prev,
+          page: activePage,
+          limit: activeLimit,
           total: data.total,
-          totalPages: Math.max(1, Math.ceil(data.total / (prev.limit === 'all' ? data.total || 1 : prev.limit))),
+          totalPages: Math.max(1, Math.ceil(data.total / (activeLimit === 'all' ? data.total || 1 : activeLimit))),
         }));
       } else {
         setSupplierPagination((prev) => ({
           ...prev,
+          page: activePage,
+          limit: activeLimit,
           total: list.length,
           totalPages: 1,
         }));
@@ -511,7 +629,7 @@ export function Suppliers() {
     } finally {
       setLoadingSuppliers(false);
     }
-  }, [supplierSearch, supplierPagination.page, supplierPagination.limit]);
+  }, [supplierSearch, supplierSort, supplierPagination.page, supplierPagination.limit]);
 
   // Load Inter-branch transfer requests
   const fetchRequests = useCallback(async () => {
@@ -526,22 +644,56 @@ export function Suppliers() {
     }
   }, []);
 
+  // Load Incoming Shipments pending confirmation
+  const fetchIncomingShipments = useCallback(async () => {
+    try {
+      setLoadingShipments(true);
+      const branchParam = activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : '';
+      const data = await api.get(`/inventory/transfers/incoming${branchParam}`).catch(() => []);
+      setIncomingShipments(Array.isArray(data) ? data : []);
+    } catch {
+      setIncomingShipments([]);
+    } finally {
+      setLoadingShipments(false);
+    }
+  }, [activeBranchId]);
+
+  // Handle Receive Shipment
+  const handleReceiveShipment = async (transferId) => {
+    try {
+      setReceivingTransferId(transferId);
+      await api.post(`/inventory/transfers/${transferId}/receive`);
+      toast.success('تم تأكيد استلام الشحنة وإضافتها لمخزون ومقاسات الفرع بنجاح! 📦✅');
+      fetchIncomingShipments();
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.message || 'فشل تأكيد استلام الشحنة');
+    } finally {
+      setReceivingTransferId(null);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'inventory') {
       const timer = setTimeout(() => {
         fetchProducts();
         fetchRequests();
+        fetchIncomingShipments();
       }, 200);
       return () => clearTimeout(timer);
     } else {
-      const timer = setTimeout(fetchSuppliers, 200);
+      const timer = setTimeout(() => {
+        lastFetchedSupplierQueryRef.current = '';
+        fetchSuppliers({ force: true });
+      }, 200);
       return () => clearTimeout(timer);
     }
-  }, [activeTab, fetchProducts, fetchSuppliers, fetchRequests]);
+  }, [activeTab, fetchProducts, fetchSuppliers, fetchRequests, fetchIncomingShipments]);
 
+  // Ensure suppliers list is loaded once on initial mount for dropdowns across tabs
   useEffect(() => {
     fetchSuppliers();
-  }, [fetchSuppliers]);
+  }, []);
 
   // Reset pagination when branch changes
   useEffect(() => {
@@ -565,14 +717,17 @@ export function Suppliers() {
   const handleSupplierPageChange = (newPage) => {
     const pageNum = Math.max(1, Math.min(newPage, supplierPagination.totalPages));
     setSupplierPagination((prev) => ({ ...prev, page: pageNum }));
+    fetchSuppliers({ page: pageNum, force: true });
   };
 
   const handleSupplierLimitChange = (newLimit) => {
+    const lim = newLimit === 'all' ? 'all' : Number(newLimit);
     setSupplierPagination((prev) => ({
       ...prev,
-      limit: newLimit === 'all' ? 'all' : Number(newLimit),
+      limit: lim,
       page: 1,
     }));
+    fetchSuppliers({ page: 1, limit: lim, force: true });
   };
 
   // Open Create Product Modal
@@ -591,12 +746,7 @@ export function Suppliers() {
     setPStock('20');
     setPMinStock('5');
     setPImage('');
-    setProductSizes([
-      { id: 1, size_name: '48', color_name: '', stock_level: '5' },
-      { id: 2, size_name: '50', color_name: '', stock_level: '5' },
-      { id: 3, size_name: '52', color_name: '', stock_level: '5' },
-      { id: 4, size_name: '54', color_name: '', stock_level: '5' },
-    ]);
+    setProductSizes([]);
     setSelectedImageFile(null);
     setImagePreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -629,6 +779,7 @@ export function Suppliers() {
           size_name: s.size_name || '',
           color_name: s.color_name || p.color || '',
           stock_level: String(s.stock_level ?? 0),
+          barcode: s.barcode || '',
         }))
       );
     } else if (p.size_cut || p.size) {
@@ -680,6 +831,7 @@ export function Suppliers() {
         size_name: s.size_name.trim(),
         color_name: String(s.color_name || '').trim(),
         stock_level: Math.max(0, Number(s.stock_level) || 0),
+        barcode: String(s.barcode || '').trim() || generate12DigitBarcode(),
       }));
 
     if (cleanedSizes.length === 0) {
@@ -692,6 +844,23 @@ export function Suppliers() {
       return;
     }
 
+    // Prevent the same size + color from being entered twice: the backend keeps one row per
+    // (size, color) and a duplicated row would make the total disagree with the size rows.
+    const seenSizeColor = new Set();
+    const duplicateSizeColors = [];
+    for (const s of cleanedSizes) {
+      const key = `${s.size_name.trim().toLowerCase()}|${s.color_name.trim().toLowerCase()}`;
+      if (seenSizeColor.has(key)) {
+        duplicateSizeColors.push(`${s.size_name} / ${s.color_name}`);
+      } else {
+        seenSizeColor.add(key);
+      }
+    }
+    if (duplicateSizeColors.length > 0) {
+      toast.error(`المقاس مكرر بنفس اللون: ${[...new Set(duplicateSizeColors)].join('، ')} — اجمع الكمية في سطر واحد`);
+      return;
+    }
+
     const finalStock = cleanedSizes.reduce((sum, s) => sum + s.stock_level, 0);
     const finalSizeCut = cleanedSizes.map((s) => s.size_name).join(', ');
 
@@ -701,66 +870,88 @@ export function Suppliers() {
       const targetBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1;
       const finalColor = (pColor === '__OTHER__' ? pNewColor.trim() : pColor.trim()) || cleanedSizes[0].color_name;
 
-      if (selectedImageFile) {
-        // Method 2: Local Upload via Multipart FormData
-        const formData = new FormData();
-        formData.append('image', selectedImageFile);
-        formData.append('name', finalName);
-        formData.append('category', pCategory);
-        formData.append('color', finalColor);
-        if (pColor === '__OTHER__') formData.append('new_color', pNewColor.trim());
-        formData.append('size_cut', finalSizeCut);
-        formData.append('sizes', JSON.stringify(cleanedSizes));
-        formData.append('price', Number(pPrice) || 0);
-        formData.append('cost_price', Number(pCost) || 0);
-        formData.append('barcode', pBarcode.trim());
-        formData.append('stock', finalStock);
-        formData.append('stock_level', finalStock);
-        formData.append('min_stock_level', Number(pMinStock) || 5);
-        formData.append('supplier_id', selectedSupId);
-        formData.append('preferred_supplier_id', selectedSupId);
-        formData.append('branch_id', targetBranchId);
+        let createdProductResult = null;
+        if (selectedImageFile) {
+          // Method 2: Local Upload via Multipart FormData
+          const formData = new FormData();
+          formData.append('image', selectedImageFile);
+          formData.append('name', finalName);
+          formData.append('category', pCategory);
+          formData.append('color', finalColor);
+          if (pColor === '__OTHER__') formData.append('new_color', pNewColor.trim());
+          formData.append('size_cut', finalSizeCut);
+          formData.append('sizes', JSON.stringify(cleanedSizes));
+          formData.append('price', Number(pPrice) || 0);
+          formData.append('cost_price', Number(pCost) || 0);
+          formData.append('barcode', pBarcode.trim());
+          formData.append('stock', finalStock);
+          formData.append('stock_level', finalStock);
+          formData.append('min_stock_level', Number(pMinStock) || 5);
+          formData.append('supplier_id', selectedSupId);
+          formData.append('preferred_supplier_id', selectedSupId);
+          formData.append('branch_id', targetBranchId);
 
-        if (editingProduct) {
-          await api.put(`/inventory/${editingProduct.id}`, formData);
-          toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
+          if (editingProduct) {
+            await api.put(`/inventory/${editingProduct.id}`, formData);
+            toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
+          } else {
+            createdProductResult = await api.post('/inventory', formData);
+            toast.success('تمت إضافة المنتج ومقاساته للمخزون بنجاح! 📦');
+          }
         } else {
-          await api.post('/inventory', formData);
-          toast.success('تمت إضافة المنتج ومقاساته للمخزون بنجاح! 📦');
-        }
-      } else {
-        // Method 1 / URL or Text payload
-        const payload = {
-          name: finalName,
-          category: pCategory,
-          color: finalColor,
-          new_color: pColor === '__OTHER__' ? pNewColor.trim() : '',
-          size_cut: finalSizeCut,
-          sizes: cleanedSizes,
-          price: Number(pPrice) || 0,
-          cost_price: Number(pCost) || 0,
-          barcode: pBarcode.trim(),
-          stock: finalStock,
-          stock_level: finalStock,
-          min_stock_level: Number(pMinStock) || 5,
-          supplier_id: selectedSupId,
-          preferred_supplier_id: selectedSupId,
-          image_url: pImage.trim(),
-          branch_id: targetBranchId,
-        };
+          // Method 1 / URL or Text payload
+          const payload = {
+            name: finalName,
+            category: pCategory,
+            color: finalColor,
+            new_color: pColor === '__OTHER__' ? pNewColor.trim() : '',
+            size_cut: finalSizeCut,
+            sizes: cleanedSizes,
+            price: Number(pPrice) || 0,
+            cost_price: Number(pCost) || 0,
+            barcode: pBarcode.trim(),
+            stock: finalStock,
+            stock_level: finalStock,
+            min_stock_level: Number(pMinStock) || 5,
+            supplier_id: selectedSupId,
+            preferred_supplier_id: selectedSupId,
+            image_url: pImage.trim(),
+            branch_id: targetBranchId,
+          };
 
-        if (editingProduct) {
-          await api.put(`/inventory/${editingProduct.id}`, payload);
-          toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
-        } else {
-          await api.post('/inventory', payload);
-          toast.success('تمت إضافة المنتج ومقاساته للمخزون بنجاح! 📦');
+          if (editingProduct) {
+            await api.put(`/inventory/${editingProduct.id}`, payload);
+            toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
+          } else {
+            createdProductResult = await api.post('/inventory', payload);
+            toast.success('تمت إضافة المنتج ومقاساته للمخزون بنجاح! 📦');
+          }
         }
-      }
 
-      setShowProductModal(false);
-      fetchProducts();
-      fetchDropdownOptions();
+        setShowProductModal(false);
+        fetchProducts();
+        fetchDropdownOptions();
+
+        if (!editingProduct) {
+          // Immediately show barcode print modal for the newly added product
+          const newlyAddedProduct = {
+            ...(createdProductResult || {}),
+            id: createdProductResult?.id || Date.now(),
+            name: createdProductResult?.name || finalName,
+            barcode: createdProductResult?.barcode || pBarcode.trim(),
+            price: createdProductResult?.price ?? (Number(pPrice) || 0),
+            color: createdProductResult?.color || finalColor,
+            sizes:
+              createdProductResult?.sizes && createdProductResult.sizes.length > 0
+                ? createdProductResult.sizes
+                : cleanedSizes,
+            size_cut: createdProductResult?.size_cut || finalSizeCut,
+            category: createdProductResult?.category || pCategory,
+          };
+          setSelectedProductForBarcode(newlyAddedProduct);
+          setIsBarcodeNewlyCreated(true);
+          setShowBarcodePrintModal(true);
+        }
     } catch (err) {
       toast.error(err.message || 'فشل حفظ المنتج');
     } finally {
@@ -780,34 +971,169 @@ export function Suppliers() {
     }
   };
 
+  // Load branch product details for transfer modal
+  const loadTransferDetails = useCallback(async (productId, branchId) => {
+    if (!productId || !branchId) return;
+    try {
+      setTransferLoadingDetails(true);
+      const data = await api.get(`/inventory/${productId}?branch_id=${branchId}`);
+      const branchStock = Number(data.branch_stock_level ?? data.stock_level ?? 0);
+      const sizes = Array.isArray(data.sizes) ? data.sizes : [];
+      setTransferBranchStock(branchStock);
+      setTransferSizes(sizes);
+      setTransferVariantQtys({});
+      if (sizes.length === 0) {
+        setTransferQty(branchStock > 0 ? '1' : '0');
+      }
+    } catch (err) {
+      console.error('Failed to load branch product details for transfer:', err);
+      toast.error('تعذر جلب تفاصيل رصيد ومقاسات الفرع المحدد');
+    } finally {
+      setTransferLoadingDetails(false);
+    }
+  }, [toast]);
+
   // Open Transfer Modal
   const openTransferModal = (p) => {
     setTransferProduct(p);
-    setTransferQty('1');
-    const otherBranches = branches.filter((b) => b.id.toString() !== activeBranchId?.toString());
+
+    let srcBranch = activeBranchId && activeBranchId !== 'all' ? activeBranchId.toString() : '';
+    if (!srcBranch && inventoryBranchFilter && inventoryBranchFilter !== 'all') {
+      srcBranch = inventoryBranchFilter.toString();
+    }
+    if (!srcBranch) {
+      const branchWithStock = p.branch_stocks?.find((bs) => Number(bs.stock_level) > 0);
+      srcBranch = branchWithStock ? branchWithStock.branch_id.toString() : branches[0]?.id?.toString() || '1';
+    }
+
+    setFromBranchId(srcBranch);
+
+    const otherBranches = branches.filter((b) => b.id.toString() !== srcBranch);
     if (otherBranches.length > 0) {
       setToBranchId(otherBranches[0].id.toString());
+    } else {
+      setToBranchId('');
     }
+
+    setTransferDirect(true);
+    setTransferVariantQtys({});
+    setTransferQty('1');
     setShowTransferModal(true);
+    loadTransferDetails(p.id, srcBranch);
   };
+
+  const handleSourceBranchChange = (newSrcId) => {
+    setFromBranchId(newSrcId);
+    if (toBranchId === newSrcId) {
+      const other = branches.find((b) => b.id.toString() !== newSrcId);
+      if (other) setToBranchId(other.id.toString());
+    }
+    if (transferProduct?.id) {
+      loadTransferDetails(transferProduct.id, newSrcId);
+    }
+  };
+
+  const handleVariantQtyChange = (key, val, maxAvailable) => {
+    const raw = Number(val);
+    const num = isNaN(raw) ? 0 : Math.max(0, Math.min(maxAvailable, raw));
+    setTransferVariantQtys((prev) => ({
+      ...prev,
+      [key]: num,
+    }));
+  };
+
+  const handleFillOneOfEach = () => {
+    const updated = {};
+    transferSizes.forEach((s, idx) => {
+      const maxAvail = Number(s.stock_level || 0);
+      if (maxAvail > 0) {
+        const key = s.id ? `id_${s.id}` : `${s.size_name}___${s.color_name || ''}___${idx}`;
+        updated[key] = 1;
+      }
+    });
+    setTransferVariantQtys(updated);
+  };
+
+  const handleTransferAllAvailable = () => {
+    const updated = {};
+    transferSizes.forEach((s, idx) => {
+      const maxAvail = Number(s.stock_level || 0);
+      if (maxAvail > 0) {
+        const key = s.id ? `id_${s.id}` : `${s.size_name}___${s.color_name || ''}___${idx}`;
+        updated[key] = maxAvail;
+      }
+    });
+    setTransferVariantQtys(updated);
+  };
+
+  const handleResetVariantQtys = () => {
+    setTransferVariantQtys({});
+  };
+
+  const totalTransferQty = useMemo(() => {
+    if (transferSizes.length > 0) {
+      return Object.values(transferVariantQtys).reduce((sum, q) => sum + (Number(q) || 0), 0);
+    }
+    return Number(transferQty) || 0;
+  }, [transferSizes, transferVariantQtys, transferQty]);
 
   // Submit Stock Transfer
   const handleTransferSubmit = async (e) => {
     e.preventDefault();
-    if (!transferProduct || !toBranchId) return;
+    if (!transferProduct || !fromBranchId || !toBranchId) {
+      toast.error('الرجاء تحديد المنتج، الفرع المصدر، والفرع الوجهة');
+      return;
+    }
+
+    if (fromBranchId === toBranchId) {
+      toast.error('لا يمكن التحويل لنفس الفرع');
+      return;
+    }
+
+    if (totalTransferQty <= 0) {
+      toast.error('الرجاء تحديد كمية صالحة للتحويل (أكبر من صفر)');
+      return;
+    }
+
+    if (totalTransferQty > transferBranchStock) {
+      toast.error(`عفواً، إجمالي الكمية المحولة (${totalTransferQty}) يتجاوز الرصيد المتوفر في الفرع المصدر (${transferBranchStock})`);
+      return;
+    }
 
     setTransferSubmitting(true);
     try {
-      await api.post('/inventory/transfer', {
+      const payload = {
         inventory_id: transferProduct.id,
-        from_branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
+        from_branch_id: Number(fromBranchId),
         to_branch_id: Number(toBranchId),
-        quantity: Number(transferQty),
-      });
+        quantity: totalTransferQty,
+        direct_transfer: transferDirect,
+      };
 
-      toast.success('تم تحويل كمية المخزون للفرع الآخر بنجاح! 🚚');
+      if (transferSizes.length > 0) {
+        payload.sizes = transferSizes
+          .map((s, idx) => {
+            const key = s.id ? `id_${s.id}` : `${s.size_name}___${s.color_name || ''}___${idx}`;
+            const qty = Number(transferVariantQtys[key] || 0);
+            return {
+              id: s.id,
+              size_name: s.size_name,
+              color_name: s.color_name,
+              size_id: s.size_id,
+              barcode: s.barcode,
+              quantity: qty,
+            };
+          })
+          .filter((s) => s.quantity > 0);
+      }
+
+      const res = await api.post('/inventory/transfer', payload);
+
+      toast.success(res?.message || 'تم تحويل كمية المخزون للفرع الآخر بنجاح! 🚚');
       setShowTransferModal(false);
       fetchProducts();
+      fetchRequests();
+      fetchIncomingShipments();
     } catch (err) {
       toast.error(err.message || 'فشل تحويل المخزون');
     } finally {
@@ -886,10 +1212,26 @@ export function Suppliers() {
         branch_id: activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1,
       };
 
-      await api.post('/inventory', payload);
+      const createdDup = await api.post('/inventory', payload);
       toast.success('تم تكرار المنتج بنجاح! 📋');
       setShowDuplicateModal(false);
       fetchProducts();
+
+      // Show barcode print modal for the duplicated product
+      const newlyDuplicatedProduct = {
+        ...(createdDup || {}),
+        id: createdDup?.id || Date.now(),
+        name: createdDup?.name || payload.name,
+        barcode: createdDup?.barcode || payload.barcode,
+        price: createdDup?.price ?? payload.price,
+        color: createdDup?.color || payload.color,
+        size_cut: createdDup?.size_cut || payload.size_cut,
+        size: createdDup?.size_cut || payload.size_cut,
+        category: createdDup?.category || payload.category,
+      };
+      setSelectedProductForBarcode(newlyDuplicatedProduct);
+      setIsBarcodeNewlyCreated(true);
+      setShowBarcodePrintModal(true);
     } catch (err) {
       toast.error(err.message || 'فشل تكرار المنتج');
     } finally {
@@ -948,15 +1290,16 @@ export function Suppliers() {
         toast.info('جاري تجهيز سجل الموردين للتصدير... 📊');
         const query = new URLSearchParams();
         if (supplierSearch.trim()) query.append('search', supplierSearch.trim());
+        if (supplierSort) query.append('sort', supplierSort);
         query.append('all', 'true');
 
         const res = await api.get(`/suppliers?${query.toString()}`);
         const exportSuppliers = Array.isArray(res) ? res : res?.suppliers || res?.data || res?.items || suppliers;
 
         filename = `suppliers_${new Date().toISOString().split('T')[0]}.csv`;
-        csvContent += 'الرقم,اسم المورد,الشركة,رقم الهاتف,العنوان,إجمالي المشتريات,الرصيد المستحق\n';
+        csvContent += 'الرقم,اسم المورد,الشركة,رقم الهاتف,العنوان,إجمالي المشتريات,الرصيد المستحق,تاريخ الإضافة\n';
         exportSuppliers.forEach((s) => {
-          csvContent += `"${s.id}","${s.name || ''}","${s.company || ''}","${s.phone || ''}","${s.address || ''}","${s.total_purchases || 0}","${s.balance || 0}"\n`;
+          csvContent += `"${s.id}","${s.name || ''}","${s.company_name || s.company || ''}","${s.phone || ''}","${s.address || ''}","${s.total_purchases || 0}","${s.balance || 0}","${s.created_at ? formatSupplierDate(s.created_at) : ''}"\n`;
         });
       }
 
@@ -983,6 +1326,7 @@ export function Suppliers() {
     setSPhone('');
     setSAddress('');
     setSNotes('');
+    setSCreatedAt(getCairoDateString());
     setShowSupplierModal(true);
   };
 
@@ -994,6 +1338,7 @@ export function Suppliers() {
     setSPhone(s.phone || '');
     setSAddress(s.address || '');
     setSNotes(s.notes || '');
+    setSCreatedAt(s.created_at ? getCairoDateString(s.created_at) : getCairoDateString());
     setShowSupplierModal(true);
   };
 
@@ -1019,13 +1364,20 @@ export function Suppliers() {
       if (editingSupplier) {
         await api.put(`/suppliers/${editingSupplier.id}`, payload);
         toast.success('تم تحديث بيانات المورد بنجاح! 🏭');
+        setShowSupplierModal(false);
+        lastFetchedSupplierQueryRef.current = '';
+        fetchSuppliers({ force: true });
       } else {
+        payload.created_at = sCreatedAt || getCairoDateString();
         await api.post('/suppliers', payload);
         toast.success('تمت إضافة المورد بنجاح! 🏭');
+        setShowSupplierModal(false);
+        setSupplierSearch('');
+        setSupplierSort('latest');
+        setSupplierPagination((prev) => ({ ...prev, page: 1 }));
+        lastFetchedSupplierQueryRef.current = '';
+        fetchSuppliers({ search: '', sort: 'latest', page: 1, force: true });
       }
-
-      setShowSupplierModal(false);
-      fetchSuppliers();
     } catch (err) {
       toast.error(err.message || 'فشل حفظ بيانات المورد');
     } finally {
@@ -1039,7 +1391,8 @@ export function Suppliers() {
     try {
       await api.delete(`/suppliers/${id}`);
       toast.success('تم حذف المورد بنجاح');
-      fetchSuppliers();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
     } catch (err) {
       toast.error(err.message || 'فشل حذف المورد');
     }
@@ -1082,7 +1435,8 @@ export function Suppliers() {
       setShowPaymentModal(false);
       setPaymentAmount('');
       setPaymentNotes('');
-      fetchSuppliers();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
       if (showStatementModal) {
         openStatement(selectedSupplier);
       }
@@ -1123,7 +1477,8 @@ export function Suppliers() {
       setReturnQuantity('1');
       setReturnUnitPrice('');
       setReturnNotes('');
-      fetchSuppliers();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
     } catch (err) {
       toast.error(err.message || 'فشل تسجيل مرتجع المشتريات');
     } finally {
@@ -1301,6 +1656,83 @@ export function Suppliers() {
             </div>
           )}
 
+          {/* Incoming Shipments Pending Receiving Banner */}
+          {incomingShipments.length > 0 && (
+            <div className="bg-indigo-50 border-2 border-indigo-300 rounded-3xl p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-indigo-900 font-black">
+                  <Package className="w-5 h-5 text-indigo-600" />
+                  <span>شحنات بضاعة واردة لفرعك في الطريق ({incomingShipments.length}) 🚚</span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-indigo-100/70 font-black text-indigo-900">
+                    <tr>
+                      <th className="p-2.5">رقم الشحنة</th>
+                      <th className="p-2.5">الصنف</th>
+                      <th className="p-2.5">المرسل من فرع</th>
+                      <th className="p-2.5">الكمية</th>
+                      <th className="p-2.5">تفاصيل المقاسات</th>
+                      <th className="p-2.5 text-center">الإجراء</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-indigo-200/50 font-bold">
+                    {incomingShipments.map((shipment) => {
+                      let parsedSizes = [];
+                      if (shipment.sizes_data) {
+                        try {
+                          parsedSizes = typeof shipment.sizes_data === 'string' ? JSON.parse(shipment.sizes_data) : shipment.sizes_data;
+                        } catch {}
+                      }
+                      return (
+                        <tr key={shipment.id} className="hover:bg-indigo-100/40 transition-colors">
+                          <td className="p-2.5 font-mono">#{shipment.id}</td>
+                          <td className="p-2.5 font-black text-indigo-950">
+                            {shipment.inventory_name || shipment.name}
+                            {shipment.inventory_barcode && (
+                              <span className="text-[10px] text-slate-400 font-mono block">
+                                #{shipment.inventory_barcode}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2.5">{shipment.from_branch_name}</td>
+                          <td className="p-2.5 font-mono text-sm font-black text-indigo-700">
+                            {shipment.quantity} قطعة
+                          </td>
+                          <td className="p-2.5 text-slate-600">
+                            {parsedSizes.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {parsedSizes.map((sz, sidx) => (
+                                  <span key={sidx} className="px-1.5 py-0.5 rounded bg-white border border-indigo-200 text-[10px] font-bold">
+                                    {sz.color_name ? `${sz.color_name} ` : ''}{sz.size_name}: <strong>{sz.quantity}</strong>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span>—</span>
+                            )}
+                          </td>
+                          <td className="p-2.5 text-center">
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              isLoading={receivingTransferId === shipment.id}
+                              onClick={() => handleReceiveShipment(shipment.id)}
+                              className="!bg-emerald-600 hover:!bg-emerald-700 font-black text-xs py-1 px-3 shadow-xs"
+                            >
+                              تأكيد الاستلام ✅
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <Card>
             <CardHeader
               title="قائمة أصناف المخزون"
@@ -1445,7 +1877,7 @@ export function Suppliers() {
                     >
                       <option value="all">كل الفروع والمخازن (الإجمالي)</option>
                       {branches.map((b) => (
-                        <option key={b.id} value={b.id}>
+                        <option key={b.id} value={b.id.toString()}>
                           {b.name}
                         </option>
                       ))}
@@ -1554,15 +1986,15 @@ export function Suppliers() {
                         </button>
                       </span>
                     )}
-                    {inventoryBranchFilter !== 'all' && (
+                    {inventoryBranchFilter !== defaultBranch && (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
                         <span>
-                          الفرع: {branches.find((b) => String(b.id) === String(inventoryBranchFilter))?.name || inventoryBranchFilter}
+                          الفرع: {inventoryBranchFilter === 'all' ? 'كل الفروع والمخازن' : branches.find((b) => String(b.id) === String(inventoryBranchFilter))?.name || inventoryBranchFilter}
                         </span>
                         <button
                           type="button"
                           onClick={() => {
-                            setInventoryBranchFilter('all');
+                            setInventoryBranchFilter(defaultBranch);
                             setInventoryPagination((prev) => ({ ...prev, page: 1 }));
                           }}
                           className="hover:text-emerald-900 cursor-pointer"
@@ -1828,6 +2260,19 @@ export function Suppliers() {
                                 </button>
                               )}
 
+                              {/* Print Barcode Button */}
+                              <button
+                                onClick={() => {
+                                  setSelectedProductForBarcode(p);
+                                  setIsBarcodeNewlyCreated(false);
+                                  setShowBarcodePrintModal(true);
+                                }}
+                                className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                title="طباعة باركود المنتج"
+                              >
+                                <Barcode className="w-4 h-4" />
+                              </button>
+
                               {/* Edit Button */}
                               <button
                                 onClick={() => openEditProduct(p)}
@@ -1921,9 +2366,25 @@ export function Suppliers() {
                       السابق
                     </Button>
 
-                    <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800">
-                      صفحة {inventoryPagination.page} من {inventoryPagination.totalPages}
-                    </span>
+                    <div className="flex items-center gap-1 mx-1">
+                      {getPaginationItems(inventoryPagination.page, inventoryPagination.totalPages).map((p, idx) => (
+                        p === '...' ? (
+                          <span key={`inv-ellipsis-${idx}`} className="px-1 text-xs text-[#777266] font-bold">...</span>
+                        ) : (
+                          <button
+                            key={`inv-p-${p}`}
+                            onClick={() => handleInventoryPageChange(p)}
+                            className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-black transition-colors ${
+                              inventoryPagination.page === p
+                                ? 'bg-[#151515] text-white shadow-sm'
+                                : 'bg-white border border-[#E6DECD] text-[#565147] hover:bg-[#FAF6ED] hover:text-[#151515]'
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        )
+                      ))}
+                    </div>
 
                     <Button
                       variant="outline"
@@ -1940,99 +2401,6 @@ export function Suppliers() {
                       size="sm"
                       disabled={inventoryPagination.page >= inventoryPagination.totalPages}
                       onClick={() => handleInventoryPageChange(inventoryPagination.totalPages)}
-                      title="الصفحة الأخيرة"
-                      className="!px-2"
-                    >
-                      <ChevronsLeft className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Suppliers Pagination Bar */}
-            {supplierPagination.total > 0 && (
-              <div className="p-4 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/50 rounded-b-2xl">
-                {/* Info summary & Page size */}
-                <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-600">
-                  <span>
-                    عرض{' '}
-                    <span className="text-indigo-600 font-black">
-                      {supplierPagination.limit === 'all'
-                        ? `1 - ${supplierPagination.total}`
-                        : `${(supplierPagination.page - 1) * supplierPagination.limit + 1} - ${Math.min(
-                            supplierPagination.page * supplierPagination.limit,
-                            supplierPagination.total
-                          )}`}
-                    </span>{' '}
-                    من إجمالي{' '}
-                    <span className="text-slate-900 font-black">
-                      {Number(supplierPagination.total).toLocaleString()}
-                    </span>{' '}
-                    مورد
-                  </span>
-
-                  <div className="flex items-center gap-1.5 mr-2">
-                    <span className="text-slate-400">لكل صفحة:</span>
-                    {[30, 50, 100, 200, 'الكل'].map((lim) => (
-                      <button
-                        key={lim}
-                        onClick={() => handleSupplierLimitChange(lim)}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
-                          supplierPagination.limit === lim || (lim === 'الكل' && supplierPagination.limit === 'all')
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
-                        }`}
-                      >
-                        {lim}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Page Navigation Controls */}
-                {supplierPagination.totalPages > 1 && supplierPagination.limit !== 'all' && (
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={supplierPagination.page <= 1}
-                      onClick={() => handleSupplierPageChange(1)}
-                      title="الصفحة الأولى"
-                      className="!px-2"
-                    >
-                      <ChevronsRight className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={supplierPagination.page <= 1}
-                      onClick={() => handleSupplierPageChange(supplierPagination.page - 1)}
-                      className="!text-xs !py-1"
-                    >
-                      <ChevronRight className="w-3.5 h-3.5 ml-1" />
-                      السابق
-                    </Button>
-
-                    <span className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800">
-                      صفحة {supplierPagination.page} من {supplierPagination.totalPages}
-                    </span>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={supplierPagination.page >= supplierPagination.totalPages}
-                      onClick={() => handleSupplierPageChange(supplierPagination.page + 1)}
-                      className="!text-xs !py-1"
-                    >
-                      التالي
-                      <ChevronLeft className="w-3.5 h-3.5 mr-1" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={supplierPagination.page >= supplierPagination.totalPages}
-                      onClick={() => handleSupplierPageChange(supplierPagination.totalPages)}
                       title="الصفحة الأخيرة"
                       className="!px-2"
                     >
@@ -2071,7 +2439,28 @@ export function Suppliers() {
                     className="w-full bg-[#FFFDF9] border border-[#E6DECD] rounded-xl pr-9 pl-3 py-2 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-colors"
                   />
                 </div>
-                <Button variant="outline" onClick={fetchSuppliers} icon={RotateCcw}>
+                <div className="relative min-w-[190px]">
+                  <select
+                    value={supplierSort}
+                    onChange={(e) => {
+                      const newSort = e.target.value;
+                      setSupplierSort(newSort);
+                      setSupplierPagination((prev) => ({ ...prev, page: 1 }));
+                      fetchSuppliers({ sort: newSort, page: 1 });
+                    }}
+                    className="w-full h-[34px] pr-8 pl-7 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] outline-none focus:border-[#151515] transition-colors appearance-none cursor-pointer text-right shadow-2xs"
+                    aria-label="ترتيب الموردين"
+                  >
+                    <option value="latest">الأحدث أولاً (الافتراضي)</option>
+                    <option value="oldest">الأقدم أولاً</option>
+                    <option value="balance_desc">الأعلى رصيداً / مديونية</option>
+                    <option value="purchases_desc">الأكثر مشتريات</option>
+                    <option value="name_asc">الاسم (أ - ي)</option>
+                  </select>
+                  <ArrowUpDown className="w-3.5 h-3.5 text-[#777266] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="w-3.5 h-3.5 text-[#777266] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <Button variant="outline" onClick={() => { lastFetchedSupplierQueryRef.current = ''; fetchSuppliers({ force: true }); }} icon={RotateCcw}>
                   تحديث
                 </Button>
               </div>
@@ -2105,7 +2494,13 @@ export function Suppliers() {
                     <tr key={s.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                       <td className="py-3.5 pr-4">
                         <div className="font-bold text-[#24221F]">{s.name}</div>
-                        <div className="text-[10px] font-mono text-[#777266] font-bold">كود: #{s.code || s.id}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] font-mono text-[#777266] font-bold">كود: #{s.code || s.id}</span>
+                          <span className="text-[10px] text-[#777266] flex items-center gap-1 font-medium bg-[#FAF6ED] px-1.5 py-0.5 rounded border border-[#E6DECD]/60">
+                            <span>📅 تاريخ الإضافة:</span>
+                            <span className="font-mono font-bold text-[#24221F]">{formatSupplierDate(s.created_at)}</span>
+                          </span>
+                        </div>
                       </td>
                       <td className="py-3.5 text-[#565147] font-bold text-xs">{s.company_name || s.company || '-'}</td>
                       <td className="py-3.5 text-[#777266] font-mono text-xs" dir="ltr">
@@ -2181,6 +2576,115 @@ export function Suppliers() {
               </table>
             </div>
           )}
+
+          {/* Suppliers Pagination Bar */}
+          {supplierPagination.total > 0 && (
+            <div className="p-4 border-t border-[#E6DECD] flex flex-col md:flex-row items-center justify-between gap-3 bg-[#FFFDF9] rounded-b-2xl">
+              {/* Info summary & Page size */}
+              <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-[#777266]">
+                <span>
+                  عرض{' '}
+                  <span className="text-[#24221F] font-black">
+                    {supplierPagination.limit === 'all'
+                      ? `1 - ${supplierPagination.total}`
+                      : `${(supplierPagination.page - 1) * supplierPagination.limit + 1} - ${Math.min(
+                          supplierPagination.page * supplierPagination.limit,
+                          supplierPagination.total
+                        )}`}
+                  </span>{' '}
+                  من إجمالي{' '}
+                  <span className="text-[#24221F] font-black">
+                    {Number(supplierPagination.total).toLocaleString()}
+                  </span>{' '}
+                  مورد
+                </span>
+
+                <div className="flex items-center gap-1.5 mr-2">
+                  <span className="text-[#777266]">لكل صفحة:</span>
+                  {[30, 50, 100, 200, 'الكل'].map((lim) => (
+                    <button
+                      key={lim}
+                      onClick={() => handleSupplierLimitChange(lim)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                        supplierPagination.limit === lim || (lim === 'الكل' && supplierPagination.limit === 'all')
+                          ? 'bg-[#151515] text-white shadow-sm'
+                          : 'bg-[#FFFDF9] border border-[#E6DECD] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
+                      }`}
+                    >
+                      {lim}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Page Navigation Controls */}
+              {supplierPagination.totalPages > 1 && supplierPagination.limit !== 'all' && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={supplierPagination.page <= 1}
+                    onClick={() => handleSupplierPageChange(1)}
+                    title="الصفحة الأولى"
+                    className="!px-2"
+                  >
+                    <ChevronsRight className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={supplierPagination.page <= 1}
+                    onClick={() => handleSupplierPageChange(supplierPagination.page - 1)}
+                    className="!text-xs !py-1"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                    السابق
+                  </Button>
+
+                  <div className="flex items-center gap-1 mx-1">
+                    {getPaginationItems(supplierPagination.page, supplierPagination.totalPages).map((p, idx) => (
+                      p === '...' ? (
+                        <span key={`sup-ellipsis-${idx}`} className="px-1 text-xs text-[#777266] font-bold">...</span>
+                      ) : (
+                        <button
+                          key={`sup-p-${p}`}
+                          onClick={() => handleSupplierPageChange(p)}
+                          className={`min-w-[32px] h-8 px-2.5 rounded-lg text-xs font-black transition-colors ${
+                            supplierPagination.page === p
+                              ? 'bg-[#151515] text-white shadow-sm'
+                              : 'bg-white border border-[#E6DECD] text-[#565147] hover:bg-[#FAF6ED] hover:text-[#151515]'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      )
+                    ))}
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={supplierPagination.page >= supplierPagination.totalPages}
+                    onClick={() => handleSupplierPageChange(supplierPagination.page + 1)}
+                    className="!text-xs !py-1"
+                  >
+                    التالي
+                    <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={supplierPagination.page >= supplierPagination.totalPages}
+                    onClick={() => handleSupplierPageChange(supplierPagination.totalPages)}
+                    title="الصفحة الأخيرة"
+                    className="!px-2"
+                  >
+                    <ChevronsLeft className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
@@ -2189,7 +2693,7 @@ export function Suppliers() {
         isOpen={showProductModal}
         onClose={() => setShowProductModal(false)}
         title={editingProduct ? 'تعديل بيانات المنتج ✏️' : 'إضافة منتج جديد للمخزون 📦'}
-        maxWidth="max-w-2xl"
+        maxWidth="max-w-4xl"
       >
         <form onSubmit={handleSaveProduct} className="space-y-4">
           {editingProduct && (
@@ -2360,185 +2864,14 @@ export function Suppliers() {
               placeholder="5"
             />
 
-            {/* MULTI-SIZE INVENTORY MANAGER (FULL WIDTH) */}
-            <div className="sm:col-span-2 bg-gradient-to-br from-slate-50 to-indigo-50/40 p-4 rounded-2xl border-2 border-indigo-100 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100/80 pb-2.5">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-sm">
-                    📐
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-black text-slate-900">
-                      مقاسات المنتج ورصيد كل مقاس بالمخزن
-                    </h4>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      لكل مقاس لون وكمية مستقلان، بينما يظل الباركود واحدًا للمنتج كله
-                    </p>
-                  </div>
-                </div>
-
-                {/* Live Total Stock Badge */}
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold text-slate-600">إجمالي المخزون:</span>
-                  <span className="px-3 py-1 rounded-xl bg-indigo-600 text-white font-black text-xs shadow-sm">
-                    {calculatedTotalStock} قطعة
-                  </span>
-                </div>
-              </div>
-
-              {/* Quick Size Presets */}
-              <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                <span className="text-[11px] font-bold text-slate-500 ml-1">قوالب مقاسات سريعة:</span>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('suits_men')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  بدل رجالي (46-58)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('suits_slim')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  بدل سليم (48-54)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('standard')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  قمصان/كاجوال (S-3XL)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('shoes')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  أحذية (40-45)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('men_pants')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  بنطلونات رجالي (30-40)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('kids_boys')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  أطفال أولادي (2-12)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('kids_girls')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  أطفال بناتي (2-12)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applySizesPreset('single')}
-                  className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 text-slate-700 font-bold text-[11px] border border-slate-200 transition-colors shadow-2xs cursor-pointer"
-                >
-                  مقاس موحد (حر)
-                </button>
-              </div>
-
-              {/* Datalist for fast auto-complete of size names */}
-              <datalist id="sizes-autocomplete-list">
-                {sizesList.map((s, idx) => (
-                  <option key={idx} value={s} />
-                ))}
-              </datalist>
-              <datalist id="colors-autocomplete-list">
-                {colorsList.map((color, idx) => (
-                  <option key={idx} value={color} />
-                ))}
-              </datalist>
-
-              {/* Size Rows Table */}
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
-                <table className="w-full text-right text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
-                    <tr>
-                      <th className="py-2 px-3 w-[35%]">المقاس (Size)</th>
-                      <th className="py-2 px-3 w-[35%]">اللون</th>
-                      <th className="py-2 px-3 w-[25%]">الكمية بالمخزن (قطعة)</th>
-                      <th className="py-2 px-3 text-center w-16">إجراء</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {productSizes.map((row) => (
-                      <tr key={row.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            list="sizes-autocomplete-list"
-                            value={row.size_name}
-                            onChange={(e) => updateSizeRow(row.id, 'size_name', e.target.value)}
-                            placeholder="مثال: 48، 50، L..."
-                            className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition-all"
-                            required
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            list="colors-autocomplete-list"
-                            value={row.color_name || ''}
-                            onChange={(e) => updateSizeRow(row.id, 'color_name', e.target.value)}
-                            placeholder="مثال: كحلي، أسود..."
-                            className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition-all"
-                            required
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.stock_level}
-                            onChange={(e) => updateSizeRow(row.id, 'stock_level', e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition-all"
-                            required
-                          />
-                        </td>
-                        <td className="p-2 text-center">
-                          {productSizes.length > 1 ? (
-                            <button
-                              type="button"
-                              onClick={() => removeSizeRow(row.id)}
-                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                              title="حذف هذا المقاس"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          ) : (
-                            <span className="text-slate-300">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Add Size Row Button */}
-              <div className="flex items-center justify-between pt-1">
-                <button
-                  type="button"
-                  onClick={() => addSizeRow('', '5')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-50 border border-indigo-200 text-indigo-700 font-black text-xs transition-colors shadow-2xs cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>إضافة مقاس آخر للبدلة</span>
-                </button>
-                <span className="text-[11px] text-slate-400 font-medium">
-                  {productSizes.length} مقاسات محددة
-                </span>
-              </div>
+            {/* FAST MATRIX VARIANT GENERATOR (COLORS X SIZES X BARCODES) */}
+            <div className="sm:col-span-2">
+              <MatrixVariantGenerator
+                productSizes={productSizes}
+                setProductSizes={setProductSizes}
+                existingColors={colorsList}
+                existingSizes={sizesList}
+              />
             </div>
           </div>
 
@@ -2795,46 +3128,336 @@ export function Suppliers() {
         isOpen={showTransferModal}
         onClose={() => setShowTransferModal(false)}
         title="تحويل مخزون لفرع آخر 🚚"
-        subtitle={`الصنف: ${transferProduct?.name}`}
-        maxWidth="max-w-md"
+        subtitle={transferProduct ? `الصنف: ${transferProduct.name} ${transferProduct.barcode ? `• باركود: ${transferProduct.barcode}` : ''}` : ''}
+        maxWidth="max-w-3xl"
       >
-        <form onSubmit={handleTransferSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700">الفرع المحول إليه *</label>
-            <select
-              value={toBranchId}
-              onChange={(e) => setToBranchId(e.target.value)}
-              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
-              required
-            >
-              {branches
-                .filter((b) => b.id.toString() !== activeBranchId?.toString())
-                .map((b) => (
-                  <option key={b.id} value={b.id.toString()}>
-                    {b.name}
-                  </option>
-                ))}
-            </select>
+        <form onSubmit={handleTransferSubmit} className="space-y-4 text-slate-800">
+          {/* PRODUCT SUMMARY CARD */}
+          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              {transferProduct?.image_url ? (
+                <img
+                  src={transferProduct.image_url}
+                  alt={transferProduct.name}
+                  className="w-12 h-12 rounded-xl object-cover border border-slate-200 shadow-xs"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 font-black">
+                  <Package className="w-6 h-6" />
+                </div>
+              )}
+              <div>
+                <h4 className="font-black text-sm text-slate-900">{transferProduct?.name}</h4>
+                <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500 font-mono">
+                  {transferProduct?.barcode && <span>#{transferProduct.barcode}</span>}
+                  {transferProduct?.category && <span className="text-slate-400">• {transferProduct.category}</span>}
+                </div>
+              </div>
+            </div>
+
+            {/* Branch Stock Badge */}
+            <div className="text-left bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-500 block">المتوفر في الفرع المصدر</span>
+              <span className={`text-base font-black font-mono ${transferBranchStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {transferLoadingDetails ? '...' : `${transferBranchStock} قطعة`}
+              </span>
+            </div>
           </div>
 
-          <Input
-            label="الكمية المحولة *"
-            type="number"
-            min="1"
-            value={transferQty}
-            onChange={(e) => setTransferQty(e.target.value)}
-            required
-          />
+          {/* BRANCH SELECTION: FROM & TO */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/40 p-3.5 rounded-2xl border border-indigo-100/80">
+            {/* FROM BRANCH */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                الفرع المحول منه (المصدر) *
+              </label>
+              {isAdmin ? (
+                <select
+                  value={fromBranchId}
+                  onChange={(e) => handleSourceBranchChange(e.target.value)}
+                  className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 shadow-2xs"
+                  required
+                >
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id.toString()}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-black text-slate-700 shadow-2xs">
+                  {branches.find((b) => b.id.toString() === fromBranchId)?.name || `فرع #${fromBranchId}`}
+                </div>
+              )}
+            </div>
 
+            {/* TO BRANCH */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                الفرع المحول إليه (الوجهة) *
+              </label>
+              <select
+                value={toBranchId}
+                onChange={(e) => setToBranchId(e.target.value)}
+                className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 shadow-2xs"
+                required
+              >
+                {branches
+                  .filter((b) => b.id.toString() !== fromBranchId)
+                  .map((b) => (
+                    <option key={b.id} value={b.id.toString()}>
+                      {b.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+
+          {/* STOCK STATUS / ALERT */}
+          {transferLoadingDetails ? (
+            <div className="text-center py-6 text-xs font-bold text-slate-400">
+              جاري فحص كميات ومقاسات الصنف في الفرع... ⏳
+            </div>
+          ) : transferBranchStock <= 0 ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-center space-y-1">
+              <p className="text-xs font-black text-rose-700">⚠️ رصيد هذا الصنف منعدم (0 قطعة) في الفرع المصدر المحدد!</p>
+              <p className="text-[11px] text-rose-600">لا يمكن إجراء عملية نقل دون وجود مخزون متوفر في هذا الفرع.</p>
+            </div>
+          ) : (
+            <>
+              {/* IF PRODUCT HAS SIZES/COLORS VARIANTS */}
+              {transferSizes && transferSizes.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                    <div>
+                      <span className="text-xs font-black text-slate-800">
+                        تحديد الكميات حسب المقاس واللون 🏷️
+                      </span>
+                      <span className="text-[11px] text-slate-400 font-bold block">
+                        حدد عدد القطع المراد نقلها من كل مقاس متوفر
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleFillOneOfEach}
+                        className="px-2.5 py-1 text-[11px] font-black bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors"
+                      >
+                        +1 من كل متوفر
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTransferAllAvailable}
+                        className="px-2.5 py-1 text-[11px] font-black bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
+                      >
+                        نقل كل المتاح
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetVariantQtys}
+                        className="px-2 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors"
+                      >
+                        تصفير
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* SIZES BREAKDOWN TABLE / CARDS */}
+                  <div className="max-h-60 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 bg-white shadow-2xs">
+                    {transferSizes.map((s, idx) => {
+                      const key = s.id ? `id_${s.id}` : `${s.size_name}___${s.color_name || ''}___${idx}`;
+                      const avail = Number(s.stock_level || 0);
+                      const currentVal = transferVariantQtys[key] ?? 0;
+                      const isDepleted = avail <= 0;
+
+                      return (
+                        <div
+                          key={key || idx}
+                          className={`flex items-center justify-between p-2.5 transition-colors ${
+                            isDepleted
+                              ? 'bg-slate-50/60 opacity-60'
+                              : currentVal > 0
+                              ? 'bg-indigo-50/30'
+                              : 'hover:bg-slate-50/50'
+                          }`}
+                        >
+                          {/* Variant Details */}
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {s.color_name && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black bg-slate-100 text-slate-700 border border-slate-200">
+                                <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                                {s.color_name}
+                              </span>
+                            )}
+                            <span className="px-2 py-0.5 rounded-md text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              {s.size_name}
+                            </span>
+                            {s.barcode && (
+                              <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
+                                ({s.barcode})
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Available & Transfer Input */}
+                          <div className="flex items-center gap-3">
+                            <span className={`text-xs font-bold font-mono ${isDepleted ? 'text-rose-500' : 'text-slate-600'}`}>
+                              المتاح: <strong className={avail > 0 ? 'text-slate-900 font-black' : 'text-rose-600'}>{avail}</strong>
+                            </span>
+
+                            {/* Qty Input Control */}
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={isDepleted || currentVal <= 0}
+                                onClick={() => handleVariantQtyChange(key, currentVal - 1, avail)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min="0"
+                                max={avail}
+                                value={currentVal || ''}
+                                placeholder="0"
+                                disabled={isDepleted}
+                                onChange={(e) => handleVariantQtyChange(key, e.target.value, avail)}
+                                className="w-14 text-center bg-white border border-slate-300 rounded-lg py-1 text-xs font-black text-slate-800 outline-none focus:border-indigo-600 disabled:bg-slate-100 shadow-2xs font-mono"
+                              />
+                              <button
+                                type="button"
+                                disabled={isDepleted || currentVal >= avail}
+                                onClick={() => handleVariantQtyChange(key, currentVal + 1, avail)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isDepleted || currentVal === avail}
+                                onClick={() => handleVariantQtyChange(key, avail, avail)}
+                                className="px-1.5 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 rounded border border-indigo-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors ml-1"
+                              >
+                                الكل
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                /* SIMPLE PRODUCT (NO SIZES) */
+                <div className="space-y-3 bg-slate-50/50 p-3.5 rounded-2xl border border-slate-200/80">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-slate-700">الكمية المراد تحويلها *</label>
+                    <span className="text-xs font-bold text-slate-500">
+                      الرصيد المتاح: <strong className="text-emerald-700 font-black font-mono">{transferBranchStock} قطعة</strong>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min="1"
+                      max={transferBranchStock}
+                      value={transferQty}
+                      onChange={(e) => setTransferQty(e.target.value)}
+                      className="text-center font-mono font-black text-sm"
+                      required
+                    />
+                    <div className="flex items-center gap-1">
+                      {[1, 5, 10].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          disabled={transferBranchStock < num}
+                          onClick={() => setTransferQty(String(num))}
+                          className="px-2.5 py-2 text-xs font-bold bg-white hover:bg-slate-100 rounded-xl border border-slate-200 text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed shadow-2xs"
+                        >
+                          {num}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setTransferQty(String(transferBranchStock))}
+                        className="px-2.5 py-2 text-xs font-black bg-indigo-50 hover:bg-indigo-100 rounded-xl border border-indigo-200 text-indigo-700 shadow-2xs"
+                      >
+                        كل الكمية ({transferBranchStock})
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TRANSFER SUMMARY BAR */}
+              <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl p-3.5 flex items-center justify-between shadow-2xs">
+                <div>
+                  <span className="text-xs font-black text-indigo-950 block">ملخص عملية التحويل</span>
+                  <span className="text-[11px] text-slate-500 font-bold">
+                    سيتم خصمها من {branches.find((b) => b.id.toString() === fromBranchId)?.name} وإضافتها إلى {branches.find((b) => b.id.toString() === toBranchId)?.name}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-center">
+                    <span className="text-[10px] font-bold text-slate-500 block">إجمالي المحول</span>
+                    <span className="text-lg font-black font-mono text-indigo-700">
+                      {totalTransferQty} قطعة
+                    </span>
+                  </div>
+                  <div className="text-center border-r border-indigo-200 pr-4">
+                    <span className="text-[10px] font-bold text-slate-500 block">المتبقي في المصدر</span>
+                    <span className="text-lg font-black font-mono text-slate-700">
+                      {Math.max(0, transferBranchStock - totalTransferQty)} قطعة
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* TRANSFER DIRECT/PENDING OPTION */}
+              <div className="flex items-center gap-4 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="transfer_type"
+                    checked={transferDirect}
+                    onChange={() => setTransferDirect(true)}
+                    className="accent-indigo-600"
+                  />
+                  <span>تحويل مباشر وفوري (مكتمل) ⚡</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="transfer_type"
+                    checked={!transferDirect}
+                    onChange={() => setTransferDirect(false)}
+                    className="accent-indigo-600"
+                  />
+                  <span>إرسال شحنة بانتظار استلام الفرع 📦</span>
+                </label>
+              </div>
+            </>
+          )}
+
+          {/* ACTION BUTTONS */}
           <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
             <Button
               type="submit"
               variant="primary"
               size="lg"
+              disabled={transferBranchStock <= 0 || totalTransferQty <= 0 || totalTransferQty > transferBranchStock}
               isLoading={transferSubmitting}
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
             >
-              تأكيد النقل
+              {totalTransferQty > 0
+                ? `تأكيد تحويل (${totalTransferQty}) قطعة 🚚`
+                : 'تأكيد النقل'}
             </Button>
             <Button
               type="button"
@@ -2869,6 +3492,15 @@ export function Suppliers() {
             onChange={(e) => setSName(e.target.value)}
             placeholder="مثال: أحمد محمود"
             required
+          />
+
+          <Input
+            label="تاريخ الإنشاء / الإضافة"
+            type="date"
+            value={sCreatedAt}
+            onChange={(e) => setSCreatedAt(e.target.value)}
+            helperText={editingSupplier ? 'تاريخ إضافة المورد الأصلي' : 'تاريخ إضافة المورد (تلقائي تاريخ اليوم ويمكن تعديله)'}
+            disabled={Boolean(editingSupplier)}
           />
 
           <Input
@@ -3266,6 +3898,22 @@ export function Suppliers() {
           </div>
         )}
       </Modal>
+
+      {/* PRODUCT BARCODE PRINT MODAL */}
+      <ProductBarcodePrintModal
+        isOpen={showBarcodePrintModal}
+        onClose={() => {
+          setShowBarcodePrintModal(false);
+          setSelectedProductForBarcode(null);
+          setIsBarcodeNewlyCreated(false);
+        }}
+        product={selectedProductForBarcode}
+        storeName={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.name || ''}
+        logoUrl={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.logo_url}
+        branchLogo={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.logo_url}
+        branchId={activeBranchId}
+        isNewlyCreated={isBarcodeNewlyCreated}
+      />
     </div>
   );
 }
