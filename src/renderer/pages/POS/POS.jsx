@@ -340,6 +340,16 @@ export function POS() {
 
   // Refs
   const searchInputRef = useRef(null);
+  const customerSearchTimeoutRef = useRef(null);
+  const returnSearchTimeoutRef = useRef(null);
+
+  // Clean up search debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      if (customerSearchTimeoutRef.current) clearTimeout(customerSearchTimeoutRef.current);
+      if (returnSearchTimeoutRef.current) clearTimeout(returnSearchTimeoutRef.current);
+    };
+  }, []);
 
   // Save carts to localStorage
   useEffect(() => {
@@ -1127,22 +1137,27 @@ export function POS() {
   const totalDiscount = itemsDiscountTotal + invoiceDiscountTotal;
   const grandTotal = Math.max(0, subtotal - totalDiscount);
 
-  // Customer Search suggestions
-  const searchCustomers = async (phoneOrName) => {
+  // Customer Search suggestions (debounced)
+  const searchCustomers = (phoneOrName) => {
+    if (customerSearchTimeoutRef.current) {
+      clearTimeout(customerSearchTimeoutRef.current);
+    }
     if (!phoneOrName || phoneOrName.length < 2) {
       setCustomerSuggestions([]);
       setShowSuggestions(false);
       return;
     }
-    try {
-      const branchParam = activeBranchId && activeBranchId !== 'all' ? `&branch_id=${activeBranchId}` : '';
-      const data = await api.get(`/customers?search=${encodeURIComponent(phoneOrName)}${branchParam}`);
-      const list = Array.isArray(data) ? data : (data?.customers || data?.data || data?.items || []);
-      setCustomerSuggestions(list);
-      setShowSuggestions(list.length > 0);
-    } catch {
-      setCustomerSuggestions([]);
-    }
+    customerSearchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const branchParam = activeBranchId && activeBranchId !== 'all' ? `&branch_id=${activeBranchId}` : '';
+        const data = await api.get(`/customers?search=${encodeURIComponent(phoneOrName)}${branchParam}`);
+        const list = Array.isArray(data) ? data : (data?.customers || data?.data || data?.items || []);
+        setCustomerSuggestions(list);
+        setShowSuggestions(list.length > 0);
+      } catch {
+        setCustomerSuggestions([]);
+      }
+    }, 250);
   };
 
   // Open Checkout Modal
@@ -1674,23 +1689,28 @@ export function POS() {
     }
   };
 
-  // Search orders for Return
-  const handleSearchReturnOrders = async (query) => {
+  // Search orders for Return (debounced)
+  const handleSearchReturnOrders = (query) => {
     setReturnOrderSearchQuery(query);
+    if (returnSearchTimeoutRef.current) {
+      clearTimeout(returnSearchTimeoutRef.current);
+    }
     if (!query || query.length < 2) {
       setReturnFoundOrders([]);
       return;
     }
-    try {
-      setSearchingReturnOrders(true);
-      const branchParam = activeBranchId && activeBranchId !== 'all' ? `&branch_id=${activeBranchId}` : '';
-      const data = await api.get(`/orders/search?query=${encodeURIComponent(query)}${branchParam}`);
-      setReturnFoundOrders(Array.isArray(data) ? data : (data?.orders || data?.items || data?.data || []));
-    } catch {
-      setReturnFoundOrders([]);
-    } finally {
-      setSearchingReturnOrders(false);
-    }
+    returnSearchTimeoutRef.current = setTimeout(async () => {
+      try {
+        setSearchingReturnOrders(true);
+        const branchParam = activeBranchId && activeBranchId !== 'all' ? `&branch_id=${activeBranchId}` : '';
+        const data = await api.get(`/orders/search?query=${encodeURIComponent(query)}${branchParam}`);
+        setReturnFoundOrders(Array.isArray(data) ? data : (data?.orders || data?.items || data?.data || []));
+      } catch {
+        setReturnFoundOrders([]);
+      } finally {
+        setSearchingReturnOrders(false);
+      }
+    }, 300);
   };
 
   // Helper to calculate exact financial details for returning an item

@@ -227,28 +227,41 @@ export function Rentals() {
   }, [loadLookups]);
 
   // When new booking modal opens, ensure lookups are loaded
+  const customerSearchTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (customerSearchTimeoutRef.current) clearTimeout(customerSearchTimeoutRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (showCreateModal && (!employees.length || !rentalInventory.length)) {
       loadLookups();
     }
   }, [showCreateModal, employees.length, rentalInventory.length, loadLookups]);
 
-  // Search customers on typing
-  const searchCustomers = async (query) => {
+  // Search customers on typing (debounced)
+  const searchCustomers = (query) => {
+    if (customerSearchTimeoutRef.current) {
+      clearTimeout(customerSearchTimeoutRef.current);
+    }
     if (!query || query.length < 2) {
       setCustomerSuggestions([]);
       setShowSuggestions(false);
       return;
     }
-    try {
-      const branchParam = (activeBranchId && activeBranchId !== 'all') ? `&branch_id=${activeBranchId}` : '';
-      const data = await api.get(`/customers?search=${encodeURIComponent(query)}${branchParam}`);
-      const list = Array.isArray(data) ? data : (data?.customers || data?.data || data?.items || []);
-      setCustomerSuggestions(list);
-      setShowSuggestions(list.length > 0);
-    } catch {
-      setCustomerSuggestions([]);
-    }
+    customerSearchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const branchParam = (activeBranchId && activeBranchId !== 'all') ? `&branch_id=${activeBranchId}` : '';
+        const data = await api.get(`/customers?search=${encodeURIComponent(query)}${branchParam}`);
+        const list = Array.isArray(data) ? data : (data?.customers || data?.data || data?.items || []);
+        setCustomerSuggestions(list);
+        setShowSuggestions(list.length > 0);
+      } catch {
+        setCustomerSuggestions([]);
+      }
+    }, 250);
   };
 
   // Helper to recalculate total price and deposit from booking items

@@ -37,8 +37,29 @@ process.on('uncaughtException', (error) => {
 // Performance and memory switches
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
-// Enforce aggressive garbage collection to prevent memory bloat over time
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512');
+// Enforce safe memory headroom for large 31-day Excel consolidations and PDF generation
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=1024');
+
+const isDev = !app.isPackaged && (process.argv.includes('--dev') || process.env.NODE_ENV === 'development');
+const isExternalServer = process.argv.includes('--external-server');
+const devClientPort = Number(process.env.VITE_DEV_PORT || 5173);
+
+function validateSender(senderFrame) {
+  if (!senderFrame || !senderFrame.url) return false;
+  try {
+    const parsed = new URL(senderFrame.url);
+    const port = process.env.PORT || '6253';
+    const allowedOrigins = [
+      `http://127.0.0.1:${port}`,
+      `http://localhost:${port}`,
+      `http://127.0.0.1:${devClientPort}`,
+      `http://localhost:${devClientPort}`,
+    ];
+    return allowedOrigins.includes(parsed.origin);
+  } catch {
+    return false;
+  }
+}
 
 app.on('second-instance', () => {
   if (mainWindow) {
@@ -49,7 +70,11 @@ app.on('second-instance', () => {
 });
 
 // Fix input focus freezing after modal alert/confirm
-ipcMain.on('fix-focus', () => {
+ipcMain.on('fix-focus', (event) => {
+  if (!validateSender(event.senderFrame)) {
+    log('Security: Rejected fix-focus IPC from untrusted sender frame');
+    return;
+  }
   if (mainWindow) {
     mainWindow.blur();
     mainWindow.focus();
@@ -58,6 +83,10 @@ ipcMain.on('fix-focus', () => {
 
 // Export report or thermal labels to PDF via offscreen printToPDF
 ipcMain.handle('export-pdf', async (event, payload) => {
+  if (!validateSender(event.senderFrame)) {
+    log('Security: Rejected export-pdf IPC from untrusted sender frame');
+    return { success: false, error: 'Unauthorized sender frame origin' };
+  }
   try {
     const {
       html,
@@ -118,10 +147,6 @@ ipcMain.handle('export-pdf', async (event, payload) => {
 });
 
 const net = require('net');
-
-const isDev = !app.isPackaged && (process.argv.includes('--dev') || process.env.NODE_ENV === 'development');
-const isExternalServer = process.argv.includes('--external-server');
-const devClientPort = Number(process.env.VITE_DEV_PORT || 5173);
 
 function isPortOpen(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
