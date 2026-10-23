@@ -48,6 +48,47 @@ async function runPostgresMigrations() {
     `, [key, value]);
   }
 
+  // Seed initial branches & users into PostgreSQL if empty (e.g. fresh installation or CI runner)
+  try {
+    const { rows: branchRows } = await db.query('SELECT COUNT(*) as count FROM branches');
+    if (Number(branchRows[0].count) === 0) {
+      const seedFile = path.join(__dirname, 'branch_initial_seed.json');
+      if (fs.existsSync(seedFile)) {
+        const seedData = JSON.parse(fs.readFileSync(seedFile, 'utf8'));
+        if (Array.isArray(seedData.branches)) {
+          for (const b of seedData.branches) {
+            await db.query(`
+              INSERT INTO branches (id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+              ON CONFLICT (id) DO NOTHING
+            `, [
+              b.id, b.name, b.location || null, b.type || null, Boolean(b.is_main_warehouse),
+              b.phone || null, b.logo_url || null, b.invoice_logo_height || 160, b.invoice_logo_spacing || 8,
+              b.invoice_logo_filter || 'black', Boolean(b.invoice_logo_bg_enabled),
+              b.invoice_logo_bg_start || '#ffffff', b.invoice_logo_bg_end || '#ffffff',
+              b.allowed_gender || 'both'
+            ]);
+          }
+          await db.query("SELECT setval(pg_get_serial_sequence('branches', 'id'), COALESCE(MAX(id), 1)) FROM branches");
+        }
+        if (Array.isArray(seedData.users)) {
+          for (const u of seedData.users) {
+            const perms = typeof u.permissions === 'object' ? JSON.stringify(u.permissions) : (u.permissions || '[]');
+            await db.query(`
+              INSERT INTO users (id, username, password_hash, role, branch_id, permissions, employee_id)
+              VALUES ($1, $2, $3, $4, $5, $6, $7)
+              ON CONFLICT (id) DO NOTHING
+            `, [u.id, u.username, u.password_hash, u.role, u.branch_id, perms, u.employee_id || null]);
+          }
+          await db.query("SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE(MAX(id), 1)) FROM users");
+        }
+        console.log(`🌱 Seeded initial branches & users into PostgreSQL.`);
+      }
+    }
+  } catch (seedErr) {
+    console.warn('Could not seed initial branches & users into PostgreSQL:', seedErr.message);
+  }
+
   console.log('✨ All PostgreSQL migrations are up to date.');
 }
 

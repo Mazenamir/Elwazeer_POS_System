@@ -6,6 +6,11 @@ console.log('====================================================');
 console.log('🧪 ELWAZEER / BEBYOON SYSTEM - PACKAGE & DEPS AUDIT');
 console.log('====================================================\n');
 
+const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+if (isCI) {
+  console.log('ℹ️ Running in CI Environment mode (GitHub Actions).\n');
+}
+
 let failed = 0;
 let passed = 0;
 
@@ -32,8 +37,13 @@ try {
 } catch (e) {
   nodeVersion = 'Error: ' + e.message;
 }
-check('Portable Node.js binary is valid', Boolean(nodeVersion && nodeVersion.startsWith('v')), nodeVersion);
-check('Portable Node.js built-in SQLite engine works', sqliteWorking);
+
+if (!fs.existsSync(localNode) && isCI) {
+  console.log('ℹ️ CI NOTICE: Skipping portable Node.js runtime check (untracked binary in git repository)');
+} else {
+  check('Portable Node.js binary is valid', Boolean(nodeVersion && nodeVersion.startsWith('v')), nodeVersion);
+  check('Portable Node.js built-in SQLite engine works', sqliteWorking);
+}
 
 // 2. Verify PostgreSQL Portable Binaries
 const pgCtl = path.resolve('postgresql/bin/pg_ctl.exe');
@@ -46,24 +56,37 @@ try {
 } catch (e) {
   pgVersion = 'Error: ' + e.message;
 }
-check('PostgreSQL engine is valid', Boolean(pgVersion && pgVersion.includes('PostgreSQL')), pgVersion);
+
+if (!fs.existsSync(postgres) && isCI) {
+  console.log('ℹ️ CI NOTICE: Skipping portable PostgreSQL binary check (untracked binary in git repository)');
+} else {
+  check('PostgreSQL engine is valid', Boolean(pgVersion && pgVersion.includes('PostgreSQL')), pgVersion);
+}
 
 // 3. Verify PostgreSQL Essential DLLs
 const binDir = path.resolve('postgresql/bin');
-const requiredDlls = [
-  'msvcp140.dll', 'vcruntime140.dll', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll',
-  'libintl-9.dll', 'libxml2.dll', 'liblz4.dll', 'libzstd.dll', 'icuuc77.dll', 'icuin77.dll'
-];
-const missingDlls = requiredDlls.filter(d => !fs.existsSync(path.join(binDir, d)));
-check('PostgreSQL internal runtime DLLs present', missingDlls.length === 0, missingDlls.length ? `Missing: ${missingDlls.join(', ')}` : 'All present');
+if (!fs.existsSync(binDir) && isCI) {
+  console.log('ℹ️ CI NOTICE: Skipping PostgreSQL DLLs check in CI (untracked binaries)');
+} else {
+  const requiredDlls = [
+    'msvcp140.dll', 'vcruntime140.dll', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll',
+    'libintl-9.dll', 'libxml2.dll', 'liblz4.dll', 'libzstd.dll', 'icuuc77.dll', 'icuin77.dll'
+  ];
+  const missingDlls = requiredDlls.filter(d => !fs.existsSync(path.join(binDir, d)));
+  check('PostgreSQL internal runtime DLLs present', missingDlls.length === 0, missingDlls.length ? `Missing: ${missingDlls.join(', ')}` : 'All present');
+}
 
 // 4. Verify Microsoft Visual C++ 2015-2022 Redistributable Setup Package
 const vcRedist = path.resolve('build/vc_redist.x64.exe');
 const vcRedistExists = fs.existsSync(vcRedist);
 const vcRedistSize = vcRedistExists ? fs.statSync(vcRedist).size : 0;
-check('Official Visual C++ Redistributable (vc_redist.x64.exe) bundled in build/', vcRedistExists && vcRedistSize > 20000000, `${(vcRedistSize / (1024 * 1024)).toFixed(1)} MB`);
+if (!vcRedistExists && isCI) {
+  console.log('ℹ️ CI NOTICE: Skipping vc_redist.x64.exe check in CI (untracked installer binary in git repository)');
+} else {
+  check('Official Visual C++ Redistributable (vc_redist.x64.exe) bundled in build/', vcRedistExists && vcRedistSize > 20000000, `${(vcRedistSize / (1024 * 1024)).toFixed(1)} MB`);
+}
 
-// 5. Verify NSIS Installer Script
+// 5. Verify NSIS Installer Script (ALWAYS checked)
 const installerNsh = path.resolve('build/installer.nsh');
 const nshContent = fs.existsSync(installerNsh) ? fs.readFileSync(installerNsh, 'utf8') : '';
 check('NSIS prerequisite script contains VC++ detection & install logic', nshContent.includes('vc_redist.x64.exe') && nshContent.includes('customInstall'));
@@ -72,15 +95,19 @@ check('NSIS uninstaller protects user database with explicit retention prompt', 
 
 // 6. Verify Database Template Directory
 const dataDir = path.resolve('programs/data');
-check('PostgreSQL template PG_VERSION exists', fs.existsSync(path.join(dataDir, 'PG_VERSION')));
-check('PostgreSQL template postgresql.conf exists', fs.existsSync(path.join(dataDir, 'postgresql.conf')));
-check('PostgreSQL template pg_hba.conf exists', fs.existsSync(path.join(dataDir, 'pg_hba.conf')));
+if (!fs.existsSync(dataDir) && isCI) {
+  console.log('ℹ️ CI NOTICE: Skipping programs/data template directory check in CI (untracked directory)');
+} else {
+  check('PostgreSQL template PG_VERSION exists', fs.existsSync(path.join(dataDir, 'PG_VERSION')));
+  check('PostgreSQL template postgresql.conf exists', fs.existsSync(path.join(dataDir, 'postgresql.conf')));
+  check('PostgreSQL template pg_hba.conf exists', fs.existsSync(path.join(dataDir, 'pg_hba.conf')));
+}
 
-// 7. Verify Frontend Client Build
+// 7. Verify Frontend Client Build (ALWAYS checked)
 const distRendererIndex = path.resolve('dist/renderer/index.html');
 check('Frontend client production build exists (dist/renderer/index.html)', fs.existsSync(distRendererIndex));
 
-// 8. Verify package.json build configuration
+// 8. Verify package.json build configuration (ALWAYS checked)
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 check('package.json has perMachine: true', pkg.build?.nsis?.perMachine === true);
 check('package.json includes build/installer.nsh', pkg.build?.nsis?.include === 'build/installer.nsh');
@@ -107,7 +134,11 @@ const candidateInstallers = [
 const installerExe = candidateInstallers.find(p => fs.existsSync(p));
 const installerExists = Boolean(installerExe);
 const installerSize = installerExists ? fs.statSync(installerExe).size : 0;
-check('Generated Windows NSIS installer exists', installerExists, installerExists ? `${path.basename(installerExe)} (${(installerSize / (1024 * 1024)).toFixed(1)} MB)` : 'Missing');
+if (!installerExists && isCI) {
+  console.log('ℹ️ CI NOTICE: Skipping generated installer binary check in CI pre-packaging step');
+} else {
+  check('Generated Windows NSIS installer exists', installerExists, installerExists ? `${path.basename(installerExe)} (${(installerSize / (1024 * 1024)).toFixed(1)} MB)` : 'Missing');
+}
 
 console.log('\n----------------------------------------------------');
 console.log(`Summary: ${passed} passed, ${failed} failed`);

@@ -22,6 +22,7 @@
     "dist:branch": "electron-builder --config electron-builder.branch.json --win",
     "verify:package": "node scratch/verify_package.js",
     "test": "node scratch/run_all_audit_suites.js",
+    "test:release-gate": "node scratch/release_gate_runner.js",
     "test:updater": "node scratch/test_auto_updater_lifecycle.js",
     "test:invariants": "node scratch/test_cash_drawer_and_payroll_invariants.js",
     "test:simulator": "electron scratch/test_simulator_suite.js",
