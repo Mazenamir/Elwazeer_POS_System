@@ -998,53 +998,48 @@ async function getEmployeePayslip(id, monthParam, user) {
   // 2. Attendance
   const attRes = await db.query(
     `SELECT 
-       SUM(late_minutes) as late_minutes,
-       SUM(early_departure_minutes) as early_minutes,
-       SUM(overtime_minutes) as overtime_minutes,
-       COUNT(CASE WHEN status = 'absent' THEN 1 END) as absent_days,
-       COUNT(CASE WHEN status = 'present' THEN 1 END) as present_days
+       status,
+       notes,
+       COALESCE(late_minutes, 0) as late_minutes,
+       COALESCE(early_departure_minutes, 0) as early_minutes,
+       COALESCE(overtime_minutes, 0) as overtime_minutes,
+       COALESCE(total_hours, 0) as total_hours
      FROM attendance
      WHERE employee_id = $1 AND date >= $2::date AND date < $3::date`,
     [id, monthRange.start, monthRange.end]
   );
 
-  const att = attRes.rows[0];
-  const lateMinutes = Number(att.late_minutes) || 0;
-  const earlyMinutes = Number(att.early_minutes) || 0;
-  const overtimeMinutes = Number(att.overtime_minutes) || 0;
-  const absentDays = Number(att.absent_days) || 0;
+  let lateMinutes = 0;
+  let earlyMinutes = 0;
+  let overtimeMinutes = 0;
+  let absentDays = 0;
+  let leaveDays = 0;
+  let halfDays = 0;
 
-  // Calculate dynamic work hours from shift
-  let workHours = 8;
-  if (empRes.rows[0].shift_start && empRes.rows[0].shift_end) {
-    const startParts = empRes.rows[0].shift_start.split(':');
-    const endParts = empRes.rows[0].shift_end.split(':');
-    if (startParts.length >= 2 && endParts.length >= 2) {
-      let startMins = parseInt(startParts[0], 10) * 60 + parseInt(startParts[1], 10);
-      let endMins = parseInt(endParts[0], 10) * 60 + parseInt(endParts[1], 10);
-      if (endMins < startMins) endMins += 24 * 60;
-      const diffHours = (endMins - startMins) / 60;
-      if (diffHours > 0 && diffHours <= 24) {
-        workHours = diffHours;
-      }
-    }
-  }
+  attRes.rows.forEach((r) => {
+    lateMinutes += Number(r.late_minutes || 0);
+    earlyMinutes += Number(r.early_minutes || 0);
+    overtimeMinutes += Number(r.overtime_minutes || 0);
+    const notes = String(r.notes || '');
+    const status = String(r.status || '');
+    if (notes.includes('غياب') || status === 'absent') absentDays += 1;
+    if (notes.includes('جاز') || notes.includes('إجازة') || status === 'leave') leaveDays += 1;
+    if (notes.includes('نص يوم') || status === 'half_day') halfDays += 1;
+  });
 
-  const dailyRate = basic_salary / 30;
-  const hourlyRate = dailyRate / workHours;
-  const minuteRate = hourlyRate / 60;
-  const delayPenaltyMultiplier = 1.5;
-  const overtimeMultiplier = 1.35;
+  // Calculate according to Elwazeer standard payroll invariants
+  const dailyRate = Math.round((basic_salary / 30) * 100) / 100;
+  const absenceDeduction = Math.round(absentDays * dailyRate * 2); // Double penalty
+  const leaveDeduction = Math.round(Math.max(0, leaveDays - 4) * dailyRate); // 4 days allowed
+  const halfDayDeduction = Math.round(halfDays * (dailyRate / 2));
+  const lateDeduction = Math.round((lateMinutes / 60) * (dailyRate / 10));
+  const earlyDeduction = Math.round((earlyMinutes / 60) * (dailyRate / 10));
+  const overtimeBonus = Math.round(((dailyRate / 10) * 1.35) * (overtimeMinutes / 60));
 
-  const absenceDeduction = absentDays * dailyRate;
-  const lateDeduction = lateMinutes * minuteRate * delayPenaltyMultiplier;
-  const earlyDeduction = earlyMinutes * minuteRate * delayPenaltyMultiplier;
-  const overtimeBonus = overtimeMinutes * minuteRate * overtimeMultiplier;
-
-  const totalDeductions = deductions + advances + absenceDeduction + lateDeduction + earlyDeduction;
+  const totalDeductions = deductions + advances + absenceDeduction + leaveDeduction + halfDayDeduction + lateDeduction + earlyDeduction;
   const totalBonuses = bonuses + overtimeBonus;
 
-  const netSalary = basic_salary + totalBonuses - totalDeductions;
+  const netSalary = Math.round(basic_salary + totalBonuses - totalDeductions);
   const remainingBalance = netSalary - salaryPayments;
 
   return {
@@ -1055,6 +1050,12 @@ async function getEmployeePayslip(id, monthParam, user) {
     },
     month,
     basic_salary,
+    bonuses: totalBonuses,
+    commissions: 0,
+    advances,
+    deductions: totalDeductions,
+    already_paid: salaryPayments,
+    net_salary: netSalary,
     financials: {
       advances,
       deductions_manual: deductions,
@@ -1079,10 +1080,14 @@ async function getEmployeePayslip(id, monthParam, user) {
     },
     attendance: {
       absent_days: absentDays,
+      leave_days: leaveDays,
+      half_days: halfDays,
       late_minutes: lateMinutes,
       early_minutes: earlyMinutes,
       overtime_minutes: overtimeMinutes,
       absence_deduction: Number(absenceDeduction.toFixed(2)),
+      leave_deduction: Number(leaveDeduction.toFixed(2)),
+      half_day_deduction: Number(halfDayDeduction.toFixed(2)),
       late_deduction: Number(lateDeduction.toFixed(2)),
       early_deduction: Number(earlyDeduction.toFixed(2)),
       overtime_bonus: Number(overtimeBonus.toFixed(2)),

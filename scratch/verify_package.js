@@ -97,10 +97,12 @@ check('package.json excludes stale logs & current_logfiles from programs/data', 
 check('package.json excludes dev native modules (@rolldown, lightningcss)', Boolean(nodeModulesRes?.filter?.includes('!@rolldown/**/*')));
 
 // 9. Verify Generated Production Windows Installer
+const distFiles = fs.existsSync('dist') ? fs.readdirSync('dist').filter(f => f.endsWith('.exe')) : [];
 const candidateInstallers = [
   path.resolve(`dist/${pkg.build.productName} Setup ${pkg.version}.exe`),
   path.resolve(`dist/Bebyoon Master Setup ${pkg.version}.exe`),
   path.resolve(`dist/Bebyoon System Setup ${pkg.version}.exe`),
+  ...distFiles.map(f => path.resolve('dist', f))
 ];
 const installerExe = candidateInstallers.find(p => fs.existsSync(p));
 const installerExists = Boolean(installerExe);

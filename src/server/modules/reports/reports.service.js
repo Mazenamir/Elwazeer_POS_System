@@ -599,10 +599,11 @@ async function getProfitReport(query = {}, user = null) {
       tailoring: total_tailoring,
       total_revenue,
       revenue: total_revenue,
-      cash_drawer,
-      cash_in_drawer: cash_drawer,
+      cash_drawer: physical_cash_in_drawer,
+      cash_in_drawer: physical_cash_in_drawer,
       physical_cash_in_drawer,
-      net_cash: cash_drawer,
+      gross_cash_drawer: cash_drawer,
+      net_cash: physical_cash_in_drawer,
       cogs,
       gross_profit,
       expenses,
@@ -645,12 +646,13 @@ async function getProfitReport(query = {}, user = null) {
   summary.gross_profit = gross_profit;
   summary.profit = net_profit;
   summary.profit_margin = profit_margin;
-  summary.cash_in_drawer = summary.cash_drawer;
   summary.physical_cash_in_drawer = Math.max(0, summary.cash_drawer - summary.total_advances);
+  summary.cash_in_drawer = summary.physical_cash_in_drawer;
+  summary.gross_cash_drawer = summary.cash_drawer;
+  summary.cash_drawer = summary.physical_cash_in_drawer;
   summary.total_expenses_and_advances = summary.expenses + summary.total_advances;
   summary.total_sales_and_revenue = summary.total_revenue;
-  summary.net_cash = summary.cash_drawer;
-  summary.net_cash = summary.cash_drawer;
+  summary.net_cash = summary.physical_cash_in_drawer;
 
   const paymentParams = reportBranchId ? [range.start, range.end, reportBranchId] : [range.start, range.end];
   const paymentBranchFilter = reportBranchId ? ' AND branch_id = $3' : '';
@@ -2731,8 +2733,9 @@ async function getExtendedDailyReport(query = {}, user = null) {
       total_advances: totalAdvances,
       total_expenses: totalExpenses,
       total_deductions: totalDeductions,
-      cash_in_drawer: cashDrawerExcel,
+      cash_in_drawer: physicalCashInDrawer,
       physical_cash_in_drawer: physicalCashInDrawer,
+      cash_drawer_excel: cashDrawerExcel,
       cash_collected: cashCollected,
       cash_expenses: cashExpenses,
     }

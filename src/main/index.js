@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { autoUpdater } = require('electron-updater');
+const { setupAutoUpdater, stopAutoUpdater } = require('./updater');
 const ServerSupervisor = require('./server-supervisor');
 const { createSystemTray } = require('./tray');
 
@@ -17,65 +17,6 @@ let serverSupervisor = null;
 let tray = null;
 let isQuiting = false;
 let logPath = null;
-
-function setupAutoUpdater() {
-  // Never check for updates while running in development mode
-  if (!app.isPackaged) {
-    log('[UPDATER] Skipped: application is not packaged.');
-    return;
-  }
-
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-
-  autoUpdater.on('checking-for-update', () => {
-    log('[UPDATER] Checking for updates...');
-  });
-
-  autoUpdater.on('update-available', (info) => {
-    log(`[UPDATER] Update available: ${info.version}`);
-  });
-
-  autoUpdater.on('update-not-available', (info) => {
-    log(`[UPDATER] No update available. Current version: ${info.version}`);
-  });
-
-  autoUpdater.on('download-progress', (progress) => {
-    log(
-      `[UPDATER] Download progress: ${Math.round(progress.percent)}%`
-    );
-  });
-
-  autoUpdater.on('update-downloaded', (info) => {
-    log(`[UPDATER] Update downloaded: ${info.version}`);
-    try {
-      dialog.showMessageBox({
-        type: 'info',
-        title: 'تحديث جديد متوفر',
-        message: `تم تنزيل التحديث الجديد (الإصدار ${info.version}) بنجاح.\nهل ترغب في إعادة تشغيل البرنامج الآن لتطبيق التحديث؟`,
-        buttons: ['إعادة التشغيل وتطبيق التحديث الآن', 'لاحقاً عند إغلاق البرنامج'],
-        defaultId: 0,
-        cancelId: 1,
-      }).then((result) => {
-        if (result.response === 0) {
-          autoUpdater.quitAndInstall();
-        }
-      });
-    } catch (e) {
-      log(`[UPDATER] Dialog prompt failed: ${e.message}`);
-    }
-  });
-
-  autoUpdater.on('error', (error) => {
-    log(`[UPDATER] Error: ${error.message}`);
-  });
-
-  autoUpdater.checkForUpdates().catch((error) => {
-    log(`[UPDATER] Check failed: ${error.message}`);
-  });
-}
-
-
 
 function log(msg) {
   console.log(msg);
@@ -311,6 +252,7 @@ function createWindow(targetUrl, isDevMode = false) {
 
   mainWindow.on('close', () => {
     isQuiting = true;
+  stopAutoUpdater();
     app.quit();
   });
 
@@ -322,6 +264,7 @@ function createWindow(targetUrl, isDevMode = false) {
   if (!tray) {
     tray = createSystemTray(mainWindow, () => {
       isQuiting = true;
+  stopAutoUpdater();
       app.quit();
     }, iconPath);
   }
@@ -330,7 +273,7 @@ function createWindow(targetUrl, isDevMode = false) {
 app.on('ready', async () => {
   logPath = path.join(app.getPath('userData'), 'debug.log');
 
-  setupAutoUpdater();
+  setupAutoUpdater({ log });
 
   log('--- APP START (MODULAR ARCHITECTURE) ---');
   if (isDev) log('[DEV MODE] Running in Development mode');
@@ -439,6 +382,7 @@ app.on('ready', async () => {
 
 app.on('before-quit', () => {
   isQuiting = true;
+  stopAutoUpdater();
   if (serverSupervisor) {
     serverSupervisor.stop();
   }

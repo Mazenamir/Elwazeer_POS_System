@@ -1,6 +1,6 @@
 {
   "name": "bebyoon-system",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Bebyoon / El-Wazeer POS & Management System",
   "main": "src/main/index.js",
   "scripts": {
@@ -21,6 +21,9 @@
     "dist:win": "electron-builder --win",
     "dist:branch": "electron-builder --config electron-builder.branch.json --win",
     "verify:package": "node scratch/verify_package.js",
+    "test": "node scratch/run_all_audit_suites.js",
+    "test:updater": "node scratch/test_auto_updater_lifecycle.js",
+    "test:invariants": "node scratch/test_cash_drawer_and_payroll_invariants.js",
     "test:simulator": "electron scratch/test_simulator_suite.js",
     "test:rentals": "node scratch/test_rentals_barcodes_reservations.js"
   },

@@ -1,0 +1,60 @@
+name: Elwazeer POS System CI & Release Gates
+
+on:
+  push:
+    branches: [ master, 'audit/**', 'release/**' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-and-build:
+    name: Code Quality, Tests & Build Validation
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Client Production Build (Vite)
+        run: npm run build:client
+
+      - name: Verify Package & Packaging Integrity
+        run: npm run verify:package
+
+      - name: Run Auto-Updater Lifecycle & Concurrency Tests
+        run: npm run test:updater
+        env:
+          NODE_ENV: test
+
+      - name: Run Cash Drawer & Payroll Invariants Tests
+        run: npm run test:invariants
+        env:
+          NODE_ENV: test
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: your_postgres_password
+          DB_NAME: pos_db
+
+      - name: Run Full Quality Audit Suites
+        run: npm test
+        env:
+          NODE_ENV: test
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: your_postgres_password
+          DB_NAME: pos_db
