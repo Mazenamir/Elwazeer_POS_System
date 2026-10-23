@@ -28,6 +28,7 @@ import { Card, CardHeader } from '../../components/ui/Card';
 import { printElement } from '../../utils/print';
 import { ThermalReceipt } from '../../components/receipts';
 import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
+import { useDebounce } from '../../hooks';
 
 function formatTailoringPaymentMethod(order) {
   if (!order) return 'نقدي (كاش)';
@@ -56,6 +57,7 @@ export function Tailoring() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [employees, setEmployees] = useState([]);
 
   // Create Modal State
@@ -195,7 +197,7 @@ export function Tailoring() {
       setLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
-      if (search.trim()) query.append('search', search.trim());
+      if (debouncedSearch.trim()) query.append('search', debouncedSearch.trim());
 
       const data = await api.get(`/tailoring-orders?${query.toString()}`);
       setOrders(Array.isArray(data) ? data : (data?.orders || data?.data || data?.items || []));
@@ -204,7 +206,7 @@ export function Tailoring() {
     } finally {
       setLoading(false);
     }
-  }, [activeBranchId, search]);
+  }, [activeBranchId, debouncedSearch]);
 
   useEffect(() => {
     fetchOrders();
