@@ -26,16 +26,22 @@ dist-branch/
 # Scratch directory (temporary test scripts & artifacts)
 scratch/*
 !scratch/run_all_audit_suites.js
+!scratch/release_gate_runner.js
+!scratch/test_financial_payroll_invariants.js
+!scratch/test_auto_updater.js
 !scratch/test_auto_updater_lifecycle.js
-!scratch/test_cash_drawer_and_payroll_invariants.js
+!scratch/test_m3_adversarial_challenger_harness.js
+!scratch/test_m2_security.js
 !scratch/concurrency_and_atomicity_tests.js
-!scratch/deep_integration_tests.js
-!scratch/review_deep_verification_tests.js
 !scratch/verification_tests.js
+!scratch/deep_integration_tests.js
 !scratch/test_inventory_suite.js
+!scratch/test_rentals_barcodes_reservations.js
+!scratch/victory_audit_r2_independent_suite.js
+!scratch/test_cash_drawer_and_payroll_invariants.js
+!scratch/review_deep_verification_tests.js
 !scratch/test_split_sales_in_reports.js
 !scratch/test_tailoring_split_and_employees.js
-!scratch/test_rentals_barcodes_reservations.js
 !scratch/test_prior_defects.js
 !scratch/reviewer_r4_comprehensive_check.js
 !scratch/sentinel_independent_victory_audit.js
