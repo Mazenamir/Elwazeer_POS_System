@@ -11,11 +11,28 @@ ALTER TABLE rentals ADD COLUMN IF NOT EXISTS payment_splits JSONB;
 ALTER TABLE rentals ADD COLUMN IF NOT EXISTS custom_items JSONB;
 
 -- Backfill existing rentals
-UPDATE rentals
-SET cash_amount = deposit
-WHERE (payment_method IN ('cash', 'نقدي', 'كاش') OR payment_method IS NULL)
-  AND (cash_amount IS NULL OR cash_amount = 0)
-  AND deposit > 0;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'rentals' AND column_name = 'deposit'
+  ) THEN
+    UPDATE rentals
+    SET cash_amount = deposit
+    WHERE (payment_method IN ('cash', 'نقدي', 'كاش') OR payment_method IS NULL)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit > 0;
+  ELSIF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'rentals' AND column_name = 'deposit_amount'
+  ) THEN
+    UPDATE rentals
+    SET cash_amount = deposit_amount
+    WHERE (payment_method IN ('cash', 'نقدي', 'كاش') OR payment_method IS NULL)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit_amount > 0;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_rentals_payment_method ON rentals(payment_method);
 CREATE INDEX IF NOT EXISTS idx_rentals_group_uuid ON rentals(rental_group_uuid);

@@ -12,29 +12,67 @@ WHERE tp.tailoring_order_id = to_orders.id
   AND (tp.payment_method IS NULL OR tp.payment_method = 'cash');
 
 -- Backfill non-cash rentals that had deposit > 0 but split amounts not yet populated
-UPDATE rentals
-SET bank_transfer_amount = deposit
-WHERE payment_method IN ('bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي')
-  AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
-  AND (card_amount IS NULL OR card_amount = 0)
-  AND (wallet_amount IS NULL OR wallet_amount = 0)
-  AND (cash_amount IS NULL OR cash_amount = 0)
-  AND deposit > 0;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'rentals' AND column_name = 'deposit'
+  ) THEN
+    UPDATE rentals
+    SET bank_transfer_amount = deposit
+    WHERE payment_method IN ('bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي')
+      AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
+      AND (card_amount IS NULL OR card_amount = 0)
+      AND (wallet_amount IS NULL OR wallet_amount = 0)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit > 0;
 
-UPDATE rentals
-SET card_amount = deposit
-WHERE payment_method IN ('card', 'visa', 'بطاقة', 'فيزا', 'credit')
-  AND (card_amount IS NULL OR card_amount = 0)
-  AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
-  AND (wallet_amount IS NULL OR wallet_amount = 0)
-  AND (cash_amount IS NULL OR cash_amount = 0)
-  AND deposit > 0;
+    UPDATE rentals
+    SET card_amount = deposit
+    WHERE payment_method IN ('card', 'visa', 'بطاقة', 'فيزا', 'credit')
+      AND (card_amount IS NULL OR card_amount = 0)
+      AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
+      AND (wallet_amount IS NULL OR wallet_amount = 0)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit > 0;
 
-UPDATE rentals
-SET wallet_amount = deposit
-WHERE payment_method IN ('wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة', 'vodafone', 'vodafone_cash')
-  AND (wallet_amount IS NULL OR wallet_amount = 0)
-  AND (card_amount IS NULL OR card_amount = 0)
-  AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
-  AND (cash_amount IS NULL OR cash_amount = 0)
-  AND deposit > 0;
+    UPDATE rentals
+    SET wallet_amount = deposit
+    WHERE payment_method IN ('wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة', 'vodafone', 'vodafone_cash')
+      AND (wallet_amount IS NULL OR wallet_amount = 0)
+      AND (card_amount IS NULL OR card_amount = 0)
+      AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit > 0;
+  ELSIF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'rentals' AND column_name = 'deposit_amount'
+  ) THEN
+    UPDATE rentals
+    SET bank_transfer_amount = deposit_amount
+    WHERE payment_method IN ('bank_transfer', 'bank', 'transfer', 'انستاباي', 'instapay', 'تحويل بنكي')
+      AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
+      AND (card_amount IS NULL OR card_amount = 0)
+      AND (wallet_amount IS NULL OR wallet_amount = 0)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit_amount > 0;
+
+    UPDATE rentals
+    SET card_amount = deposit_amount
+    WHERE payment_method IN ('card', 'visa', 'بطاقة', 'فيزا', 'credit')
+      AND (card_amount IS NULL OR card_amount = 0)
+      AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
+      AND (wallet_amount IS NULL OR wallet_amount = 0)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit_amount > 0;
+
+    UPDATE rentals
+    SET wallet_amount = deposit_amount
+    WHERE payment_method IN ('wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة', 'vodafone', 'vodafone_cash')
+      AND (wallet_amount IS NULL OR wallet_amount = 0)
+      AND (card_amount IS NULL OR card_amount = 0)
+      AND (bank_transfer_amount IS NULL OR bank_transfer_amount = 0)
+      AND (cash_amount IS NULL OR cash_amount = 0)
+      AND deposit_amount > 0;
+  END IF;
+END $$;
