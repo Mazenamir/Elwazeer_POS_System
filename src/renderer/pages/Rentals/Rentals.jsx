@@ -31,6 +31,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../services/api/client';
+import useDebounce from '../../hooks/useDebounce';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
@@ -63,6 +64,7 @@ export function Rentals() {
 
   // Filters & Tabs
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [statusFilter, setStatusFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('all'); // 'all' | 'today_all' | 'today_pickup' | 'today_return' | 'upcoming'
 
@@ -91,6 +93,7 @@ export function Rentals() {
   const [submitting, setSubmitting] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const debouncedCustomerPhone = useDebounce(customerPhone, 300);
   const [nationalId, setNationalId] = useState('');
   const [hasIdGuarantee, setHasIdGuarantee] = useState(true);
 
@@ -174,7 +177,7 @@ export function Rentals() {
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (statusFilter !== 'all') query.append('status', statusFilter);
-      if (search.trim()) query.append('search', search.trim());
+      if (debouncedSearch.trim()) query.append('search', debouncedSearch.trim());
 
       const data = await api.get(`/rentals?${query.toString()}`);
       setRentals(Array.isArray(data) ? data : (data?.rentals || data?.data || data?.items || []));
@@ -183,7 +186,7 @@ export function Rentals() {
     } finally {
       setLoading(false);
     }
-  }, [activeBranchId, statusFilter, search]);
+  }, [activeBranchId, statusFilter, debouncedSearch]);
 
   useEffect(() => {
     fetchRentals();
@@ -263,6 +266,31 @@ export function Rentals() {
       }
     }, 250);
   };
+
+  useEffect(() => {
+    if (!debouncedCustomerPhone || debouncedCustomerPhone.length < 2) {
+      setCustomerSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    let isCurrent = true;
+    const runSearch = async () => {
+      try {
+        const branchParam = (activeBranchId && activeBranchId !== 'all') ? `&branch_id=${activeBranchId}` : '';
+        const data = await api.get(`/customers?search=${encodeURIComponent(debouncedCustomerPhone)}${branchParam}`);
+        if (!isCurrent) return;
+        const list = Array.isArray(data) ? data : (data?.customers || data?.data || data?.items || []);
+        setCustomerSuggestions(list);
+        setShowSuggestions(list.length > 0);
+      } catch {
+        if (isCurrent) setCustomerSuggestions([]);
+      }
+    };
+    runSearch();
+    return () => {
+      isCurrent = false;
+    };
+  }, [debouncedCustomerPhone, activeBranchId]);
 
   // Helper to recalculate total price and deposit from booking items
   const recalcTotals = (items) => {
@@ -1211,7 +1239,6 @@ export function Rentals() {
                 value={customerPhone}
                 onChange={(e) => {
                   setCustomerPhone(e.target.value);
-                  searchCustomers(e.target.value);
                 }}
                 placeholder="01XXXXXXXXX"
                 required

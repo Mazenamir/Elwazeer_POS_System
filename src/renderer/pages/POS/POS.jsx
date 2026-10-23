@@ -43,6 +43,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../services/api/client';
+import useDebounce from '../../hooks/useDebounce';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Modal from '../../components/ui/Modal';
@@ -209,6 +210,7 @@ export function POS() {
   const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const debouncedCustomerPhone = useDebounce(customerPhone, 300);
   const [sellerId, setSellerId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash'); // 'cash' | 'bank_transfer' | 'card' | 'wallet' | 'debt'
   const [paidAmount, setPaidAmount] = useState('');
@@ -1159,6 +1161,31 @@ export function POS() {
       }
     }, 250);
   };
+
+  useEffect(() => {
+    if (!debouncedCustomerPhone || debouncedCustomerPhone.length < 2) {
+      setCustomerSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    let isCurrent = true;
+    const fetchCustomers = async () => {
+      try {
+        const branchParam = activeBranchId && activeBranchId !== 'all' ? `&branch_id=${activeBranchId}` : '';
+        const data = await api.get(`/customers?search=${encodeURIComponent(debouncedCustomerPhone)}${branchParam}`);
+        if (!isCurrent) return;
+        const list = Array.isArray(data) ? data : (data?.customers || data?.data || data?.items || []);
+        setCustomerSuggestions(list);
+        setShowSuggestions(list.length > 0);
+      } catch {
+        if (isCurrent) setCustomerSuggestions([]);
+      }
+    };
+    fetchCustomers();
+    return () => {
+      isCurrent = false;
+    };
+  }, [debouncedCustomerPhone, activeBranchId]);
 
   // Open Checkout Modal
   const openCheckout = () => {
@@ -4151,7 +4178,6 @@ export function POS() {
                 value={customerPhone}
                 onChange={(e) => {
                   setCustomerPhone(e.target.value);
-                  searchCustomers(e.target.value);
                 }}
                 placeholder="01XXXXXXXXX"
                 required
