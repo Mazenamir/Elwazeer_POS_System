@@ -1098,7 +1098,7 @@ async function generateSummaryReportExcel(summaryData, options = {}) {
     ['الرواتب والأجور المسددة', Number(summaryData.salaries || summaryData.total_salaries_paid || 0), 'صافي حركات رواتب الموظفين'],
     ['صافي الربح النهائي', Number(summaryData.net_profit || 0), 'مجمل الربح - المصروفات - الرواتب'],
     ['هامش الربح الصافي %', `${Number(summaryData.profit_margin || 0).toFixed(1)}%`, 'نسبة صافي الربح من الإيرادات'],
-    ['صافي الكاش المحصل بالدرج', Number(summaryData.cash_drawer || 0), 'النقدية الفعلية المحصلة بالخزينة'],
+    ['صافي الكاش المحصل بالدرج', Number(summaryData.physical_cash_in_drawer || summaryData.cash_drawer || 0), 'النقدية الفعلية المحصلة بالخزينة'],
   ];
 
   rows.forEach((r, idx) => {

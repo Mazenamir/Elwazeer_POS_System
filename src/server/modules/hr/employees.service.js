@@ -1015,11 +1015,13 @@ async function getEmployeePayslip(id, monthParam, user) {
   let absentDays = 0;
   let leaveDays = 0;
   let halfDays = 0;
+  let totalHours = 0;
 
   attRes.rows.forEach((r) => {
     lateMinutes += Number(r.late_minutes || 0);
     earlyMinutes += Number(r.early_minutes || 0);
     overtimeMinutes += Number(r.overtime_minutes || 0);
+    totalHours += Number(r.total_hours || 0);
     const notes = String(r.notes || '');
     const status = String(r.status || '');
     if (notes.includes('غياب') || status === 'absent') absentDays += 1;
@@ -1028,15 +1030,30 @@ async function getEmployeePayslip(id, monthParam, user) {
   });
 
   // Calculate according to Elwazeer standard payroll invariants
+  const requiredHours = 268;
+  const actualHours = Math.round(totalHours * 100) / 100;
   const dailyRate = Math.round((basic_salary / 30) * 100) / 100;
   const absenceDeduction = Math.round(absentDays * dailyRate * 2); // Double penalty
   const leaveDeduction = Math.round(Math.max(0, leaveDays - 4) * dailyRate); // 4 days allowed
   const halfDayDeduction = Math.round(halfDays * (dailyRate / 2));
-  const lateDeduction = Math.round((lateMinutes / 60) * (dailyRate / 10));
-  const earlyDeduction = Math.round((earlyMinutes / 60) * (dailyRate / 10));
-  const overtimeBonus = Math.round(((dailyRate / 10) * 1.35) * (overtimeMinutes / 60));
 
-  const totalDeductions = deductions + advances + absenceDeduction + leaveDeduction + halfDayDeduction + lateDeduction + earlyDeduction;
+  let delayHours = 0;
+  let overtimeHours = 0;
+  if (totalHours > 0) {
+    delayHours = actualHours < requiredHours ? Math.round((requiredHours - actualHours) * 100) / 100 : 0;
+    overtimeHours = actualHours > requiredHours ? Math.round((actualHours - requiredHours) * 100) / 100 : 0;
+  } else if (lateMinutes > 0 || earlyMinutes > 0 || overtimeMinutes > 0) {
+    delayHours = Math.round(((lateMinutes + earlyMinutes) / 60) * 100) / 100;
+    overtimeHours = Math.round((overtimeMinutes / 60) * 100) / 100;
+  }
+
+  const delayDeduction = Math.round(delayHours * (dailyRate / 10));
+  const lateDeduction = delayDeduction;
+  const earlyDeduction = 0;
+  const overtimeAmount = Math.round(((dailyRate / 10) * 1.35) * overtimeHours);
+  const overtimeBonus = overtimeAmount;
+
+  const totalDeductions = deductions + advances + absenceDeduction + leaveDeduction + halfDayDeduction + delayDeduction;
   const totalBonuses = bonuses + overtimeBonus;
 
   const netSalary = Math.round(basic_salary + totalBonuses - totalDeductions);
@@ -1085,12 +1102,19 @@ async function getEmployeePayslip(id, monthParam, user) {
       late_minutes: lateMinutes,
       early_minutes: earlyMinutes,
       overtime_minutes: overtimeMinutes,
+      actual_hours: actualHours,
+      required_hours: requiredHours,
+      delay_hours: delayHours,
+      overtime_hours: overtimeHours,
+      daily_rate: dailyRate,
       absence_deduction: Number(absenceDeduction.toFixed(2)),
       leave_deduction: Number(leaveDeduction.toFixed(2)),
       half_day_deduction: Number(halfDayDeduction.toFixed(2)),
+      delay_deduction: Number(delayDeduction.toFixed(2)),
       late_deduction: Number(lateDeduction.toFixed(2)),
       early_deduction: Number(earlyDeduction.toFixed(2)),
       overtime_bonus: Number(overtimeBonus.toFixed(2)),
+      overtime_amount: Number(overtimeAmount.toFixed(2)),
     },
     totals: {
       total_deductions: Number(totalDeductions.toFixed(2)),
@@ -1205,6 +1229,7 @@ module.exports = {
   getAttendanceReport,
   createEmployeeTransaction,
   getEmployeeSummary,
+  getEmployeeFinancialSummary: getEmployeeSummary,
   getEmployeePayslip,
   getEmployeeSalesReport,
 };

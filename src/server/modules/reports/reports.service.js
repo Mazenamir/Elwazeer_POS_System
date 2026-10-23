@@ -628,11 +628,12 @@ async function getProfitReport(query = {}, user = null) {
     acc.total_salaries_paid += curr.total_salaries_paid;
     acc.net_profit += curr.net_profit;
     acc.total_revenue += curr.total_revenue;
-    acc.cash_drawer += curr.cash_drawer;
+    acc.cash_drawer += (curr.gross_cash_drawer !== undefined ? curr.gross_cash_drawer : curr.cash_drawer);
+    acc.physical_cash_in_drawer += (curr.physical_cash_in_drawer !== undefined ? curr.physical_cash_in_drawer : curr.cash_drawer);
     acc.total_advances += (curr.advances || 0);
     acc.total_inventory_value += curr.total_inventory_value;
     return acc;
-  }, { total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0, cash_drawer: 0, total_advances: 0, cogs: 0, expenses: 0, total_salaries_paid: 0, net_profit: 0, total_inventory_value: 0 });
+  }, { total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0, cash_drawer: 0, physical_cash_in_drawer: 0, total_advances: 0, cogs: 0, expenses: 0, total_salaries_paid: 0, net_profit: 0, total_inventory_value: 0 });
 
   const gross_profit = summary.total_revenue - summary.cogs;
   const net_profit = summary.net_profit;
@@ -646,9 +647,9 @@ async function getProfitReport(query = {}, user = null) {
   summary.gross_profit = gross_profit;
   summary.profit = net_profit;
   summary.profit_margin = profit_margin;
-  summary.physical_cash_in_drawer = Math.max(0, summary.cash_drawer - summary.total_advances);
-  summary.cash_in_drawer = summary.physical_cash_in_drawer;
   summary.gross_cash_drawer = summary.cash_drawer;
+  summary.physical_cash_in_drawer = Math.max(0, summary.gross_cash_drawer - summary.total_advances);
+  summary.cash_in_drawer = summary.physical_cash_in_drawer;
   summary.cash_drawer = summary.physical_cash_in_drawer;
   summary.total_expenses_and_advances = summary.expenses + summary.total_advances;
   summary.total_sales_and_revenue = summary.total_revenue;
@@ -1543,6 +1544,7 @@ async function getDailyReport(query = {}, user = null) {
       tailoringRes,
       cashRes,
       inventoryValueRes,
+      advancesRes,
     ] = await Promise.all([
       db.query(
         `SELECT branch_id, COALESCE(SUM(total_amount), 0) as total, COUNT(id)::int as count
@@ -1683,6 +1685,17 @@ async function getDailyReport(query = {}, user = null) {
          GROUP BY ib.branch_id`,
         [branchIds]
       ),
+      db.query(
+        `SELECT e.branch_id, COALESCE(SUM(et.amount), 0) as total
+         FROM employee_transactions et
+         JOIN employees e ON e.id = et.employee_id
+         WHERE e.branch_id = ANY($1::int[])
+           AND et.type = 'advance'
+           AND et.transaction_date >= $2::date
+           AND et.transaction_date < $3::date
+         GROUP BY e.branch_id`,
+        reportParams
+      ),
     ]);
 
     const salesByBranch = rowsByBranch(salesRes.rows, row => ({ total: Number(row.total), count: Number(row.count) }));
@@ -1697,6 +1710,7 @@ async function getDailyReport(query = {}, user = null) {
     const tailoringByBranch = rowsByBranch(tailoringRes.rows, row => ({ total: Number(row.total), count: Number(row.count) }));
     const cashByBranch = rowsByBranch(cashRes.rows, row => Number(row.total));
     const inventoryValueByBranch = rowsByBranch(inventoryValueRes.rows, row => Number(row.total));
+    const advancesByBranch = rowsByBranch(advancesRes.rows, row => Number(row.total));
 
     report = branches.map(branch => {
       const branchId = Number(branch.id);
@@ -1708,11 +1722,13 @@ async function getDailyReport(query = {}, user = null) {
       const cogs = (cogsByBranch.get(branchId) || 0) - (returnCogsByBranch.get(branchId) || 0);
       const expenses = expensesByBranch.get(branchId) || 0;
       const cash_expenses = cashExpensesByBranch.get(branchId) || 0;
+      const advances = advancesByBranch.get(branchId) || 0;
       const total_salaries_paid = salariesByBranch.get(branchId) || 0;
       const total_rentals = rentals.total + (finesByBranch.get(branchId) || 0);
       const total_tailoring = tailoring.total;
       const total_revenue = total_sales + total_rentals + total_tailoring;
       const cash_drawer = (cashByBranch.get(branchId) || 0) - returns.total - cash_expenses;
+      const physical_cash_in_drawer = Math.max(0, (cashByBranch.get(branchId) || 0) - returns.total - cash_expenses - advances);
       const gross_profit = total_revenue - cogs;
       const net_profit = total_revenue - (cogs + expenses + total_salaries_paid);
 
@@ -1729,6 +1745,8 @@ async function getDailyReport(query = {}, user = null) {
         total_expenses: expenses,
         total_salaries_paid,
         salaries: total_salaries_paid,
+        advances,
+        total_advances: advances,
         total_rentals,
         rentals: total_rentals,
         total_tailoring,
@@ -1736,9 +1754,11 @@ async function getDailyReport(query = {}, user = null) {
         tailoring_count: tailoring.count,
         total_revenue,
         revenue: total_revenue,
-        cash_drawer,
-        cash_in_drawer: cash_drawer,
-        net_cash: cash_drawer,
+        cash_drawer: physical_cash_in_drawer,
+        cash_in_drawer: physical_cash_in_drawer,
+        physical_cash_in_drawer,
+        gross_cash_drawer: cash_drawer,
+        net_cash: physical_cash_in_drawer,
         rental_count: rentals.count,
         net_profit,
         profit: net_profit,
@@ -2735,6 +2755,9 @@ async function getExtendedDailyReport(query = {}, user = null) {
       total_deductions: totalDeductions,
       cash_in_drawer: physicalCashInDrawer,
       physical_cash_in_drawer: physicalCashInDrawer,
+      cash_drawer: physicalCashInDrawer,
+      gross_cash_drawer: Math.max(0, cashCollected - cashExpenses),
+      net_cash: physicalCashInDrawer,
       cash_drawer_excel: cashDrawerExcel,
       cash_collected: cashCollected,
       cash_expenses: cashExpenses,
