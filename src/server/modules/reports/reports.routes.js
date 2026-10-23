@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const reportsController = require('./reports.controller');
 const { requirePermission } = require('../../middleware/rbac.middleware');
+const { exportLimiter } = require('../../middleware/rateLimit.middleware');
 
 // Dashboard & Top Products shortcuts (requires Dashboard.html permission or admin)
 router.get('/dashboard', requirePermission('Dashboard.html'), reportsController.getDashboard);
@@ -29,8 +30,8 @@ router.get('/reports/kpi', requirePermission('Reports.html'), reportsController.
 router.post('/reports/attendance-quick-log', requirePermission('Reports.html'), reportsController.updateDailyAttendanceQuick);
 
 // Exports (.xlsx and printable HTML)
-router.get('/reports/export/excel', requirePermission('Reports.html'), reportsController.exportExcel);
-router.get('/reports/export/consolidated-excel', requirePermission('Reports.html'), reportsController.exportConsolidatedExcel);
-router.get('/reports/export/pdf-html', requirePermission('Reports.html'), reportsController.exportPdfHtml);
+router.get('/reports/export/excel', requirePermission('Reports.html'), exportLimiter, reportsController.exportExcel);
+router.get('/reports/export/consolidated-excel', requirePermission('Reports.html'), exportLimiter, reportsController.exportConsolidatedExcel);
+router.get('/reports/export/pdf-html', requirePermission('Reports.html'), exportLimiter, reportsController.exportPdfHtml);
 
 module.exports = router;

@@ -44,7 +44,12 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
   if (type === 'all' || type === 'products') {
     tasks.push((async () => {
       try {
-        const params = [pattern];
+        const params = [pattern, queryStr, `${queryStr}%`];
+        let idFilter = '';
+        if (isNumeric) {
+          params.push(parseInt(cleanNum, 10));
+          idFilter = `OR i.id = $${params.length}`;
+        }
         let branchFilter = '';
         if (effectiveBranchId) {
           params.push(effectiveBranchId);
@@ -70,13 +75,13 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
               OR i.category ILIKE $1 
               OR i.color ILIKE $1
               OR i.size_cut ILIKE $1
-              ${isNumeric ? `OR i.id = ${cleanNum}` : ''}
+              ${idFilter}
             )
             ${branchFilter}
           ORDER BY 
             CASE 
-              WHEN i.barcode = '${queryStr}' THEN 0
-              WHEN i.name ILIKE '${queryStr}%' THEN 1
+              WHEN i.barcode = $2 THEN 0
+              WHEN i.name ILIKE $3 THEN 1
               ELSE 2 
             END,
             i.id DESC
@@ -94,7 +99,12 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
   if (type === 'all' || type === 'customers') {
     tasks.push((async () => {
       try {
-        const params = [pattern];
+        const params = [pattern, queryStr, `${queryStr}%`];
+        let idFilter = '';
+        if (isNumeric) {
+          params.push(parseInt(cleanNum, 10));
+          idFilter = `OR c.id = $${params.length}`;
+        }
         let branchFilter = '';
         if (effectiveBranchId) {
           params.push(effectiveBranchId);
@@ -117,13 +127,13 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
             c.name ILIKE $1 
             OR c.phone ILIKE $1 
             OR COALESCE(c.national_id, '') ILIKE $1
-            ${isNumeric ? `OR c.id = ${cleanNum}` : ''}
+            ${idFilter}
           )
           ${branchFilter}
           ORDER BY 
             CASE 
-              WHEN c.phone = '${queryStr}' THEN 0
-              WHEN c.name ILIKE '${queryStr}%' THEN 1
+              WHEN c.phone = $2 THEN 0
+              WHEN c.name ILIKE $3 THEN 1
               ELSE 2 
             END,
             c.id ASC
@@ -142,6 +152,11 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
     tasks.push((async () => {
       try {
         const params = [pattern];
+        let numFilter = '';
+        if (isNumeric) {
+          params.push(parseInt(cleanNum, 10));
+          numFilter = `OR o.branch_invoice_number = $${params.length} OR o.id = $${params.length}`;
+        }
         let branchFilter = '';
         if (effectiveBranchId) {
           params.push(effectiveBranchId);
@@ -167,7 +182,7 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
           WHERE (
             c.name ILIKE $1
             OR c.phone ILIKE $1
-            ${isNumeric ? `OR o.branch_invoice_number = ${cleanNum} OR o.id = ${cleanNum}` : ''}
+            ${numFilter}
             OR o.offline_uuid::text ILIKE $1
           )
           ${branchFilter}
@@ -187,6 +202,11 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
     tasks.push((async () => {
       try {
         const params = [pattern];
+        let idFilter = '';
+        if (isNumeric) {
+          params.push(parseInt(cleanNum, 10));
+          idFilter = `OR e.id = $${params.length}`;
+        }
         let branchFilter = '';
         if (effectiveBranchId) {
           params.push(effectiveBranchId);
@@ -208,7 +228,7 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
             e.name ILIKE $1 
             OR e.phone ILIKE $1 
             OR COALESCE(e.position, '') ILIKE $1
-            ${isNumeric ? `OR e.id = ${cleanNum}` : ''}
+            ${idFilter}
           )
           ${branchFilter}
           ORDER BY e.name ASC, e.id ASC
@@ -226,6 +246,13 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
   if (type === 'all' || type === 'suppliers') {
     tasks.push((async () => {
       try {
+        const params = [pattern];
+        let idFilter = '';
+        if (isNumeric) {
+          params.push(parseInt(cleanNum, 10));
+          idFilter = `OR id = $${params.length}`;
+        }
+
         const { rows } = await db.query(`
           SELECT 
             id,
@@ -237,11 +264,11 @@ async function searchPostgres({ queryStr, pattern, cleanNum, isNumeric, effectiv
             name ILIKE $1 
             OR COALESCE(code, '') ILIKE $1 
             OR COALESCE(phone, '') ILIKE $1
-            ${isNumeric ? `OR id = ${cleanNum}` : ''}
+            ${idFilter}
           )
           ORDER BY name ASC
           LIMIT 8
-        `, [pattern]);
+        `, params);
         return { key: 'suppliers', items: rows };
       } catch (err) {
         console.error('[Search] Suppliers search error:', err.message);
@@ -280,13 +307,16 @@ function searchSqlite({ queryStr, pattern, cleanNum, isNumeric, effectiveBranchI
     suppliers: [],
   };
 
+  const safeNum = isNumeric ? parseInt(cleanNum, 10) : null;
+  const safeBranchId = effectiveBranchId ? parseInt(effectiveBranchId, 10) : null;
+
   try {
     if (type === 'all' || type === 'products') {
       const pRows = db.sqlite.prepare(`
         SELECT id, name, category, color, size_cut, barcode, price, stock_level, image_url
         FROM inventory
         WHERE is_deleted = 0
-          AND (name LIKE ? OR barcode LIKE ? OR category LIKE ? OR color LIKE ? ${isNumeric ? `OR id = ${cleanNum}` : ''})
+          AND (name LIKE ? OR barcode LIKE ? OR category LIKE ? OR color LIKE ? ${safeNum !== null ? `OR id = ${safeNum}` : ''})
         ORDER BY id DESC
         LIMIT 8
       `).all(pattern, pattern, pattern, pattern);
@@ -299,8 +329,8 @@ function searchSqlite({ queryStr, pattern, cleanNum, isNumeric, effectiveBranchI
         SELECT c.id, c.name, c.initials, c.phone, c.status, c.total_spent, c.branch_id, b.name as branch_name
         FROM customers c
         LEFT JOIN branches b ON c.branch_id = b.id
-        WHERE (c.name LIKE ? OR c.phone LIKE ? ${isNumeric ? `OR c.id = ${cleanNum}` : ''})
-        ${effectiveBranchId ? `AND c.branch_id = ${effectiveBranchId}` : ''}
+        WHERE (c.name LIKE ? OR c.phone LIKE ? ${safeNum !== null ? `OR c.id = ${safeNum}` : ''})
+        ${safeBranchId !== null ? `AND c.branch_id = ${safeBranchId}` : ''}
         ORDER BY c.id ASC
         LIMIT 8
       `).all(pattern, pattern);
@@ -313,8 +343,8 @@ function searchSqlite({ queryStr, pattern, cleanNum, isNumeric, effectiveBranchI
         SELECT e.id, e.name, e.phone, e.position, e.status, e.branch_id, b.name as branch_name
         FROM employees e
         LEFT JOIN branches b ON e.branch_id = b.id
-        WHERE (e.name LIKE ? OR e.phone LIKE ? OR e.position LIKE ? ${isNumeric ? `OR e.id = ${cleanNum}` : ''})
-        ${effectiveBranchId ? `AND e.branch_id = ${effectiveBranchId}` : ''}
+        WHERE (e.name LIKE ? OR e.phone LIKE ? OR e.position LIKE ? ${safeNum !== null ? `OR e.id = ${safeNum}` : ''})
+        ${safeBranchId !== null ? `AND e.branch_id = ${safeBranchId}` : ''}
         ORDER BY e.name ASC
         LIMIT 8
       `).all(pattern, pattern, pattern);

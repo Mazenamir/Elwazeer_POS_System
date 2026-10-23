@@ -122,6 +122,15 @@ async function getDiagnostics(req, res, next) {
 }
 
 async function configure(req, res, next) {
+  const syncKey = req.headers?.['x-sync-key'];
+  const expectedKey = process.env.SYNC_API_KEY || config.SYNC_API_KEY;
+  const isKeyValid = Boolean(syncKey && expectedKey && syncKey === expectedKey);
+  const isAdmin = Boolean(req.user && req.user.role === 'admin');
+
+  if (!isKeyValid && !isAdmin && !req.isSyncKeyAuthenticated) {
+    return res.status(req.user ? 403 : 401).json({ error: 'Unauthorized: Admin privilege or sync key required' });
+  }
+
   try {
     const result = await syncService.configureSyncServer(req.body);
     res.json(result);

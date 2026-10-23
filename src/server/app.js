@@ -51,30 +51,34 @@ app.use(helmet({
 
 // CORS configuration - strict local, LAN, and same-host origin verification
 const LOCAL_ORIGIN_REGEX = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i;
+const LOCAL_HOST_REGEX = /^(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i;
 
 function isAllowedOrigin(origin, req) {
   if (!origin || origin === 'null') return true;
   if (LOCAL_ORIGIN_REGEX.test(origin)) return true;
-
-  // Allow requests where origin host matches the server host being accessed (Same-Host / Same-Origin)
-  const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
-  if (host) {
-    if (origin === `http://${host}` || origin === `https://${host}`) {
-      return true;
-    }
-    try {
-      const parsedOrigin = new URL(origin);
-      if (parsedOrigin.host.toLowerCase() === host.toLowerCase()) {
-        return true;
-      }
-    } catch {}
-  }
 
   // Allow explicitly configured CORS origins in .env
   if (config.CORS_ORIGIN) {
     const allowed = config.CORS_ORIGIN.split(',').map((s) => s.trim().toLowerCase());
     if (allowed.includes('*') || allowed.includes(origin.toLowerCase())) {
       return true;
+    }
+  }
+
+  // Only allow same-host matching if host is a validated local/LAN host
+  const rawHost = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
+  if (rawHost) {
+    const host = String(rawHost).split(',')[0].trim();
+    if (LOCAL_HOST_REGEX.test(host)) {
+      if (origin === `http://${host}` || origin === `https://${host}`) {
+        return true;
+      }
+      try {
+        const parsedOrigin = new URL(origin);
+        if (parsedOrigin.host.toLowerCase() === host.toLowerCase()) {
+          return true;
+        }
+      } catch {}
     }
   }
 

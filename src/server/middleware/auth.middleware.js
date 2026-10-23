@@ -28,10 +28,6 @@ const PUBLIC_PATHS = new Set([
   '/api/sync/apply',
   '/api/sync/ping',
   '/api/sync/catalog',
-  '/api/sync/status',
-  '/api/sync/cycle',
-  '/api/sync/diagnostics',
-  '/api/sync/configure',
   '/responsive.css',
   '/router.js',
   '/auth.js',
@@ -46,7 +42,64 @@ function isPublicRequest(req) {
   return false;
 }
 
+const { hasPermission, hasInventoryAdminAccess } = require('../../shared/constants/permissions');
+
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'admin') {
+    if (res) {
+      res.status(403).json({ error: 'Forbidden' });
+      return false;
+    }
+    return false;
+  }
+  if (typeof next === 'function') next();
+  return true;
+}
+
+function requirePermission(...permissions) {
+  const flattened = permissions.flat(Infinity);
+  return function requirePermission(req, res, next) {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (req.user.role === 'admin') {
+      return next();
+    }
+    const allowed = flattened.some((p) => {
+      if (p === 'inventory_admin') return hasInventoryAdminAccess(req.user);
+      return hasPermission(req.user, p);
+    });
+    if (allowed) {
+      return next();
+    }
+    return res.status(403).json({ error: 'Forbidden' });
+  };
+}
+
+function requireInventoryAdmin(req, res, next) {
+  if (!req.user) {
+    if (res) res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  if (hasInventoryAdminAccess(req.user)) {
+    if (typeof next === 'function') return next();
+    return true;
+  }
+  if (res) {
+    res.status(403).json({ error: 'Forbidden' });
+  }
+  return false;
+}
+
 async function authMiddleware(req, res, next) {
+  // Allow sync requests with valid x-sync-key
+  const syncKey = req.headers?.['x-sync-key'];
+  const expectedKey = process.env.SYNC_API_KEY || config.SYNC_API_KEY;
+  if (syncKey && expectedKey && syncKey === expectedKey && req.path.startsWith('/api/sync/')) {
+    req.isSyncKeyAuthenticated = true;
+    return next();
+  }
+
   // AUTH-01: Extract token from cookies or Authorization: Bearer <token> header
   let token = req.cookies?.token;
   let isCookieToken = Boolean(token);
@@ -115,4 +168,7 @@ async function authMiddleware(req, res, next) {
 module.exports = {
   authMiddleware,
   isPublicRequest,
+  requireAdmin,
+  requirePermission,
+  requireInventoryAdmin,
 };
