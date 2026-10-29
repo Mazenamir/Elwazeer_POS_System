@@ -9,6 +9,15 @@ async function getEmployeeOptions(req, res, next) {
   }
 }
 
+async function getActiveSellers(req, res, next) {
+  try {
+    const data = await employeesService.getActiveSellers(req.query, req.user);
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getCheckoutReminders(req, res, next) {
   try {
     const reminders = await employeesService.getCheckoutReminders(req.query.branch_id, req.user);
@@ -146,6 +155,7 @@ async function getEmployeeSalesReport(req, res, next) {
 
 module.exports = {
   getEmployeeOptions,
+  getActiveSellers,
   getCheckoutReminders,
   listEmployees,
   createEmployee,

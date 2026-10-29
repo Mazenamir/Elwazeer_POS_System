@@ -180,9 +180,9 @@ export function generateBarcodeSvg(barcodeValue, paperType = 'sticker-38x25mm') 
   const is50 = paperType === 'sticker-50x30mm';
 
   // Crisp line widths and heights tailored for 203 DPI thermal printheads
-  // Height 20 for 25mm labels fits cleanly inside label boundary with dedicated price space
-  const barWidth = is38 ? 1.0 : is50 ? 1.2 : 1.4;
-  const barHeight = is38 ? 20 : is50 ? 24 : 36;
+  // Height 16 for 25mm labels fits cleanly inside label boundary with dedicated price space
+  const barWidth = is38 ? 1.15 : is50 ? 1.35 : 1.55;
+  const barHeight = is38 ? 16 : is50 ? 20 : 36;
 
   const raw = String(barcodeValue ?? '').trim() || '000000';
 
@@ -331,7 +331,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
       padding: 0 !important;
       background: #ffffff !important;
-      font-family: 'Cairo', Tahoma, Arial, sans-serif;
+      font-family: 'Cairo', Tahoma, Arial, sans-serif; font-weight: 900 !important;
       direction: rtl;
       color: #000000 !important;
       text-align: center !important;
@@ -382,7 +382,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .barcode-title {
       width: 100%;
       font-size: 11pt;
-      font-weight: 800;
+      font-weight: 900;
       line-height: 1.2;
       word-break: break-word;
       margin-bottom: 2px;
@@ -391,7 +391,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .barcode-variant {
       width: 100%;
       font-size: 9pt;
-      font-weight: 700;
+      font-weight: 900;
       color: #222222;
       line-height: 1.2;
       margin-bottom: 3px;
@@ -438,7 +438,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .barcode-price-orig {
       text-decoration: line-through;
       font-size: 9pt;
-      font-weight: 600;
+      font-weight: 900;
       color: #555555;
     }
     .barcode-price-final {
@@ -543,7 +543,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
       padding: 0 !important;
       background: #ffffff !important;
-      font-family: 'Cairo', Tahoma, Arial, sans-serif;
+      font-family: 'Cairo', Tahoma, Arial, sans-serif; font-weight: 900 !important;
       direction: ltr !important;
       color: #000000 !important;
       text-align: center !important;
@@ -552,12 +552,12 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .sticker-ticket-38 {
       width: ${labelWidthMm} !important;
       max-width: ${labelWidthMm} !important;
-      height: 23.8mm !important;
-      max-height: 23.8mm !important;
+      height: 22.2mm !important;
+      max-height: 22.2mm !important;
       overflow: hidden !important;
       box-sizing: border-box !important;
       margin: 0 auto !important;
-      padding: 0.5mm 1mm !important;
+      padding: 0.4mm 1mm 1.6mm 1mm !important;
       page-break-inside: avoid !important;
       break-inside: avoid !important;
       page-break-after: always !important;
@@ -574,8 +574,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     }
     .sticker-header-38 {
       width: 100% !important;
-      height: 4.0mm !important;
-      max-height: 4.0mm !important;
+      height: 3.2mm !important;
+      max-height: 3.2mm !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -583,8 +583,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
     }
     .sticker-logo-38 {
-      max-height: 3.8mm !important;
-      max-width: 26mm !important;
+      max-height: 3.0mm !important;
+      max-width: 24mm !important;
       width: auto !important;
       height: auto !important;
       object-fit: contain !important;
@@ -609,9 +609,9 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .sticker-title-38 {
       width: 100% !important;
       font-size: 6pt !important;
-      font-weight: 800 !important;
+      font-weight: 900 !important;
       line-height: 1.05 !important;
-      max-height: 2.8mm !important;
+      max-height: 2.6mm !important;
       text-align: center !important;
       direction: rtl !important;
       white-space: nowrap !important;
@@ -622,10 +622,10 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .sticker-variant-38 {
       width: 100% !important;
       font-size: 5pt !important;
-      font-weight: 700 !important;
+      font-weight: 900 !important;
       line-height: 1 !important;
-      max-height: 2.2mm !important;
-      color: #111111 !important;
+      max-height: 2.0mm !important;
+      color: #000000 !important;
       text-align: center !important;
       direction: rtl !important;
       white-space: nowrap !important;
@@ -635,8 +635,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     }
     .sticker-graphic-38 {
       width: 100% !important;
-      height: 5.6mm !important;
-      max-height: 5.6mm !important;
+      height: 4.4mm !important;
+      max-height: 4.4mm !important;
       display: flex !important;
       justify-content: center !important;
       align-items: center !important;
@@ -650,7 +650,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
       max-width: 95% !important;
       width: auto !important;
-      height: 5.4mm !important;
+      height: 4.2mm !important;
     }
     .sticker-code-38 {
       width: 100% !important;
@@ -659,17 +659,17 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       font-weight: 900 !important;
       line-height: 1 !important;
       letter-spacing: 0.5px !important;
-      max-height: 2.2mm !important;
+      max-height: 2.0mm !important;
       text-align: center !important;
       direction: ltr !important;
       margin: 0 auto !important;
     }
     .sticker-price-38 {
       width: 100% !important;
-      font-size: 8pt !important;
+      font-size: 8.5pt !important;
       font-weight: 900 !important;
-      line-height: 1.1 !important;
-      max-height: 4.2mm !important;
+      line-height: 1 !important;
+      max-height: 4.4mm !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -677,16 +677,20 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       text-align: center !important;
       direction: rtl !important;
       margin: 0 auto !important;
+      color: #000000 !important;
     }
     .sticker-price-orig-38 {
       text-decoration: line-through !important;
-      font-size: 5.5pt !important;
-      font-weight: normal !important;
-      color: #555555 !important;
+      font-size: 6pt !important;
+      font-weight: 900 !important;
+      color: #333333 !important;
+      margin-left: 2px !important;
     }
     .sticker-price-final-38 {
       font-weight: 900 !important;
-      font-size: 8pt !important;
+      font-size: 8.5pt !important;
+      color: #000000 !important;
+      letter-spacing: -0.2px !important;
     }
     ${options.forSimulator ? `
     html, body {
@@ -783,7 +787,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
       padding: 0 !important;
       background: #ffffff !important;
-      font-family: 'Cairo', Tahoma, Arial, sans-serif;
+      font-family: 'Cairo', Tahoma, Arial, sans-serif; font-weight: 900 !important;
       direction: ltr !important;
       color: #000000 !important;
       text-align: center !important;
@@ -791,12 +795,12 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     }
     .sticker-ticket-50 {
       width: 50mm !important;
-      height: 30mm !important;
-      max-height: 30mm !important;
+      height: 27.2mm !important;
+      max-height: 27.2mm !important;
       overflow: hidden !important;
       box-sizing: border-box !important;
       margin: 0 auto !important;
-      padding: 0.6mm 1.2mm !important;
+      padding: 0.6mm 1.2mm 1.8mm 1.2mm !important;
       page-break-inside: avoid !important;
       break-inside: avoid !important;
       page-break-after: always !important;
@@ -813,8 +817,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     }
     .sticker-header-50 {
       width: 100% !important;
-      height: 5mm !important;
-      max-height: 5mm !important;
+      height: 4.2mm !important;
+      max-height: 4.2mm !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -822,8 +826,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
     }
     .sticker-logo-50 {
-      max-height: 4.8mm !important;
-      max-width: 32mm !important;
+      max-height: 4.0mm !important;
+      max-width: 30mm !important;
       width: auto !important;
       height: auto !important;
       object-fit: contain !important;
@@ -848,9 +852,9 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .sticker-title-50 {
       width: 100% !important;
       font-size: 7pt !important;
-      font-weight: 800 !important;
-      line-height: 1.15 !important;
-      max-height: 3.4mm !important;
+      font-weight: 900 !important;
+      line-height: 1 !important;
+      max-height: 3.0mm !important;
       text-align: center !important;
       direction: rtl !important;
       white-space: nowrap !important;
@@ -861,10 +865,10 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     .sticker-variant-50 {
       width: 100% !important;
       font-size: 6pt !important;
-      font-weight: 700 !important;
+      font-weight: 900 !important;
       line-height: 1 !important;
-      max-height: 2.7mm !important;
-      color: #222222 !important;
+      max-height: 2.4mm !important;
+      color: #000000 !important;
       text-align: center !important;
       direction: rtl !important;
       white-space: nowrap !important;
@@ -874,8 +878,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     }
     .sticker-graphic-50 {
       width: 100% !important;
-      height: 7mm !important;
-      max-height: 7mm !important;
+      height: 5.8mm !important;
+      max-height: 5.8mm !important;
       display: flex !important;
       justify-content: center !important;
       align-items: center !important;
@@ -889,7 +893,7 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
       max-width: 95% !important;
       width: auto !important;
-      height: 6.8mm !important;
+      height: 5.6mm !important;
     }
     .sticker-code-50 {
       width: 100% !important;
@@ -898,17 +902,17 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       font-weight: 900 !important;
       line-height: 1 !important;
       letter-spacing: 0.8px !important;
-      max-height: 2.7mm !important;
+      max-height: 2.4mm !important;
       text-align: center !important;
       direction: ltr !important;
       margin: 0 auto !important;
     }
     .sticker-price-50 {
       width: 100% !important;
-      font-size: 8.5pt !important;
+      font-size: 9.5pt !important;
       font-weight: 900 !important;
-      line-height: 1.1 !important;
-      max-height: 4.2mm !important;
+      line-height: 1 !important;
+      max-height: 4.8mm !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -916,16 +920,18 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       text-align: center !important;
       direction: rtl !important;
       margin: 0 auto !important;
+      color: #000000 !important;
     }
     .sticker-price-orig-50 {
       text-decoration: line-through !important;
-      font-size: 6.5pt !important;
-      font-weight: normal !important;
-      color: #555555 !important;
+      font-size: 7pt !important;
+      font-weight: 900 !important;
+      color: #333333 !important;
     }
     .sticker-price-final-50 {
       font-weight: 900 !important;
-      font-size: 8.5pt !important;
+      font-size: 9.5pt !important;
+      color: #000000 !important;
     }
     ${options.forSimulator ? `
     html, body {

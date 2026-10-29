@@ -8,9 +8,20 @@ export function BranchProvider({ children }) {
   const { user, isAuthenticated } = useAuth();
   const [branches, setBranches] = useState([]);
   const [activeBranchId, setActiveBranchId] = useState(() => {
+    if (user && user.role !== 'admin' && user?.branch_id) {
+      return user.branch_id.toString();
+    }
     return localStorage.getItem('bebyoon_active_branch_id') || 'all';
   });
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (user && user.role !== 'admin' && user?.branch_id) {
+      const bId = user.branch_id.toString();
+      setActiveBranchId(bId);
+      localStorage.setItem('bebyoon_active_branch_id', bId);
+    }
+  }, [user]);
 
   const fetchBranches = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -20,8 +31,8 @@ export function BranchProvider({ children }) {
       if (Array.isArray(data)) {
         setBranches(data);
 
-        // If user is branch-scoped (branch_user or cashier), lock to their assigned branch
-        if ((user?.role === 'branch_user' || user?.role === 'cashier') && user?.branch_id) {
+        // If user is branch-scoped (any non-admin account), strictly lock to their assigned branch
+        if (user && user.role !== 'admin' && user?.branch_id) {
           setActiveBranchId(user.branch_id.toString());
           localStorage.setItem('bebyoon_active_branch_id', user.branch_id.toString());
         } else {
@@ -47,6 +58,9 @@ export function BranchProvider({ children }) {
   }, [fetchBranches]);
 
   const selectBranch = (branchId) => {
+    if (user && user.role !== 'admin' && user?.branch_id) {
+      return;
+    }
     setActiveBranchId(branchId);
     localStorage.setItem('bebyoon_active_branch_id', branchId);
   };

@@ -12,15 +12,20 @@ function requireAdmin(req, res, next) {
   return true;
 }
 
-function requirePermission(permission) {
-  return (req, res, next) => {
+function requirePermission(...permissions) {
+  const flattened = permissions.flat(Infinity);
+  return function requirePermission(req, res, next) {
     if (!req.user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     if (req.user.role === 'admin') {
       return next();
     }
-    if (hasPermission(req.user, permission)) {
+    const allowed = flattened.some((p) => {
+      if (p === 'inventory_admin') return hasInventoryAdminAccess(req.user);
+      return hasPermission(req.user, p);
+    });
+    if (allowed) {
       return next();
     }
     return res.status(403).json({ error: 'Forbidden' });

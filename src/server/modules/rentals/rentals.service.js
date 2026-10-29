@@ -6,7 +6,7 @@ const { dateOnly, daysBetween, getDatabaseCairoNow } = require('../../../shared/
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { clampInt, roundCurrency } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
-const { normalizeBarcodeInput, getAvailableBarcode, assertBarcodeAvailable, adjustInventoryStock } = require('../inventory/inventory.helpers');
+const { normalizeBarcodeInput, getAvailableBarcode, assertBarcodeAvailable, generateUniqueBarcode, adjustInventoryStock, resolveCategoryQuery } = require('../inventory/inventory.helpers');
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { getRentalAvailability, getRentalGroupRows, getOrCreateSalesInventoryForRental } = require('./rentals.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
@@ -30,7 +30,7 @@ async function listRentalInventory(query = {}, user = null, req = null) {
   const params = [];
   if (targetRentalBranchId) {
     params.push(targetRentalBranchId);
-    branchJoinFilter = `AND rib.branch_id = ${params.length}`;
+    branchJoinFilter = `AND rib.branch_id = $${params.length}`;
   }
 
   const where = ['ri.is_deleted = FALSE'];
@@ -42,7 +42,7 @@ async function listRentalInventory(query = {}, user = null, req = null) {
     where.push(`EXISTS (
       SELECT 1 FROM rental_inventory_branches rib_filter
       WHERE rib_filter.rental_inventory_id = ri.id
-        AND rib_filter.branch_id = ${params.length}
+        AND rib_filter.branch_id = $${params.length}
         ${stockFilter}
     )`);
   }
@@ -67,9 +67,16 @@ async function listRentalInventory(query = {}, user = null, req = null) {
     params.push(likePattern(query.barcode));
     where.push(`ri.barcode ILIKE $${params.length}`);
   }
-  if (query.category) {
-    params.push(query.category);
-    where.push(`ri.category = $${params.length}`);
+  const catQuery = resolveCategoryQuery(query.category);
+  if (catQuery) {
+    if (catQuery.type === 'suits') {
+      where.push(`(ri.category ILIKE '%SUIT%' OR ri.category ILIKE '%بدل%')`);
+    } else if (catQuery.type === 'other') {
+      where.push(`(ri.category IS NULL OR TRIM(ri.category) = '' OR LOWER(TRIM(ri.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+    } else {
+      params.push(catQuery.value);
+      where.push(`LOWER(TRIM(ri.category)) = LOWER(TRIM($${params.length}))`);
+    }
   }
   if (query.color) {
     params.push(likePattern(query.color));
@@ -111,21 +118,25 @@ async function listRentalInventory(query = {}, user = null, req = null) {
 }
 
 async function createRentalInventory(body, user) {
-  let { name, category, size_cut, color, barcode, image_url, branch_stocks, stock_level } = body || {};
+  let { name, category, size_cut, color, barcode, image_url, branch_stocks, stock_level, price, rental_price } = body || {};
   barcode = normalizeBarcodeInput(barcode);
+  const itemPrice = Number(price ?? rental_price ?? 0) || 0;
 
   if (isBranchScopedUser(user)) {
     branch_stocks = [{ branch_id: user.branch_id, stock_level: stock_level || 0 }];
   }
 
   const item = await db.transaction(async (tx) => {
-    barcode = await getAvailableBarcode(tx, barcode);
-    await assertBarcodeAvailable(tx, barcode);
+    if (barcode) {
+      await assertBarcodeAvailable(tx, barcode);
+    } else {
+      barcode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+    }
 
     const { rows } = await tx.query(
       `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url) 
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [name, category, size_cut, color, barcode, 0, image_url]
+      [name, category, size_cut, color, barcode, itemPrice, image_url]
     );
     const newItem = rows[0];
 
@@ -203,8 +214,9 @@ async function updateRentalInventory(id, body, user) {
     throw err;
   }
 
-  let { name, category, size_cut, color, barcode, image_url, branch_stocks } = body || {};
+  let { name, category, size_cut, color, barcode, image_url, branch_stocks, price, rental_price } = body || {};
   barcode = normalizeBarcodeInput(barcode);
+  const itemPrice = Number(price ?? rental_price ?? 0) || 0;
 
   if (isBranchScopedUser(user)) {
     const ownStock = Array.isArray(branch_stocks)
@@ -240,7 +252,7 @@ async function updateRentalInventory(id, body, user) {
       `UPDATE rental_inventory 
        SET name=$1, category=$2, size_cut=$3, color=$4, barcode=$5, price=$6, image_url=$7 
        WHERE id=$8 RETURNING *`,
-      [name, category, size_cut, color, barcode, 0, image_url, id]
+      [name, category, size_cut, color, barcode, itemPrice, image_url, id]
     );
 
     if (branch_stocks && Array.isArray(branch_stocks)) {
@@ -279,9 +291,28 @@ async function deleteRentalInventory(id, user) {
 }
 
 async function transferFromSales(body, user) {
-  const { inventory_id, from_branch, to_branch, quantity } = body || {};
-  if (!inventory_id || !from_branch || !to_branch || !quantity) {
-    const err = new Error('Missing required data');
+  let {
+    inventory_id,
+    from_branch,
+    to_branch,
+    quantity,
+    branch_id,
+    rental_price,
+    price,
+    transfer_mode,
+    size,
+    size_name,
+    part_type,
+    color,
+  } = body || {};
+
+  from_branch = Number(from_branch || branch_id || user?.branch_id || 1);
+  to_branch = Number(to_branch || branch_id || from_branch || user?.branch_id || 1);
+  quantity = Number(quantity) > 0 ? Number(quantity) : 1;
+  const effectiveRentalPrice = Number(price ?? rental_price ?? 0) || 0;
+
+  if (!inventory_id) {
+    const err = new Error('بيانات الصنف المطلوب تحويله غير صالحة أو مفقودة');
     err.statusCode = 400;
     throw err;
   }
@@ -294,86 +325,216 @@ async function transferFromSales(body, user) {
     }
   }
 
+  let transferredItemName = '';
+
   await db.transaction(async (tx) => {
     // 1. Get source inventory details
     const invRes = await tx.query('SELECT * FROM inventory WHERE id = $1', [inventory_id]);
     if (invRes.rows.length === 0) {
-      const err = new Error('Inventory item not found');
+      const err = new Error('الصنف غير موجود بالمخزون أو تم حذفه');
       err.statusCode = 404;
       throw err;
     }
     const invItem = invRes.rows[0];
 
-    // 2. Check source stock
-    const stockRes = await tx.query(
-      'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
-      [inventory_id, from_branch]
-    );
-    if (stockRes.rows.length === 0 || Number(stockRes.rows[0].stock_level) < quantity) {
-      const err = new Error('Insufficient stock in source branch');
-      err.statusCode = 400;
-      throw err;
-    }
+    // Determine target piece / size name
+    const effectivePart = part_type && part_type !== 'بدلة كاملة' ? String(part_type).trim() : null;
+    transferredItemName = effectivePart ? `${invItem.name} (${effectivePart})` : invItem.name;
+    const effectiveSize = String(size || size_name || '').trim();
+    const effectiveColor = String(color || invItem.color || '').trim();
 
-    // 3. Find or create rental inventory item
-    let rentalItemId;
-    const rentalInvRes = await tx.query(
-      'SELECT id FROM rental_inventory WHERE name = $1 AND category = $2 AND size_cut = $3 AND color = $4 AND is_deleted = FALSE',
-      [invItem.name, invItem.category, invItem.size_cut, invItem.color]
-    );
+    if (transfer_mode === 'full_suit' && !effectiveSize) {
+      // Transfer across all available sizes for this suit in from_branch
+      const sizesRes = await tx.query(
+        'SELECT * FROM inventory_sizes WHERE inventory_id = $1 AND branch_id = $2 AND stock_level > 0 ORDER BY id ASC',
+        [inventory_id, from_branch]
+      );
+      if (sizesRes.rows.length > 0) {
+        for (const sr of sizesRes.rows) {
+          const moveQty = Math.min(Number(sr.stock_level || 0), quantity);
+          if (moveQty <= 0) continue;
 
-    if (rentalInvRes.rows.length > 0) {
-      rentalItemId = rentalInvRes.rows[0].id;
+          // Find or create in rental_inventory
+          const sName = sr.size_name || invItem.size_cut;
+          const sColor = sr.color_name || effectiveColor;
+          const rInvRes = await tx.query(
+            'SELECT id, price FROM rental_inventory WHERE name = $1 AND category = $2 AND size_cut = $3 AND color = $4 AND is_deleted = FALSE',
+            [transferredItemName, invItem.category, sName, sColor]
+          );
+          let rId;
+          if (rInvRes.rows.length > 0) {
+            rId = rInvRes.rows[0].id;
+            if (effectiveRentalPrice > 0 && Number(rInvRes.rows[0].price) === 0) {
+              await tx.query('UPDATE rental_inventory SET price = $1 WHERE id = $2', [effectiveRentalPrice, rId]);
+            }
+          } else {
+            let newBarcode = invItem.barcode ? normalizeBarcodeInput(`${invItem.barcode}${sr.size_id || 9}`) : null;
+            newBarcode = await getAvailableBarcode(tx, newBarcode);
+            const insRes = await tx.query(
+              `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url)
+               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+              [transferredItemName, invItem.category, sName, sColor, newBarcode, effectiveRentalPrice, invItem.image_url]
+            );
+            rId = insRes.rows[0].id;
+          }
+
+          // Deduct from sales inventory
+          await adjustInventoryStock(tx, {
+            inventoryId: inventory_id,
+            branchId: from_branch,
+            quantityDelta: -moveQty,
+            size: sName,
+            color: sColor,
+          });
+
+          // Add to rental inventory
+          await tx.query(
+            `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (rental_inventory_id, branch_id)
+             DO UPDATE SET stock_level = rental_inventory_branches.stock_level + $3`,
+            [rId, to_branch, moveQty]
+          );
+        }
+      } else {
+        // Fallback when no inventory_sizes rows exist
+        const stockRes = await tx.query(
+          'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+          [inventory_id, from_branch]
+        );
+        const currentStock = stockRes.rows.length > 0 ? Number(stockRes.rows[0].stock_level) : 0;
+        if (currentStock < quantity) {
+          const err = new Error(`الرصيد المتوفر بالمخزن (${currentStock} قطعة) غير كافٍ لتحويل (${quantity} قطعة)`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        let rentalItemId;
+        const rentalInvRes = await tx.query(
+          'SELECT id, price FROM rental_inventory WHERE name = $1 AND category = $2 AND size_cut = $3 AND color = $4 AND is_deleted = FALSE',
+          [transferredItemName, invItem.category, invItem.size_cut, effectiveColor]
+        );
+        if (rentalInvRes.rows.length > 0) {
+          rentalItemId = rentalInvRes.rows[0].id;
+        } else {
+          let newBarcode = invItem.barcode ? normalizeBarcodeInput(`${invItem.barcode}9`) : null;
+          newBarcode = await getAvailableBarcode(tx, newBarcode);
+          const newRentalRes = await tx.query(
+            `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            [transferredItemName, invItem.category, invItem.size_cut, effectiveColor, newBarcode, effectiveRentalPrice, invItem.image_url]
+          );
+          rentalItemId = newRentalRes.rows[0].id;
+        }
+        await adjustInventoryStock(tx, {
+          inventoryId: inventory_id,
+          branchId: from_branch,
+          quantityDelta: -quantity,
+          size: invItem.size_cut,
+          color: effectiveColor,
+        });
+        await tx.query(
+          `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level) 
+           VALUES ($1, $2, $3)
+           ON CONFLICT (rental_inventory_id, branch_id) 
+           DO UPDATE SET stock_level = rental_inventory_branches.stock_level + $3`,
+          [rentalItemId, to_branch, quantity]
+        );
+      }
     } else {
-      let newBarcode = invItem.barcode ? normalizeBarcodeInput(`${invItem.barcode}9`) : null;
-      newBarcode = await getAvailableBarcode(tx, newBarcode);
-      const newRentalRes = await tx.query(
-        `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [invItem.name, invItem.category, invItem.size_cut, invItem.color, newBarcode, 0, invItem.image_url]
-      );
-      rentalItemId = newRentalRes.rows[0].id;
+      // Specific size or part piece transfer
+      const targetSize = effectiveSize || invItem.size_cut;
 
-      // Sync new rental item with all branches
+      // Check stock
+      if (effectiveSize) {
+        const sizeStockRes = await tx.query(
+          'SELECT stock_level FROM inventory_sizes WHERE inventory_id = $1 AND branch_id = $2 AND LOWER(TRIM(size_name)) = LOWER(TRIM($3)) FOR UPDATE',
+          [inventory_id, from_branch, effectiveSize]
+        );
+        const sizeStock = sizeStockRes.rows.length > 0 ? Number(sizeStockRes.rows[0].stock_level) : 0;
+        if (sizeStock < quantity) {
+          const err = new Error(`رصيد المقاس (${effectiveSize}) في الفرع هو (${sizeStock} قطعة) فقط، ولا يكفي لتحويل (${quantity} قطعة)`);
+          err.statusCode = 400;
+          throw err;
+        }
+      } else {
+        const stockRes = await tx.query(
+          'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+          [inventory_id, from_branch]
+        );
+        const currentStock = stockRes.rows.length > 0 ? Number(stockRes.rows[0].stock_level) : 0;
+        if (currentStock < quantity) {
+          const err = new Error(`الرصيد المتوفر بالمخزن (${currentStock} قطعة) غير كافٍ لتحويل (${quantity} قطعة)`);
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+
+      // Find or create in rental_inventory
+      let rentalItemId;
+      const rentalInvRes = await tx.query(
+        'SELECT id, price FROM rental_inventory WHERE name = $1 AND category = $2 AND size_cut = $3 AND color = $4 AND is_deleted = FALSE',
+        [transferredItemName, invItem.category, targetSize, effectiveColor]
+      );
+
+      if (rentalInvRes.rows.length > 0) {
+        rentalItemId = rentalInvRes.rows[0].id;
+        if (effectiveRentalPrice > 0 && Number(rentalInvRes.rows[0].price) === 0) {
+          await tx.query('UPDATE rental_inventory SET price = $1 WHERE id = $2', [effectiveRentalPrice, rentalItemId]);
+        }
+      } else {
+        let newBarcode = invItem.barcode ? normalizeBarcodeInput(`${invItem.barcode}${effectiveSize || '9'}`) : null;
+        newBarcode = await getAvailableBarcode(tx, newBarcode);
+        const newRentalRes = await tx.query(
+          `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [transferredItemName, invItem.category, targetSize, effectiveColor, newBarcode, effectiveRentalPrice, invItem.image_url]
+        );
+        rentalItemId = newRentalRes.rows[0].id;
+
+        await tx.query(
+          `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level)
+           SELECT $1, id, 0 FROM branches
+           ON CONFLICT DO NOTHING`,
+          [rentalItemId]
+        );
+      }
+
+      // Deduct from sales inventory
+      await adjustInventoryStock(tx, {
+        inventoryId: inventory_id,
+        branchId: from_branch,
+        quantityDelta: -quantity,
+        size: targetSize,
+        color: effectiveColor,
+      });
+
+      // Add to rental inventory
       await tx.query(
-        `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level)
-         SELECT $1, id, 0 FROM branches
-         ON CONFLICT DO NOTHING`,
-        [rentalItemId]
+        `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level) 
+         VALUES ($1, $2, $3)
+         ON CONFLICT (rental_inventory_id, branch_id) 
+         DO UPDATE SET stock_level = rental_inventory_branches.stock_level + $3`,
+        [rentalItemId, to_branch, quantity]
       );
     }
-
-    // 4. Deduct from sales inventory across sizes, branch, and global canonical levels
-    await adjustInventoryStock(tx, {
-      inventoryId: inventory_id,
-      branchId: from_branch,
-      quantityDelta: -quantity,
-      size: invItem.size_cut,
-      color: invItem.color,
-    });
-
-    // 5. Add to rental inventory (specific target branch)
-    await tx.query(
-      `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level) 
-       VALUES ($1, $2, $3)
-       ON CONFLICT (rental_inventory_id, branch_id) 
-       DO UPDATE SET stock_level = rental_inventory_branches.stock_level + $3`,
-      [rentalItemId, to_branch, quantity]
-    );
 
     if (user) {
       await logActivity(
         user.id,
         user.username,
         'تحويل للمخزون التأجيري',
-        `تم تحويل ${quantity} قطعة من "${invItem.name}" لمخزون التأجير`,
+        `تم تحويل ${quantity} قطعة من "${transferredItemName}" ${effectiveSize ? `(مقاس ${effectiveSize})` : ''} لمخزون التأجير`,
         'RentalInventory',
         from_branch
       );
     }
   });
 
-  return { success: true };
+  return {
+    success: true,
+    message: `تم تحويل ${quantity} قطعة من "${transferredItemName}" إلى مخزون التأجير بنجاح! ✨`,
+  };
 }
 
 async function getRentalsSummary(branchIdOrQuery, user) {
@@ -470,23 +631,28 @@ async function listRentals(query = {}, user = null, req = null) {
                ELSE COALESCE(r.fine_amount, 0)
              END as suggested_fine,
              e.name as seller_name,
+             ep.name as prep_employee_name,
+             r.is_prepared,
+             r.prepared_at,
+             r.prep_notes,
              so.branch_invoice_number as sale_branch_invoice_number,
              so.order_date as sale_order_date,
              so.payment_method as sale_payment_method,
              so.paid_amount as sale_paid_amount,
              so.change_amount as sale_change_amount
       FROM rentals r
-      JOIN customers c ON r.customer_id = c.id
-      JOIN rental_inventory ri ON r.rental_inventory_id = ri.id
-      JOIN branches b ON r.branch_id = b.id
+      LEFT JOIN customers c ON r.customer_id = c.id
+      LEFT JOIN rental_inventory ri ON r.rental_inventory_id = ri.id
+      LEFT JOIN branches b ON r.branch_id = b.id
       LEFT JOIN employees e ON r.seller_id = e.id
+      LEFT JOIN employees ep ON r.prepared_by = ep.id
       LEFT JOIN orders so ON r.sale_order_id = so.id
   `;
 
   const params = [DEFAULT_RENTAL_FINE_PER_DAY];
   const where = ['$1::numeric IS NOT NULL'];
 
-  if (user && user.role === 'branch_user') {
+  if (user && (user.role === 'branch_user' || user.role === 'cashier')) {
     params.push(user.branch_id);
     where.push(`r.branch_id = $${params.length}`);
   } else if (query.branch_id && query.branch_id !== 'all') {
@@ -651,6 +817,7 @@ async function listRentals(query = {}, user = null, req = null) {
       }
       return {
         ...r,
+        inventory_name: r.inventory_name || allItems[0]?.name || allItems[0]?.product_name || 'قطعة تأجير',
         pickup_date: dateOnly(r.pickup_date),
         return_date: dateOnly(r.return_date),
         actual_return_date: r.actual_return_date ? dateOnly(r.actual_return_date) : null,
@@ -792,8 +959,9 @@ async function createRental(body, user, req) {
     throw err;
   }
 
+  let sellerName = null;
   if (seller_id) {
-    const sellerRes = await db.query('SELECT branch_id FROM employees WHERE id = $1', [seller_id]);
+    const sellerRes = await db.query('SELECT name, branch_id FROM employees WHERE id = $1', [seller_id]);
     if (sellerRes.rows.length === 0) {
       const err = new Error('Seller not found');
       err.statusCode = 400;
@@ -804,6 +972,7 @@ async function createRental(body, user, req) {
       err.statusCode = 400;
       throw err;
     }
+    sellerName = sellerRes.rows[0].name;
   }
 
   const rental = await db.transaction(async (tx) => {
@@ -980,7 +1149,11 @@ async function createRental(body, user, req) {
       );
     }
 
-    return { ...createdRentals[0], rentals: createdRentals };
+    return {
+      ...createdRentals[0],
+      seller_name: sellerName || null,
+      rentals: createdRentals.map((r) => ({ ...r, seller_name: sellerName || null })),
+    };
   });
 
   return rental;
@@ -1023,7 +1196,7 @@ async function pickupRental(id, user) {
       );
     }
 
-    await tx.query("UPDATE rentals SET status = 'active' WHERE id = ANY($1::int[])", [rentals.map((r) => r.id)]);
+    await tx.query("UPDATE rentals SET status = 'active', actual_pickup_date = CURRENT_TIMESTAMP WHERE id = ANY($1::int[])", [rentals.map((r) => r.id)]);
 
     if (user) {
       await logActivity(
@@ -1415,6 +1588,12 @@ async function settleRentalPayment(id, body, user, req) {
       ]
     );
 
+    await tx.query(
+      `INSERT INTO rental_payments (rental_id, amount, payment_method, payment_date, branch_id, seller_id, notes)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6)`,
+      [rentals[0].id, pay, finalPaymentMethod, branchId, user?.employee_id || rentals[0].seller_id, noteMsg]
+    );
+
     await queueSyncOperation(tx, req, 'rental', 'update', rentals[0].id, branchId, {
       id: rentals[0].id,
       remaining: updatedRemaining,
@@ -1652,7 +1831,642 @@ async function updateRentalStatus(id, newStatus, options = {}, user = null, req 
   return { success: true, newStatus };
 }
 
+async function handleScanAction(body = {}, user = null) {
+  const rawCode = String(body.barcode || '').trim();
+  if (!rawCode) {
+    const err = new Error('الرجاء إدخال أو مسح الباركود');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
+  let targetBranchId = isCashierOrBranch && user.branch_id
+    ? user.branch_id
+    : (body.branch_id && body.branch_id !== 'all' ? Number(body.branch_id) : (user?.branch_id || null));
+
+  const cleanId = rawCode.replace(/^RNT-/i, '').replace(/^#/i, '').trim();
+  const isNumericId = /^\d+$/.test(cleanId);
+
+  // Search rentals matching code (order by active status first: booked -> active -> others)
+  let branchFilter = '';
+  const searchParams = [rawCode];
+  if (targetBranchId) {
+    searchParams.push(targetBranchId);
+    branchFilter = `AND r.branch_id = $${searchParams.length}`;
+  }
+
+  let idFilter = '';
+  if (isNumericId) {
+    searchParams.push(parseInt(cleanId, 10));
+    idFilter = `OR r.id = $${searchParams.length}`;
+  }
+
+  const matchingRentals = await db.query(`
+    SELECT r.*,
+           c.name as customer_name,
+           c.phone as customer_phone,
+           ri.name as inventory_name,
+           ri.category as inventory_category,
+           ri.barcode as inventory_barcode,
+           ri.color as inventory_color,
+           ri.size_cut as inventory_size,
+           b.name as branch_name,
+           e.name as seller_name
+    FROM rentals r
+    LEFT JOIN customers c ON r.customer_id = c.id
+    LEFT JOIN rental_inventory ri ON r.rental_inventory_id = ri.id
+    LEFT JOIN branches b ON r.branch_id = b.id
+    LEFT JOIN employees e ON r.seller_id = e.id
+    WHERE (
+      ri.barcode = $1
+      OR r.offline_uuid::text = $1
+      ${idFilter}
+      OR c.phone = $1
+    )
+    ${branchFilter}
+    ORDER BY 
+      CASE 
+        WHEN r.status = 'booked' THEN 1
+        WHEN r.status = 'active' THEN 2
+        ELSE 3
+      END ASC,
+      r.id DESC
+    LIMIT 5
+  `, searchParams);
+
+  if (matchingRentals.rows.length === 0) {
+    // Check if the barcode belongs to a rental inventory item without active reservation
+    const invCheck = await db.query(
+      'SELECT id, name, category, barcode, size_cut, color FROM rental_inventory WHERE barcode = $1 AND is_deleted IS NOT TRUE LIMIT 1',
+      [rawCode]
+    );
+    if (invCheck.rows.length > 0) {
+      const it = invCheck.rows[0];
+      return {
+        success: false,
+        action: 'inventory_item',
+        message: `القطعة "${it.name}" (${it.size_cut || ''} - ${it.color || ''}) متوفرة بالمخزن ولا يوجد حجز نشط أو معلق لها حالياً`,
+        item: it,
+      };
+    }
+
+    return {
+      success: false,
+      action: 'not_found',
+      message: `عفواً، لم يتم العثور على حجز أو بدلة بهذا الباركود (${rawCode})`,
+    };
+  }
+
+  const target = matchingRentals.rows[0];
+  const remaining = Number(target.remaining || 0);
+
+  // Case 1: Status is BOOKED (Pickup flow)
+  if (target.status === 'booked') {
+    if (remaining <= 0) {
+      // Direct pickup with 0 clicks!
+      await pickupRental(target.id, user);
+      return {
+        success: true,
+        action: 'picked_up',
+        message: `تم تسليم البدلة "${target.inventory_name || target.id}" للعميل (${target.customer_name || ''}) بنجاح! 👗`,
+        rental: {
+          ...target,
+          status: 'active',
+        },
+        requiresPayment: false,
+      };
+    } else {
+      // Requires remaining collection before releasing suit
+      return {
+        success: true,
+        action: 'requires_payment',
+        type: 'pickup',
+        message: `البدلة محجوزة للعميل (${target.customer_name}) ومتبقي عليها (${remaining} ج.م) يجب سدادها قبل الاستلام`,
+        remaining: remaining,
+        deposit: Number(target.deposit || 0),
+        total_price: Number(target.total_price || 0),
+        rental: target,
+        requiresPayment: true,
+      };
+    }
+  }
+
+  // Case 2: Status is ACTIVE (Return flow)
+  if (target.status === 'active') {
+    const cairoNow = await getDatabaseCairoNow(db);
+    const delayDays = daysBetween(target.return_date, cairoNow.date);
+    const perDay = Number(target.daily_fine || DEFAULT_RENTAL_FINE_PER_DAY);
+    const calculatedFine = delayDays > 0 ? Math.max(0, roundCurrency(delayDays * perDay)) : 0;
+
+    if (remaining <= 0 && calculatedFine <= 0) {
+      // Direct return with 0 clicks!
+      await returnRental(
+        target.id,
+        { settlement_action: 'collect', paid_amount: 0, fine: 0, notes: 'إرجاع فوري بالباركود' },
+        user
+      );
+      return {
+        success: true,
+        action: 'returned',
+        message: `تم إرجاع البدلة "${target.inventory_name || target.id}" وإعادتها لمخزن الفرع بنجاح! ✨`,
+        rental: {
+          ...target,
+          status: 'returned',
+        },
+        requiresPayment: false,
+      };
+    } else {
+      // Requires settling remaining or fine
+      return {
+        success: true,
+        action: 'requires_payment',
+        type: 'return',
+        message: `إرجاع بدلة مع تسوية حساب (متبقي: ${remaining} ج.م${calculatedFine > 0 ? ` + غرامة تأخير: ${calculatedFine} ج.م` : ''})`,
+        remaining: remaining,
+        fine: calculatedFine,
+        suggested_fine: calculatedFine,
+        delay_days: delayDays > 0 ? delayDays : 0,
+        rental: target,
+        requiresPayment: true,
+      };
+    }
+  }
+
+  // Case 3: Already completed or cancelled
+  return {
+    success: true,
+    action: 'info',
+    message: `العقد #${target.id} منتهي مسبقاً (الحالة: ${target.status === 'returned' ? 'مسترجع بالكامل' : (target.status === 'sold' ? 'محول لبيع' : 'ملغي')})`,
+    rental: target,
+    requiresPayment: false,
+  };
+}
+
+async function setRentalPrepared(id, body = {}, user = null) {
+  const isPrepared = body.is_prepared !== false;
+  const notes = body.notes || body.prep_notes || null;
+  let preparedBy = body.prepared_by ? Number(body.prepared_by) : null;
+
+  if (!preparedBy && user?.employee_id) {
+    preparedBy = user.employee_id;
+  }
+  if (!preparedBy && user?.id) {
+    const empMatch = await db.query('SELECT id FROM employees WHERE branch_id = $1 ORDER BY id LIMIT 1', [user.branch_id || 1]);
+    if (empMatch.rows.length > 0) preparedBy = empMatch.rows[0].id;
+  }
+
+  const result = await db.query(`
+    UPDATE rentals
+    SET is_prepared = $1,
+        prepared_at = CASE WHEN $1 = true THEN ${CAIRO_NOW_SQL} ELSE NULL END,
+        prepared_by = CASE WHEN $1 = true THEN COALESCE($2, prepared_by) ELSE NULL END,
+        prep_notes = COALESCE($3, prep_notes)
+    WHERE id = $4 OR rental_group_uuid = (SELECT rental_group_uuid FROM rentals WHERE id = $4 AND rental_group_uuid IS NOT NULL)
+    RETURNING id, is_prepared, prepared_at, prepared_by, branch_id
+  `, [isPrepared, preparedBy, notes, id]);
+
+  if (result.rows.length === 0) {
+    const err = new Error('الحجز غير موجود');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (user) {
+    await logActivity(
+      user.id,
+      user.username,
+      'تجهيز إيجار',
+      isPrepared ? `تم تجهيز البدلة للحجز #${id} وجاهزة بالجراب` : `تم إلغاء تجهيز الحجز #${id}`,
+      'Rental',
+      result.rows[0].branch_id
+    );
+  }
+
+  const fullRow = await db.query(`
+    SELECT r.id, r.is_prepared, r.prepared_at, r.prepared_by, ep.name as prep_employee_name, r.prep_notes
+    FROM rentals r
+    LEFT JOIN employees ep ON r.prepared_by = ep.id
+    WHERE r.id = $1
+  `, [id]);
+
+  return {
+    success: true,
+    message: isPrepared ? 'تم تسجيل البدلة كـ "جاهزة بالجراب للاستلام" بنجاح! 👔✅' : 'تم إلغاء حالة التجهيز',
+    rental: fullRow.rows[0]
+  };
+}
+
+async function getRentalPreparationList(query = {}, user = null) {
+  const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
+  let branchId = isCashierOrBranch && user.branch_id
+    ? user.branch_id
+    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (user?.branch_id || null));
+
+  let branchFilter = '';
+  const params = [];
+  if (branchId) {
+    params.push(branchId);
+    branchFilter = `AND r.branch_id = $${params.length}`;
+  }
+
+  let dateFilter = `AND r.pickup_date >= ${CAIRO_DATE_SQL} AND r.pickup_date <= (${CAIRO_DATE_SQL} + INTERVAL '1 day')`;
+  if (query.all_upcoming === 'true') {
+    dateFilter = `AND r.pickup_date >= ${CAIRO_DATE_SQL}`;
+  } else if (query.date) {
+    params.push(query.date);
+    dateFilter = `AND r.pickup_date = $${params.length}::date`;
+  }
+
+  const { rows } = await db.query(`
+    SELECT r.id,
+           r.customer_id,
+           c.name as customer_name,
+           c.phone as customer_phone,
+           ri.id as rental_inventory_id,
+           ri.name as inventory_name,
+           ri.category as inventory_category,
+           ri.barcode as inventory_barcode,
+           ri.color as inventory_color,
+           ri.size_cut as inventory_size,
+           r.pickup_date,
+           r.return_date,
+           r.status,
+           r.total_price,
+           r.deposit,
+           r.remaining,
+           r.is_prepared,
+           r.prepared_at,
+           r.prep_notes,
+           ep.name as prep_employee_name,
+           e.name as seller_name,
+           b.name as branch_name,
+           r.custom_items
+    FROM rentals r
+    LEFT JOIN customers c ON r.customer_id = c.id
+    LEFT JOIN rental_inventory ri ON r.rental_inventory_id = ri.id
+    LEFT JOIN branches b ON r.branch_id = b.id
+    LEFT JOIN employees e ON r.seller_id = e.id
+    LEFT JOIN employees ep ON r.prepared_by = ep.id
+    WHERE r.status = 'booked'
+      ${dateFilter}
+      ${branchFilter}
+    ORDER BY r.is_prepared ASC, r.pickup_date ASC, r.id ASC
+  `, params);
+
+  const total = rows.length;
+  const preparedCount = rows.filter(r => r.is_prepared).length;
+  const unpreparedCount = total - preparedCount;
+
+  return {
+    success: true,
+    summary: {
+      total,
+      preparedCount,
+      unpreparedCount,
+    },
+    items: rows
+  };
+}
+
+async function getRentalHistoryLedger(query = {}, user = null) {
+  const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
+  let branchId = isCashierOrBranch && user.branch_id
+    ? user.branch_id
+    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (user?.branch_id || null));
+
+  const cairoNow = await getDatabaseCairoNow(db);
+  const startDate = query.start_date || query.from_date || cairoNow.date;
+  const endDate = query.end_date || query.to_date || cairoNow.date;
+
+  const params = [startDate, endDate];
+  let branchFilter = '';
+  if (branchId) {
+    params.push(branchId);
+    branchFilter = `AND r.branch_id = $${params.length}`;
+  }
+
+  let statusFilter = "AND r.status IN ('active', 'returned', 'sold')";
+  if (query.status === 'all') {
+    statusFilter = '';
+  } else if (query.status) {
+    params.push(query.status);
+    statusFilter = `AND r.status = $${params.length}`;
+  }
+
+  const { rows } = await db.query(`
+    SELECT r.id,
+           r.customer_id,
+           c.name as customer_name,
+           c.phone as customer_phone,
+           ri.name as inventory_name,
+           ri.barcode as inventory_barcode,
+           ri.color as inventory_color,
+           ri.size_cut as inventory_size,
+           r.pickup_date,
+           r.return_date,
+           r.actual_return_date,
+           r.status,
+           r.total_price,
+           r.deposit,
+           r.paid_amount,
+           r.remaining,
+           r.fine_amount,
+           r.payment_method,
+           r.cash_amount,
+           r.card_amount,
+           r.wallet_amount,
+           r.bank_transfer_amount,
+           r.payment_splits,
+           e.name as seller_name,
+           b.name as branch_name,
+           r.notes
+    FROM rentals r
+    LEFT JOIN customers c ON r.customer_id = c.id
+    LEFT JOIN rental_inventory ri ON r.rental_inventory_id = ri.id
+    LEFT JOIN branches b ON r.branch_id = b.id
+    LEFT JOIN employees e ON r.seller_id = e.id
+    WHERE (
+      (r.pickup_date >= $1::date AND r.pickup_date <= $2::date)
+      OR (r.actual_return_date >= $1::date AND r.actual_return_date <= $2::date)
+      OR (r.booking_date >= $1::date AND r.booking_date <= $2::date)
+    )
+    ${statusFilter}
+    ${branchFilter}
+    ORDER BY r.id DESC
+  `, params);
+
+  const summary = {
+    total_count: rows.length,
+    total_contract_value: rows.reduce((s, r) => s + Number(r.total_price || 0), 0),
+    total_paid: rows.reduce((s, r) => s + Number(r.paid_amount || r.deposit || 0), 0),
+    total_remaining: rows.reduce((s, r) => s + Number(r.remaining || 0), 0),
+    total_fines: rows.reduce((s, r) => s + Number(r.fine_amount || 0), 0),
+    total_cash: rows.reduce((s, r) => {
+      if (Number(r.cash_amount) > 0) return s + Number(r.cash_amount);
+      if (r.payment_method === 'cash') return s + Number(r.paid_amount || r.deposit || 0);
+      return s;
+    }, 0),
+    total_electronic: rows.reduce((s, r) => {
+      const elec = Number(r.card_amount || 0) + Number(r.bank_transfer_amount || 0) + Number(r.wallet_amount || 0);
+      if (elec > 0) return s + elec;
+      if (['card', 'visa', 'bank_transfer', 'instapay', 'wallet'].includes(r.payment_method)) {
+        return s + Number(r.paid_amount || r.deposit || 0);
+      }
+      return s;
+    }, 0),
+  };
+
+  return {
+    success: true,
+    startDate,
+    endDate,
+    summary,
+    items: rows
+  };
+}
+
+async function getRentalMetadata(branchId = null) {
+  const bId = branchId && branchId !== 'all' ? parseInt(branchId, 10) : null;
+  const params = [];
+  let query = '';
+
+  if (bId) {
+    params.push(bId);
+    query = `
+      SELECT COALESCE(NULLIF(TRIM(ri.category), ''), 'أخرى') as cat, count(DISTINCT ri.id)::int as count
+      FROM rental_inventory ri
+      JOIN rental_inventory_branches rib ON rib.rental_inventory_id = ri.id AND rib.branch_id = $1 AND rib.stock_level > 0
+      WHERE ri.is_deleted = FALSE
+      GROUP BY COALESCE(NULLIF(TRIM(ri.category), ''), 'أخرى')
+      HAVING count(DISTINCT ri.id) > 0
+      ORDER BY count DESC
+    `;
+  } else {
+    query = `
+      SELECT COALESCE(NULLIF(TRIM(ri.category), ''), 'أخرى') as cat, count(*)::int as count
+      FROM rental_inventory ri
+      WHERE ri.is_deleted = FALSE
+      GROUP BY COALESCE(NULLIF(TRIM(ri.category), ''), 'أخرى')
+      HAVING count(*) > 0
+      ORDER BY count DESC
+    `;
+  }
+
+  const { rows } = await db.query(query, params);
+  const categoryCounts = {};
+  let totalAll = 0;
+  let totalSuits = 0;
+
+  rows.forEach((r) => {
+    const c = Number(r.count);
+    if (c > 0) {
+      categoryCounts[r.cat] = c;
+      totalAll += c;
+      if (r.cat.toLowerCase().includes('suit') || r.cat.includes('بدل')) {
+        totalSuits += c;
+      }
+    }
+  });
+
+  categoryCounts['الكل'] = totalAll;
+  categoryCounts['كل التصنيفات'] = totalAll;
+  categoryCounts['كل الأصناف'] = totalAll;
+  categoryCounts['all'] = totalAll;
+
+  if (totalSuits > 0) {
+    categoryCounts['بدل'] = totalSuits;
+    categoryCounts['بدل (جميع الأنواع)'] = totalSuits;
+    categoryCounts['بدل (جميع الانواع)'] = totalSuits;
+  }
+  if (categoryCounts['أخرى'] && categoryCounts['أخرى'] > 0) {
+    categoryCounts['بدون تصنيف / أخرى'] = categoryCounts['أخرى'];
+    categoryCounts['بدون تصنيف'] = categoryCounts['أخرى'];
+  }
+  if (categoryCounts['FORMAL SUIT'] && categoryCounts['FORMAL SUIT'] > 0) {
+    categoryCounts['بدل رسمية'] = categoryCounts['FORMAL SUIT'];
+    categoryCounts['بدل رسمية (FORMAL SUIT)'] = categoryCounts['FORMAL SUIT'];
+  }
+  if (categoryCounts['TUXEDO SUIT'] && categoryCounts['TUXEDO SUIT'] > 0) {
+    categoryCounts['بدل سموكن'] = categoryCounts['TUXEDO SUIT'];
+    categoryCounts['بدل سموكن (TUXEDO SUIT)'] = categoryCounts['TUXEDO SUIT'];
+  }
+  if (categoryCounts['SUIT'] && categoryCounts['SUIT'] > 0) {
+    categoryCounts['بدل عادية'] = categoryCounts['SUIT'];
+    categoryCounts['بدل عادية (SUIT)'] = categoryCounts['SUIT'];
+  }
+  if (categoryCounts['CASUAL SUIT'] && categoryCounts['CASUAL SUIT'] > 0) {
+    categoryCounts['بدل كاجوال'] = categoryCounts['CASUAL SUIT'];
+    categoryCounts['بدل كاجوال (CASUAL SUIT)'] = categoryCounts['CASUAL SUIT'];
+  }
+  if (categoryCounts['KIDS'] && categoryCounts['KIDS'] > 0) {
+    categoryCounts['أطفال'] = categoryCounts['KIDS'];
+    categoryCounts['أطفال (KIDS)'] = categoryCounts['KIDS'];
+  }
+  if (categoryCounts['WALLET'] && categoryCounts['WALLET'] > 0) {
+    categoryCounts['محافظ'] = categoryCounts['WALLET'];
+    categoryCounts['محافظ (WALLET)'] = categoryCounts['WALLET'];
+  }
+
+  const activeCats = rows.map((r) => r.cat).filter(Boolean);
+  const uniqueCats = Array.from(new Set([
+    ...(totalSuits > 0 ? ['بدل'] : []),
+    ...activeCats,
+  ]));
+
+  return {
+    categories: uniqueCats,
+    categoryCounts,
+    total: totalAll,
+  };
+}
+
+
+async function addRentalItems(id, body, user) {
+  const { items, custom_items, extra_price, extra_deposit, notes } = body || {};
+
+  return await db.transaction(async (tx) => {
+    const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
+    if (!rentals || rentals.length === 0) {
+      const err = new Error('عقد التأجير غير موجود');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const mainRental = rentals[0];
+    const b_id = mainRental.branch_id;
+    if (user && user.role === 'branch_user' && Number(b_id) !== Number(user.branch_id)) {
+      const err = new Error('Unauthorized');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    if (mainRental.status === 'cancelled' || mainRental.status === 'returned') {
+      const err = new Error('لا يمكن إضافة قطع لعقد ملغي أو مسترجع');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    let existingCustom = [];
+    if (typeof mainRental.custom_items === 'string' && mainRental.custom_items.trim()) {
+      try { existingCustom = JSON.parse(mainRental.custom_items); } catch {}
+    } else if (Array.isArray(mainRental.custom_items)) {
+      existingCustom = [...mainRental.custom_items];
+    }
+
+    let addedPrice = 0;
+    const incomingCustom = Array.isArray(custom_items) ? custom_items : [];
+    for (const c of incomingCustom) {
+      if (!c.name) continue;
+      const cPrice = Math.max(0, Number(c.price || 0));
+      addedPrice += cPrice;
+      existingCustom.push({
+        id: c.id || `custom_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+        name: c.name,
+        category: c.category || 'إكسسوار',
+        price: cPrice,
+        is_custom: true,
+        added_at: new Date().toISOString(),
+      });
+    }
+
+    const incomingInvItems = Array.isArray(items) ? items : [];
+    for (const inv of incomingInvItems) {
+      const invId = Number(inv.id || inv.rental_inventory_id);
+      if (!invId) continue;
+      const invPrice = Math.max(0, Number(inv.price || inv.rental_price || 0));
+      addedPrice += invPrice;
+
+      const avail = await getRentalAvailability(tx, invId, b_id, mainRental.pickup_date, mainRental.return_date, { lockStockRow: true });
+      if (avail.available < 1) {
+        const err = new Error(`القطعة #${invId} غير متاحة في فترة الحجز المحددة`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const itemOfflineUuid = newUuid();
+      await tx.query(
+        `INSERT INTO rentals (
+           customer_id, rental_inventory_id, branch_id, pickup_date, return_date,
+           total_price, national_id, deposit, remaining, paid_amount,
+           id_card_guarantee, notes, status, daily_fine, seller_id,
+           payment_method, rental_group_uuid, offline_uuid
+         ) VALUES (
+           $1, $2, $3, $4, $5,
+           0, $6, 0, 0, 0,
+           $7, $8, $9, $10, $11,
+           $12, $13, $14
+         )`,
+        [
+          mainRental.customer_id,
+          invId,
+          b_id,
+          mainRental.pickup_date,
+          mainRental.return_date,
+          mainRental.national_id,
+          mainRental.id_card_guarantee,
+          notes ? `[إضافة ملحقة]: ${notes}` : null,
+          mainRental.status,
+          mainRental.daily_fine,
+          mainRental.seller_id,
+          mainRental.payment_method,
+          mainRental.rental_group_uuid,
+          itemOfflineUuid,
+        ]
+      );
+    }
+
+    if (extra_price !== undefined && extra_price !== null && Number(extra_price) > 0) {
+      addedPrice = Math.max(addedPrice, Number(extra_price));
+    }
+
+    const currentTotal = Number(mainRental.total_price || 0);
+    const currentRemaining = Number(mainRental.remaining || 0);
+    const currentDeposit = Number(mainRental.deposit || 0);
+
+    const newTotal = roundCurrency(currentTotal + addedPrice);
+    const newRemaining = roundCurrency(currentRemaining + addedPrice);
+    const newDeposit = extra_deposit ? roundCurrency(currentDeposit + Number(extra_deposit)) : currentDeposit;
+
+    const updatedNotes = notes
+      ? `${mainRental.notes ? mainRental.notes + ' | ' : ''}[إضافة قطع إضافية: +${addedPrice} ج.م - ${notes}]`
+      : mainRental.notes;
+
+    await tx.query(
+      `UPDATE rentals
+       SET total_price = $1,
+           remaining = $2,
+           deposit = $3,
+           custom_items = $4,
+           notes = $5
+       WHERE id = $6`,
+      [newTotal, newRemaining, newDeposit, JSON.stringify(existingCustom), updatedNotes, mainRental.id]
+    );
+
+    if (user) {
+      await logActivity(
+        user.id,
+        user.username,
+        'إضافة قطع لحجز تأجير',
+        `تم إضافة قطع/ملحقات بقيمة ${addedPrice} ج.م للحجز #${id}`,
+        'Rental',
+        b_id
+      );
+    }
+
+    return {
+      success: true,
+      rental_id: id,
+      new_total: newTotal,
+      new_remaining: newRemaining,
+      added_price: addedPrice,
+      custom_items: existingCustom,
+      message: `تم إضافة القطع والملحقات بنجاح! تم تحديث الإجمالي إلى (${newTotal} ج.م) والمتبقي إلى (${newRemaining} ج.م) ✨`,
+    };
+  });
+}
+
 module.exports = {
+  addRentalItems,
   listRentalInventory,
   createRentalInventory,
   checkAvailability,
@@ -1668,4 +2482,9 @@ module.exports = {
   settleRentalPayment,
   sellRental,
   updateRentalStatus,
+  handleScanAction,
+  setRentalPrepared,
+  getRentalPreparationList,
+  getRentalHistoryLedger,
+  getRentalMetadata,
 };

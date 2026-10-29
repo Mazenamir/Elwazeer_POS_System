@@ -16,6 +16,7 @@ const {
   getPrimaryKeyColumns,
   resetTableSequence,
 } = require('./backup.helpers');
+const { invalidateInventoryMetadata } = require('../inventory/inventory.helpers');
 
 const PUBLIC_SETTINGS_KEYS = new Set([
   'store_name',
@@ -346,6 +347,8 @@ async function resetSystem({ password, full_wipe }, user) {
       `);
     }
   });
+
+  invalidateInventoryMetadata();
 
   return {
     success: true,

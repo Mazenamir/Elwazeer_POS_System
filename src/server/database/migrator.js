@@ -357,6 +357,32 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       pending_sync INTEGER DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS order_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER,
+      amount REAL NOT NULL,
+      payment_method TEXT DEFAULT 'cash',
+      payment_date TEXT DEFAULT CURRENT_TIMESTAMP,
+      branch_id INTEGER,
+      seller_id INTEGER,
+      notes TEXT,
+      offline_uuid TEXT UNIQUE,
+      pending_sync INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS rental_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rental_id INTEGER,
+      amount REAL NOT NULL,
+      payment_method TEXT DEFAULT 'cash',
+      payment_date TEXT DEFAULT CURRENT_TIMESTAMP,
+      branch_id INTEGER,
+      seller_id INTEGER,
+      notes TEXT,
+      offline_uuid TEXT UNIQUE,
+      pending_sync INTEGER DEFAULT 1
+    );
+
     CREATE TABLE IF NOT EXISTS worn_products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_type TEXT NOT NULL,
@@ -400,7 +426,13 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       transfer_date TEXT DEFAULT CURRENT_TIMESTAMP,
       status TEXT DEFAULT 'completed',
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      sizes_data TEXT
+      sizes_data TEXT,
+      created_by INTEGER,
+      sender_id INTEGER,
+      received_by INTEGER,
+      sender_name TEXT,
+      received_by_name TEXT,
+      created_by_name TEXT
     );
 
     CREATE TABLE IF NOT EXISTS notification_reads (
@@ -432,8 +464,11 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
     CREATE TABLE IF NOT EXISTS supplier_transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       supplier_id INTEGER,
+      branch_id INTEGER,
       transaction_type TEXT NOT NULL,
       amount REAL NOT NULL,
+      payment_method TEXT DEFAULT 'cash',
+      paid_from_drawer INTEGER DEFAULT 1,
       transaction_date TEXT DEFAULT CURRENT_TIMESTAMP,
       notes TEXT,
       purchase_batch_id TEXT
@@ -458,7 +493,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       role TEXT DEFAULT 'branch_user',
       branch_id INTEGER,
       permissions TEXT DEFAULT '[]',
-      employee_id INTEGER
+      employee_id INTEGER,
+      full_name TEXT
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -474,7 +510,13 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   }
 
   try {
+    sqlite.exec("ALTER TABLE users ADD COLUMN full_name TEXT");
+  } catch {}
+  try {
     sqlite.exec("ALTER TABLE branches ADD COLUMN allowed_gender TEXT DEFAULT 'both'");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE inventory ADD COLUMN gender TEXT DEFAULT 'both'");
   } catch {}
 
   try {
@@ -500,6 +542,16 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   } catch {}
   try {
     sqlite.exec("ALTER TABLE orders ADD COLUMN payment_splits TEXT");
+  } catch {}
+
+  try {
+    sqlite.exec("ALTER TABLE supplier_transactions ADD COLUMN payment_method TEXT DEFAULT 'cash'");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE supplier_transactions ADD COLUMN paid_from_drawer INTEGER DEFAULT 1");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE supplier_transactions ADD COLUMN branch_id INTEGER");
   } catch {}
 
   try {
@@ -696,6 +748,15 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try {
     sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN sizes_data TEXT');
   } catch {}
+  try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN created_by INTEGER'); } catch {}
+  try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN sender_id INTEGER'); } catch {}
+  try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN received_by INTEGER'); } catch {}
+  try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN sender_name TEXT'); } catch {}
+  try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN received_by_name TEXT'); } catch {}
+  try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN created_by_name TEXT'); } catch {}
+  try { sqlite.exec("ALTER TABLE returns ADD COLUMN refund_method TEXT DEFAULT 'cash'"); } catch {}
+  try { sqlite.exec('ALTER TABLE rentals ADD COLUMN actual_pickup_date TEXT'); } catch {}
+  try { sqlite.exec('ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0'); } catch {}
 
   // Seed initial users & branches into branch SQLite if empty
   try {

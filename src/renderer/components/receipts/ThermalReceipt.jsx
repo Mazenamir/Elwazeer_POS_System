@@ -127,7 +127,7 @@ export function ThermalReceipt({
     try {
       JsBarcode(barcodeRef.current, barcodeVal, {
         format: 'CODE128',
-        width: 1.2,
+        width: 1.35, fontOptions: "bold",
         height: 20,
         displayValue: true,
         fontSize: 8.5,
@@ -161,7 +161,7 @@ export function ThermalReceipt({
         className="receipt-card bg-white text-black text-xs font-sans w-full max-w-[340px] p-2 sm:p-3 shadow-xl rounded-2xl border border-slate-200/90 relative select-text"
         style={{
           direction: 'rtl',
-          fontFamily: "'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif",
+          fontFamily: "'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif", fontWeight: '800',
           color: '#000000',
           WebkitPrintColorAdjust: 'exact',
           printColorAdjust: 'exact',
@@ -189,7 +189,7 @@ export function ThermalReceipt({
             </p>
           )}
           {storePhone && (
-            <p className="text-[9.5px] font-medium text-slate-600 leading-tight" dir="ltr">
+            <p className="text-[9.5px] font-bold text-slate-600 leading-tight" dir="ltr">
               للتواصل: {storePhone}
             </p>
           )}
@@ -203,7 +203,7 @@ export function ThermalReceipt({
           {/* Row 1: Invoice Number & Date */}
           <div className="flex justify-between items-baseline py-0">
             <div className="text-right">
-              <span className="text-[9px] text-slate-500 font-medium ml-1">
+              <span className="text-[9px] text-black font-extrabold ml-1">
                 {type === 'return' ? 'رقم الإيصال:' : 'رقم الفاتورة:'}
               </span>
               <span className="font-black text-slate-900 text-xs sm:text-[13px]">
@@ -211,7 +211,7 @@ export function ThermalReceipt({
               </span>
             </div>
             <div className="text-left pl-1 flex items-baseline gap-1" dir="ltr">
-              <span className="text-[9px] text-slate-500 font-medium">التاريخ:</span>
+              <span className="text-[9px] text-black font-extrabold">التاريخ:</span>
               <span className="font-bold text-slate-900 text-[10px]">
                 {formattedDateTime}
               </span>
@@ -221,13 +221,13 @@ export function ThermalReceipt({
           {/* Row 2: Customer & Phone */}
           <div className="flex justify-between items-baseline py-0">
             <div className="text-right">
-              <span className="text-[9px] text-slate-500 font-medium ml-1">العميل:</span>
+              <span className="text-[9px] text-black font-extrabold ml-1">العميل:</span>
               <span className="font-bold text-slate-900 text-xs">
                 {customerName || 'عميل نقدي'}
               </span>
             </div>
             <div className="text-left pl-1 flex items-baseline gap-1" dir="ltr">
-              <span className="text-[9px] text-slate-500 font-medium">الهاتف:</span>
+              <span className="text-[9px] text-black font-extrabold">الهاتف:</span>
               <span className="font-bold text-slate-900 text-[10px]">
                 {customerPhone || '-'}
               </span>
@@ -237,13 +237,15 @@ export function ThermalReceipt({
           {/* Row 3: Cashier/Seller & Payment Method */}
           <div className="flex justify-between items-baseline py-0">
             <div className="text-right">
-              <span className="text-[9px] text-slate-500 font-medium ml-1">البائع:</span>
+              <span className="text-[9px] text-black font-extrabold ml-1">
+                {type === 'rental' ? 'مسؤول الحجز:' : 'البائع:'}
+              </span>
               <span className="font-bold text-slate-900 text-xs">
-                {sellerName || 'الكاشير'}
+                {sellerName || (type === 'rental' ? 'مسؤول التأجير' : 'الكاشير')}
               </span>
             </div>
             <div className="text-left pl-1 flex items-baseline gap-1">
-              <span className="text-[9px] text-slate-500 font-medium">الدفع:</span>
+              <span className="text-[9px] text-black font-extrabold">الدفع:</span>
               <span className="font-bold text-slate-900 text-xs text-left">
                 {paymentMethodLabel}
               </span>
@@ -254,7 +256,7 @@ export function ThermalReceipt({
           {type === 'return' && originalOrderId && (
             <div className="flex justify-between items-baseline py-0">
               <div className="text-right">
-                <span className="text-[9px] text-slate-500 font-medium ml-1">الطلب الأصلي:</span>
+                <span className="text-[9px] text-black font-extrabold ml-1">الطلب الأصلي:</span>
                 <span className="font-bold text-slate-900 text-xs">#{originalOrderId}</span>
               </div>
               <div className="text-left pl-1">
@@ -267,11 +269,11 @@ export function ThermalReceipt({
           {type === 'rental' && (pickupDate || returnDate) && (
             <div className="flex justify-between items-baseline py-0">
               <div className="text-right">
-                <span className="text-[9px] text-slate-500 font-medium ml-1">الاستلام:</span>
+                <span className="text-[9px] text-black font-extrabold ml-1">الاستلام:</span>
                 <span className="font-bold text-slate-900 text-[10px]">{pickupDate || '-'}</span>
               </div>
               <div className="text-left pl-1 flex items-baseline gap-1" dir="ltr">
-                <span className="text-[9px] text-slate-500 font-medium">الإرجاع:</span>
+                <span className="text-[9px] text-black font-extrabold">الإرجاع:</span>
                 <span className="font-bold text-slate-900 text-[10px]">{returnDate || '-'}</span>
               </div>
             </div>
@@ -332,7 +334,7 @@ export function ThermalReceipt({
                       <div className="w-[50%] text-right font-bold leading-tight break-words">
                         {fullItemName}
                       </div>
-                      <div className="w-[18%] text-center font-semibold text-slate-800">
+                      <div className="w-[18%] text-center font-black text-black">
                         {qty}
                       </div>
                       <div
@@ -345,7 +347,7 @@ export function ThermalReceipt({
 
                     {/* Secondary line: Barcode | Color | Size */}
                     {detailsText && (
-                      <div className="text-[8.5px] text-slate-500 font-normal mt-0 text-right leading-tight">
+                      <div className="text-[8.5px] text-slate-900 font-bold mt-0 text-right leading-tight">
                         {detailsText}
                       </div>
                     )}
@@ -372,19 +374,19 @@ export function ThermalReceipt({
 
         {/* FINANCIAL SUMMARY / SUBTOTALS */}
         <div className="space-y-0.5 text-xs text-slate-700 my-0.5">
-          <div className="flex justify-between items-center font-medium">
+          <div className="flex justify-between items-center font-bold">
             <span>المجموع الفرعي</span>
             <span dir="ltr" className="pl-1">{numSubtotal.toFixed(2)}</span>
           </div>
 
           {numDiscount > 0 && (
-            <div className="flex justify-between items-center font-medium text-rose-600">
+            <div className="flex justify-between items-center font-bold text-rose-600">
               <span>الخصم</span>
               <span dir="ltr" className="pl-1">- {numDiscount.toFixed(2)}</span>
             </div>
           )}
 
-          <div className="flex justify-between items-center font-medium">
+          <div className="flex justify-between items-center font-bold">
             <span>الضريبة ({taxRate || 0}%)</span>
             <span dir="ltr" className="pl-1">{numTax.toFixed(2)}</span>
           </div>
@@ -423,7 +425,7 @@ export function ThermalReceipt({
           </div>
 
           {type !== 'return' && (
-            <div className="flex justify-between items-center text-slate-700 font-medium">
+            <div className="flex justify-between items-center text-black font-black">
               <span>المدفوع:</span>
               <span dir="ltr" className="pl-1">{numPaid.toFixed(2)} ج.م</span>
             </div>
@@ -439,7 +441,7 @@ export function ThermalReceipt({
                 normalizedSplits.map((s, idx) => (
                   <div key={idx} className="flex justify-between items-center text-slate-700">
                     <span>{getPaymentMethodArabic(s.method || s.payment_method)}:</span>
-                    <span dir="ltr" className="font-semibold text-slate-900 pl-1">{Number(s.amount || 0).toFixed(2)} ج.م</span>
+                    <span dir="ltr" className="font-black text-black pl-1">{Number(s.amount || 0).toFixed(2)} ج.م</span>
                   </div>
                 ))
               ) : (
@@ -447,25 +449,25 @@ export function ThermalReceipt({
                   {Number(cashAmount) > 0 && (
                     <div className="flex justify-between items-center text-slate-700">
                       <span>نقداً (بالدرج):</span>
-                      <span dir="ltr" className="font-semibold text-slate-900 pl-1">{Number(cashAmount).toFixed(2)} ج.م</span>
+                      <span dir="ltr" className="font-black text-black pl-1">{Number(cashAmount).toFixed(2)} ج.م</span>
                     </div>
                   )}
                   {Number(bankTransferAmount) > 0 && (
                     <div className="flex justify-between items-center text-slate-700">
                       <span>انستاباي / تحويل بنكي:</span>
-                      <span dir="ltr" className="font-semibold text-slate-900 pl-1">{Number(bankTransferAmount).toFixed(2)} ج.م</span>
+                      <span dir="ltr" className="font-black text-black pl-1">{Number(bankTransferAmount).toFixed(2)} ج.م</span>
                     </div>
                   )}
                   {Number(cardAmount) > 0 && (
                     <div className="flex justify-between items-center text-slate-700">
                       <span>بطاقة بنكية (فيزا):</span>
-                      <span dir="ltr" className="font-semibold text-slate-900 pl-1">{Number(cardAmount).toFixed(2)} ج.م</span>
+                      <span dir="ltr" className="font-black text-black pl-1">{Number(cardAmount).toFixed(2)} ج.م</span>
                     </div>
                   )}
                   {Number(walletAmount) > 0 && (
                     <div className="flex justify-between items-center text-slate-700">
                       <span>فودافون كاش:</span>
-                      <span dir="ltr" className="font-semibold text-slate-900 pl-1">{Number(walletAmount).toFixed(2)} ج.م</span>
+                      <span dir="ltr" className="font-black text-black pl-1">{Number(walletAmount).toFixed(2)} ج.م</span>
                     </div>
                   )}
                 </>
@@ -481,7 +483,7 @@ export function ThermalReceipt({
                 <span dir="ltr" className="pl-1">{numRemaining.toFixed(2)} ج.م</span>
               </div>
             ) : (
-              <div className="flex justify-between items-center text-slate-700 font-medium">
+              <div className="flex justify-between items-center text-black font-black">
                 <span>المتبقي (الباقي للعميل):</span>
                 <span dir="ltr" className="pl-1">{numChange.toFixed(2)} ج.م</span>
               </div>
@@ -501,7 +503,7 @@ export function ThermalReceipt({
         )}
 
         {showQrCode && (
-          <div className="flex items-center justify-center gap-1 py-0.5 px-2 my-0.5 bg-slate-50 rounded border border-slate-200/80 text-[8.5px] text-slate-600 font-medium">
+          <div className="flex items-center justify-center gap-1 py-0.5 px-2 my-0.5 bg-slate-50 rounded border border-slate-200/80 text-[8.5px] text-black font-extrabold">
             <QrCode className="w-2.5 h-2.5 text-slate-800 shrink-0" />
             <span>فاتورة إلكترونية موثقة • {branchObj?.name || 'BEBYOON'} POS</span>
             <ShieldCheck className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
@@ -509,7 +511,7 @@ export function ThermalReceipt({
         )}
 
         {/* STORE POLICY & TERMS FOOTER */}
-        <div className="text-center pt-0.5 space-y-0 text-[8px] text-slate-500 font-medium leading-tight">
+        <div className="text-center pt-0.5 space-y-0 text-[8px] text-black font-extrabold leading-tight">
           {footerMessage ? (
             <p className="font-bold text-slate-800 whitespace-pre-line">
               {footerMessage}

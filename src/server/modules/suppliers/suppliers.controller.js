@@ -1,5 +1,5 @@
 const service = require('./suppliers.service');
-const { hasInventoryAdminAccess } = require('../../../shared/constants/permissions');
+const { hasInventoryAdminAccess, hasPermission } = require('../../../shared/constants/permissions');
 
 async function getOptions(req, res, next) {
   try {
@@ -51,7 +51,7 @@ async function listSupplyRecords(req, res, next) {
     if (!hasInventoryAdminAccess(req.user)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const result = await service.listSupplyRecords(req);
+    const result = await service.listSupplyRecords(req, req.user);
     res.json(result);
   } catch (err) {
     next(err);
@@ -78,10 +78,10 @@ async function bulkRestock(req, res, next) {
 
 async function createTransaction(req, res, next) {
   try {
-    if (!hasInventoryAdminAccess(req.user)) {
+    if (!hasInventoryAdminAccess(req.user) && !hasPermission(req.user, 'Suppliers.html') && !hasPermission(req.user, 'Expenses.html')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const result = await service.createSupplierTransaction(req.body);
+    const result = await service.createSupplierTransaction(req.body, req.user);
     res.json(result);
   } catch (err) {
     next(err);
@@ -103,10 +103,22 @@ async function processReturn(req, res) {
 
 async function getStatement(req, res, next) {
   try {
-    if (!hasInventoryAdminAccess(req.user)) {
+    if (!hasInventoryAdminAccess(req.user) && !hasPermission(req.user, 'Suppliers.html') && !hasPermission(req.user, 'Reports.html')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const result = await service.getSupplierStatement(req.params.id, req.query.limit);
+    const result = await service.getSupplierStatement(req.params.id, req.query.limit, req.query, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getSuppliersLedger(req, res, next) {
+  try {
+    if (!hasInventoryAdminAccess(req.user) && !hasPermission(req.user, 'Suppliers.html') && !hasPermission(req.user, 'Reports.html')) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const result = await service.getSuppliersLedger(req.query, req.user, req);
     res.json(result);
   } catch (err) {
     next(err);
@@ -125,4 +137,5 @@ module.exports = {
   createTransaction,
   processReturn,
   getStatement,
+  getSuppliersLedger,
 };

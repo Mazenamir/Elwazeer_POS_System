@@ -6,6 +6,7 @@ const router = express.Router();
 
 // Rental Inventory - Specific routes before parameterized :id
 router.get('/rental-inventory', requirePermission('Rentals.html', 'RentalInventory.html'), controller.listRentalInventory);
+router.get('/rental-inventory/categories', requirePermission('Rentals.html', 'RentalInventory.html'), controller.getRentalCategories);
 router.post('/rental-inventory', requirePermission('Rentals.html', 'RentalInventory.html'), controller.createRentalInventory);
 router.post('/rental-inventory/transfer-from-sales', requirePermission('Rentals.html', 'RentalInventory.html'), controller.transferFromSales);
 router.get('/rental-inventory/:id/availability', requirePermission('Rentals.html', 'RentalInventory.html'), controller.checkAvailability);
@@ -14,13 +15,19 @@ router.delete('/rental-inventory/:id', requirePermission('Rentals.html', 'Rental
 
 // Rentals - Specific routes before parameterized :id
 router.get('/rentals/summary', requirePermission('Rentals.html'), controller.getRentalsSummary);
+router.get('/rentals/preparation', requirePermission('Rentals.html'), controller.getRentalPreparationList);
+router.get('/rentals/history-ledger', requirePermission('Rentals.html'), controller.getRentalHistoryLedger);
+router.post('/rentals/scan-action', requirePermission('Rentals.html'), controller.handleScanAction);
 router.get('/rentals', requirePermission('Rentals.html'), controller.listRentals);
 router.post('/rentals', requirePermission('Rentals.html'), controller.createRental);
+router.put('/rentals/:id/prepare', requirePermission('Rentals.html'), controller.setRentalPrepared);
 router.put('/rentals/:id/status', requirePermission('Rentals.html'), controller.updateRentalStatus);
 router.put('/rentals/:id/pickup', requirePermission('Rentals.html'), controller.pickupRental);
 router.put('/rentals/:id/cancel', requirePermission('Rentals.html'), controller.cancelRental);
 router.put('/rentals/:id/return', requirePermission('Rentals.html'), controller.returnRental);
 router.post('/rentals/:id/return', requirePermission('Rentals.html'), controller.returnRental);
+router.post('/rentals/:id/items', requirePermission('Rentals.html'), controller.addRentalItems);
+router.put('/rentals/:id/items', requirePermission('Rentals.html'), controller.addRentalItems);
 router.put('/rentals/:id/settle-payment', requirePermission('Rentals.html'), controller.settleRentalPayment);
 router.post('/rentals/:id/settle-payment', requirePermission('Rentals.html'), controller.settleRentalPayment);
 router.put('/rentals/:id/sell', requirePermission('Rentals.html'), controller.sellRental);

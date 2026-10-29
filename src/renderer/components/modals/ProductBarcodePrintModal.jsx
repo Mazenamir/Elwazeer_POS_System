@@ -272,8 +272,11 @@ export function ProductBarcodePrintModal({
       });
 
       if (selectedSizesList.length === 0) {
-        toast.warning?.('يرجى تحديد مقاس واحد على الأقل للطباعة') ||
-          toast.error?.('يرجى تحديد مقاس واحد على الأقل للطباعة');
+        if (toast?.warning) {
+          toast.warning('يرجى تحديد مقاس واحد على الأقل للطباعة');
+        } else if (toast?.error) {
+          toast.error('يرجى تحديد مقاس واحد على الأقل للطباعة');
+        }
         return;
       }
 
@@ -319,8 +322,11 @@ export function ProductBarcodePrintModal({
     }
 
     if (queue.length === 0) {
-      toast.warning?.('لا توجد ملصقات محددة للطباعة') ||
-        toast.error?.('لا توجد ملصقات محددة للطباعة');
+      if (toast?.warning) {
+        toast.warning('لا توجد ملصقات محددة للطباعة');
+      } else if (toast?.error) {
+        toast.error('لا توجد ملصقات محددة للطباعة');
+      }
       return;
     }
 

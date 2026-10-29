@@ -33,6 +33,7 @@ router.put('/users/me', controller.updateOwnAccount);
 router.post('/users/branch', requireAdmin, controller.createBranchUser);
 router.get('/users/branch', requireAdmin, controller.listBranchUsers);
 router.put('/users/branch/:id', requireAdmin, controller.updateBranchUser);
+router.get('/permissions', requireAdmin, controller.getPermissions);
 router.delete('/users/branch/:id', requireAdmin, controller.deleteBranchUser);
 
 module.exports = router;

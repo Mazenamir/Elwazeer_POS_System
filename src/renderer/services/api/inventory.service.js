@@ -12,6 +12,21 @@ export const inventoryService = {
   delete: (id) => api.delete(`/inventory/${id}`),
   transferStock: (data) => api.post('/inventory/transfer', data),
   transferToRental: (data) => api.post('/inventory/transfer-to-rental', data),
+  listTransferLogs: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/inventory/transfers/logs${qs ? `?${qs}` : ''}`);
+  },
+  listTransferRequests: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/inventory/transfers/requests${qs ? `?${qs}` : ''}`);
+  },
+  listIncomingTransfers: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/inventory/transfers/incoming${qs ? `?${qs}` : ''}`);
+  },
+  approveTransfer: (id) => api.post(`/inventory/transfers/${id}/approve`),
+  rejectTransfer: (id) => api.post(`/inventory/transfers/${id}/reject`),
+  receiveTransfer: (id) => api.post(`/inventory/transfers/${id}/receive`),
   
   // Suppliers
   listSuppliers: () => api.get('/suppliers'),

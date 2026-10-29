@@ -61,6 +61,22 @@ export const reportsService = {
     const qs = new URLSearchParams(params).toString();
     return api.get(`/reports/kpi${qs ? `?${qs}` : ''}`);
   },
+  getMonthlyMaster: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/master-sheet${qs ? `?${qs}` : ''}`);
+  },
+  getMasterSheet: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/master-sheet${qs ? `?${qs}` : ''}`);
+  },
+  getMonthlyMasterReport: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/master-sheet${qs ? `?${qs}` : ''}`);
+  },
+  getSuppliersLedger: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/suppliers-ledger${qs ? `?${qs}` : ''}`);
+  },
   quickLogAttendance: (data) => {
     return api.post('/reports/attendance-quick-log', data);
   },
@@ -72,8 +88,16 @@ export const reportsService = {
     const qs = new URLSearchParams(params).toString();
     return api.get(`/reports/export/consolidated-excel${qs ? `?${qs}` : ''}`, { responseType: 'blob' });
   },
+  exportMasterExcel: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/export/consolidated-excel${qs ? `?${qs}` : ''}`, { responseType: 'blob' });
+  },
   exportPdfHtml: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
+    return api.get(`/reports/export/pdf-html${qs ? `?${qs}` : ''}`);
+  },
+  exportMasterPdf: (params = {}) => {
+    const qs = new URLSearchParams({ type: 'master', ...params }).toString();
     return api.get(`/reports/export/pdf-html${qs ? `?${qs}` : ''}`);
   },
 };

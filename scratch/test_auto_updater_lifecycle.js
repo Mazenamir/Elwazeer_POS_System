@@ -95,7 +95,7 @@ async function runAutoUpdaterTests() {
 
     manager.init();
     // Wait for initial check to execute
-    await new Promise(r => setTimeout(r, 40));
+    await new Promise(r => setTimeout(r, 80));
     assert.strictEqual(mock.checkCount, 1, 'Initial check must execute');
     assert.strictEqual(manager.getStatus().lastCheckStatus, 'up-to-date');
     assert.strictEqual(manager.isChecking, false);
@@ -117,7 +117,7 @@ async function runAutoUpdaterTests() {
     });
 
     manager.init();
-    await new Promise(r => setTimeout(r, 40));
+    await new Promise(r => setTimeout(r, 80));
     assert.strictEqual(mock.checkCount, 1);
     assert.strictEqual(manager.getStatus().lastCheckStatus, 'available');
     assert.strictEqual(manager.isDownloading, true, 'isDownloading flag must be active');

@@ -27,7 +27,21 @@ import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
 import ProductBarcodePrintModal from '../../components/modals/ProductBarcodePrintModal';
 
-const BASE_CATEGORIES = ['الكل', 'TUXEDO SUIT', 'FORMAL SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'أخرى'];
+const CATEGORY_DISPLAY_MAP = {
+  'الكل': 'كل الأصناف',
+  'بدل': 'بدل (جميع الأنواع)',
+  'FORMAL SUIT': 'بدل رسمية (FORMAL SUIT)',
+  'TUXEDO SUIT': 'بدل سموكن (TUXEDO SUIT)',
+  'SUIT': 'بدل عادية (SUIT)',
+  'CASUAL SUIT': 'بدل كاجوال (CASUAL SUIT)',
+  'KIDS': 'أطفال (KIDS)',
+  'بنطلون': 'بنطلون',
+  'قميص': 'قميص',
+  'تيشيرت': 'تيشيرت',
+  'ترنج': 'ترنج',
+  'WALLET': 'محافظ (WALLET)',
+  'أخرى': 'بدون تصنيف / أخرى',
+};
 
 export function RentalInventory() {
   const { user, isAdmin } = useAuth();
@@ -35,7 +49,8 @@ export function RentalInventory() {
   const toast = useToast();
 
   const [items, setItems] = useState([]);
-  const [categoriesList, setCategoriesList] = useState(BASE_CATEGORIES);
+  const [categoriesList, setCategoriesList] = useState(['الكل']);
+  const [categoryCounts, setCategoryCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('الكل');
@@ -58,24 +73,42 @@ export function RentalInventory() {
 
   // Form State
   const [name, setName] = useState('');
-  const [category, setCategory] = useState('TUXEDO SUIT');
+  const [category, setCategory] = useState('');
   const [color, setColor] = useState('');
   const [sizeCut, setSizeCut] = useState('');
   const [barcode, setBarcode] = useState('');
+  const [rentalPrice, setRentalPrice] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [stockLevel, setStockLevel] = useState('1');
 
-  // Load Metadata categories
+  // Load Rental Categories with real counts strictly from rental inventory
+  const fetchCategories = useCallback(async () => {
+    try {
+      const branchParam = activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : '';
+      const meta = await api.get(`/rental-inventory/categories${branchParam}`);
+      if (meta?.categories && Array.isArray(meta.categories)) {
+        const counts = meta.categoryCounts || {};
+        const active = meta.categories.filter((c) => {
+          if (!c || c === 'الكل') return false;
+          if (typeof counts[c] === 'number') return counts[c] > 0;
+          return true;
+        });
+        setCategoriesList(['الكل', ...active]);
+        setCategoryCounts(counts);
+
+        // Fallback selected category to 'الكل' if it has 0 items or no longer exists
+        setSelectedCategory((prev) => {
+          if (prev === 'الكل') return prev;
+          if (active.includes(prev)) return prev;
+          return 'الكل';
+        });
+      }
+    } catch {}
+  }, [activeBranchId]);
+
   useEffect(() => {
-    api.get('/inventory/metadata')
-      .then((meta) => {
-        if (meta?.categories && Array.isArray(meta.categories)) {
-          const merged = Array.from(new Set([...BASE_CATEGORIES, ...meta.categories]));
-          setCategoriesList(merged);
-        }
-      })
-      .catch(() => {});
-  }, []);
+    fetchCategories();
+  }, [fetchCategories]);
 
   // Load Inventory
   const fetchItems = useCallback(async () => {
@@ -150,10 +183,11 @@ export function RentalInventory() {
   const openCreateModal = () => {
     setEditingItem(null);
     setName('');
-    setCategory('TUXEDO SUIT');
+    setCategory(categoriesList.find((c) => c !== 'الكل') || '');
     setColor('');
     setSizeCut('');
     setBarcode('');
+    setRentalPrice('');
     setImageUrl('');
     setStockLevel('1');
     setShowModal(true);
@@ -162,10 +196,17 @@ export function RentalInventory() {
   const openEditModal = (item) => {
     setEditingItem(item);
     setName(item.name || '');
-    setCategory(item.category || 'TUXEDO SUIT');
+    setCategory(item.category || categoriesList.find((c) => c !== 'الكل') || '');
     setColor(item.color || '');
     setSizeCut(item.size_cut || '');
     setBarcode(item.barcode || '');
+    setRentalPrice(
+      item.price !== undefined && item.price !== null
+        ? item.price.toString()
+        : item.rental_price
+        ? item.rental_price.toString()
+        : ''
+    );
     setImageUrl(item.image_url || '');
     setStockLevel(item.stock_level ? item.stock_level.toString() : '1');
     setShowModal(true);
@@ -180,12 +221,15 @@ export function RentalInventory() {
 
     setSubmitting(true);
     try {
+      const parsedPrice = Number(rentalPrice) || 0;
       const payload = {
         name: name.trim(),
         category,
         color: color.trim(),
         size_cut: sizeCut.trim(),
         barcode: barcode.trim(),
+        price: parsedPrice,
+        rental_price: parsedPrice,
         image_url: imageUrl.trim(),
         stock_level: Number(stockLevel) || 1,
         branch_stocks: [
@@ -203,6 +247,7 @@ export function RentalInventory() {
         const res = await api.post('/rental-inventory', payload);
         toast.success('تمت إضافة قطعة التأجير للمخزون بنجاح! 👗');
 
+        const effectivePrice = Number(res?.price ?? res?.rental_price ?? parsedPrice) || 0;
         const createdRental = {
           ...(res || {}),
           id: res?.id || Date.now(),
@@ -212,8 +257,8 @@ export function RentalInventory() {
           size: sizeCut.trim(),
           size_cut: sizeCut.trim(),
           barcode: res?.barcode || barcode.trim() || '',
-          rental_price: Number(res?.rental_price) || Number(rentalPrice) || 0,
-          price: Number(res?.rental_price) || Number(rentalPrice) || Number(res?.price) || 0,
+          rental_price: effectivePrice,
+          price: effectivePrice,
         };
         setSelectedRentalForBarcode(createdRental);
         setIsBarcodeNewlyCreated(true);
@@ -222,6 +267,7 @@ export function RentalInventory() {
 
       setShowModal(false);
       fetchItems();
+      fetchCategories();
     } catch (err) {
       toast.error(err.message || 'فشل حفظ القطعة');
     } finally {
@@ -235,6 +281,7 @@ export function RentalInventory() {
       await api.delete(`/rental-inventory/${id}`);
       toast.success('تم حذف القطعة بنجاح');
       fetchItems();
+      fetchCategories();
     } catch (err) {
       toast.error(err.message || 'فشل حذف القطعة');
     }
@@ -263,23 +310,44 @@ export function RentalInventory() {
       </div>
 
       {/* Categories Bar */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-        {categoriesList.map((cat) => (
-          <button
-            key={cat}
-            onClick={() => {
-              setSelectedCategory(cat);
-              setPagination((prev) => ({ ...prev, page: 1 }));
-            }}
-            className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
-              selectedCategory === cat
-                ? 'bg-[#151515] text-white shadow-sm'
-                : 'bg-[#FFFDF9] border border-[#E6DECD] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
-            }`}
-          >
-            {cat}
-          </button>
-        ))}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+        {categoriesList
+          .filter((cat) => {
+            if (cat === 'الكل') return true;
+            const c = categoryCounts[cat] ?? categoryCounts[CATEGORY_DISPLAY_MAP[cat]];
+            return typeof c === 'number' && c > 0;
+          })
+          .map((cat) => {
+            const isSelected = selectedCategory === cat;
+            const displayName = CATEGORY_DISPLAY_MAP[cat] || cat;
+            const count = categoryCounts[cat] ?? categoryCounts[displayName];
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => {
+                  setSelectedCategory(cat);
+                  setPagination((prev) => ({ ...prev, page: 1 }));
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                  isSelected
+                    ? 'bg-[#151515] text-white shadow-sm ring-2 ring-[#151515]/20'
+                    : 'bg-[#FFFDF9] text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F] border border-[#E6DECD]'
+                }`}
+              >
+                <span>{cat === 'الكل' ? 'كل الأصناف' : displayName}</span>
+                {typeof count === 'number' && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-[#FAF6ED] text-[#777266] border border-[#E6DECD]/70'
+                    }`}
+                  >
+                    {count.toLocaleString()}
+                  </span>
+                )}
+              </button>
+            );
+          })}
       </div>
 
       {/* Main Table Card */}
@@ -331,6 +399,7 @@ export function RentalInventory() {
                   <th className="pb-3">التصنيف</th>
                   <th className="pb-3">اللون والمقاس</th>
                   <th className="pb-3">الباركود</th>
+                  <th className="pb-3">سعر التأجير</th>
                   <th className="pb-3">الرصيد المتوفر</th>
                   <th className="pb-3 pl-2">إجراءات</th>
                 </tr>
@@ -378,6 +447,13 @@ export function RentalInventory() {
                     </td>
                     <td className="py-3 font-mono text-xs text-slate-500" dir="ltr">
                       {item.barcode || '-'}
+                    </td>
+                    <td className="py-3 font-black text-slate-800">
+                      {Number(item.price || item.rental_price || 0) > 0 ? (
+                        <span>{Number(item.price || item.rental_price).toLocaleString()} ج.م</span>
+                      ) : (
+                        <span className="text-slate-400 font-normal">-</span>
+                      )}
                     </td>
                     <td className="py-3 font-black text-indigo-600">
                       {item.stock_level ?? 1} قطعة
@@ -541,17 +617,20 @@ export function RentalInventory() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700">التصنيف</label>
-              <select
+              <input
+                type="text"
+                list="rental-categories-options"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
+                placeholder="اختر أو اكتب التصنيف..."
                 className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-800 outline-none focus:border-indigo-600"
-              >
+                required
+              />
+              <datalist id="rental-categories-options">
                 {categoriesList.filter((c) => c !== 'الكل').map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
+                  <option key={cat} value={cat} />
                 ))}
-              </select>
+              </datalist>
             </div>
 
             <Input
@@ -570,19 +649,22 @@ export function RentalInventory() {
               placeholder="S, M, L, XL, 42, 44..."
             />
             <Input
-              label="الباركود (يترك فارغاً للتوليد التلقائي)"
-              value={barcode}
-              onChange={(e) => setBarcode(e.target.value)}
-              placeholder="باركود القطعة..."
+              label="سعر التأجير الافتراضي (ج.م)"
+              type="number"
+              min="0"
+              step="any"
+              value={rentalPrice}
+              onChange={(e) => setRentalPrice(e.target.value)}
+              placeholder="0.00"
             />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
-              label="رابط صورة القطعة (اختياري)"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              placeholder="https://..."
+              label="الباركود (يترك فارغاً للتوليد التلقائي)"
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value)}
+              placeholder="باركود القطعة..."
             />
             <Input
               label="الكمية المتوفرة بالمخزن"
@@ -592,6 +674,13 @@ export function RentalInventory() {
               onChange={(e) => setStockLevel(e.target.value)}
             />
           </div>
+
+          <Input
+            label="رابط صورة القطعة (اختياري)"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            placeholder="https://..."
+          />
 
           <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
             <Button

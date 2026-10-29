@@ -110,14 +110,6 @@ export function ExpensesManager({ isCashierTab = false }) {
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
 
-  // Keep branch locked if inside cashier tab
-  useEffect(() => {
-    if (activeBranchId) {
-      setFilterBranch(activeBranchId);
-      setPagination((p) => ({ ...p, page: 1 }));
-    }
-  }, [activeBranchId]);
-
   // Pagination
   const [pagination, setPagination] = useState({
     page: 1,
@@ -125,6 +117,14 @@ export function ExpensesManager({ isCashierTab = false }) {
     total: 0,
     totalPages: 1,
   });
+
+  // Keep branch locked if inside cashier tab
+  useEffect(() => {
+    if (activeBranchId) {
+      setFilterBranch(activeBranchId);
+      setPagination((p) => ({ ...p, page: 1 }));
+    }
+  }, [activeBranchId]);
 
   // Add Expense Modal
   const [showAddModal, setShowAddModal] = useState(false);

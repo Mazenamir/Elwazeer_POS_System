@@ -30,9 +30,10 @@ function translatePgToSqlite(sql) {
   // Strip FOR UPDATE
   s = s.replace(/\bFOR\s+UPDATE\b/gi, '');
 
-  // json_agg -> json_group_array, json_build_object -> json_object
+  // json_agg -> json_group_array, json_build_object -> json_object, json_object_agg -> json_group_object
   s = s.replace(/\bjson_agg\b/gi, 'json_group_array');
   s = s.replace(/\bjson_build_object\b/gi, 'json_object');
+  s = s.replace(/\bjson_object_agg\b/gi, 'json_group_object');
 
   // = ANY($1) -> IN (SELECT value FROM json_each(?1))
   s = s.replace(/=\s*ANY\s*\(\s*\$(\d+)\s*\)/gi, 'IN (SELECT value FROM json_each(?$1))');
@@ -87,6 +88,27 @@ if (config.IS_BRANCH_MODE) {
   sqliteDb.function('pg_advisory_xact_lock', { varargs: true }, () => 1);
   sqliteDb.function('pg_advisory_lock', { varargs: true }, () => 1);
   sqliteDb.function('pg_advisory_unlock', { varargs: true }, () => 1);
+  sqliteDb.function('to_char', { varargs: true }, (val, fmt) => {
+    if (!val) return null;
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    if (fmt === 'YYYY-MM-DD') {
+      return d.toISOString().slice(0, 10);
+    }
+    if (fmt === 'YYYY-MM') {
+      return d.toISOString().slice(0, 7);
+    }
+    if (fmt === 'HH24:MI') {
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    if (fmt === 'HH12:MI AM') {
+      const hours = d.getHours();
+      const h12 = hours % 12 || 12;
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      return `${String(h12).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} ${ampm}`;
+    }
+    return String(val);
+  });
 
   function executeSqliteQuery(targetDb, rawSql, params = []) {
     const sDb = targetDb || sqliteDb;

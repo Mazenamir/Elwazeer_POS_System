@@ -38,6 +38,108 @@ const EXTRA_PERMISSIONS = [
   INVENTORY_VIEW_ALL_BRANCHES_PERMISSION,
 ];
 
+/**
+ * Rich Permission Definitions for Customizable Manual RBAC UI
+ */
+const PERMISSION_DEFINITIONS = [
+  {
+    id: 'index.html',
+    label: 'الكاشير والفواتير (POS)',
+    description: 'تسجيل فواتير المبيعات، البحث، الاسترجاع، وسداد المتبقي',
+    group: 'المبيعات والتشغيل',
+  },
+  {
+    id: 'Rentals.html',
+    label: 'عقود التأجير',
+    description: 'حجز وتسليم واسترجاع فساتين وبدل التأجير وسداد الحسابات',
+    group: 'المبيعات والتشغيل',
+  },
+  {
+    id: 'RentalInventory.html',
+    label: 'مخزون التأجير',
+    description: 'إدارة قطع ومقاسات مخزون التأجير والتحقق من التوفر',
+    group: 'المخزون والمنتجات',
+  },
+  {
+    id: 'Suppliers.html',
+    label: 'المخزون والموردين',
+    description: 'إدارة المنتجات والتوريدات وحسابات الموردين والشراء',
+    group: 'المخزون والمنتجات',
+  },
+  {
+    id: 'Alterations.html',
+    label: 'التعديلات والبروفات',
+    description: 'تسجيل ومتابعة بروفات وتعديلات الفساتين ومواعيد التسليم',
+    group: 'الخياطة والتجهيز',
+  },
+  {
+    id: 'Tailoring.html',
+    label: 'التفصيل والخياطة',
+    description: 'إدارة طلبات ومراحل تفصيل الملابس الرجالي والحريمي',
+    group: 'الخياطة والتجهيز',
+  },
+  {
+    id: 'Customers.html',
+    label: 'دليل العملاء والديون',
+    description: 'بيانات العملاء، سجلات المشتريات، وكشوف الحساب والمديونيات',
+    group: 'العملاء والموظفين',
+  },
+  {
+    id: 'Employees.html',
+    label: 'شؤون الموظفين والرواتب',
+    description: 'الحضور والانصراف، السلف، ومسير الرواتب الشهرية والخصومات',
+    group: 'العملاء والموظفين',
+  },
+  {
+    id: 'Expenses.html',
+    label: 'المصروفات والعهد والدرج',
+    description: 'تسجيل المصروفات النقدية، تقفيل الدرج اليومي، وإدارة العهد',
+    group: 'المالية والحسابات',
+  },
+  {
+    id: 'Reports.html',
+    label: 'التقارير والأرباح',
+    description: 'تقارير الأرباح والمبيعات ومسير الرواتب المعتمد والإكسيل',
+    group: 'المالية والحسابات',
+  },
+  {
+    id: 'Barcodes.html',
+    label: 'طباعة الباركود',
+    description: 'تصميم وطباعة ملصقات الباركود للقطع والأصناف',
+    group: 'المخزون والمنتجات',
+  },
+  {
+    id: 'WornProducts.html',
+    label: 'الهوالك والتوالف',
+    description: 'تسجيل المنتجات المهترئة والتالفة واستبعادها من الجرد',
+    group: 'المخزون والمنتجات',
+  },
+  {
+    id: 'Dashboard.html',
+    label: 'لوحة التحكم والإحصائيات',
+    description: 'مؤشرات الأداء السريعة وإحصائيات العمليات اليومية',
+    group: 'الإدارة العامة',
+  },
+  {
+    id: 'Settings.html',
+    label: 'الإعدادات العامة للنظام',
+    description: 'إدارة الفروع وبيانات المؤسسة والنسخ الاحتياطي',
+    group: 'الإدارة العامة',
+  },
+  {
+    id: 'inventory_admin',
+    label: 'إدارة متقدمة للمخزون',
+    description: 'صلاحية التحويل بين الفروع وتعديل الأصناف والأسعار',
+    group: 'صلاحيات متقدمة',
+  },
+  {
+    id: 'inventory_view_all_branches',
+    label: 'رؤية مخزون كافة الفروع',
+    description: 'الاطلاع على أرصدة ومخزون الفروع الأخرى في شاشات الجرد',
+    group: 'صلاحيات متقدمة',
+  },
+];
+
 function normalizePermissions(permissions) {
   if (Array.isArray(permissions)) return permissions;
   if (!permissions) return [];
@@ -82,7 +184,7 @@ function hasInventoryAllBranchesAccess(user) {
 }
 
 function isBranchScopedUser(user) {
-  return Boolean(user && user.role === 'branch_user' && !hasInventoryAllBranchesAccess(user));
+  return Boolean(user && user.role !== 'admin');
 }
 
 module.exports = {
@@ -91,6 +193,7 @@ module.exports = {
   INVENTORY_ADMIN_PERMISSION,
   INVENTORY_VIEW_ALL_BRANCHES_PERMISSION,
   EXTRA_PERMISSIONS,
+  PERMISSION_DEFINITIONS,
   normalizePermissions,
   defaultPermissionsForRole,
   getUserPermissions,

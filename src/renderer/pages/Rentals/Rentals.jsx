@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Sparkles,
   Calendar,
@@ -70,6 +70,37 @@ export function Rentals() {
 
   // Barcode Scanner in Booking Modal
   const [barcodeScanInput, setBarcodeScanInput] = useState('');
+
+  // 1-Click Quick Barcode Scanner for Instant Pickup / Return
+  const [quickScanInput, setQuickScanInput] = useState('');
+  const [quickScanLoading, setQuickScanLoading] = useState(false);
+  const quickScanRef = useRef(null);
+
+  // Preparation State (Task 3)
+  const [prepList, setPrepList] = useState([]);
+  const [prepSummary, setPrepSummary] = useState({ total: 0, preparedCount: 0, unpreparedCount: 0 });
+  const [prepLoading, setPrepLoading] = useState(false);
+  const [prepUpcomingOnly, setPrepUpcomingOnly] = useState(false);
+
+  // History Ledger State (Task 3)
+  const [ledgerItems, setLedgerItems] = useState([]);
+  const [ledgerSummary, setLedgerSummary] = useState({
+    total_count: 0,
+    total_contract_value: 0,
+    total_paid: 0,
+    total_remaining: 0,
+    total_fines: 0,
+    total_cash: 0,
+    total_electronic: 0,
+  });
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerStartDate, setLedgerStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().split('T')[0];
+  });
+  const [ledgerEndDate, setLedgerEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [ledgerStatusFilter, setLedgerStatusFilter] = useState('');
 
   // Status Change Modal State
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -148,6 +179,16 @@ export function Rentals() {
   const [paymentSettleNotes, setPaymentSettleNotes] = useState('');
   const [paymentSettleSubmitting, setPaymentSettleSubmitting] = useState(false);
 
+  // Add Items Modal State
+  const [showAddItemsModal, setShowAddItemsModal] = useState(false);
+  const [selectedRentalForAddItems, setSelectedRentalForAddItems] = useState(null);
+  const [extraItemsToAdd, setExtraItemsToAdd] = useState([]);
+  const [extraCustomName, setExtraCustomName] = useState('');
+  const [extraCustomCategory, setExtraCustomCategory] = useState('قميص');
+  const [extraCustomPrice, setExtraCustomPrice] = useState('');
+  const [extraNotes, setExtraNotes] = useState('');
+  const [extraSubmitting, setExtraSubmitting] = useState(false);
+
   // Thermal Receipt Modal
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [selectedReceiptRental, setSelectedReceiptRental] = useState(null);
@@ -164,9 +205,13 @@ export function Rentals() {
   // Load Rentals Summary
   const fetchSummary = useCallback(async () => {
     try {
-      const summaryUrl = `/rentals/summary${(activeBranchId && activeBranchId !== 'all') ? `?branch_id=${activeBranchId}` : ''}`;
-      const res = await api.get(summaryUrl);
+      const branchQuery = (activeBranchId && activeBranchId !== 'all') ? `?branch_id=${activeBranchId}` : '';
+      const [res, prepRes] = await Promise.all([
+        api.get(`/rentals/summary${branchQuery}`),
+        api.get(`/rentals/preparation${branchQuery}`).catch(() => null),
+      ]);
       if (res) setSummary(res);
+      if (prepRes?.summary) setPrepSummary(prepRes.summary);
     } catch {}
   }, [activeBranchId]);
 
@@ -188,17 +233,85 @@ export function Rentals() {
     }
   }, [activeBranchId, statusFilter, debouncedSearch]);
 
+  // Load Preparation List (Task 3)
+  const fetchPreparation = useCallback(async () => {
+    try {
+      setPrepLoading(true);
+      const query = new URLSearchParams();
+      if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
+      if (prepUpcomingOnly) query.append('upcoming', 'true');
+      const res = await api.get(`/rentals/preparation?${query.toString()}`);
+      if (res && res.items) {
+        setPrepList(res.items);
+        setPrepSummary(res.summary || { total: 0, preparedCount: 0, unpreparedCount: 0 });
+      }
+    } catch (err) {
+      console.error('Failed to load preparation list:', err);
+    } finally {
+      setPrepLoading(false);
+    }
+  }, [activeBranchId, prepUpcomingOnly]);
+
+  // Toggle Suit Preparation Status (Task 3)
+  const handleTogglePrepare = async (rentalId, currentStatus) => {
+    try {
+      const nextStatus = !currentStatus;
+      await api.put(`/rentals/${rentalId}/prepare`, { is_prepared: nextStatus });
+      toast.success(nextStatus ? 'تم تأكيد تجهيز البدلة بالجراب 👔✨' : 'تم إلغاء حالة التجهيز ↩️');
+      fetchPreparation();
+      fetchRentals();
+    } catch (err) {
+      toast.error(err.message || 'فشل تحديث حالة تجهيز البدلة');
+    }
+  };
+
+  // Load History Ledger (Task 3)
+  const fetchLedger = useCallback(async () => {
+    try {
+      setLedgerLoading(true);
+      const query = new URLSearchParams();
+      if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
+      if (ledgerStartDate) query.append('start_date', ledgerStartDate);
+      if (ledgerEndDate) query.append('end_date', ledgerEndDate);
+      if (ledgerStatusFilter) query.append('status', ledgerStatusFilter);
+
+      const res = await api.get(`/rentals/history-ledger?${query.toString()}`);
+      if (res && res.items) {
+        setLedgerItems(res.items);
+        setLedgerSummary(res.summary || {
+          total_count: 0,
+          total_contract_value: 0,
+          total_paid: 0,
+          total_remaining: 0,
+          total_fines: 0,
+          total_cash: 0,
+          total_electronic: 0,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load history ledger:', err);
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, [activeBranchId, ledgerStartDate, ledgerEndDate, ledgerStatusFilter]);
+
   useEffect(() => {
-    fetchRentals();
-    fetchSummary();
-  }, [fetchRentals, fetchSummary]);
+    if (activeTab === 'preparation') {
+      fetchPreparation();
+    } else if (activeTab === 'ledger') {
+      fetchLedger();
+    } else {
+      fetchRentals();
+      fetchSummary();
+    }
+  }, [activeTab, fetchPreparation, fetchLedger, fetchRentals, fetchSummary]);
 
   // Load Lookups (Rental Inventory and Employees)
   const loadLookups = useCallback(async () => {
     try {
       const branchParam = (activeBranchId && activeBranchId !== 'all') ? `?branch_id=${activeBranchId}` : '';
       const invUrl = `/rental-inventory${branchParam}`;
-      const optUrl = `/employees/options${branchParam}`;
+      const optUrl = `/employees/active-sellers${branchParam}`;
       const empUrl = `/employees${branchParam}`;
 
       const [invRes, optRes] = await Promise.all([
@@ -428,6 +541,10 @@ export function Rentals() {
       toast.error('الرجاء إضافة قطعة تأجير واحدة على الأقل للحجز (بدلة، قميص، أو إكسسوار)');
       return;
     }
+    if (!sellerId) {
+      toast.error('الرجاء اختيار الموظف المسؤول عن الحجز');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -512,9 +629,13 @@ export function Rentals() {
       fetchSummary();
 
       // Show receipt with all booking items and payment details
+      const chosenSeller = employees.find((e) => e.id.toString() === sellerId?.toString());
       setSelectedReceiptRental({
         ...res,
         items: bookingItems,
+        customer_name: customerName.trim(),
+        customer_phone: customerPhone.trim(),
+        seller_name: chosenSeller?.name || res.seller_name || 'مسؤول الحجز',
         payment_method: finalMethod,
         payment_splits: splitsArray,
         paid_amount: paid,
@@ -575,6 +696,70 @@ export function Rentals() {
     setShowStatusModal(true);
   };
 
+  // Open Return Modal
+  const openReturnModal = (rental) => {
+    setSelectedRentalForReturn(rental);
+    setFineAmount(rental.suggested_fine ? rental.suggested_fine.toString() : '0');
+    const rem = Number(rental.remaining || 0);
+    if (rem > 0) {
+      setReturnSettlementAction('collect');
+      setReturnPaidAmount(rem.toString());
+    } else {
+      setReturnSettlementAction('collect');
+      setReturnPaidAmount('0');
+    }
+    setReturnPaymentMethod('cash');
+    setReturnNotes('');
+    setShowReturnModal(true);
+  };
+
+  // Handle 1-Click Quick Barcode Scan (Instant Pickup / Return)
+  const handleQuickScan = async (e) => {
+    if (e && e.key && e.key !== 'Enter') return;
+    if (e && e.preventDefault) e.preventDefault();
+    const c = quickScanInput.trim();
+    if (!c) return;
+
+    try {
+      setQuickScanLoading(true);
+      const branchToUse = (activeBranchId && activeBranchId !== 'all') ? activeBranchId : undefined;
+      const res = await api.post('/rentals/scan-action', { barcode: c, branch_id: branchToUse });
+
+      if (res.action === 'picked_up') {
+        toast.success(res.message || 'تم تسليم البدلة للعميل بنجاح! 👗');
+        setQuickScanInput('');
+        fetchRentals();
+        fetchSummary();
+      } else if (res.action === 'returned') {
+        toast.success(res.message || 'تم إرجاع البدلة للمخزن بنجاح! ✨');
+        setQuickScanInput('');
+        fetchRentals();
+        fetchSummary();
+      } else if (res.action === 'requires_payment') {
+        setQuickScanInput('');
+        toast.info(res.message);
+        if (res.type === 'pickup') {
+          openStatusModal(res.rental);
+        } else {
+          openReturnModal(res.rental);
+        }
+      } else if (res.action === 'info') {
+        toast.info(res.message);
+        setQuickScanInput('');
+      } else {
+        toast.warning(res.message || 'لم يتم العثور على حجز');
+      }
+    } catch (err) {
+      toast.error(err.message || 'فشل معالجة الباركود');
+    } finally {
+      setQuickScanLoading(false);
+      if (quickScanRef.current) {
+        quickScanRef.current.focus();
+      }
+    }
+  };
+
+
   // Submit Status Change
   const handleUpdateStatus = async (e) => {
     if (e) e.preventDefault();
@@ -622,22 +807,6 @@ export function Rentals() {
     }
   };
 
-  // Open Return Modal
-  const openReturnModal = (rental) => {
-    setSelectedRentalForReturn(rental);
-    setFineAmount(rental.suggested_fine ? rental.suggested_fine.toString() : '0');
-    const rem = Number(rental.remaining || 0);
-    if (rem > 0) {
-      setReturnSettlementAction('collect');
-      setReturnPaidAmount(rem.toString());
-    } else {
-      setReturnSettlementAction('collect');
-      setReturnPaidAmount('0');
-    }
-    setReturnPaymentMethod('cash');
-    setReturnNotes('');
-    setShowReturnModal(true);
-  };
 
   // Submit Return
   const handleReturnSubmit = async (e) => {
@@ -699,6 +868,53 @@ export function Rentals() {
     setPaymentSettleMethod('cash');
     setPaymentSettleNotes('');
     setShowSettlePaymentModal(true);
+  };
+
+  // Open Add Items Modal
+  const openAddItemsModal = (rental) => {
+    setSelectedRentalForAddItems(rental);
+    setExtraItemsToAdd([]);
+    setExtraCustomName('');
+    setExtraCustomCategory('قميص');
+    setExtraCustomPrice('');
+    setExtraNotes('');
+    setShowAddItemsModal(true);
+  };
+
+  // Submit Add Items
+  const handleAddItemsSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedRentalForAddItems) return;
+    const finalItems = [...extraItemsToAdd];
+    if (extraCustomName.trim()) {
+      finalItems.push({
+        name: extraCustomName.trim(),
+        category: extraCustomCategory,
+        price: Number(extraCustomPrice) || 0,
+        is_custom: true,
+      });
+    }
+    if (finalItems.length === 0) {
+      toast.warning('يرجى إضافة قطعة أو ملحق أولاً');
+      return;
+    }
+
+    setExtraSubmitting(true);
+    try {
+      const res = await api.post(`/rentals/${selectedRentalForAddItems.id}/items`, {
+        custom_items: finalItems,
+        notes: extraNotes.trim(),
+      });
+
+      toast.success(res?.message || 'تمت إضافة القطع والملحقات بنجاح! ✨');
+      setShowAddItemsModal(false);
+      fetchRentals();
+      fetchSummary();
+    } catch (err) {
+      toast.error(err.message || 'فشل إضافة القطع للحجز');
+    } finally {
+      setExtraSubmitting(false);
+    }
   };
 
   // Submit Settle Payment
@@ -847,8 +1063,8 @@ export function Rentals() {
 
       {/* Main Table Card */}
       <Card>
-        {/* Navigation Tabs for Daily Operations */}
-        <div className="px-6 pt-3 pb-3 border-b border-[#E6DECD]/70 flex flex-wrap items-center justify-between gap-2.5 bg-[#FAF8F5]/80">
+        {/* Navigation Tabs for Daily Operations & Quick Barcode Scanner */}
+        <div className="px-6 pt-3 pb-3 border-b border-[#E6DECD]/70 flex flex-wrap items-center justify-between gap-3 bg-[#FAF8F5]/80">
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
@@ -902,7 +1118,7 @@ export function Rentals() {
               type="button"
               onClick={() => { setActiveTab('upcoming'); setStatusFilter('upcoming'); }}
               className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                statusFilter === 'upcoming'
+                activeTab === 'upcoming' && statusFilter === 'upcoming'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'bg-indigo-50 border border-indigo-200 text-indigo-900 hover:bg-indigo-100'
               }`}
@@ -910,15 +1126,459 @@ export function Rentals() {
             >
               <span>⏳ حجوزات قادمة</span>
               <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                statusFilter === 'upcoming' ? 'bg-white text-indigo-800' : 'bg-indigo-200 text-indigo-900'
+                activeTab === 'upcoming' ? 'bg-white text-indigo-800' : 'bg-indigo-200 text-indigo-900'
               }`}>
                 {summary.upcoming || 0}
               </span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('preparation'); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'preparation'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-amber-50 border border-amber-200 text-amber-900 hover:bg-amber-100'
+              }`}
+              title="تحضير وتجهيز البدل بالجراب لاستلام اليوم والغد"
+            >
+              <span>👔 تحضير الاستلامات</span>
+              {prepSummary.unpreparedCount > 0 && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                  activeTab === 'preparation' ? 'bg-white text-amber-800' : 'bg-amber-500 text-white animate-pulse'
+                }`}>
+                  {prepSummary.unpreparedCount} بانتظار الكيّ
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('ledger'); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'ledger'
+                  ? 'bg-purple-700 text-white shadow-xs'
+                  : 'bg-purple-50 border border-purple-200 text-purple-900 hover:bg-purple-100'
+              }`}
+              title="الأرشيف المالي للاستلامات والحسابات السابقة"
+            >
+              <span>📊 الأرشيف المالي للاستلامات</span>
+            </button>
           </div>
+
+          {/* Quick Barcode Scanner for 1-Click Pickup / Return */}
+          <form
+            onSubmit={handleQuickScan}
+            className="flex items-center gap-2 bg-white border-2 border-indigo-500/40 hover:border-indigo-600 focus-within:border-indigo-600 rounded-xl px-3 py-1.5 shadow-xs transition-all w-full md:w-auto md:min-w-[360px]"
+          >
+            <Barcode className="w-5 h-5 text-indigo-600 shrink-0" />
+            <input
+              ref={quickScanRef}
+              type="text"
+              value={quickScanInput}
+              onChange={(e) => setQuickScanInput(e.target.value)}
+              placeholder="امسح باركود البدلة أو العقد (استلام / إرجاع فوري)..."
+              disabled={quickScanLoading}
+              className="bg-transparent text-xs font-black text-[#24221F] placeholder:text-slate-400 outline-none w-full"
+            />
+            <button
+              type="submit"
+              disabled={quickScanLoading || !quickScanInput.trim()}
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-lg text-[10px] font-black shrink-0 transition-colors cursor-pointer"
+            >
+              {quickScanLoading ? 'جاري...' : 'تنفيذ ⚡'}
+            </button>
+          </form>
         </div>
 
-        <CardHeader
+        {activeTab === 'preparation' ? (
+          <div>
+            <div className="p-6 border-b border-[#E6DECD]/70 bg-white">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-black text-[#24221F] flex items-center gap-2">
+                    <span>👔 شاشة تحضير وتجهيز البدل للاستلام</span>
+                  </h3>
+                  <p className="text-xs text-[#777266] mt-1 font-bold">
+                    فحص البدل، تجهيز الإكسسوارات والملحقات، والكيّ ووضعها بالجراب لضمان التسليم الفوري للعميل بدون تأخير
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPrepUpcomingOnly(!prepUpcomingOnly)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                      prepUpcomingOnly
+                        ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                        : 'bg-white border-[#E6DECD] text-[#565147] hover:bg-[#FAF8F5]'
+                    }`}
+                  >
+                    {prepUpcomingOnly ? 'عرض: كل الحجوزات القادمة 🌐' : 'عرض: اليوم والغد فقط ⚡'}
+                  </button>
+                  <Button variant="outline" size="sm" onClick={fetchPreparation} icon={RotateCcw}>
+                    تحديث
+                  </Button>
+                </div>
+              </div>
+
+              {/* Prep KPI summary pills */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+                <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E6DECD] flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#565147]">إجمالي البدل المجدولة:</span>
+                  <span className="text-base font-black text-[#24221F]">{prepSummary.total || 0}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-800">جاهزة بالجراب للاستلام ✨:</span>
+                  <span className="text-base font-black text-emerald-700">{prepSummary.preparedCount || 0}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-800">بانتظار الكيّ والتحضير ⏳:</span>
+                  <span className="text-base font-black text-amber-700">{prepSummary.unpreparedCount || 0}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Preparation Cards Grid */}
+            {prepLoading ? (
+              <div className="py-20 text-center text-[#777266] font-bold text-sm">
+                جاري تحميل قائمة التحضير...
+              </div>
+            ) : prepList.length === 0 ? (
+              <div className="py-20 text-center text-[#777266] font-bold text-sm">
+                🎉 لا توجد بدل بانتظار التجهيز في هذه الفترة! جميع البدل جاهزة أو لا توجد مواعيد تسليم قريبة.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-6 bg-[#FAF8F5]/50">
+                {prepList.map((item) => {
+                  const isToday = item.pickup_date && String(item.pickup_date).slice(0, 10) === cairoTodayStr;
+                  return (
+                    <div
+                      key={item.id}
+                      className={`rounded-2xl border transition-all p-4 flex flex-col justify-between ${
+                        item.is_prepared
+                          ? 'bg-emerald-50/40 border-emerald-200 shadow-xs'
+                          : 'bg-white border-amber-200 shadow-xs'
+                      }`}
+                    >
+                      <div>
+                        {/* Header: Contract # and Pickup timing */}
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                          <span className="font-mono text-xs font-bold text-slate-500">
+                            عقد #{item.id}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                              isToday
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                                : 'bg-blue-50 text-blue-800 border border-blue-200'
+                            }`}
+                          >
+                            {isToday ? '🔥 استلام اليوم!' : `استلام: ${new Date(item.pickup_date).toLocaleDateString('ar-EG')}`}
+                          </span>
+                        </div>
+
+                        {/* Customer Info */}
+                        <div className="mt-2.5">
+                          <div className="text-sm font-black text-[#24221F]">{item.customer_name}</div>
+                          <div className="text-xs text-[#777266] font-mono mt-0.5" dir="ltr">{item.customer_phone}</div>
+                        </div>
+
+                        {/* Suit Details */}
+                        <div className="mt-3 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                          <div className="font-bold text-xs text-[#24221F] flex items-center justify-between">
+                            <span>{item.suit_name || 'بدلة تأجير'}</span>
+                            {item.inventory_barcode && (
+                              <span className="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                                #{item.inventory_barcode}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 text-[11px] text-[#565147] font-bold mt-1.5">
+                            {item.color && (
+                              <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200">
+                                اللون: {item.color}
+                              </span>
+                            )}
+                            {item.size && (
+                              <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200">
+                                المقاس: {item.size}
+                              </span>
+                            )}
+                            {item.fabric && (
+                              <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200">
+                                الخامة: {item.fabric}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Multi-items / Accessories */}
+                          {Array.isArray(item.items) && item.items.length > 1 && (
+                            <div className="mt-2 pt-2 border-t border-slate-200">
+                              <span className="text-[10px] font-bold text-indigo-700">الملحقات المطلوبة:</span>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {item.items.map((it, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 border border-indigo-200 text-indigo-800"
+                                  >
+                                    {it.name || it.product_name}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Seller / Branch */}
+                        <div className="flex items-center justify-between text-[11px] text-[#777266] font-bold mt-2 px-1">
+                          {item.seller_name && <span>مسؤول الحجز: {item.seller_name}</span>}
+                          {item.branch_name && <span>الفرع: {item.branch_name}</span>}
+                        </div>
+                      </div>
+
+                      {/* Status & 1-Click Action Button */}
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        {item.is_prepared ? (
+                          <div className="space-y-2">
+                            <div className="p-2 rounded-xl bg-emerald-100/70 border border-emerald-300 text-emerald-800 text-xs font-bold text-center">
+                              ✨ جاهزة ومكوية بالجراب للاستلام
+                              {item.prepared_by_name && (
+                                <div className="text-[10px] text-emerald-700 font-normal mt-0.5">
+                                  بواسطة: {item.prepared_by_name}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePrepare(item.id, true)}
+                              className="w-full py-1.5 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-100 text-xs font-bold transition-all cursor-pointer"
+                            >
+                              إلغاء التجهيز ↩️
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="p-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold text-center">
+                              ⏳ بانتظار الكيّ والجراب
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePrepare(item.id, false)}
+                              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <span>تم التجهيز والكيّ بالجراب 👔✅</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'ledger' ? (
+          <div>
+            {/* Ledger Filter Bar */}
+            <div className="p-6 border-b border-[#E6DECD]/70 bg-white">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-black text-[#24221F] flex items-center gap-2">
+                    <span>📊 الأرشيف المالي للاستلامات والحسابات السابقة</span>
+                  </h3>
+                  <p className="text-xs text-[#777266] mt-1 font-bold">
+                    سجل مالي تفصيلي لجميع عقود الإيجار المنفذة، الإيرادات النقدية والبنكية، متبقيات الديون، وغرامات التأخير
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center gap-1 text-xs font-bold text-[#565147]">
+                    <span>من:</span>
+                    <input
+                      type="date"
+                      value={ledgerStartDate}
+                      onChange={(e) => setLedgerStartDate(e.target.value)}
+                      className="bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#24221F] outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1 text-xs font-bold text-[#565147]">
+                    <span>إلى:</span>
+                    <input
+                      type="date"
+                      value={ledgerEndDate}
+                      onChange={(e) => setLedgerEndDate(e.target.value)}
+                      className="bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#24221F] outline-none"
+                    />
+                  </div>
+                  <select
+                    value={ledgerStatusFilter}
+                    onChange={(e) => setLedgerStatusFilter(e.target.value)}
+                    className="bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3 py-1.5 text-xs font-bold text-[#24221F] outline-none"
+                  >
+                    <option value="">كل الحالات</option>
+                    <option value="returned">مُرجعة (خالص)</option>
+                    <option value="returned_debt">مُرجعة (عليها متبقي)</option>
+                    <option value="active">تم الاستلام (سارية)</option>
+                    <option value="booked">محجوزة</option>
+                    <option value="cancelled">ملغاة</option>
+                  </select>
+                  <Button variant="outline" size="sm" onClick={fetchLedger} icon={RotateCcw}>
+                    تحديث
+                  </Button>
+                </div>
+              </div>
+
+              {/* 7 Financial KPI Summary Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 mt-5">
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  <div className="text-[11px] font-bold text-slate-600">إجمالي العقود</div>
+                  <div className="text-base font-black text-slate-800 mt-1">{ledgerSummary.total_count || 0}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200">
+                  <div className="text-[11px] font-bold text-indigo-700">قيمة العقود</div>
+                  <div className="text-base font-black text-indigo-900 mt-1">{Number(ledgerSummary.total_contract_value || 0).toLocaleString()} ج.م</div>
+                </div>
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                  <div className="text-[11px] font-bold text-emerald-700">المحصل الفعلي</div>
+                  <div className="text-base font-black text-emerald-800 mt-1">{Number(ledgerSummary.total_paid || 0).toLocaleString()} ج.م</div>
+                </div>
+                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
+                  <div className="text-[11px] font-bold text-blue-700">كاش بالدرج</div>
+                  <div className="text-base font-black text-blue-800 mt-1">{Number(ledgerSummary.total_cash || 0).toLocaleString()} ج.م</div>
+                </div>
+                <div className="p-3 rounded-xl bg-purple-50 border border-purple-200">
+                  <div className="text-[11px] font-bold text-purple-700">بنكي / فيزا / إنستا</div>
+                  <div className="text-base font-black text-purple-800 mt-1">{Number(ledgerSummary.total_electronic || 0).toLocaleString()} ج.م</div>
+                </div>
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200">
+                  <div className="text-[11px] font-bold text-rose-700">متبقيات ديون</div>
+                  <div className="text-base font-black text-rose-800 mt-1">{Number(ledgerSummary.total_remaining || 0).toLocaleString()} ج.م</div>
+                </div>
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+                  <div className="text-[11px] font-bold text-amber-700">غرامات محصلة</div>
+                  <div className="text-base font-black text-amber-800 mt-1">{Number(ledgerSummary.total_fines || 0).toLocaleString()} ج.م</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Ledger Table */}
+            {ledgerLoading ? (
+              <div className="py-20 text-center text-[#777266] font-bold text-sm">
+                جاري تحميل الأرشيف المالي...
+              </div>
+            ) : ledgerItems.length === 0 ? (
+              <div className="py-20 text-center text-[#777266] font-bold text-sm">
+                لا توجد سجلات مالية مطابقة للفترة المحددة
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-[#E6DECD] text-[#777266] font-black uppercase bg-[#FAF8F5]">
+                      <th className="py-3 pr-4">رقم العقد</th>
+                      <th className="py-3">العميل</th>
+                      <th className="py-3">الموظف المسؤول</th>
+                      <th className="py-3">البدلة / القطعة</th>
+                      <th className="py-3">تاريخ الاستلام</th>
+                      <th className="py-3">تاريخ الإرجاع</th>
+                      <th className="py-3">قيمة العقد</th>
+                      <th className="py-3">المدفوع</th>
+                      <th className="py-3">طريقة الدفع</th>
+                      <th className="py-3">المتبقي</th>
+                      <th className="py-3">التأمين</th>
+                      <th className="py-3">الغرامة</th>
+                      <th className="py-3">الحالة</th>
+                      <th className="py-3 pl-4">طباعة</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E6DECD]/70 font-medium">
+                    {ledgerItems.map((item) => (
+                      <tr key={item.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
+                        <td className="py-3 pr-4 font-bold text-[#24221F]">#{item.id}</td>
+                        <td className="py-3">
+                          <div className="font-bold text-[#24221F]">{item.customer_name}</div>
+                          <div className="text-[10px] text-[#777266] font-mono" dir="ltr">{item.customer_phone}</div>
+                        </td>
+                        <td className="py-3">
+                          <span className="text-xs font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
+                            {item.seller_name || '-'}
+                          </span>
+                        </td>
+                        <td className="py-3">
+                          <div className="font-bold text-[#24221F]">{item.inventory_name || 'بدلة تأجير'}</div>
+                          {item.inventory_barcode && (
+                            <div className="text-[10px] font-mono text-slate-500">#{item.inventory_barcode}</div>
+                          )}
+                        </td>
+                        <td className="py-3 text-[#565147]">
+                          {item.pickup_date ? new Date(item.pickup_date).toLocaleDateString('ar-EG') : '-'}
+                        </td>
+                        <td className="py-3 text-[#565147]">
+                          {item.return_date ? new Date(item.return_date).toLocaleDateString('ar-EG') : '-'}
+                        </td>
+                        <td className="py-3 font-bold text-[#24221F]">
+                          {Number(item.total_price || 0).toLocaleString()} ج.م
+                        </td>
+                        <td className="py-3 font-bold text-emerald-700">
+                          {Number(item.paid_amount || 0).toLocaleString()} ج.م
+                        </td>
+                        <td className="py-3">
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            item.payment_method === 'cash'
+                              ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                              : item.payment_method === 'split'
+                                ? 'bg-purple-50 text-purple-800 border border-purple-200'
+                                : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          }`}>
+                            {item.payment_method === 'cash' ? 'كاش' : item.payment_method === 'bank_transfer' ? 'فيزا/إنستا' : item.payment_method === 'split' ? 'مجزأ' : item.payment_method}
+                          </span>
+                        </td>
+                        <td className="py-3">
+                          {Number(item.remaining || 0) > 0 ? (
+                            <span className="text-rose-600 font-black">{Number(item.remaining).toLocaleString()} ج.م</span>
+                          ) : (
+                            <span className="text-emerald-700 font-bold">خالص</span>
+                          )}
+                        </td>
+                        <td className="py-3 text-slate-600 font-bold">
+                          {Number(item.deposit || 0).toLocaleString()} ج.م
+                        </td>
+                        <td className="py-3">
+                          {Number(item.fine_amount || 0) > 0 ? (
+                            <span className="text-rose-600 font-black">{Number(item.fine_amount).toLocaleString()} ج.م</span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </td>
+                        <td className="py-3">
+                          <span className="text-xs font-bold">
+                            {STATUS_MAP[item.status]?.label || item.status}
+                          </span>
+                        </td>
+                        <td className="py-3 pl-4">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedReceiptRental(item);
+                              setShowReceiptModal(true);
+                            }}
+                            className="p-1 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                            title="طباعة إيصال"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+        <CardHeader
           title="سجل الحجوزات"
           subtitle="استعراض وتحديث حالات الإيجارات"
           action={
@@ -1019,6 +1679,11 @@ export function Rentals() {
                         <div className="text-xs text-[#777266] font-mono" dir="ltr">
                           {r.customer_phone}
                         </div>
+                        {r.seller_name && (
+                          <div className="text-[10px] text-indigo-700 font-bold flex items-center gap-1 mt-0.5">
+                            <span>مسؤول الحجز: {r.seller_name}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5">
                         <div className="font-bold text-[#24221F] flex items-center gap-1.5">
@@ -1081,6 +1746,15 @@ export function Rentals() {
                         {isDelay && (
                           <div className="text-[11px] text-rose-600 font-black mt-0.5">
                             تأخير {r.delay_days} يوم!
+                          </div>
+                        )}
+                        {r.status === 'booked' && (
+                          <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black mt-1 ${
+                            r.is_prepared
+                              ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                              : 'bg-amber-50 border border-amber-200 text-amber-700'
+                          }`}>
+                            <span>{r.is_prepared ? '✨ جاهزة بالجراب' : '⏳ بانتظار التجهيز'}</span>
                           </div>
                         )}
                         {r.status === 'booked' && r.pickup_date && String(r.pickup_date).slice(0, 10) === cairoTodayStr && (
@@ -1175,6 +1849,19 @@ export function Rentals() {
                             </button>
                           )}
 
+                          {/* Add Items / Accessories Button */}
+                          {['booked', 'active'].includes(r.status) && (
+                            <button
+                              type="button"
+                              onClick={() => openAddItemsModal(r)}
+                              className="px-2 py-1 rounded-lg border border-indigo-200 text-indigo-600 bg-indigo-50/50 hover:bg-indigo-100 hover:border-indigo-400 transition-colors flex items-center gap-1 text-xs font-bold"
+                              title="إضافة قطع وملحقات إضافية لهذا الحجز"
+                            >
+                              <Shirt className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>+ إضافة قطع</span>
+                            </button>
+                          )}
+
                           {/* Settle Remaining Payment if remaining > 0 (for returned or active) */}
                           {Number(r.remaining || 0) > 0 && r.status !== 'cancelled' && (
                             <Button
@@ -1218,6 +1905,8 @@ export function Rentals() {
               </tbody>
             </table>
           </div>
+        )}
+          </>
         )}
       </Card>
 
@@ -1569,13 +2258,14 @@ export function Rentals() {
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">الموظف المسؤول</label>
+                <label className="text-xs font-bold text-slate-700">الموظف المسؤول *</label>
                 <select
                   value={sellerId}
                   onChange={(e) => setSellerId(e.target.value)}
+                  required
                   className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none focus:border-indigo-600"
                 >
-                  <option value="">اختر الموظف...</option>
+                  <option value="">اختر الموظف المسؤول...</option>
                   {employees.map((emp) => (
                     <option key={emp.id} value={emp.id.toString()}>
                       {emp.name} {emp.position ? `(${emp.position})` : ''}
@@ -2060,6 +2750,145 @@ export function Rentals() {
               variant="outline"
               size="lg"
               onClick={() => setShowReturnModal(false)}
+            >
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ADD ITEMS & ACCESSORIES MODAL */}
+      <Modal
+        isOpen={showAddItemsModal}
+        onClose={() => setShowAddItemsModal(false)}
+        title="إضافة قطع وملحقات للحجز ✨"
+        subtitle={`عقد رقم #${selectedRentalForAddItems?.id} - العميل: ${selectedRentalForAddItems?.customer_name}`}
+        maxWidth="max-w-lg"
+      >
+        <form onSubmit={handleAddItemsSubmit} className="space-y-4">
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+            <div className="font-bold text-slate-800">الصنف الأساسي: {selectedRentalForAddItems?.inventory_name || selectedRentalForAddItems?.suit_name || 'بدلة تأجير'}</div>
+            <div className="flex justify-between text-slate-600">
+              <span>الإجمالي الحالي: <b className="text-slate-900">{Number(selectedRentalForAddItems?.total_price || 0).toLocaleString()} ج.م</b></span>
+              <span>المتبقي: <b className="text-rose-600">{Number(selectedRentalForAddItems?.remaining || 0).toLocaleString()} ج.م</b></span>
+            </div>
+          </div>
+
+          {/* Quick presets */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+              <Shirt className="w-4 h-4 text-indigo-600" />
+              <span>إضافة ملحق سريع:</span>
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { name: 'قميص أبيض كلاسيك', category: 'قميص', price: 150 },
+                { name: 'قميص أسود كلاسيك', category: 'قميص', price: 150 },
+                { name: 'بيبيون ستان أسود', category: 'بيبيون', price: 50 },
+                { name: 'كرافتة ستان كلاسيك', category: 'كرافت', price: 75 },
+                { name: 'حذاء كلاسيك أسود', category: 'حذاء', price: 200 },
+                { name: 'صدرية بدلة كلاسيك', category: 'صدرية', price: 150 },
+                { name: 'منديل جيب ستان', category: 'إكسسوار', price: 30 },
+              ].map((acc, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    setExtraItemsToAdd((prev) => [
+                      ...prev,
+                      { id: `acc_${Date.now()}_${idx}`, name: acc.name, category: acc.category, price: acc.price, is_custom: true }
+                    ]);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-[11px] font-bold text-slate-700 transition-all flex items-center gap-1 shadow-2xs"
+                >
+                  <Plus className="w-3 h-3 text-indigo-600" />
+                  <span>{acc.name}</span>
+                  <span className="text-slate-400 font-normal">({acc.price} ج.م)</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Accessory Input */}
+          <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-2">
+            <label className="text-xs font-bold text-indigo-900">أو إضافة ملحق مخصص:</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <input
+                type="text"
+                value={extraCustomName}
+                onChange={(e) => setExtraCustomName(e.target.value)}
+                placeholder="اسم الملحق (مثال: بروش)..."
+                className="col-span-1 sm:col-span-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 bg-white"
+              />
+              <select
+                value={extraCustomCategory}
+                onChange={(e) => setExtraCustomCategory(e.target.value)}
+                className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 bg-white"
+              >
+                <option value="قميص">قميص</option>
+                <option value="بيبيون">بيبيون</option>
+                <option value="كرافت">كرافت</option>
+                <option value="حذاء">حذاء</option>
+                <option value="صدرية">صدرية</option>
+                <option value="إكسسوار">إكسسوار</option>
+                <option value="أخرى">أخرى</option>
+              </select>
+              <input
+                type="number"
+                value={extraCustomPrice}
+                onChange={(e) => setExtraCustomPrice(e.target.value)}
+                placeholder="السعر (ج.م)..."
+                className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-indigo-600 bg-white"
+              />
+            </div>
+          </div>
+
+          {/* Currently Added Extra Items */}
+          {extraItemsToAdd.length > 0 && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">الملحقات المختارة للإضافة:</label>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {extraItemsToAdd.map((it, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                    <span className="font-bold text-slate-800">{it.name} ({it.category})</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-indigo-700">{it.price} ج.م</span>
+                      <button
+                        type="button"
+                        onClick={() => setExtraItemsToAdd((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-rose-600 hover:text-rose-800 font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Input
+            label="ملاحظات حول الإضافة (اختياري)"
+            value={extraNotes}
+            onChange={(e) => setExtraNotes(e.target.value)}
+            placeholder="ملاحظات حول القطع المضافة..."
+          />
+
+          <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={extraSubmitting}
+              className="flex-1 !rounded-2xl !bg-indigo-600 hover:!bg-indigo-700 font-black text-white"
+            >
+              تأكيد إضافة القطع وتحديث الحجز
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowAddItemsModal(false)}
             >
               إلغاء
             </Button>

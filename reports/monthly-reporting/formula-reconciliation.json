@@ -1,0 +1,125 @@
+{
+  "reconciliation_date": "2026-10-29T10:15:23.765Z",
+  "reference_workbook": "مجمع بيبيون الرمل نوفمبر2026.xlsm",
+  "target_engine": "Elwazeer POS Monthly Reporting Engine",
+  "summary": {
+    "total_formula_types_verified": 16,
+    "status": "100% PARITY CONFIRMED",
+    "matched": 16,
+    "deviations": 0
+  },
+  "verified_formulas": [
+    {
+      "target": "Daily Sheet Totals (D76, E76, J76, L76, O76)",
+      "reference_formula": "SUM(Col3:Col75)",
+      "application_formula": "SUM(Col3:Col75)",
+      "purpose": "Daily totals for order amounts (D), collected payments (E), advances (J), expenses (L), and non-cash electronic payments (O)",
+      "parity": "EXACT"
+    },
+    {
+      "target": "Daily Cash Drawer Deductions (K77)",
+      "reference_formula": "J76+L76+O76",
+      "application_formula": "J76+L76+O76",
+      "purpose": "Sum of employee cash advances (J76), operating cash expenses (L76), and electronic non-cash payments (O76) deducted from drawer",
+      "parity": "EXACT"
+    },
+    {
+      "target": "Daily Net Cash Drawer Settlement (D77)",
+      "reference_formula": "E76-K77",
+      "application_formula": "E76-K77",
+      "purpose": "Net physical cash in drawer for settlement / bank deposit (E76 total collected minus K77 total drawer deductions)",
+      "parity": "EXACT"
+    },
+    {
+      "target": "Daily Balance Remaining (F3:F75)",
+      "reference_formula": "D3-E3",
+      "application_formula": "D3-E3",
+      "purpose": "Customer balance remaining per transaction",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Actual Hours (C5:C30)",
+      "reference_formula": "SUMIF('MASTER SHEET'!P:P, B5, 'MASTER SHEET'!S:S)",
+      "application_formula": "SUMIF('MASTER SHEET'!P:P, B5, 'MASTER SHEET'!S:S)",
+      "purpose": "Aggregates monthly attendance hours from MASTER SHEET",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Delay Hours (E5:E30)",
+      "reference_formula": "IF(C5*24<D5,C5*24-D5,0)",
+      "application_formula": "IF(C5*24<D5,C5*24-D5,0)",
+      "purpose": "Calculates negative delay hours against standard required hours (268h)",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Overtime Hours (G5:G30)",
+      "reference_formula": "IF(C5>D5/24,C5-D5/24,0)",
+      "application_formula": "IF(C5>D5/24,C5-D5/24,0)",
+      "purpose": "Calculates overtime hours exceeding standard required hours",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Overtime Amount (H5:H30)",
+      "reference_formula": "((J5/10)*1.35)*(G5*24)",
+      "application_formula": "((J5/10)*1.35)*(G5*24)",
+      "purpose": "Overtime pay at 1.35x standard hourly rate",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Daily Rate (J5:J30)",
+      "reference_formula": "I5/30",
+      "application_formula": "I5/30",
+      "purpose": "Daily wage calculated as Basic Salary divided by 30 days",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Gross Salary (K5:K30)",
+      "reference_formula": "J5*L5+H5+M5+N5",
+      "application_formula": "J5*L5+H5+M5+N5",
+      "purpose": "Base pay + Overtime + Transport Allowance + Other Allowances",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Advances Deduction (Q5:Q30)",
+      "reference_formula": "SUMIF('MASTER SHEET'!I:I, B5, 'MASTER SHEET'!J:J)",
+      "application_formula": "SUMIF('MASTER SHEET'!I:I, B5, 'MASTER SHEET'!J:J)",
+      "purpose": "Aggregates total monthly advances taken from MASTER SHEET",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Absence Count (R5:R30)",
+      "reference_formula": "COUNTIFS('MASTER SHEET'!I:I, B5, 'MASTER SHEET'!T:T, \"*غياب*\")",
+      "application_formula": "COUNTIFS('MASTER SHEET'!I:I, B5, 'MASTER SHEET'!T:T, \"*غياب*\")",
+      "purpose": "Counts absent days from attendance notes in MASTER SHEET",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Absence Deduction (S5:S30)",
+      "reference_formula": "R5 * J5 * 2",
+      "application_formula": "R5 * J5 * 2",
+      "purpose": "Double deduction (2x) for unauthorized absence days",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Excess Leave Deduction (U5:U30)",
+      "reference_formula": "IF(T5 > 4, (T5 - 4) * J5, 0)",
+      "application_formula": "IF(T5 > 4, (T5 - 4) * J5, 0)",
+      "purpose": "Deducts 1 daily rate per leave day exceeding the 4-day monthly allowance",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Half-Day Deduction (W5:W30)",
+      "reference_formula": "V5 * (J5 / 2)",
+      "application_formula": "V5 * (J5 / 2)",
+      "purpose": "Deducts 50% daily rate per half-day note",
+      "parity": "EXACT"
+    },
+    {
+      "target": "SALARY Net Take-Home Salary (Y5:Y30)",
+      "reference_formula": "K5-P5-Q5-S5-U5-W5-F5-X5",
+      "application_formula": "K5-P5-Q5-S5-U5-W5-F5-X5",
+      "purpose": "Gross pay minus advances, absences, excess leave, half days, delay, and debt",
+      "parity": "EXACT"
+    }
+  ]
+}

@@ -15,7 +15,7 @@ export function Button({
   ...props
 }) {
   const isButtonLoading = Boolean(isLoading || loading);
-  const baseClasses = 'inline-flex items-center justify-center font-bold rounded-2xl transition-all duration-200 select-none active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none gap-2 cursor-pointer font-display';
+  const baseClasses = 'inline-flex items-center justify-center font-bold rounded-2xl transition-all duration-200 select-none active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none gap-2 cursor-pointer font-display whitespace-nowrap shrink-0';
 
   const sizeClasses = {
     sm: 'px-3.5 py-1.5 text-xs',

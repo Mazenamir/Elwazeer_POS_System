@@ -30,10 +30,10 @@ const searchLimiter = createLimiter({
   message: 'تم تجاوز الحد المسموح به لطلبات البحث، برجاء المحاولة لاحقاً',
 });
 
-// 2. Export Limiter: 10 requests per minute on GET /api/reports/export/*
+// 2. Export Limiter: 60 requests per minute on GET /api/reports/export/*
 const exportLimiter = createLimiter({
   windowMs: 60 * 1000,
-  max: 10,
+  max: Number(process.env.EXPORT_LIMITER_MAX) || 60,
   message: 'تم تجاوز الحد المسموح به لعمليات التصدير، برجاء المحاولة لاحقاً',
 });
 

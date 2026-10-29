@@ -327,7 +327,7 @@ function formatPdfPaymentMethod(item) {
  * 1. Daily Reports History PDF HTML
  */
 function generateDailyHistoryPdfHtml(historyRows, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || 'آخر 30 يوماً';
   const cairoTime = formatCairoDateTime();
 
@@ -439,7 +439,7 @@ function generateDailyHistoryPdfHtml(historyRows, options = {}) {
     </table>
 
     <div class="footer">
-      <div>تم إنشاء هذا التقرير آلياً بواسطة نظام الوزير (Bebyoon System)</div>
+      <div>تم إنشاء هذا التقرير آلياً بواسطة نظام الوزير</div>
       <div>صفحة 1 من 1</div>
     </div>
   `;
@@ -451,7 +451,7 @@ function generateDailyHistoryPdfHtml(historyRows, options = {}) {
  * 2. Monthly Financial Overview PDF HTML
  */
 function generateMonthlyHistoryPdfHtml(monthlyRows, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || 'آخر 12 شهراً';
   const cairoTime = formatCairoDateTime();
 
@@ -575,7 +575,7 @@ function generateMonthlyHistoryPdfHtml(monthlyRows, options = {}) {
  * 3. Profit & Loss Statement PDF HTML
  */
 function generateProfitReportPdfHtml(profitReport, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || profitReport.month || '-';
   const cairoTime = formatCairoDateTime();
   const summary = profitReport.summary || profitReport;
@@ -724,7 +724,7 @@ function generateProfitReportPdfHtml(profitReport, options = {}) {
  * 4. Top Selling Products PDF HTML
  */
 function generateTopProductsPdfHtml(products, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || 'جميع الفترات';
   const cairoTime = formatCairoDateTime();
 
@@ -823,7 +823,7 @@ function generateTopProductsPdfHtml(products, options = {}) {
  * 5. Daily Details PDF HTML (Invoices, Cash, Branches)
  */
 function generateDailyDetailsPdfHtml(dailyData, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const dateStr = options.date || dailyData.date || '-';
   const cairoTime = formatCairoDateTime();
 
@@ -833,6 +833,14 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
   const tailoringInvoices = Array.isArray(dailyData.tailoring?.items)
     ? dailyData.tailoring.items
     : (Array.isArray(dailyData.tailoring_invoices) ? dailyData.tailoring_invoices : []);
+
+  const expenseItems = Array.isArray(dailyData.expenses_details?.items)
+    ? dailyData.expenses_details.items
+    : (Array.isArray(dailyData.expenses?.items) ? dailyData.expenses.items : (Array.isArray(dailyData.expenses) ? dailyData.expenses : []));
+  const attendanceList = Array.isArray(dailyData.attendance) ? dailyData.attendance : [];
+  const advancesList = Array.isArray(dailyData.salaries_details?.items)
+    ? dailyData.salaries_details.items.filter((s) => s.transaction_type === 'advance')
+    : [];
 
   const bRows = branchSales.map((b) => `
     <tr>
@@ -892,6 +900,37 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
         <td class="num">${formatMoney(t.total_amount)}</td>
         <td class="num text-rose-600">${formatMoney(t.remaining_amount || 0)}</td>
         <td class="center font-bold" style="font-size: 8pt; color: ${isRemainder ? '#0284c7' : '#d97706'};">${typeLabel}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const expRows = expenseItems.slice(0, 100).map((e) => `
+    <tr>
+      <td class="center font-mono font-bold">#${e.id || '-'}</td>
+      <td>${e.branch_name || '-'}</td>
+      <td class="font-bold">${e.category || 'غير محدد'}</td>
+      <td>${e.notes || e.description || '-'}</td>
+      <td class="center">${formatPdfPaymentMethod(e)}</td>
+      <td class="num text-rose-600 font-bold">${formatMoney(e.amount)}</td>
+    </tr>
+  `).join('');
+
+  const advMap = new Map();
+  advancesList.forEach((adv) => {
+    advMap.set(adv.employee_name, (advMap.get(adv.employee_name) || 0) + Number(adv.amount || 0));
+  });
+
+  const stRows = attendanceList.slice(0, 100).map((st) => {
+    const advAmt = advMap.get(st.employee_name) || 0;
+    return `
+      <tr>
+        <td class="font-bold">${st.employee_name || '-'}</td>
+        <td>${st.branch_name || '-'}</td>
+        <td class="center font-mono">${st.check_in || '-'}</td>
+        <td class="center font-mono">${st.check_out || '-'}</td>
+        <td class="center font-bold">${Number(st.total_hours || 0).toFixed(1)} س</td>
+        <td class="num text-amber-700 font-bold">${advAmt > 0 ? formatMoney(advAmt) : '-'}</td>
+        <td>${st.notes || (st.status === 'absent' ? 'غياب' : '-')}</td>
       </tr>
     `;
   }).join('');
@@ -989,6 +1028,58 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
       </table>
     ` : ''}
 
+    ${expenseItems.length > 0 ? `
+      <h2 style="font-size: 11pt; margin: 20px 0 6px 0; color: #1e293b;">5. المصروفات المسجلة اليوم (${expenseItems.length} بند)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="center" style="width: 10%;">رقم الإيصال</th>
+            <th style="width: 18%;">الفرع</th>
+            <th style="width: 20%;">البند / التصنيف</th>
+            <th style="width: 26%;">البيان والملاحظات</th>
+            <th class="center" style="width: 12%;">طريقة الصرف</th>
+            <th class="center" style="width: 14%;">المبلغ</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${expRows}
+        </tbody>
+      </table>
+    ` : ''}
+
+    ${attendanceList.length > 0 ? `
+      <h2 style="font-size: 11pt; margin: 20px 0 6px 0; color: #1e293b;">6. سجل الحضور وسلف الموظفين (${attendanceList.length} موظف)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 20%;">الموظف</th>
+            <th style="width: 16%;">الفرع</th>
+            <th class="center" style="width: 12%;">الحضور</th>
+            <th class="center" style="width: 12%;">الانصراف</th>
+            <th class="center" style="width: 12%;">ساعات العمل</th>
+            <th class="center" style="width: 14%;">السلفة</th>
+            <th style="width: 14%;">ملاحظات</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${stRows}
+        </tbody>
+      </table>
+    ` : ''}
+
+    <h2 style="font-size: 11pt; margin: 20px 0 6px 0; color: #1e293b;">7. تقفيل الدرج النقدي والتسوية</h2>
+    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 20px;">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+        <span><strong>إجمالي الإيرادات الكلية:</strong> ${formatMoney(dailyData.summary?.total_revenue ?? dailyData.summary?.revenue ?? 0)}</span>
+        <span><strong>المصروفات التشغيلية:</strong> ${formatMoney(dailyData.summary?.total_expenses ?? dailyData.summary?.expenses ?? 0)}</span>
+        <span><strong>سلف الموظفين:</strong> ${formatMoney(dailyData.summary?.total_advances ?? dailyData.summary?.advances ?? 0)}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: 8px;">
+        <span style="font-size: 11pt; font-weight: bold; color: #047857;">صافي الكاش الفعلي المتبقي بالدرج للتوريد 💵:</span>
+        <span style="font-size: 14pt; font-weight: 900; color: #047857;">${formatMoney(dailyData.summary?.cash_in_drawer ?? dailyData.summary?.physical_cash_in_drawer ?? 0)}</span>
+      </div>
+    </div>
+
     <div class="footer">
       <div>تقرير الإغلاق اليومي - نظام الوزير للمبيعات والتأجير</div>
       <div>صفحة 1 من 1</div>
@@ -1002,7 +1093,7 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
  * 6. Sales Invoices PDF HTML
  */
 function generateSalesPdfHtml(salesData, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || (salesData.date_from && salesData.date_to ? `${salesData.date_from} إلى ${salesData.date_to}` : '-');
   const cairoTime = formatCairoDateTime();
 
@@ -1133,7 +1224,7 @@ function generateSalesPdfHtml(salesData, options = {}) {
  * 7. Rentals Report PDF HTML
  */
 function generateRentalsPdfHtml(rentalsData, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || (rentalsData.date_from && rentalsData.date_to ? `${rentalsData.date_from} إلى ${rentalsData.date_to}` : '-');
   const cairoTime = formatCairoDateTime();
 
@@ -1251,7 +1342,7 @@ function generateRentalsPdfHtml(rentalsData, options = {}) {
  * 8. Expenses Report PDF HTML
  */
 function generateExpensesPdfHtml(expensesData, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || (expensesData.date_from && expensesData.date_to ? `${expensesData.date_from} إلى ${expensesData.date_to}` : '-');
   const cairoTime = formatCairoDateTime();
 
@@ -1367,7 +1458,7 @@ function generateExpensesPdfHtml(expensesData, options = {}) {
  * 9. Financial Summary PDF HTML
  */
 function generateSummaryPdfHtml(summaryData, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const period = options.period || (summaryData.date_from && summaryData.date_to ? `${summaryData.date_from} إلى ${summaryData.date_to}` : (summaryData.month || '-'));
   const cairoTime = formatCairoDateTime();
 
@@ -1487,7 +1578,7 @@ function generateSummaryPdfHtml(summaryData, options = {}) {
  * 10. Inventory Valuation & Stock PDF HTML
  */
 function generateInventoryPdfHtml(inventoryData, options = {}) {
-  const branchName = options.branchName || 'كافة الفروع';
+  const branchName = options.branchName || 'كل الفروع';
   const cairoTime = formatCairoDateTime();
 
   const items = Array.isArray(inventoryData.items) ? inventoryData.items : [];
@@ -1696,7 +1787,7 @@ function generateOhdaPdfHtml(ohdaData, options = {}) {
     </table>
 
     <div class="footer">
-      <div>كشف عهدة وسلف الموظفين - نظام بيبيون والوزير</div>
+      <div>كشف عهدة وسلف الموظفين - نظام الوزير</div>
       <div>توقيع مسؤول الفرع: _______________________</div>
     </div>
   `;
@@ -1832,7 +1923,7 @@ function generateSalaryPdfHtml(salaryData, options = {}) {
     </table>
 
     <div class="footer">
-      <div>مسير الرواتب - نظام بيبيون والوزير لإدارة الفروع</div>
+      <div>مسير الرواتب - نظام الوزير لإدارة الفروع</div>
       <div>اعتماد الإدارة: _______________________</div>
     </div>
   `;
@@ -1918,7 +2009,7 @@ function generateKpiPdfHtml(kpiData, options = {}) {
     </table>
 
     <div class="footer">
-      <div>تقرير تقييم البائعين - نظام بيبيون والوزير</div>
+      <div>تقرير تقييم البائعين - نظام الوزير</div>
       <div>تقرير رسمي معتمد</div>
     </div>
   `;
@@ -1927,106 +2018,551 @@ function generateKpiPdfHtml(kpiData, options = {}) {
 }
 
 /**
- * 16. Consolidated Branch Overview PDF HTML
+ * 16. Consolidated Branch Overview & Master Sheet PDF HTML
  */
 function generateConsolidatedPdfHtml(data, options = {}) {
-  const branchName = options.branchName || 'فرع الرمل';
-  const period = options.period || '-';
+  const isAll = options.branchName === 'كل الفروع' || options.branchName === 'all' || data?.branch_id === 'all' || data?.branch_clean_name === 'كل الفروع' || data?.branch_name === 'كل الفروع';
+  const cleanName = isAll ? 'كل الفروع' : (data?.branch_clean_name || data?.branding?.cleanName || options.branchName || 'الرمل');
+  const branchName = isAll ? 'كل الفروع' : (options.branchName || data?.branch_name || data?.branding?.branchName || (cleanName.startsWith('فرع') ? cleanName : `فرع ${cleanName}`));
+  const period = options.period || data?.month || '-';
   const cairoTime = formatCairoDateTime();
-  const { ohda, salary, kpi } = data || {};
+  const { ohda, salary, kpi, days, summary = {} } = data || {};
+  const logoDataUri = options.branding?.logoDataUri || data?.branding?.logoDataUri || '';
+  let rawTitle = isAll
+    ? 'كل الفروع'
+    : (data?.report_title || data?.branding?.titles?.master || branchName);
+  const displayTitle = isAll
+    ? 'كل الفروع'
+    : (rawTitle
+        .replace(/^التقرير\s+الشهري\s+المجمع\s+لبيبيون\s+/gi, '')
+        .replace(/^التقرير\s+المجمع\s+لبيبيون\s+/gi, '')
+        .replace(/^التقرير\s+اليومي\s+لبيبيون(\s*[-–]\s*)?/gi, '')
+        .replace(/^التقرير\s+اليومي(\s*[-–]\s*)?/gi, '')
+        .replace(/^بيبيون\s+للبدل\s+الرجالي(\s*[-–]\s*)?/gi, '')
+        .replace(/^بيبيون\s+فرع\s+/gi, 'فرع ')
+        .replace(/^بيبيون\s+/gi, '')
+        .trim() || branchName);
 
   const bodyContent = `
     <div class="header">
-      <div class="title-area">
-        <h1>الملخص المجمع للفرع (Consolidated Monthly Overview)</h1>
-        <div class="subtitle">تقرير شامل لكافة أنشطة الفرع: المبيعات، العهدة، مسير المرتبات، وأداء البائعين</div>
+      <div style="display: flex; align-items: center; gap: 14px;">
+        ${logoDataUri ? `
+          <img src="${logoDataUri}" alt="Logo" style="height: 52px; width: auto; max-width: 120px; object-fit: contain; border-radius: 8px; border: 1px solid #cbd5e1; padding: 2px; background: #fff;" />
+        ` : ''}
+        <div class="title-area">
+          <h1 style="font-size: 16pt; margin: 0; color: #0f172a;">${displayTitle}</h1>
+          <div class="subtitle" style="font-size: 9pt; color: #475569; margin-top: 3px;">
+            المجمع الشهري لحركة التشغيل والمبيعات والعهد ومسير الرواتب وتقفيل الدرج اليومي لشهر ${period}
+          </div>
+        </div>
       </div>
-      <div class="meta-badge">
+      <div class="meta-badge" style="font-size: 8.5pt; text-align: left;">
         <div>الفرع: <strong>${branchName}</strong></div>
         <div>الشهر: <strong>${period}</strong></div>
         <div>وقت الطباعة: ${cairoTime}</div>
       </div>
     </div>
 
-    <div class="kpi-grid">
+    <!-- Monthly Grand KPI Cards -->
+    <div class="kpi-grid" style="grid-template-columns: repeat(6, 1fr); margin-bottom: 18px;">
       <div class="kpi-card highlight">
-        <div class="kpi-title">إجمالي مبيعات البائعين (KPI)</div>
-        <div class="kpi-value text-emerald-700">${formatMoney(kpi?.summary?.total_sales || 0)}</div>
+        <div class="kpi-title">إجمالي مبيعات الشهر</div>
+        <div class="kpi-value text-emerald-700">${formatMoney(summary.total_sales || 0)}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">إجمالي صافي المرتبات المستحقة</div>
-        <div class="kpi-value text-indigo-700">${formatMoney(salary?.summary?.total_net_salary || 0)}</div>
+        <div class="kpi-title">المقبوض كاش (E76)</div>
+        <div class="kpi-value text-indigo-700">${formatMoney(summary.total_paid_cash || summary.total_paid || 0)}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">إجمالي السلف المسحوبة</div>
-        <div class="kpi-value text-rose-700">${formatMoney(ohda?.summary?.total_advances || 0)}</div>
+        <div class="kpi-title">إجمالي السلف (J76)</div>
+        <div class="kpi-value text-rose-700">${formatMoney(summary.total_advances || 0)}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">عدد العاملين بالفرع</div>
-        <div class="kpi-value">${salary?.employees?.length || 0}</div>
+        <div class="kpi-title">المصروفات والتشغيل (L76)</div>
+        <div class="kpi-value text-amber-700">${formatMoney(summary.total_expenses || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">كاش الدرج للتوريد (D77)</div>
+        <div class="kpi-value ${(summary.total_cash_drawer || summary.net_cash_drawer || 0) >= 0 ? 'text-emerald-800' : 'text-rose-700'} font-black">
+          ${formatMoney(summary.total_cash_drawer || summary.net_cash_drawer || 0)}
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">مدفوعات إلكترونية (O76)</div>
+        <div class="kpi-value text-blue-700">${formatMoney(summary.total_electronic || 0)}</div>
       </div>
     </div>
 
-    <h3 style="margin-top: 20px; margin-bottom: 8px;">1. ملخص مسير الرواتب:</h3>
-    <table style="font-size: 8.5pt;">
+    <!-- Section 1: Daily Operations Breakdown Table (MASTER SHEET) -->
+    ${days && days.length > 0 ? `
+      <h3 style="margin-top: 16px; margin-bottom: 8px; font-size: 11pt; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">
+        1. ملخص حركة العمليات اليومية وتقفيل الدرج (MASTER SHEET):
+      </h3>
+      <table style="font-size: 8pt; width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+        <thead>
+          <tr style="background: #0f172a; color: #fff;">
+            <th style="padding: 6px 4px; text-align: center;">اليوم والتاريخ</th>
+            <th style="padding: 6px 4px; text-align: center;">المبيعات (D76)</th>
+            <th style="padding: 6px 4px; text-align: center;">المقبوض (E76)</th>
+            <th style="padding: 6px 4px; text-align: center;">السلف (J76)</th>
+            <th style="padding: 6px 4px; text-align: center;">المصروفات (L76)</th>
+            <th style="padding: 6px 4px; text-align: center;">إلكتروني (O76)</th>
+            <th style="padding: 6px 4px; text-align: center;">المنصرف (K77)</th>
+            <th style="padding: 6px 4px; text-align: center;">صافي توريد الدرج (D77)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${days.map(d => {
+            const dNetCash = d.summary?.net_cash_drawer ?? (d.data?.summary?.cash_in_drawer || 0);
+            return `
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 4px 6px; font-weight: bold; text-align: center;">يوم ${d.day} (${d.date})</td>
+                <td class="num">${formatMoney(d.summary?.total_sales ?? d.data?.summary?.total_sales ?? 0)}</td>
+                <td class="num">${formatMoney(d.summary?.total_paid ?? d.data?.summary?.total_paid ?? 0)}</td>
+                <td class="num text-rose-600">${formatMoney(d.summary?.total_advances ?? d.data?.summary?.total_advances ?? 0)}</td>
+                <td class="num text-amber-700">${formatMoney(d.summary?.total_expenses ?? d.data?.summary?.total_expenses ?? 0)}</td>
+                <td class="num text-blue-600">${formatMoney(d.summary?.total_electronic ?? d.data?.summary?.electronic_collections ?? 0)}</td>
+                <td class="num text-rose-700 font-bold">${formatMoney(d.summary?.total_drawer_deductions ?? 0)}</td>
+                <td class="num font-black ${dNetCash >= 0 ? 'text-emerald-800' : 'text-rose-700'}">${formatMoney(dNetCash)}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="background: #f1f5f9; font-weight: 900; border-top: 2px solid #94a3b8;">
+            <td style="padding: 6px 6px; text-align: center;">الإجمالي الشهري (Totals)</td>
+            <td class="num font-black">${formatMoney(summary.total_sales || 0)}</td>
+            <td class="num font-black text-indigo-900">${formatMoney(summary.total_paid_cash || summary.total_paid || 0)}</td>
+            <td class="num font-black text-rose-800">${formatMoney(summary.total_advances || 0)}</td>
+            <td class="num font-black text-amber-800">${formatMoney(summary.total_expenses || 0)}</td>
+            <td class="num font-black text-blue-800">${formatMoney(summary.total_electronic || 0)}</td>
+            <td class="num font-black text-rose-900">${formatMoney(summary.total_drawer_deductions || 0)}</td>
+            <td class="num font-black text-emerald-900">${formatMoney(summary.total_cash_drawer || summary.net_cash_drawer || 0)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    ` : ''}
+
+    <!-- Section 2: Payroll Summary (SALARY) -->
+    <h3 style="margin-top: 16px; margin-bottom: 8px; font-size: 11pt; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">
+      2. مسير رواتب الموظفين (SALARY Sheet):
+    </h3>
+    <table style="font-size: 8pt; width: 100%; border-collapse: collapse; margin-bottom: 20px;">
       <thead>
-        <tr>
-          <th>اسم الموظف</th>
-          <th>ساعات فعلية</th>
-          <th>تأخير</th>
-          <th>إضافي</th>
-          <th>الأساسي</th>
-          <th>السلف</th>
-          <th>إجمالي الاستقطاعات</th>
-          <th>صافي القبض</th>
+        <tr style="background: #1e293b; color: #fff;">
+          <th style="padding: 6px 4px; text-align: center;">اسم الموظف</th>
+          <th style="padding: 6px 4px; text-align: center;">ساعات فعلية</th>
+          <th style="padding: 6px 4px; text-align: center;">تأخير</th>
+          <th style="padding: 6px 4px; text-align: center;">إضافي</th>
+          <th style="padding: 6px 4px; text-align: center;">الأساسي</th>
+          <th style="padding: 6px 4px; text-align: center;">اليومية</th>
+          <th style="padding: 6px 4px; text-align: center;">السلف</th>
+          <th style="padding: 6px 4px; text-align: center;">استقطاع الغياب</th>
+          <th style="padding: 6px 4px; text-align: center;">استقطاع إجازات</th>
+          <th style="padding: 6px 4px; text-align: center;">صافي القبض</th>
         </tr>
       </thead>
       <tbody>
         ${(salary?.employees || []).map(e => `
-          <tr>
-            <td class="font-bold">${e.employee_name || '-'}</td>
+          <tr style="border-bottom: 1px solid #e2e8f0;">
+            <td style="padding: 4px 6px; font-weight: bold;">${e.employee_name || '-'}</td>
             <td class="center">${Number(e.actual_hours || 0).toFixed(1)}</td>
             <td class="center text-rose-600">${e.delay_hours > 0 ? e.delay_hours.toFixed(1) : '-'}</td>
             <td class="center text-emerald-600">${e.overtime_hours > 0 ? e.overtime_hours.toFixed(1) : '-'}</td>
             <td class="num">${formatMoney(e.basic_salary || 0)}</td>
+            <td class="num">${formatMoney(e.daily_rate || 0)}</td>
             <td class="num text-rose-600">${formatMoney(e.advances || 0)}</td>
-            <td class="num text-rose-600">${formatMoney((e.absent_deduction || 0) + (e.leave_deduction || 0) + (e.delay_deduction || 0))}</td>
+            <td class="num text-rose-600">${formatMoney(e.absent_deduction || 0)}</td>
+            <td class="num text-rose-600">${formatMoney(e.leave_deduction || 0)}</td>
             <td class="num font-black text-emerald-800">${formatMoney(e.net_salary || 0)}</td>
           </tr>
         `).join('')}
       </tbody>
+      <tfoot>
+        <tr style="background: #f1f5f9; font-weight: 900; border-top: 2px solid #94a3b8;">
+          <td style="padding: 6px 6px; text-align: center;">الإجمالي</td>
+          <td colspan="3"></td>
+          <td class="num">${formatMoney((salary?.employees || []).reduce((sum, e) => sum + Number(e.basic_salary || 0), 0))}</td>
+          <td></td>
+          <td class="num text-rose-700">${formatMoney((salary?.employees || []).reduce((sum, e) => sum + Number(e.advances || 0), 0))}</td>
+          <td class="num text-rose-700">${formatMoney((salary?.employees || []).reduce((sum, e) => sum + Number(e.absent_deduction || 0), 0))}</td>
+          <td class="num text-rose-700">${formatMoney((salary?.employees || []).reduce((sum, e) => sum + Number(e.leave_deduction || 0), 0))}</td>
+          <td class="num font-black text-emerald-900">${formatMoney(salary?.summary?.total_net_salary || 0)}</td>
+        </tr>
+      </tfoot>
     </table>
 
-    <h3 style="margin-top: 20px; margin-bottom: 8px;">2. أداء البائعين (KPI):</h3>
-    <table style="font-size: 8.5pt;">
+    <!-- Section 3: Seller KPI Summary (KPI) -->
+    <h3 style="margin-top: 16px; margin-bottom: 8px; font-size: 11pt; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">
+      3. تقييم وأداء البائعين (KPI Sheet):
+    </h3>
+    <table style="font-size: 8pt; width: 100%; border-collapse: collapse;">
       <thead>
-        <tr>
-          <th>اسم البائع</th>
-          <th>المبيعات المحققة</th>
-          <th>التارجت</th>
-          <th>نسبة الإنجاز</th>
+        <tr style="background: #1e293b; color: #fff;">
+          <th style="padding: 6px 4px; text-align: center;">اسم البائع</th>
+          <th style="padding: 6px 4px; text-align: center;">المبيعات المحققة</th>
+          <th style="padding: 6px 4px; text-align: center;">التارجت</th>
+          <th style="padding: 6px 4px; text-align: center;">نسبة الإنجاز</th>
         </tr>
       </thead>
       <tbody>
         ${(kpi?.sellers || []).map(s => `
-          <tr>
-            <td class="font-bold">${s.seller_name || '-'}</td>
+          <tr style="border-bottom: 1px solid #e2e8f0;">
+            <td style="padding: 4px 6px; font-weight: bold;">${s.seller_name || '-'}</td>
             <td class="num font-bold text-emerald-700">${formatMoney(s.total_sales || 0)}</td>
             <td class="num">${formatMoney(s.target || 0)}</td>
             <td class="center font-black">${Number(s.achievement_percentage || 0).toFixed(1)}%</td>
           </tr>
         `).join('')}
       </tbody>
+      <tfoot>
+        <tr style="background: #f1f5f9; font-weight: 900; border-top: 2px solid #94a3b8;">
+          <td style="padding: 6px 6px; text-align: center;">الإجمالي</td>
+          <td class="num text-emerald-800">${formatMoney(kpi?.summary?.total_sales || 0)}</td>
+          <td class="num">${formatMoney((kpi?.sellers || []).reduce((sum, s) => sum + Number(s.target || 0), 0))}</td>
+          <td class="center font-black">${Number(kpi?.summary?.average_achievement || 0).toFixed(1)}%</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer" style="margin-top: 30px; display: flex; justify-content: space-between; font-size: 8pt; color: #64748b; border-top: 1px solid #cbd5e1; padding-top: 8px;">
+      <div>الملف المجمع للفرع (MASTER SHEET) - نظام الوزير لإدارة الفروع ونقاط البيع</div>
+      <div>تقرير مالي رسمي معتمد ومطابق لدفاتر التفتيش</div>
+    </div>
+  `;
+
+  return wrapHtml(displayTitle, bodyContent, { orientation: 'landscape' });
+}
+
+/**
+ * 17. Suppliers Ledger Overview PDF HTML
+ */
+function generateSuppliersLedgerPdfHtml(ledgerData, options = {}) {
+  const branchName = options.branchName || 'كل الفروع';
+  const period = options.period || 'كافة الفترات (تراكمي)';
+  const cairoTime = formatCairoDateTime();
+  const summary = ledgerData?.summary || {};
+  const suppliers = ledgerData?.suppliers || [];
+
+  const grandPurchases = Number(summary.grand_total_purchases || 0);
+  const grandReturns = Number(summary.grand_total_returns || 0);
+  const grandPaid = Number(summary.grand_total_paid || 0);
+  const grandBalance = Number(summary.grand_total_balance || 0);
+
+  const tableRows = suppliers.map((s, idx) => {
+    const bal = Number(s.total_balance ?? s.balance ?? 0);
+    const balType = s.balance_type || (bal > 0 ? 'له' : (bal < 0 ? 'عليه' : 'خالص'));
+    return `
+      <tr>
+        <td class="center font-mono">${idx + 1}</td>
+        <td class="center font-mono">${s.code || '-'}</td>
+        <td class="font-bold text-right">${s.name || '-'}</td>
+        <td class="center font-mono">${s.phone || '-'}</td>
+        <td class="center">${s.gender_category || s.category || 'عام'}</td>
+        <td class="num">${formatMoney(s.total_purchases || 0)}</td>
+        <td class="num text-amber-700">${formatMoney(s.total_returns || 0)}</td>
+        <td class="num text-blue-700">${formatMoney(s.total_paid || 0)}</td>
+        <td class="num font-black ${bal > 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatMoney(bal)}</td>
+        <td class="center font-bold">${balType}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>سجل وكشوف حسابات الموردين التراكمية</h1>
+        <div class="subtitle">بيان مالي تفصيلي لحسابات الموردين، التوريدات، المرتجعات وصافي الأرصدة المستحقة</div>
+      </div>
+      <div class="meta-badge">
+        <div>النطاق: <strong>${branchName}</strong></div>
+        <div>الفترة: <strong>${period}</strong></div>
+        <div>تاريخ الاستخراج: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي المشتريات</div>
+        <div class="kpi-value text-emerald-800">${formatMoney(grandPurchases)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي المرتجعات</div>
+        <div class="kpi-value text-amber-700">${formatMoney(grandReturns)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي المسدد</div>
+        <div class="kpi-value text-blue-700">${formatMoney(grandPaid)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">صافي الأرصدة المستحقة</div>
+        <div class="kpi-value ${grandBalance > 0 ? 'text-rose-700' : 'text-emerald-700'} font-black">${formatMoney(grandBalance)}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 4%;">#</th>
+          <th class="center" style="width: 8%;">كود المورد</th>
+          <th style="width: 22%;">اسم المورد</th>
+          <th class="center" style="width: 11%;">رقم الهاتف</th>
+          <th class="center" style="width: 9%;">التصنيف</th>
+          <th class="center" style="width: 11%;">المشتريات</th>
+          <th class="center" style="width: 10%;">المرتجعات</th>
+          <th class="center" style="width: 11%;">المسدد</th>
+          <th class="center" style="width: 11%;">الرصيد المستحق</th>
+          <th class="center" style="width: 6%;">الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="10" class="center">لا تتوفر بيانات موردين</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="5" class="center font-black">الإجمالي العام</td>
+          <td class="num font-black">${formatMoney(grandPurchases)}</td>
+          <td class="num font-black text-amber-700">${formatMoney(grandReturns)}</td>
+          <td class="num font-black text-blue-700">${formatMoney(grandPaid)}</td>
+          <td class="num font-black ${grandBalance > 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatMoney(grandBalance)}</td>
+          <td class="center font-black">${summary.grand_total_balance_type || '-'}</td>
+        </tr>
+      </tfoot>
     </table>
 
     <div class="footer">
-      <div>الملف المجمع للفرع - نظام بيبيون والوزير</div>
+      <div>دفتر أستاذ الموردين - نظام الوزير لإدارة نقاط البيع</div>
+      <div>وثيقة مالية رسمية معتمدة</div>
+    </div>
+  `;
+
+  return wrapHtml('سجل حسابات الموردين', bodyContent, { orientation: 'landscape' });
+}
+
+/**
+ * 18. Supplier Statement PDF HTML
+ */
+function generateSupplierStatementPdfHtml(statementData, options = {}) {
+  const branchName = options.branchName || 'كل الفروع';
+  const period = options.period || 'كافة الفترات';
+  const cairoTime = formatCairoDateTime();
+  const supplier = statementData?.supplier || {};
+  const transactions = statementData?.transactions || statementData?.ledger || [];
+  const summary = statementData?.summary || {};
+
+  const totalPurchases = Number(summary.total_purchases || 0);
+  const totalPaid = Number(summary.total_paid || 0);
+  const totalReturns = Number(summary.total_returns || 0);
+  const closingBalance = Number(summary.closing_balance ?? summary.balance ?? 0);
+
+  const txRows = transactions.map((t, idx) => `
+    <tr>
+      <td class="center font-mono">${idx + 1}</td>
+      <td class="center font-mono">${t.date ? String(t.date).slice(0, 10) : '-'}</td>
+      <td class="center font-mono">${t.reference_number || t.invoice_number || '-'}</td>
+      <td class="font-bold">${t.transaction_type_label || t.type || '-'}</td>
+      <td class="text-right">${t.notes || t.description || '-'}</td>
+      <td class="num">${Number(t.debit || 0) > 0 ? formatMoney(t.debit) : '-'}</td>
+      <td class="num text-blue-700">${Number(t.credit || 0) > 0 ? formatMoney(t.credit) : '-'}</td>
+      <td class="num font-black">${formatMoney(t.running_balance ?? t.balance ?? 0)}</td>
+    </tr>
+  `).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>كشف حساب مورد تفصيلي</h1>
+        <div class="subtitle">المورد: ${supplier.name || '-'} | الكود: #${supplier.code || supplier.id || '-'} | الهاتف: ${supplier.phone || '-'}</div>
+      </div>
+      <div class="meta-badge">
+        <div>النطاق: <strong>${branchName}</strong></div>
+        <div>الفترة: <strong>${period}</strong></div>
+        <div>تاريخ الاستخراج: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-title">إجمالي المشتريات</div>
+        <div class="kpi-value text-emerald-800">${formatMoney(totalPurchases)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي المسدد</div>
+        <div class="kpi-value text-blue-700">${formatMoney(totalPaid)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">إجمالي المرتجعات</div>
+        <div class="kpi-value text-amber-700">${formatMoney(totalReturns)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">الرصيد الختامي المستحق</div>
+        <div class="kpi-value ${closingBalance > 0 ? 'text-rose-700' : 'text-emerald-700'} font-black">${formatMoney(closingBalance)}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 4%;">#</th>
+          <th class="center" style="width: 10%;">التاريخ</th>
+          <th class="center" style="width: 12%;">رقم المرجع / الفاتورة</th>
+          <th class="center" style="width: 12%;">نوع الحركة</th>
+          <th style="width: 26%;">البيان / الملاحظات</th>
+          <th class="center" style="width: 12%;">مدين (توريدات)</th>
+          <th class="center" style="width: 12%;">دائن (سداد/مرتجع)</th>
+          <th class="center" style="width: 12%;">الرصيد التراكمي</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${txRows || '<tr><td colspan="8" class="center">لا تتوفر حركات مسجلة لهذا المورد</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="5" class="center font-black">الرصيد النهائي</td>
+          <td class="num font-black">${formatMoney(totalPurchases)}</td>
+          <td class="num font-black text-blue-700">${formatMoney(totalPaid + totalReturns)}</td>
+          <td class="num font-black ${closingBalance > 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatMoney(closingBalance)}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>كشف حساب مورد - نظام الوزير</div>
+      <div>وثيقة محاسبية معتمدة</div>
+    </div>
+  `;
+
+  return wrapHtml(`كشف حساب مورد - ${supplier.name || ''}`, bodyContent, { orientation: 'landscape' });
+}
+
+/**
+ * 19. Branch Stock Matrix PDF HTML
+ */
+function generateBranchMatrixPdfHtml(matrixData, options = {}) {
+  const branchName = options.branchName || 'كافة الفروع والمخزن';
+  const cairoTime = formatCairoDateTime();
+  const rows = matrixData?.rows || matrixData?.items || (Array.isArray(matrixData) ? matrixData : []);
+
+  const tableRows = rows.map((r, idx) => `
+    <tr>
+      <td class="center font-mono">${idx + 1}</td>
+      <td class="font-bold text-right">${r.name || '-'}</td>
+      <td class="center font-mono">${r.barcode || '-'}</td>
+      <td class="center">${r.category || '-'}</td>
+      <td class="center font-mono">${r.gender_category || '-'}</td>
+      <td class="center font-bold text-indigo-700">${r.main_stock ?? r.warehouse_stock ?? 0}</td>
+      <td class="center font-bold text-emerald-700">${r.branch_stock ?? r.raml_stock ?? 0}</td>
+      <td class="center font-black bg-slate-100">${r.total_stock ?? 0}</td>
+      <td class="num">${formatMoney(r.price ?? r.sale_price ?? 0)}</td>
+    </tr>
+  `).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>تقرير أرصدة البضائع الموزعة بالفروع والمخزن الرئيسي</h1>
+        <div class="subtitle">توزيع المخزون بين المخزن المركزي والفروع التشغيلية</div>
+      </div>
+      <div class="meta-badge">
+        <div>النطاق: <strong>${branchName}</strong></div>
+        <div>تاريخ الاستخراج: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 4%;">#</th>
+          <th style="width: 25%;">اسم الصنف</th>
+          <th class="center" style="width: 14%;">الباركود</th>
+          <th class="center" style="width: 12%;">القسم</th>
+          <th class="center" style="width: 9%;">النوع</th>
+          <th class="center" style="width: 10%;">المخزن الرئيسي</th>
+          <th class="center" style="width: 10%;">فرع الرمل</th>
+          <th class="center" style="width: 8%;">إجمالي الرصيد</th>
+          <th class="center" style="width: 8%;">سعر البيع</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="9" class="center">لا تتوفر أصناف مسجلة</td></tr>'}
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div>تقرير مصفوفة أرصدة الفروع - نظام الوزير</div>
       <div>تقرير رسمي معتمد</div>
     </div>
   `;
 
-  return wrapHtml('التقرير الشهري المجمع للفرع', bodyContent, { orientation: 'landscape' });
+  return wrapHtml('مصفوفة أرصدة الفروع والمخزن', bodyContent, { orientation: 'landscape' });
 }
+
+/**
+ * 20. Stock Transfer Logs PDF HTML
+ */
+function generateTransferLogsPdfHtml(transferData, options = {}) {
+  const branchName = options.branchName || 'كل الفروع';
+  const period = options.period || 'كافة الفترات';
+  const cairoTime = formatCairoDateTime();
+  const logs = transferData?.logs || transferData?.rows || (Array.isArray(transferData) ? transferData : []);
+
+  const tableRows = logs.map((log, idx) => `
+    <tr>
+      <td class="center font-mono">${idx + 1}</td>
+      <td class="center font-mono">${log.created_at ? String(log.created_at).slice(0, 16).replace('T', ' ') : '-'}</td>
+      <td class="center font-mono font-bold">${log.transfer_code || `#${log.id}`}</td>
+      <td class="center font-bold text-amber-800">${log.from_branch_name || 'المخزن الرئيسي'}</td>
+      <td class="center font-bold text-emerald-800">${log.to_branch_name || 'فرع الرمل'}</td>
+      <td class="font-bold text-right">${log.product_name || '-'}</td>
+      <td class="center font-mono">${log.barcode || '-'}</td>
+      <td class="center font-black">${log.quantity || 0}</td>
+      <td class="center">${log.created_by_name || log.user_name || '-'}</td>
+      <td class="text-right">${log.notes || '-'}</td>
+    </tr>
+  `).join('');
+
+  const bodyContent = `
+    <div class="header">
+      <div class="title-area">
+        <h1>سجل تحويلات البضائع بين الفروع</h1>
+        <div class="subtitle">حركة التحويل والتوريد الداخلي بين المخزن الرئيسي ونقاط البيع</div>
+      </div>
+      <div class="meta-badge">
+        <div>النطاق: <strong>${branchName}</strong></div>
+        <div>الفترة: <strong>${period}</strong></div>
+        <div>تاريخ الاستخراج: ${cairoTime}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width: 4%;">#</th>
+          <th class="center" style="width: 11%;">تاريخ التحويل</th>
+          <th class="center" style="width: 10%;">كود التحويل</th>
+          <th class="center" style="width: 11%;">من فرع / مخزن</th>
+          <th class="center" style="width: 11%;">إلى فرع</th>
+          <th style="width: 18%;">اسم الصنف</th>
+          <th class="center" style="width: 11%;">الباركود</th>
+          <th class="center" style="width: 6%;">الكمية</th>
+          <th class="center" style="width: 8%;">المسؤول</th>
+          <th style="width: 10%;">ملاحظات</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows || '<tr><td colspan="10" class="center">لا تتوفر سجلات تحويل مسجلة</td></tr>'}
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div>سجل التحويلات البينية - نظام الوزير</div>
+      <div>تقرير رسمي معتمد</div>
+    </div>
+  `;
+
+  return wrapHtml('سجل تحويلات البضائع بين الفروع', bodyContent, { orientation: 'landscape' });
+}
+
 module.exports = {
   BASE_PRINT_CSS,
   wrapHtml,
@@ -2044,4 +2580,8 @@ module.exports = {
   generateSalaryPdfHtml,
   generateKpiPdfHtml,
   generateConsolidatedPdfHtml,
+  generateSuppliersLedgerPdfHtml,
+  generateSupplierStatementPdfHtml,
+  generateBranchMatrixPdfHtml,
+  generateTransferLogsPdfHtml,
 };

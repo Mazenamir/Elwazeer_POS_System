@@ -1,0 +1,22 @@
+{
+  "env": {
+    "builtin": true,
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "globals": {
+    "React": "readonly",
+    "electronAPI": "readonly",
+    "AudioContext": "readonly",
+    "webkitAudioContext": "readonly"
+  },
+  "ignorePatterns": [
+    "src/renderer/assets/**",
+    "dist/**",
+    "node_modules/**"
+  ],
+  "rules": {
+    "no-undef": "error"
+  }
+}

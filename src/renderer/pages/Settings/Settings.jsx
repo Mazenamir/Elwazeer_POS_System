@@ -26,7 +26,18 @@ import {
   Eye,
   EyeOff,
   Store,
+  Shield,
+  User as UserIcon,
+  MapPin,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
+import {
+  PERMISSION_DEFINITIONS,
+  PERMISSION_GROUPS,
+  PERMISSION_PRESETS,
+  normalizePermissions,
+} from '../../constants/permissions';
 
 const PRESET_LOGOS = [
   { id: 'antalya', label: 'فرع أنطاليا (Antalya)', url: '/logos/Antalya logo.png' },
@@ -37,7 +48,7 @@ const PRESET_LOGOS = [
 ];
 
 export function Settings() {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const { branches, reloadBranches } = useBranch();
   const { toast } = useToast();
 
@@ -79,10 +90,12 @@ export function Settings() {
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [editingUserId, setEditingUserId] = useState(null);
   const [userForm, setUserForm] = useState({
+    full_name: '',
     username: '',
     password: '',
-    role: 'cashier',
+    role: 'branch_user',
     branch_id: '',
+    permissions: ['index.html'],
   });
 
   // Branch Modal
@@ -140,26 +153,37 @@ export function Settings() {
 
   // Load Branch Users
   const loadBranchUsers = useCallback(async () => {
+    if (!isAdmin) {
+      setBranchUsers([]);
+      return;
+    }
     try {
       setLoadingUsers(true);
       const res = await client.get('/users/branch');
-      setBranchUsers(Array.isArray(res.data) ? res.data : []);
+      const list = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+      setBranchUsers(list);
     } catch {
       setBranchUsers([]);
     } finally {
       setLoadingUsers(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
   useEffect(() => {
-    if (activeTab === 'users') {
+    if (activeTab === 'users' && isAdmin) {
       loadBranchUsers();
     }
-  }, [activeTab, loadBranchUsers]);
+  }, [activeTab, isAdmin, loadBranchUsers]);
+
+  useEffect(() => {
+    if (!isAdmin && activeTab !== 'store') {
+      setActiveTab('store');
+    }
+  }, [isAdmin, activeTab]);
 
   // Save Settings
   const handleSaveSettings = async (e) => {
@@ -301,10 +325,12 @@ export function Settings() {
     setIsEditingUser(false);
     setEditingUserId(null);
     setUserForm({
+      full_name: '',
       username: '',
       password: '',
-      role: 'cashier',
+      role: 'branch_user',
       branch_id: branches[0]?.id ? String(branches[0].id) : '1',
+      permissions: ['index.html'],
     });
     setShowUserModal(true);
   };
@@ -313,17 +339,52 @@ export function Settings() {
     setIsEditingUser(true);
     setEditingUserId(u.id);
     setUserForm({
+      full_name: u.full_name || u.name || '',
       username: u.username || '',
       password: '',
-      role: u.role || 'cashier',
+      role: u.role || 'branch_user',
       branch_id: String(u.branch_id || branches[0]?.id || '1'),
+      permissions: normalizePermissions(u.permissions),
     });
     setShowUserModal(true);
   };
 
+  const handleTogglePermission = (permId) => {
+    setUserForm((prev) => {
+      const perms = Array.isArray(prev.permissions) ? prev.permissions : [];
+      if (perms.includes(permId)) {
+        return { ...prev, permissions: perms.filter((p) => p !== permId) };
+      } else {
+        return { ...prev, permissions: [...perms, permId] };
+      }
+    });
+  };
+
+  const handleApplyPreset = (presetPerms) => {
+    setUserForm((prev) => ({
+      ...prev,
+      permissions: [...presetPerms],
+    }));
+  };
+
   const handleSaveUser = async (e) => {
     e.preventDefault();
-    if (!userForm.username.trim()) return;
+    if (!userForm.username.trim()) {
+      toast({ title: 'تنبيه', message: 'اسم المستخدم مطلوب', variant: 'warning' });
+      return;
+    }
+    if (!userForm.full_name.trim()) {
+      toast({ title: 'تنبيه', message: 'اسم الشخص / الموظف مطلوب', variant: 'warning' });
+      return;
+    }
+    if (!userForm.branch_id || Number(userForm.branch_id) <= 0) {
+      toast({ title: 'تنبيه', message: 'الفرع المخصص مطلوب للحساب', variant: 'warning' });
+      return;
+    }
+    if (!userForm.permissions || userForm.permissions.length === 0) {
+      toast({ title: 'تنبيه', message: 'يرجى تحديد صلاحية واحدة على الأقل للمستخدم', variant: 'warning' });
+      return;
+    }
     if (!isEditingUser && !userForm.password) {
       toast({ title: 'تنبيه', message: 'كلمة المرور مطلوبة للمستخدم الجديد', variant: 'warning' });
       return;
@@ -331,18 +392,20 @@ export function Settings() {
 
     try {
       const payload = {
+        full_name: userForm.full_name.trim(),
         username: userForm.username.trim(),
-        role: userForm.role,
+        role: userForm.role || 'branch_user',
         branch_id: Number(userForm.branch_id),
+        permissions: Array.isArray(userForm.permissions) ? userForm.permissions : [],
       };
       if (userForm.password) payload.password = userForm.password;
 
       if (isEditingUser) {
         await client.put(`/users/branch/${editingUserId}`, payload);
-        toast({ title: 'تم التحديث', message: 'تم تحديث بيانات المستخدم', variant: 'success' });
+        toast({ title: 'تم التحديث', message: 'تم تحديث بيانات المستخدم وصلاحياته بنجاح', variant: 'success' });
       } else {
         await client.post('/users/branch', payload);
-        toast({ title: 'تمت الإضافة', message: 'تم إنشاء المستخدم بنجاح', variant: 'success' });
+        toast({ title: 'تمت الإضافة', message: 'تم إنشاء المستخدم وتعيين الصلاحيات بنجاح', variant: 'success' });
       }
       setShowUserModal(false);
       loadBranchUsers();
@@ -496,41 +559,47 @@ export function Settings() {
           <span>بيانات المتجر والفواتير</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('branches')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'branches'
-              ? 'bg-[#151515] text-white shadow-sm'
-              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
-          }`}
-        >
-          <Building className="w-4 h-4" />
-          <span>إدارة الفروع ({branches.length})</span>
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('branches')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'branches'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+            }`}
+          >
+            <Building className="w-4 h-4" />
+            <span>إدارة الفروع ({branches.length})</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'users'
-              ? 'bg-[#151515] text-white shadow-sm'
-              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>المستخدمين والصلاحيات</span>
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'users'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>المستخدمين والصلاحيات</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('backup')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'backup'
-              ? 'bg-[#151515] text-white shadow-sm'
-              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
-          }`}
-        >
-          <Database className="w-4 h-4" />
-          <span>النسخ الاحتياطي والصيانة</span>
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('backup')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'backup'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+            }`}
+          >
+            <Database className="w-4 h-4" />
+            <span>النسخ الاحتياطي والصيانة</span>
+          </button>
+        )}
       </div>
 
       {/* Tab 1: Store & Invoice Settings */}
@@ -755,7 +824,7 @@ export function Settings() {
       )}
 
       {/* Tab 2: Branches Management */}
-      {activeTab === 'branches' && (
+      {isAdmin && activeTab === 'branches' && (
         <div className="space-y-4">
           <div className="flex justify-end">
             <Button variant="primary" icon={Plus} onClick={handleOpenAddBranch}>
@@ -835,7 +904,7 @@ export function Settings() {
       )}
 
       {/* Tab 3: Users Management */}
-      {activeTab === 'users' && (
+      {isAdmin && activeTab === 'users' && (
         <Card>
           <div className="p-4 flex items-center justify-between border-b border-slate-100">
             <div>
@@ -853,71 +922,104 @@ export function Settings() {
             <table className="w-full text-right border-collapse">
               <thead>
                 <tr className="bg-[#151515] text-white text-xs font-bold">
-                  <th className="py-3 px-4 rounded-r-xl">اسم المستخدم</th>
-                  <th className="py-3 px-4">نوع الصلاحية</th>
-                  <th className="py-3 px-4">الفرع المخصص</th>
-                  <th className="py-3 px-4 text-center rounded-l-xl">إجراءات</th>
+                  <th className="py-3.5 px-4 rounded-r-xl">اسم الشخص / الموظف</th>
+                  <th className="py-3.5 px-4">اسم المستخدم</th>
+                  <th className="py-3.5 px-4">الفرع المخصص</th>
+                  <th className="py-3.5 px-4">الصلاحيات الممنوحة</th>
+                  <th className="py-3.5 px-4 text-center rounded-l-xl">إجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E6DECD]/60 text-sm">
                 {loadingUsers ? (
                   <tr>
-                    <td colSpan={4} className="py-12 text-center text-slate-400 font-bold">
+                    <td colSpan={5} className="py-12 text-center text-slate-400 font-bold">
                       جارِ تحميل المستخدمين...
                     </td>
                   </tr>
                 ) : branchUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-12 text-center text-slate-400 font-bold">
+                    <td colSpan={5} className="py-12 text-center text-slate-400 font-bold">
                       لا يوجد مستخدمون مسجلون
                     </td>
                   </tr>
                 ) : (
-                  branchUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
-                      <td className="py-3.5 px-4 font-black text-slate-900">{u.username}</td>
-                      <td className="py-3.5 px-4">
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-xs font-black ${
-                            u.role === 'admin'
-                              ? 'bg-purple-50 text-purple-700'
-                              : u.role === 'tailor'
-                              ? 'bg-amber-50 text-amber-700'
-                              : 'bg-indigo-50 text-indigo-700'
-                          }`}
-                        >
-                          {u.role === 'admin'
-                            ? 'مدير نظام'
-                            : u.role === 'tailor'
-                            ? 'ترزي / تفصيل'
-                            : 'كاشير'}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 font-bold text-slate-700">
-                        {u.branch_name || 'الفرع الرئيسي'}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => handleOpenEditUser(u)}
-                            className="p-1.5 text-slate-500 hover:text-slate-900 transition-colors"
-                            title="تعديل"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          {u.username !== user?.username && (
-                            <button
-                              onClick={() => handleDeleteUser(u.id, u.username)}
-                              className="p-1.5 text-rose-500 hover:text-rose-700 transition-colors"
-                              title="حذف"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                  branchUsers.map((u) => {
+                    const perms = normalizePermissions(u.permissions);
+                    return (
+                      <tr key={u.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
+                        <td className="py-3.5 px-4 font-black text-slate-900">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-[#C4823F] flex items-center justify-center font-black text-xs shrink-0">
+                              <UserIcon className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="font-black text-slate-900">{u.full_name || u.name || 'بدون اسم'}</div>
+                              <div className="text-[11px] text-slate-400 font-medium">#{u.id}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-800 dir-ltr text-right">
+                          @{u.username}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-[#FAF6ED] border border-[#E6DECD] text-[#24221F]">
+                            <MapPin className="w-3.5 h-3.5 text-[#C4823F]" />
+                            <span>{u.branch_name || 'الفرع الرئيسي'}</span>
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {u.role === 'admin' ? (
+                            <span className="px-2.5 py-1 rounded-full text-xs font-black bg-purple-50 text-purple-700 border border-purple-200">
+                              كامل الصلاحيات (Admin)
+                            </span>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-1 max-w-[280px]">
+                              <span className="px-2 py-0.5 rounded-md text-[11px] font-black bg-slate-900 text-white">
+                                {perms.length} صلاحيات
+                              </span>
+                              {perms.slice(0, 2).map((pid) => {
+                                const def = PERMISSION_DEFINITIONS.find((d) => d.id === pid);
+                                return (
+                                  <span
+                                    key={pid}
+                                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#FAF6ED] text-slate-700 border border-[#E6DECD] truncate max-w-[100px]"
+                                    title={def?.label || pid}
+                                  >
+                                    {def?.label || pid}
+                                  </span>
+                                );
+                              })}
+                              {perms.length > 2 && (
+                                <span className="text-[10px] font-extrabold text-slate-400">
+                                  +{perms.length - 2} المزيد
+                                </span>
+                              )}
+                            </div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => handleOpenEditUser(u)}
+                              className="p-1.5 text-slate-500 hover:text-slate-900 transition-colors"
+                              title="تعديل المستخدم والصلاحيات"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            {u.username !== user?.username && (
+                              <button
+                                onClick={() => handleDeleteUser(u.id, u.username)}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 transition-colors"
+                                title="حذف"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -926,7 +1028,7 @@ export function Settings() {
       )}
 
       {/* Tab 4: Backup & Database Maintenance */}
-      {activeTab === 'backup' && (
+      {isAdmin && activeTab === 'backup' && (
         <div className="space-y-6">
           <Card>
             <CardHeader
@@ -1185,70 +1287,171 @@ export function Settings() {
       <Modal
         isOpen={showUserModal}
         onClose={() => setShowUserModal(false)}
-        title={isEditingUser ? 'تعديل المستخدم' : 'إضافة مستخدم جديد'}
-        size="md"
+        title={isEditingUser ? 'تعديل المستخدم وتخصيص الصلاحيات' : 'إضافة مستخدم جديد وتخصيص الصلاحيات'}
+        subtitle="تحديد بيانات الموظف والفرع وتعيين صلاحيات الوصول يدوياً"
+        maxWidth="max-w-4xl"
       >
-        <form onSubmit={handleSaveUser} className="space-y-4">
-          <div>
-            <label className="block text-xs font-black text-slate-700 mb-1.5">
-              اسم المستخدم (للدخول) *
-            </label>
-            <Input
-              required
-              placeholder="username"
-              value={userForm.username}
-              onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
-            />
+        <form onSubmit={handleSaveUser} className="space-y-5">
+          {/* Identity & Branch Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5 flex items-center gap-1.5">
+                <UserIcon className="w-3.5 h-3.5 text-[#C4823F]" />
+                <span>اسم الشخص / الموظف المستخدم للحساب *</span>
+              </label>
+              <Input
+                required
+                placeholder="مثال: أحمد محمود (كاشير الفرع)"
+                value={userForm.full_name}
+                onChange={(e) => setUserForm({ ...userForm, full_name: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5">
+                اسم المستخدم (لتسجيل الدخول) *
+              </label>
+              <Input
+                required
+                placeholder="ahmed_branch1"
+                value={userForm.username}
+                onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5 flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-[#C4823F]" />
+                <span>الفرع المخصص للحساب *</span>
+              </label>
+              <select
+                className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:ring-2 focus:ring-slate-900"
+                value={userForm.branch_id}
+                onChange={(e) => setUserForm({ ...userForm, branch_id: e.target.value })}
+              >
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} {b.is_main_warehouse ? '(المخزن الرئيسي)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5">
+                {isEditingUser ? 'كلمة المرور الجديدة (اتركه فارغاً للإبقاء على الحالية)' : 'كلمة المرور *'}
+              </label>
+              <Input
+                type="password"
+                placeholder="••••••••"
+                value={userForm.password}
+                onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-black text-slate-700 mb-1.5">
-              {isEditingUser ? 'كلمة المرور الجديدة (اتركه فارغاً للإبقاء على الحالية)' : 'كلمة المرور *'}
-            </label>
-            <Input
-              type="password"
-              placeholder="••••••••"
-              value={userForm.password}
-              onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-            />
+          {/* Branch Isolation Guard Info Banner */}
+          <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-2.5 text-xs text-amber-900 font-semibold">
+            <Lock className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <strong className="block text-amber-950 font-black mb-0.5">🔒 عزل تام للفرع (Strict Branch Isolation):</strong>
+              هذا الحساب سيتم تقييده تلقائياً بالفرع المختار فقط، ولن يتمكن من الدخول أو الاطلاع أو فتح أي فرع آخر بالنظام.
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-black text-slate-700 mb-1.5">
-              نوع الصلاحية / الدور
-            </label>
-            <select
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
-              value={userForm.role}
-              onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
-            >
-              <option value="cashier">كاشير (مبيعات واستلامات فقط)</option>
-              <option value="tailor">ترزي (تفصيل وتعديلات فقط)</option>
-              <option value="admin">مدير فرع / مدير عام</option>
-            </select>
-          </div>
+          {/* Manual Granular Permissions Customizer */}
+          <div className="pt-3 border-t border-[#E6DECD]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <div>
+                <h4 className="text-sm font-black text-[#24221F] flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-[#C4823F]" />
+                  <span>تخصيص الصلاحيات يدوياً (Manual Granular Permissions)</span>
+                </h4>
+                <p className="text-[11px] font-semibold text-[#777266]">
+                  حدد الشاشات والأقسام المسموح لهذا المستخدم بالوصول إليها والعمل بها:
+                </p>
+              </div>
+              <div className="text-xs font-black px-3 py-1.5 rounded-xl bg-slate-900 text-white self-start sm:self-auto shadow-sm">
+                تم تحديد {userForm.permissions?.length || 0} من {PERMISSION_DEFINITIONS.length} صلاحية
+              </div>
+            </div>
 
-          <div>
-            <label className="block text-xs font-black text-slate-700 mb-1.5">الفرع المخصص</label>
-            <select
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
-              value={userForm.branch_id}
-              onChange={(e) => setUserForm({ ...userForm, branch_id: e.target.value })}
-            >
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
+            {/* Presets Toolbar */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-3.5 p-2.5 rounded-2xl bg-[#FAF6ED] border border-[#E6DECD]">
+              <span className="text-[11px] font-bold text-slate-500 ml-1">قوالب سريعة:</span>
+              {PERMISSION_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => handleApplyPreset(preset.permissions)}
+                  className={`px-2.5 py-1 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                    preset.id === 'all'
+                      ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                      : preset.id === 'clear'
+                      ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                      : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  {preset.label}
+                </button>
               ))}
-            </select>
+            </div>
+
+            {/* Checkbox Cards by Group */}
+            <div className="space-y-4 max-h-[46vh] overflow-y-auto px-1 pr-2 custom-scrollbar">
+              {PERMISSION_GROUPS.map((group) => {
+                const groupPerms = PERMISSION_DEFINITIONS.filter((p) => p.group === group);
+                if (groupPerms.length === 0) return null;
+                return (
+                  <div key={group} className="space-y-1.5">
+                    <div className="text-[11px] font-black text-[#777266] uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#C4823F]"></span>
+                      <span>{group}</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {groupPerms.map((perm) => {
+                        const isChecked = userForm.permissions?.includes(perm.id);
+                        return (
+                          <div
+                            key={perm.id}
+                            onClick={() => handleTogglePermission(perm.id)}
+                            className={`flex items-start gap-2.5 p-2.5 rounded-2xl border transition-all cursor-pointer select-none ${
+                              isChecked
+                                ? 'border-indigo-600 bg-indigo-50/70 shadow-sm ring-1 ring-indigo-500/20'
+                                : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-[#FAF6ED]/70'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {}} // toggled by parent div
+                              className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-xs font-black ${isChecked ? 'text-indigo-950' : 'text-slate-900'}`}>
+                                {perm.label}
+                              </div>
+                              <div className="text-[11px] font-medium text-slate-500 mt-0.5 leading-snug">
+                                {perm.description}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-2">
+          {/* Modal Action Buttons */}
+          <div className="pt-4 border-t border-[#E6DECD] flex items-center justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setShowUserModal(false)}>
               إلغاء
             </Button>
-            <Button type="submit" variant="primary">
-              {isEditingUser ? 'تحديث المستخدم' : 'إنشاء المستخدم'}
+            <Button type="submit" variant="primary" icon={Save}>
+              {isEditingUser ? 'حفظ وتحديث الصلاحيات' : 'إنشاء المستخدم وتعيين الصلاحيات'}
             </Button>
           </div>
         </form>

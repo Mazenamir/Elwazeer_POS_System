@@ -39,7 +39,7 @@ function hasInventoryAllBranchesAccess(user) {
 }
 
 function isBranchScopedUser(user) {
-  return Boolean(user && user.role === 'branch_user');
+  return Boolean(user && user.role !== 'admin');
 }
 
 async function assertBarcodeAvailable(tx, barcode, { inventoryId = null, rentalInventoryId = null } = {}) {
@@ -50,19 +50,19 @@ async function assertBarcodeAvailable(tx, barcode, { inventoryId = null, rentalI
     // SQLite check
     const invRow = db.sqlite.prepare('SELECT id FROM inventory WHERE LOWER(TRIM(barcode)) = LOWER(?) AND id != ? AND is_deleted = 0 LIMIT 1').get(normalized, inventoryId || -1);
     if (invRow) {
-      const err = new Error('هذا الباركود مستخدم بالفعل في المخزون العادي');
+      const err = new Error('هذا الباركود مستخدم بالفعل ومسجل مسبقاً في المخزون');
       err.statusCode = 400;
       throw err;
     }
     const sizeRow = db.sqlite.prepare('SELECT id FROM inventory_sizes WHERE LOWER(TRIM(barcode)) = LOWER(?) AND inventory_id != ? LIMIT 1').get(normalized, inventoryId || -1);
     if (sizeRow) {
-      const err = new Error('هذا الباركود مستخدم بالفعل في مقاسات المخزون العادي');
+      const err = new Error('هذا الباركود مستخدم بالفعل ومسجل مسبقاً في مقاسات المخزون');
       err.statusCode = 400;
       throw err;
     }
     const rentRow = db.sqlite.prepare('SELECT id FROM rental_inventory WHERE LOWER(TRIM(barcode)) = LOWER(?) AND id != ? AND is_deleted = 0 LIMIT 1').get(normalized, rentalInventoryId || -1);
     if (rentRow) {
-      const err = new Error('هذا الباركود مستخدم بالفعل في مخزون التأجير');
+      const err = new Error('هذا الباركود مستخدم بالفعل ومسجل مسبقاً في مخزون التأجير');
       err.statusCode = 400;
       throw err;
     }
@@ -79,7 +79,7 @@ async function assertBarcodeAvailable(tx, barcode, { inventoryId = null, rentalI
   }
   const existingInventory = await tx.query(`SELECT id FROM inventory WHERE ${inventoryWhere} LIMIT 1`, inventoryParams);
   if (existingInventory.rows.length > 0) {
-    const err = new Error('هذا الباركود مستخدم بالفعل في المخزون العادي');
+    const err = new Error('هذا الباركود مستخدم بالفعل ومسجل مسبقاً في المخزون، لا يمكن تكراره منعاً لتشابه القطع');
     err.statusCode = 400;
     throw err;
   }
@@ -92,7 +92,7 @@ async function assertBarcodeAvailable(tx, barcode, { inventoryId = null, rentalI
   }
   const existingSize = await tx.query(`SELECT id FROM inventory_sizes WHERE ${sizeWhere} LIMIT 1`, sizeParams);
   if (existingSize.rows.length > 0) {
-    const err = new Error('هذا الباركود مستخدم بالفعل في مقاسات المخزون العادي');
+    const err = new Error('هذا الباركود مستخدم بالفعل ومسجل مسبقاً في مقاسات المخزون، لا يمكن تكراره منعاً لتشابه القطع');
     err.statusCode = 400;
     throw err;
   }
@@ -105,7 +105,7 @@ async function assertBarcodeAvailable(tx, barcode, { inventoryId = null, rentalI
   }
   const existingRental = await tx.query(`SELECT id FROM rental_inventory WHERE ${rentalWhere} LIMIT 1`, rentalParams);
   if (existingRental.rows.length > 0) {
-    const err = new Error('هذا الباركود مستخدم بالفعل في مخزون التأجير');
+    const err = new Error('هذا الباركود مستخدم بالفعل ومسجل مسبقاً في مخزون التأجير، لا يمكن تكراره منعاً لتشابه القطع');
     err.statusCode = 400;
     throw err;
   }
@@ -115,52 +115,24 @@ async function getAvailableBarcode(tx, requestedBarcode, { inventoryId = null, r
   const baseBarcode = normalizeBarcodeInput(requestedBarcode);
   if (!baseBarcode) return null;
 
-  for (let counter = 0; counter <= 999; counter++) {
-    const candidate = counter === 0 ? baseBarcode : `${baseBarcode}${String(counter).padStart(2, '0')}`;
+  // Strict enforcement: Assert requested barcode is available without appending '01' or mutating it.
+  await assertBarcodeAvailable(tx, baseBarcode, { inventoryId, rentalInventoryId });
+  return baseBarcode;
+}
 
-    if (config.IS_BRANCH_MODE) {
-      const invRow = db.sqlite.prepare('SELECT id FROM inventory WHERE LOWER(TRIM(barcode)) = LOWER(?) AND id != ? AND is_deleted = 0 LIMIT 1').get(candidate, inventoryId || -1);
-      if (invRow) continue;
-      const sizeRow = db.sqlite.prepare('SELECT id FROM inventory_sizes WHERE LOWER(TRIM(barcode)) = LOWER(?) AND inventory_id != ? LIMIT 1').get(candidate, inventoryId || -1);
-      if (sizeRow) continue;
-      const rentRow = db.sqlite.prepare('SELECT id FROM rental_inventory WHERE LOWER(TRIM(barcode)) = LOWER(?) AND id != ? AND is_deleted = 0 LIMIT 1').get(candidate, rentalInventoryId || -1);
-      if (!rentRow) return candidate;
-      continue;
+async function generateUniqueBarcode(tx, { prefix = '20' } = {}) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const ts = Date.now().toString().slice(-6);
+    const rnd = Math.floor(1000 + Math.random() * 9000).toString();
+    const candidate = `${prefix}${ts}${rnd}`;
+    try {
+      await assertBarcodeAvailable(tx, candidate);
+      return candidate;
+    } catch {
+      // Collision, retry with new random candidate
     }
-
-    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`barcode:${candidate.toLowerCase()}`]);
-
-    const inventoryParams = [candidate];
-    let inventoryWhere = "LOWER(TRIM(barcode)) = LOWER($1) AND is_deleted = FALSE";
-    if (inventoryId !== null && inventoryId !== undefined) {
-      inventoryParams.push(inventoryId);
-      inventoryWhere += ` AND id != $${inventoryParams.length}`;
-    }
-    const existingInventory = await tx.query(`SELECT id FROM inventory WHERE ${inventoryWhere} LIMIT 1`, inventoryParams);
-    if (existingInventory.rows.length > 0) continue;
-
-    const sizeParams = [candidate];
-    let sizeWhere = "LOWER(TRIM(barcode)) = LOWER($1)";
-    if (inventoryId !== null && inventoryId !== undefined) {
-      sizeParams.push(inventoryId);
-      sizeWhere += ` AND inventory_id != $${sizeParams.length}`;
-    }
-    const existingSize = await tx.query(`SELECT id FROM inventory_sizes WHERE ${sizeWhere} LIMIT 1`, sizeParams);
-    if (existingSize.rows.length > 0) continue;
-
-    const rentalParams = [candidate];
-    let rentalWhere = "LOWER(TRIM(barcode)) = LOWER($1) AND is_deleted = FALSE";
-    if (rentalInventoryId !== null && rentalInventoryId !== undefined) {
-      rentalParams.push(rentalInventoryId);
-      rentalWhere += ` AND id != $${rentalParams.length}`;
-    }
-    const existingRental = await tx.query(`SELECT id FROM rental_inventory WHERE ${rentalWhere} LIMIT 1`, rentalParams);
-    if (existingRental.rows.length === 0) return candidate;
   }
-
-  const err = new Error('تعذر توليد باركود فريد تلقائيًا');
-  err.statusCode = 400;
-  throw err;
+  return `${prefix}${Date.now()}`;
 }
 
 async function resolveSizeId(tx, sizeName) {
@@ -606,6 +578,7 @@ module.exports = {
   isBranchScopedUser,
   assertBarcodeAvailable,
   getAvailableBarcode,
+  generateUniqueBarcode,
   adjustInventoryStock,
   resolveCategoryQuery,
 };

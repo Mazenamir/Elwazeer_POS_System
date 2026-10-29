@@ -12,7 +12,7 @@ async function listCustomers(req, user) {
   if (config.IS_BRANCH_MODE) {
     const where = [];
     const params = [];
-    if (user && user.role === 'branch_user' && !req.query.search && !req.query.phone && !req.query.name) {
+    if (user && user.role !== 'admin' && !req.query.search && !req.query.phone && !req.query.name) {
       params.push(user.branch_id);
       where.push('c.branch_id = ?');
     }
@@ -55,7 +55,7 @@ async function listCustomers(req, user) {
   const params = [];
   const where = [];
 
-  if (user && user.role === 'branch_user' && !req.query.search && !req.query.phone && !req.query.name) {
+  if (user && user.role !== 'admin' && !req.query.search && !req.query.phone && !req.query.name) {
     params.push(user.branch_id);
     where.push(`c.branch_id = $${params.length}`);
   }
@@ -79,7 +79,7 @@ async function listCustomers(req, user) {
     params.push(likePattern(req.query.national_id));
     where.push(`c.national_id ILIKE $${params.length}`);
   }
-  if (req.query.branch_id && req.query.branch_id !== 'all' && (!user || user.role !== 'branch_user')) {
+  if (req.query.branch_id && req.query.branch_id !== 'all' && user && user.role === 'admin') {
     params.push(req.query.branch_id);
     where.push(`c.branch_id = $${params.length}`);
   }
@@ -119,7 +119,7 @@ async function createCustomer(data, user) {
   }
 
   const initials = getInitialsFromName(normalizedName);
-  const branchId = (user && user.role === 'branch_user') ? user.branch_id : (data.branch_id || user?.branch_id || 1);
+  const branchId = (user && user.role !== 'admin') ? user.branch_id : (data.branch_id || user?.branch_id || 1);
   const customerStatus = status || 'عادي';
 
   if (config.IS_BRANCH_MODE) {
@@ -274,7 +274,7 @@ async function getCustomerHistory(id, user, requestedLimit = 200) {
     return { orders, rentals, alterations, returns, tailoring };
   }
 
-  if (user && user.role === 'branch_user') {
+  if (user && user.role !== 'admin') {
     const customerCheck = await db.query('SELECT phone, branch_id FROM customers WHERE id = $1', [id]);
     if (customerCheck.rows.length === 0) {
       const err = new Error('Customer not found');

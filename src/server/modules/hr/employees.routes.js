@@ -5,8 +5,9 @@ const { requirePermission } = require('../../middleware/auth.middleware');
 const { hasPermission } = require('../../../shared/constants/permissions');
 const authService = require('../auth/auth.service');
 
-// Employees options and checkout reminders
-router.get('/employees/options', requirePermission('Employees.html'), employeesController.getEmployeeOptions);
+// Employees options, active sellers, and checkout reminders
+router.get('/employees/active-sellers', requirePermission('index.html', 'Rentals.html', 'Tailoring.html', 'Alterations.html', 'Employees.html'), employeesController.getActiveSellers);
+router.get('/employees/options', requirePermission('index.html', 'Rentals.html', 'Tailoring.html', 'Alterations.html', 'Employees.html'), employeesController.getEmployeeOptions);
 router.get('/employees/checkout-reminders', requirePermission('Employees.html'), employeesController.getCheckoutReminders);
 
 // Employees CRUD & Transfer

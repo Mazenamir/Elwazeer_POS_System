@@ -30,7 +30,7 @@ const gateStartTime = Date.now();
 const gateSteps = [
   {
     step: 1,
-    name: 'Master Regression Suite Execution (12 Core Suites)',
+    name: 'Master Regression Suite Execution (15 Core Suites)',
     execCmd: `"${process.execPath}" scratch/run_all_audit_suites.js`,
     validate: null,
   },

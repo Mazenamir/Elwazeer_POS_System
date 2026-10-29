@@ -86,6 +86,24 @@ const suites = [
     domain: 'Packaging & Binaries',
     script: 'scratch/verify_package.js',
   },
+  {
+    id: 13,
+    name: 'Branch Transfer Logs, Scoping & Isolation Invariants',
+    domain: 'Inventory & Transfers',
+    script: 'scratch/test_transfer_logs_suite.js',
+  },
+  {
+    id: 14,
+    name: 'Dynamic Inventory Categories, Counts & Scoped Filters',
+    domain: 'Inventory & Filters',
+    script: 'scratch/test_dynamic_categories_and_filters.js',
+  },
+  {
+    id: 15,
+    name: 'Reports Routes, Master Sheet & Export Endpoints Parity',
+    domain: 'Reports & Routing',
+    script: 'scratch/test_reports_routes_parity.js',
+  },
 ];
 
 console.log('========================================================================================================');
@@ -194,6 +212,11 @@ console.log(`PASSED       : ${totalPassed} (${((totalPassed / suites.length) * 1
 console.log(`FAILED       : ${totalFailed}`);
 console.log(`TOTAL TIME   : ${totalMasterDurationSec}s`);
 console.log('========================================================================================================');
+
+// Automatically clean up test fixtures after suites finish
+try {
+  spawnSync('node', [path.join(__dirname, 'cleanup_test_data.js')], { stdio: 'ignore' });
+} catch {}
 
 if (totalFailed > 0) {
   console.error(`\n❌ REGRESSION SUITE FAILED: ${totalFailed} suite(s) failed. See error logs above.`);

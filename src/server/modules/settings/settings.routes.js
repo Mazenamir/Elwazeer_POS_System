@@ -1,6 +1,6 @@
 const express = require('express');
 const controller = require('./settings.controller');
-const { requireAdmin } = require('../../middleware/rbac.middleware');
+const { requireAdmin, requirePermission } = require('../../middleware/rbac.middleware');
 
 const router = express.Router();
 
@@ -8,8 +8,8 @@ const router = express.Router();
 router.get('/public/settings', controller.getPublicSettings);
 
 // Protected settings endpoints
-router.get('/settings', requireAdmin, controller.getSettings);
-router.post('/settings', requireAdmin, controller.saveSettings);
+router.get('/settings', requirePermission('Settings.html'), controller.getSettings);
+router.post('/settings', requirePermission('Settings.html'), controller.saveSettings);
 
 // Database backup & restore endpoints
 router.get('/backup/groups', requireAdmin, controller.getBackupGroups);

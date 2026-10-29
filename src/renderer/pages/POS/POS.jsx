@@ -54,8 +54,6 @@ import { ThermalReceipt } from '../../components/receipts';
 import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
 
 
-const BASE_CATEGORIES = ['الكل', 'FORMAL SUIT', 'TUXEDO SUIT', 'SUIT', 'CASUAL SUIT', 'بليزر', 'بدل', 'بنطلون', 'قميص', 'صديري', 'تيشيرت', 'جينز', 'KIDS', 'ترنج', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'إكسسوارات', 'WALLET', 'أخرى'];
-
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -89,6 +87,22 @@ function playErrorSound() {
   } catch {}
 }
 
+const CATEGORY_DISPLAY_MAP = {
+  'الكل': 'كل التصنيفات',
+  'بدل': 'بدل (جميع الأنواع)',
+  'FORMAL SUIT': 'بدل رسمية (FORMAL SUIT)',
+  'TUXEDO SUIT': 'بدل سموكن (TUXEDO SUIT)',
+  'SUIT': 'بدل عادية (SUIT)',
+  'CASUAL SUIT': 'بدل كاجوال (CASUAL SUIT)',
+  'KIDS': 'أطفال (KIDS)',
+  'بنطلون': 'بنطلون',
+  'قميص': 'قميص',
+  'تيشيرت': 'تيشيرت',
+  'ترنج': 'ترنج',
+  'WALLET': 'محافظ (WALLET)',
+  'أخرى': 'بدون تصنيف / أخرى',
+};
+
 export function POS() {
   const { user, isAdmin } = useAuth();
   const { activeBranchId, branches, activeBranch } = useBranch();
@@ -98,7 +112,8 @@ export function POS() {
   // Top Tabs: 'pos' | 'history' | 'returns'
   const initialPosTab = searchParams.get('tab') || (searchParams.get('orderId') ? 'history' : 'pos');
   const [activeTab, setActiveTab] = useState(initialPosTab);
-  const [categoriesList, setCategoriesList] = useState(BASE_CATEGORIES);
+  const [categoriesList, setCategoriesList] = useState(['الكل']);
+  const [categoryCounts, setCategoryCounts] = useState({});
 
   // Multi-cart tabs
   const [cartTabs, setCartTabs] = useState(() => {
@@ -145,11 +160,20 @@ export function POS() {
   const [metadataSizes, setMetadataSizes] = useState([]);
 
   useEffect(() => {
-    api.get('/inventory/metadata')
+    const branchParam = activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : '';
+    api.get(`/inventory/metadata${branchParam}`)
       .then((meta) => {
         if (meta?.categories && Array.isArray(meta.categories)) {
-          const merged = Array.from(new Set([...BASE_CATEGORIES, ...meta.categories]));
-          setCategoriesList(merged);
+          const counts = meta?.categoryCounts || {};
+          const active = meta.categories.filter((c) => {
+            if (!c || c === 'الكل') return false;
+            if (typeof counts[c] === 'number') {
+              return counts[c] > 0;
+            }
+            return true;
+          });
+          setCategoriesList((prev) => Array.from(new Set(['الكل', ...active, ...prev.filter((c) => c !== 'الكل')])));
+          setCategoryCounts(counts);
         }
         if (meta?.colors && Array.isArray(meta.colors)) {
           setMetadataColors(meta.colors);
@@ -159,7 +183,7 @@ export function POS() {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [activeBranchId]);
   const [settings, setSettings] = useState({
     store_name: 'Bebyoon Center',
     store_phone: '',
@@ -325,6 +349,7 @@ export function POS() {
   const [returnSelection, setReturnSelection] = useState({}); // { [itemId]: boolean }
   const [returnQuantities, setReturnQuantities] = useState({}); // { [itemId]: number }
   const [manualReturnAmount, setManualReturnAmount] = useState('');
+  const [returnRefundMethod, setReturnRefundMethod] = useState('cash');
   const [processReturnSubmitting, setProcessReturnSubmitting] = useState(false);
 
   // Return Details Modal & Return Receipt State
@@ -389,18 +414,22 @@ export function POS() {
     return filtered.length > 0 ? filtered : employees;
   }, [employees, checkoutBranchId, activeBranchId]);
 
-  // Fetch employees for branch
+  // Fetch active checked-in employees for branch
   useEffect(() => {
     async function loadEmployees() {
       try {
-        const empUrl = `/employees${activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : ''}`;
-        const data = await api.get(empUrl);
+        const branchParam = activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : '';
+        const data = await api.get(`/employees/active-sellers${branchParam}`);
         const list = Array.isArray(data) ? data : data?.employees || data?.data || [];
         setEmployees(list);
-        if (list.length > 0 && !sellerId) {
-          setSellerId(list[0].id.toString());
+        if (list.length > 0) {
+          setSellerId((prev) => (prev && list.some((e) => e.id.toString() === prev) ? prev : list[0].id.toString()));
+        } else {
+          setSellerId('');
         }
-      } catch {}
+      } catch (err) {
+        console.error('Failed to load active sellers:', err);
+      }
     }
     loadEmployees();
   }, [activeBranchId]);
@@ -456,15 +485,31 @@ export function POS() {
     return () => clearTimeout(timer);
   }, [fetchInventory]);
 
-  // Keep categories bar up to date with any categories present in inventory
+  // Keep categories list up to date with active categories present in inventory
   useEffect(() => {
-    if (inventory.length > 0) {
-      const invCats = inventory.map((i) => i.category).filter(Boolean);
-      if (invCats.length > 0) {
-        setCategoriesList((prev) => Array.from(new Set([...prev, ...invCats])));
-      }
+    if (inventory && Array.isArray(inventory)) {
+      const activeCats = Array.from(
+        new Set(
+          inventory
+            .filter((i) => !i.is_deleted)
+            .map((i) => i.category && i.category.trim())
+            .filter(Boolean)
+        )
+      ).sort();
+      const hasSuits = activeCats.some((c) => c.toLowerCase().includes('suit') || c.includes('بدل'));
+      const combined = ['الكل'];
+      if (hasSuits) combined.push('بدل');
+      combined.push(...activeCats.filter((c) => c !== 'بدل'));
+      setCategoriesList(Array.from(new Set(combined)));
     }
   }, [inventory]);
+
+  // Fallback selectedCategory if it no longer exists
+  useEffect(() => {
+    if (selectedCategory !== 'الكل' && !categoriesList.includes(selectedCategory)) {
+      setSelectedCategory('الكل');
+    }
+  }, [categoriesList, selectedCategory]);
 
   // Extract all available sizes dynamically from inventory and metadata
   const availableSizes = useMemo(() => {
@@ -849,76 +894,6 @@ export function POS() {
     [activeBranchId]
   );
 
-  // Barcode Scan / Exact Match on Enter
-  const handleBarcodeSubmit = async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const code = searchQuery.trim();
-      if (!code) return;
-
-      let matched = inventory.find(
-        (i) =>
-          (i.barcode && i.barcode.toLowerCase() === code.toLowerCase()) ||
-          (i.code && i.code.toLowerCase() === code.toLowerCase()) ||
-          (i.name && i.name.toLowerCase() === code.toLowerCase()) ||
-          (Array.isArray(i.sizes) && i.sizes.some((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase()))
-      );
-
-      if (!matched) {
-        try {
-          const directRes = await api.get(`/inventory?barcode=${encodeURIComponent(code)}&branch_id=${activeBranchId || 'all'}`);
-          const found = Array.isArray(directRes) ? directRes[0] : directRes?.items?.[0];
-          if (found) matched = found;
-        } catch {}
-      }
-
-      if (matched) {
-        const availableStock = getProductAvailableStock(matched);
-        if (availableStock <= 0) {
-          playErrorSound();
-          const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
-          toast.error(`عفواً، الصنف "${matched.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
-          return;
-        }
-
-        // Check if barcode specifically matched an individual size/variant
-        const specificSize = Array.isArray(matched.sizes)
-          ? matched.sizes.find((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase())
-          : null;
-
-        if (specificSize) {
-          const sizeStock = Number(specificSize.stock_level ?? 0);
-          if (sizeStock <= 0) {
-            playErrorSound();
-            toast.error(`عفواً، المقاس "${specificSize.size_name}" (${specificSize.color_name || ''}) نفد من المخزون.`);
-            return;
-          }
-          addToCart(matched, specificSize.size_name, specificSize);
-          setSearchQuery('');
-          return;
-        }
-
-        if (matched.sizes && Array.isArray(matched.sizes) && matched.sizes.length > 1) {
-          const hasAnyInStock = matched.sizes.some((s) => Number(s.stock_level || 0) > 0);
-          if (!hasAnyInStock) {
-            playErrorSound();
-            toast.error(`عفواً، جميع مقاسات الصنف "${matched.name}" نفدت من المخزون.`);
-            return;
-          }
-          setPendingProduct(matched);
-          setShowSizeModal(true);
-          setSearchQuery('');
-        } else {
-          addToCart(matched);
-          setSearchQuery('');
-        }
-      } else {
-        playErrorSound();
-        toast.warning(`لم يتم العثور على منتج بهذا الباركود: ${code}`);
-      }
-    }
-  };
-
   // Add Item to Current Cart with optional selectedSize
   const addToCart = (product, selectedSize = null, selectedSizeObj = null) => {
     let itemSize = selectedSize;
@@ -999,6 +974,77 @@ export function POS() {
         return { ...prev, [activeCartId]: [...items, newItem] };
       }
     });
+  };
+
+
+  // Barcode Scan / Exact Match on Enter
+  const handleBarcodeSubmit = async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const code = searchQuery.trim();
+      if (!code) return;
+
+      let matched = inventory.find(
+        (i) =>
+          (i.barcode && i.barcode.toLowerCase() === code.toLowerCase()) ||
+          (i.code && i.code.toLowerCase() === code.toLowerCase()) ||
+          (i.name && i.name.toLowerCase() === code.toLowerCase()) ||
+          (Array.isArray(i.sizes) && i.sizes.some((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase()))
+      );
+
+      if (!matched) {
+        try {
+          const directRes = await api.get(`/inventory?barcode=${encodeURIComponent(code)}&branch_id=${activeBranchId || 'all'}`);
+          const found = Array.isArray(directRes) ? directRes[0] : directRes?.items?.[0];
+          if (found) matched = found;
+        } catch {}
+      }
+
+      if (matched) {
+        const availableStock = getProductAvailableStock(matched);
+        if (availableStock <= 0) {
+          playErrorSound();
+          const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
+          toast.error(`عفواً، الصنف "${matched.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
+          return;
+        }
+
+        // Check if barcode specifically matched an individual size/variant
+        const specificSize = Array.isArray(matched.sizes)
+          ? matched.sizes.find((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase())
+          : null;
+
+        if (specificSize) {
+          const sizeStock = Number(specificSize.stock_level ?? 0);
+          if (sizeStock <= 0) {
+            playErrorSound();
+            toast.error(`عفواً، المقاس "${specificSize.size_name}" (${specificSize.color_name || ''}) نفد من المخزون.`);
+            return;
+          }
+          addToCart(matched, specificSize.size_name, specificSize);
+          setSearchQuery('');
+          return;
+        }
+
+        if (matched.sizes && Array.isArray(matched.sizes) && matched.sizes.length > 1) {
+          const hasAnyInStock = matched.sizes.some((s) => Number(s.stock_level || 0) > 0);
+          if (!hasAnyInStock) {
+            playErrorSound();
+            toast.error(`عفواً، جميع مقاسات الصنف "${matched.name}" نفدت من المخزون.`);
+            return;
+          }
+          setPendingProduct(matched);
+          setShowSizeModal(true);
+          setSearchQuery('');
+        } else {
+          addToCart(matched);
+          setSearchQuery('');
+        }
+      } else {
+        playErrorSound();
+        toast.warning(`لم يتم العثور على منتج بهذا الباركود: ${code}`);
+      }
+    }
   };
 
   // Handler when clicking a product card in POS
@@ -1821,6 +1867,18 @@ export function POS() {
       setReturnQuantities(initialQtys);
       setReturnSelection(initialSelection);
       setManualReturnAmount('');
+
+      // Auto-detect refund method from original order payment method
+      const origMethod = (fullOrder.payment_method || '').toLowerCase();
+      if (origMethod.includes('card') || origMethod.includes('visa')) {
+        setReturnRefundMethod('card');
+      } else if (origMethod.includes('wallet') || origMethod.includes('vodafone')) {
+        setReturnRefundMethod('wallet');
+      } else if (origMethod.includes('bank') || origMethod.includes('instapay')) {
+        setReturnRefundMethod('bank_transfer');
+      } else {
+        setReturnRefundMethod('cash');
+      }
     } catch (err) {
       toast.error('تعذر تحميل تفاصيل الفاتورة للإرجاع');
     }
@@ -1874,6 +1932,7 @@ export function POS() {
         branch_id: chosenBranchId,
         seller_id: Number(sellerId) || selectedReturnOrder.seller_id,
         total_return_amount: finalReturnRefund,
+        refund_method: returnRefundMethod,
         items: returnItems,
       };
 
@@ -2064,14 +2123,18 @@ export function POS() {
                         : 'border-slate-200 text-slate-700 hover:border-slate-300 focus:border-indigo-500 focus:bg-white'
                     }`}
                   >
-                    <option value="الكل">كل التصنيفات ({categoriesList.length})</option>
+                    <option value="الكل">كل التصنيفات{categoriesList.filter((c) => c !== 'الكل').length > 0 ? ` (${categoriesList.filter((c) => c !== 'الكل').length})` : ''}</option>
                     {categoriesList
                       .filter((c) => c !== 'الكل')
-                      .map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
+                      .map((cat) => {
+                        const displayName = CATEGORY_DISPLAY_MAP[cat] || cat;
+                        const count = categoryCounts[cat] ?? categoryCounts[displayName];
+                        return (
+                          <option key={cat} value={cat}>
+                            {displayName}{typeof count === 'number' ? ` (${count.toLocaleString()})` : ''}
+                          </option>
+                        );
+                      })}
                   </select>
                 </div>
 
@@ -3590,6 +3653,80 @@ export function POS() {
                 </div>
               </div>
 
+              {/* Refund Method Selector */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                <label className="block text-xs font-black text-slate-700 mb-2">
+                  طريقة رد المبلغ (تسوية المرتجع):
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReturnRefundMethod('cash')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all ${
+                      returnRefundMethod === 'cash'
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    💵 نقدي (من الدرج)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReturnRefundMethod('card')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all ${
+                      returnRefundMethod === 'card'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    💳 فيزا / بطاقة بنكية
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReturnRefundMethod('bank_transfer')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all ${
+                      returnRefundMethod === 'bank_transfer'
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    ⚡ انستاباي / تحويل
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReturnRefundMethod('wallet')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all ${
+                      returnRefundMethod === 'wallet'
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    📱 فودافون كاش / محفظة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReturnRefundMethod('customer_credit')}
+                    className={`col-span-2 sm:col-span-2 p-2.5 rounded-xl border text-xs font-bold text-center transition-all ${
+                      returnRefundMethod === 'customer_credit'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    👛 إضافة لرصيد محفظة العميل (بدون خصم من الدرج)
+                  </button>
+                </div>
+                {returnRefundMethod === 'customer_credit' && (
+                  <p className="mt-2 text-xs font-medium text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+                    💡 سيتم إضافة المبلغ المسترد ({finalReturnRefund.toLocaleString()} ج.م) مباشرة إلى رصيد محفظة العميل ({selectedReturnOrder.customer_name || 'العميل'}) لاستخدامه في مشتريات مستقبلية دون التأثير على كاش الدرج.
+                  </p>
+                )}
+                {returnRefundMethod !== 'cash' && returnRefundMethod !== 'customer_credit' && (
+                  <p className="mt-2 text-xs font-medium text-blue-700 bg-blue-50 p-2 rounded-lg border border-blue-200">
+                    💡 استرجاع إلكتروني: لن يتم خصم هذا المبلغ من الكاش الفعلي بدرج النقدية بالفرع حفاظاً على توازن الدرج.
+                  </p>
+                )}
+              </div>
+
               {/* Actions */}
               <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
                 <Button
@@ -4241,7 +4378,7 @@ export function POS() {
               className="w-full bg-white border-2 border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-800 outline-none focus:border-indigo-600 transition-colors"
               required
             >
-              <option value="">اختر الموظف البائع...</option>
+              <option value="">{checkoutEmployees.length === 0 ? '⚠️ لا يوجد بائعون داخل الدوام حالياً (يرجى تسجيل الحضور)' : 'اختر الموظف البائع...'}</option>
               {checkoutEmployees.map((emp) => (
                 <option key={emp.id} value={emp.id.toString()}>
                   {emp.name} {emp.job_title ? `(${emp.job_title})` : ''}

@@ -1,6 +1,8 @@
 const reportsService = require('./reports.service');
 const reportsExcel = require('./reports.excel');
 const reportsPdf = require('./reports.pdf');
+const { getBranchBranding, getReportBranchId } = require('./reports.helpers');
+const db = require('../../database/connection');
 
 async function getDashboard(req, res, next) {
   try {
@@ -146,6 +148,15 @@ async function getSalesKpiReport(req, res, next) {
   }
 }
 
+async function getMonthlyMasterReport(req, res, next) {
+  try {
+    const report = await reportsService.getMonthlyMasterReport(req.query, req.user);
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function updateDailyAttendanceQuick(req, res, next) {
   try {
     const result = await reportsService.updateDailyAttendanceQuick(req.body, req.user);
@@ -155,12 +166,23 @@ async function updateDailyAttendanceQuick(req, res, next) {
   }
 }
 
+async function getSuppliersLedger(req, res, next) {
+  try {
+    const suppliersService = require('../suppliers/suppliers.service');
+    const ledger = await suppliersService.getSuppliersLedger(req.query, req.user, req);
+    res.json(ledger);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function exportConsolidatedExcel(req, res, next) {
   try {
     const buffer = await reportsExcel.generateConsolidatedBranchExcel(req.query, req.user);
     const month = (req.query.month || new Date().toISOString().slice(0, 7));
-    const branchId = req.query.branch_id || 'branch';
-    const fileName = `consolidated-report-${branchId}-${month}.xlsx`;
+    const reportBranchId = getReportBranchId(req.user, req.query);
+    const branchSuffix = !reportBranchId || reportBranchId === 'all' ? 'all' : reportBranchId;
+    const fileName = `consolidated-report-${branchSuffix}-${month}.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
@@ -176,8 +198,12 @@ async function exportConsolidatedExcel(req, res, next) {
  */
 async function exportExcel(req, res, next) {
   try {
-    const type = req.query.type || 'daily_history';
-    const branchName = req.query.branch_name || (req.query.branch_id && req.query.branch_id !== 'all' ? `فرع #${req.query.branch_id}` : 'كافة الفروع');
+    const rawType = req.query.type || 'daily_history';
+    const type = String(rawType).trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const reportBranchId = getReportBranchId(req.user, req.query);
+    const branding = await getBranchBranding(db, reportBranchId);
+    const isAll = !reportBranchId || reportBranchId === 'all';
+    const branchName = isAll ? 'كل الفروع' : (req.query.branch_name || branding.branchName);
     let buffer;
     let fileName = `report-${type}-${new Date().toISOString().split('T')[0]}.xlsx`;
 
@@ -190,8 +216,14 @@ async function exportExcel(req, res, next) {
           fileName = `daily-history-${new Date().toISOString().split('T')[0]}.xlsx`;
           break;
         }
-        const data = await reportsService.getDailyReport(req.query, req.user);
-        buffer = await reportsExcel.generateDailyReportExcel(data, { branchName, period: data.date || '-' });
+        const data = await reportsService.getExtendedDailyReport(req.query, req.user);
+        buffer = await reportsExcel.generateDailyReportExcel(data, { branchName, date: req.query.date, period: req.query.date || '-' });
+        fileName = `daily-report-${data.date || new Date().toISOString().split('T')[0]}.xlsx`;
+        break;
+      }
+      case 'daily_details': {
+        const data = await reportsService.getExtendedDailyReport(req.query, req.user);
+        buffer = await reportsExcel.generateDailyReportExcel(data, { branchName, date: req.query.date, period: data.date || '-' });
         fileName = `daily-report-${data.date || new Date().toISOString().split('T')[0]}.xlsx`;
         break;
       }
@@ -220,12 +252,6 @@ async function exportExcel(req, res, next) {
         const data = await reportsService.getTopProductsReport(req.query, req.user);
         buffer = await reportsExcel.generateTopProductsExcel(data, { branchName, period: 'تقرير مبيعات وتأجير الأصناف' });
         fileName = `top-products-${new Date().toISOString().split('T')[0]}.xlsx`;
-        break;
-      }
-      case 'daily_details': {
-        const data = await reportsService.getDailyReport(req.query, req.user);
-        buffer = await reportsExcel.generateDailyReportExcel(data, { branchName, period: data.date || '-' });
-        fileName = `daily-report-${data.date || new Date().toISOString().split('T')[0]}.xlsx`;
         break;
       }
       case 'sales': {
@@ -262,13 +288,84 @@ async function exportExcel(req, res, next) {
         fileName = `inventory-report-${new Date().toISOString().split('T')[0]}.xlsx`;
         break;
       }
+      case 'suppliers': {
+        const suppliersService = require('../suppliers/suppliers.service');
+        const suppliersData = await suppliersService.listSuppliers({ ...req.query, all: 'true' }, req.user, req);
+        const suppliersList = Array.isArray(suppliersData) ? suppliersData : (suppliersData?.items || suppliersData?.suppliers || suppliersData?.data || []);
+        buffer = await reportsExcel.generateSuppliersReportExcel(suppliersList, {
+          branchName,
+          period: 'كافة الموردين والشركات',
+        });
+        fileName = `suppliers-report-${new Date().toISOString().split('T')[0]}.xlsx`;
+        break;
+      }
+      case 'suppliers_ledger': {
+        const suppliersService = require('../suppliers/suppliers.service');
+        const ledger = await suppliersService.getSuppliersLedger(req.query, req.user, req);
+        const startDate = req.query.start_date || req.query.startDate || req.query.date_from || req.query.from || null;
+        const endDate = req.query.end_date || req.query.endDate || req.query.date_to || req.query.to || null;
+        buffer = await reportsExcel.generateSuppliersLedgerExcel(ledger, {
+          branchName,
+          period: startDate && endDate
+            ? `${startDate} إلى ${endDate}`
+            : (startDate ? `من ${startDate}` : (endDate ? `حتى ${endDate}` : 'كافة الفترات (تراكمي)')),
+        });
+        fileName = `suppliers-ledger-${new Date().toISOString().split('T')[0]}.xlsx`;
+        break;
+      }
+      case 'supplier_statement': {
+        const suppliersService = require('../suppliers/suppliers.service');
+        const supplierId = req.query.supplier_id || req.query.id;
+        if (!supplierId) {
+          return res.status(400).json({ error: 'محدد المورد مطلوب لتصدير كشف الحساب' });
+        }
+        const statement = await suppliersService.getSupplierStatement(supplierId, null, req.query, req.user);
+        const startDate = req.query.start_date || req.query.startDate || req.query.date_from || req.query.from || null;
+        const endDate = req.query.end_date || req.query.endDate || req.query.date_to || req.query.to || null;
+        buffer = await reportsExcel.generateSupplierStatementExcel(statement, {
+          branchName,
+          period: startDate && endDate
+            ? `${startDate} إلى ${endDate}`
+            : (startDate ? `من ${startDate}` : (endDate ? `حتى ${endDate}` : 'كافة الفترات (تراكمي)')),
+        });
+        const supName = (statement.supplier?.name || `supplier_${supplierId}`).replace(/[^\w\u0600-\u06FF]/g, '_');
+        fileName = `supplier-statement-${supName}-${new Date().toISOString().split('T')[0]}.xlsx`;
+        break;
+      }
+      case 'branch_matrix': {
+        const inventoryService = require('../inventory/inventory.service');
+        const matrixData = await inventoryService.getBranchMatrix({ ...req.query, limit: 10000 }, req.user);
+        buffer = await reportsExcel.generateBranchMatrixExcel(matrixData, {
+          title: 'تقرير أرصدة البضائع الموزعة بالفروع والمخزن الرئيسي',
+          isAdmin: req.user?.role === 'admin',
+          user: req.user,
+        });
+        fileName = `branch-stock-matrix-${new Date().toISOString().split('T')[0]}.xlsx`;
+        break;
+      }
+      case 'transfer_logs':
+      case 'transfers': {
+        const inventoryService = require('../inventory/inventory.service');
+        const transferData = await inventoryService.listTransferLogs({ ...req.query, limit: 'all' }, req.user);
+        const startDate = req.query.date_from || req.query.startDate;
+        const endDate = req.query.date_to || req.query.endDate;
+        buffer = await reportsExcel.generateTransferLogsExcel(transferData, {
+          branchName,
+          period: startDate && endDate
+            ? `${startDate} إلى ${endDate}`
+            : (startDate ? `من ${startDate}` : (endDate ? `حتى ${endDate}` : 'كافة الفترات')),
+        });
+        fileName = `branch-transfers-log-${new Date().toISOString().split('T')[0]}.xlsx`;
+        break;
+      }
       case 'ohda': {
         const data = await reportsService.getMonthlyOhdaReport(req.query, req.user);
         buffer = await reportsExcel.generateOhdaReportExcel(data, { branchName, period: req.query.month || '-' });
         fileName = `ohda-report-${req.query.month || new Date().toISOString().slice(0, 7)}.xlsx`;
         break;
       }
-      case 'salary': {
+      case 'salary':
+      case 'salary_sheet': {
         const data = await reportsService.getMonthlySalarySheet(req.query, req.user);
         buffer = await reportsExcel.generateSalaryReportExcel(data, { branchName, period: req.query.month || '-' });
         fileName = `salary-report-${req.query.month || new Date().toISOString().slice(0, 7)}.xlsx`;
@@ -280,6 +377,9 @@ async function exportExcel(req, res, next) {
         fileName = `kpi-report-${req.query.month || new Date().toISOString().slice(0, 7)}.xlsx`;
         break;
       }
+      case 'master':
+      case 'master_sheet':
+      case 'monthly_master':
       case 'consolidated': {
         buffer = await reportsExcel.generateConsolidatedBranchExcel(req.query, req.user);
         const month = (req.query.month || new Date().toISOString().slice(0, 7));
@@ -288,7 +388,7 @@ async function exportExcel(req, res, next) {
         break;
       }
       default: {
-        return res.status(400).json({ error: `نوع التقرير غير معروف: ${type}` });
+        return res.status(400).json({ error: `نوع التقرير غير معروف: ${rawType}` });
       }
     }
 
@@ -306,8 +406,12 @@ async function exportExcel(req, res, next) {
  */
 async function exportPdfHtml(req, res, next) {
   try {
-    const type = req.query.type || 'daily_history';
-    const branchName = req.query.branch_name || (req.query.branch_id && req.query.branch_id !== 'all' ? `فرع #${req.query.branch_id}` : 'كافة الفروع');
+    const rawType = req.query.type || 'daily_history';
+    const type = String(rawType).trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const reportBranchId = getReportBranchId(req.user, req.query);
+    const branding = await getBranchBranding(db, reportBranchId);
+    const isAll = !reportBranchId || reportBranchId === 'all';
+    const branchName = isAll ? 'كل الفروع' : (req.query.branch_name || branding.branchName);
     let html = '';
 
     switch (type) {
@@ -379,12 +483,63 @@ async function exportPdfHtml(req, res, next) {
         html = reportsPdf.generateInventoryPdfHtml(data, { branchName, period: 'جرد المخزون الحالي' });
         break;
       }
+      case 'suppliers':
+      case 'suppliers_ledger': {
+        const suppliersService = require('../suppliers/suppliers.service');
+        const ledger = await suppliersService.getSuppliersLedger(req.query, req.user, req);
+        const startDate = req.query.start_date || req.query.startDate || req.query.date_from || req.query.from || null;
+        const endDate = req.query.end_date || req.query.endDate || req.query.date_to || req.query.to || null;
+        const period = startDate && endDate
+          ? `${startDate} إلى ${endDate}`
+          : (startDate ? `من ${startDate}` : (endDate ? `حتى ${endDate}` : 'كافة الفترات (تراكمي)'));
+        html = reportsPdf.generateSuppliersLedgerPdfHtml(ledger, { branchName, period });
+        break;
+      }
+      case 'supplier_statement': {
+        const suppliersService = require('../suppliers/suppliers.service');
+        const supplierId = req.query.supplier_id || req.query.id;
+        if (!supplierId) {
+          return res.status(400).json({ error: 'محدد المورد مطلوب لتصدير كشف الحساب' });
+        }
+        const statement = await suppliersService.getSupplierStatement(supplierId, null, req.query, req.user);
+        const startDate = req.query.start_date || req.query.startDate || req.query.date_from || req.query.from || null;
+        const endDate = req.query.end_date || req.query.endDate || req.query.date_to || req.query.to || null;
+        const period = startDate && endDate
+          ? `${startDate} إلى ${endDate}`
+          : (startDate ? `من ${startDate}` : (endDate ? `حتى ${endDate}` : 'كافة الفترات (تراكمي)'));
+        html = reportsPdf.generateSupplierStatementPdfHtml(statement, { branchName, period });
+        break;
+      }
+      case 'branch_matrix': {
+        const inventoryService = require('../inventory/inventory.service');
+        const matrixData = await inventoryService.getBranchMatrix({ ...req.query, limit: 10000 }, req.user);
+        html = reportsPdf.generateBranchMatrixPdfHtml(matrixData, {
+          branchName,
+          title: 'تقرير أرصدة البضائع الموزعة بالفروع والمخزن الرئيسي',
+          isAdmin: req.user?.role === 'admin',
+          user: req.user,
+        });
+        break;
+      }
+      case 'transfer_logs':
+      case 'transfers': {
+        const inventoryService = require('../inventory/inventory.service');
+        const transferData = await inventoryService.listTransferLogs({ ...req.query, limit: 'all' }, req.user);
+        const startDate = req.query.date_from || req.query.startDate;
+        const endDate = req.query.date_to || req.query.endDate;
+        const period = startDate && endDate
+          ? `${startDate} إلى ${endDate}`
+          : (startDate ? `من ${startDate}` : (endDate ? `حتى ${endDate}` : 'كافة الفترات'));
+        html = reportsPdf.generateTransferLogsPdfHtml(transferData, { branchName, period });
+        break;
+      }
       case 'ohda': {
         const data = await reportsService.getMonthlyOhdaReport(req.query, req.user);
         html = reportsPdf.generateOhdaPdfHtml(data, { branchName, period: req.query.month || '-' });
         break;
       }
-      case 'salary': {
+      case 'salary':
+      case 'salary_sheet': {
         const data = await reportsService.getMonthlySalarySheet(req.query, req.user);
         html = reportsPdf.generateSalaryPdfHtml(data, { branchName, period: req.query.month || '-' });
         break;
@@ -394,20 +549,43 @@ async function exportPdfHtml(req, res, next) {
         html = reportsPdf.generateKpiPdfHtml(data, { branchName, period: req.query.month || '-' });
         break;
       }
+      case 'master':
+      case 'master_sheet':
+      case 'monthly_master':
       case 'consolidated': {
-        const [ohda, salary, kpi] = await Promise.all([
-          reportsService.getMonthlyOhdaReport(req.query, req.user),
-          reportsService.getMonthlySalarySheet(req.query, req.user),
-          reportsService.getSalesKpiReport(req.query, req.user),
-        ]);
-        html = reportsPdf.generateConsolidatedPdfHtml({ ohda, salary, kpi }, { branchName, period: req.query.month || '-' });
+        const masterReport = await reportsService.getMonthlyMasterReport(req.query, req.user);
+        html = reportsPdf.generateConsolidatedPdfHtml(masterReport, {
+          branchName: masterReport.branch_name || branchName,
+          period: req.query.month || masterReport.month || '-',
+          branding: masterReport.branding,
+        });
         break;
       }
       default: {
-        return res.status(400).json({ error: `نوع التقرير غير معروف: ${type}` });
+        return res.status(400).json({ error: `نوع التقرير غير معروف: ${rawType}` });
       }
     }
 
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function exportMasterPdf(req, res, next) {
+  try {
+    const query = { ...req.query, type: 'master' };
+    const reportBranchId = getReportBranchId(req.user, query);
+    const branding = await getBranchBranding(db, reportBranchId);
+    const isAll = !reportBranchId || reportBranchId === 'all';
+    const branchName = isAll ? 'كل الفروع' : (query.branch_name || branding.branchName);
+    const masterReport = await reportsService.getMonthlyMasterReport(query, req.user);
+    const html = reportsPdf.generateConsolidatedPdfHtml(masterReport, {
+      branchName: masterReport.branch_name || branchName,
+      period: query.month || masterReport.month || '-',
+      branding: masterReport.branding,
+    });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {
@@ -432,8 +610,11 @@ module.exports = {
   getMonthlyOhdaReport,
   getMonthlySalarySheet,
   getSalesKpiReport,
+  getMonthlyMasterReport,
   updateDailyAttendanceQuick,
+  getSuppliersLedger,
   exportConsolidatedExcel,
   exportExcel,
   exportPdfHtml,
+  exportMasterPdf,
 };

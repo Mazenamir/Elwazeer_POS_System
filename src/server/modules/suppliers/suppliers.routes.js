@@ -19,8 +19,9 @@ router.post('/supply-records', requireInventoryAdmin, controller.createSupplyRec
 router.post('/inventory/bulk-restock', requireInventoryAdmin, controller.bulkRestock);
 
 // Transactions, Returns & Statements
-router.post('/suppliers/transactions', requireInventoryAdmin, controller.createTransaction);
+router.post('/suppliers/transactions', requirePermission('Suppliers.html', 'inventory_admin', 'Expenses.html'), controller.createTransaction);
 router.post('/suppliers/returns', requireInventoryAdmin, controller.processReturn);
-router.get('/suppliers/:id/statement', requirePermission('Suppliers.html', 'inventory_admin'), controller.getStatement);
+router.get('/suppliers/:id/statement', requirePermission('Suppliers.html', 'inventory_admin', 'Reports.html'), controller.getStatement);
+router.get('/suppliers/ledger', requirePermission('Suppliers.html', 'inventory_admin', 'Reports.html'), controller.getSuppliersLedger);
 
 module.exports = router;

@@ -13,7 +13,7 @@ async function getEmployeeOptions(query = {}, user = null) {
   const params = [todayDate];
   const where = [];
 
-  if (user && user.role === 'branch_user') {
+  if (user && user.role !== 'admin') {
     params.push(user.branch_id);
     where.push(`e.branch_id = $${params.length}`);
   } else if (query.branch_id && query.branch_id !== 'all') {
@@ -42,9 +42,45 @@ async function getEmployeeOptions(query = {}, user = null) {
   return rows;
 }
 
+async function getActiveSellers(query = {}, user = null) {
+  const { date: todayDate } = getCairoDateTimeParts();
+  const params = [todayDate];
+  const where = [
+    'a.check_in IS NOT NULL',
+    'a.check_out IS NULL',
+  ];
+
+  if (user && user.role !== 'admin') {
+    params.push(user.branch_id);
+    where.push(`e.branch_id = $${params.length}`);
+  } else if (query.branch_id && query.branch_id !== 'all') {
+    params.push(query.branch_id);
+    where.push(`e.branch_id = $${params.length}`);
+  }
+
+  if (query.search) {
+    params.push(likePattern(query.search));
+    where.push(`(e.name ILIKE $${params.length} OR e.phone ILIKE $${params.length})`);
+  }
+
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const { rows } = await db.query(
+    `SELECT e.id, e.name, e.position, e.branch_id, b.name as branch_name,
+            a.check_in as today_check_in, a.check_out as today_check_out
+     FROM employees e
+     JOIN attendance a ON a.employee_id = e.id AND a.date = $1
+     LEFT JOIN branches b ON b.id = e.branch_id
+     ${whereClause}
+     ORDER BY e.name ASC, e.id ASC`,
+    params
+  );
+  return rows;
+}
+
 async function getCheckoutReminders(branchId, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -124,7 +160,7 @@ async function listEmployees(query = {}, user = null, req = null) {
   const whereParams = [];
   const where = [];
 
-  if (user && user.role === 'branch_user') {
+  if (user && user.role !== 'admin') {
     whereParams.push(user.branch_id);
     where.push(`e.branch_id = $${whereParams.length}`);
   }
@@ -145,7 +181,7 @@ async function listEmployees(query = {}, user = null, req = null) {
     whereParams.push(likePattern(query.phone));
     where.push(`e.phone ILIKE $${whereParams.length}`);
   }
-  if (query.branch_id && query.branch_id !== 'all' && (!user || user.role !== 'branch_user')) {
+  if (query.branch_id && query.branch_id !== 'all' && (!user || user.role === 'admin')) {
     whereParams.push(query.branch_id);
     where.push(`e.branch_id = $${whereParams.length}`);
   }
@@ -230,7 +266,7 @@ async function listEmployees(query = {}, user = null, req = null) {
 
 async function createEmployee(body, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -292,7 +328,7 @@ async function createEmployee(body, user) {
 
 async function updateEmployee(id, body, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -408,7 +444,7 @@ async function transferEmployee(id, targetBranchId, user) {
 
 async function deleteEmployee(id, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -444,7 +480,7 @@ async function deleteEmployee(id, user) {
 async function recordAttendance(body, user) {
   const { employee_id, date, check_in, check_out, status, notes } = body || {};
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -474,7 +510,7 @@ async function recordAttendance(body, user) {
 
 async function toggleAttendance(id, manualTime, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -558,7 +594,7 @@ async function toggleAttendance(id, manualTime, user) {
 
 async function handleCheckoutReminder(id, attendanceDate, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -637,7 +673,7 @@ async function handleCheckoutReminder(id, attendanceDate, user) {
 async function recordManualAttendance(id, body, user) {
   const { date, status, notes, check_in, check_out } = body || {};
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -708,7 +744,7 @@ async function recordManualAttendance(id, body, user) {
 
 async function getAttendanceReport(id, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -756,7 +792,7 @@ async function getAttendanceReport(id, user) {
 async function createEmployeeTransaction(body, user) {
   const { employee_id, type, amount, transaction_date, notes } = body || {};
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -783,7 +819,7 @@ async function createEmployeeTransaction(body, user) {
 
 async function getEmployeeSummary(id, monthParam, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -936,7 +972,7 @@ async function getEmployeeSummary(id, monthParam, user) {
 
 async function getEmployeePayslip(id, monthParam, user) {
   const isAdmin = user && user.role === 'admin';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = user && user.role !== 'admin';
 
   if (!isAdmin && !isBranchUser) {
     const err = new Error('Unauthorized');
@@ -1216,6 +1252,7 @@ async function getEmployeeSalesReport(id, user) {
 
 module.exports = {
   getEmployeeOptions,
+  getActiveSellers,
   getCheckoutReminders,
   listEmployees,
   createEmployee,

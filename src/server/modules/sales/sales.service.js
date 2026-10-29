@@ -12,7 +12,7 @@ const { adjustInventoryStock } = require('../inventory/inventory.helpers');
 
 async function getNextOrderId(branchId, user = null) {
   let b_id = branchId;
-  if (user && (user.role === 'branch_user' || user.role === 'cashier')) {
+  if (user && user.role !== 'admin') {
     b_id = user.branch_id;
   }
 
@@ -82,7 +82,7 @@ async function listOrders(query = {}, user = null, req = null) {
   const params = [];
   const where = [`COALESCE(o.order_source, 'cashier') = 'cashier'`];
 
-  if (user && user.role === 'branch_user') {
+  if (user && user.role !== 'admin') {
     params.push(user.branch_id);
     where.push(`o.branch_id = $${params.length}`);
   } else if (query.branch_id && query.branch_id !== 'all') {
@@ -168,7 +168,7 @@ async function createOrder(body, user, req) {
 
   const orderOfflineUuid = newUuid(offline_uuid);
 
-  if (user && (user.role === 'branch_user' || user.role === 'cashier') && user.branch_id) {
+  if (user && user.role !== 'admin' && user.branch_id) {
     branch_id = user.branch_id;
   }
   const b_id = parseInt(branch_id, 10) || 1;
@@ -599,7 +599,7 @@ async function payRemaining(id, amount, paymentMethod, user, req) {
     }
 
     const order = rows[0];
-    if (user && user.role === 'branch_user' && Number(order.branch_id) !== Number(user.branch_id)) {
+    if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -687,6 +687,12 @@ async function payRemaining(id, amount, paymentMethod, user, req) {
       [newPaidAmount, newCash, newCard, newWallet, newBank, splitsJson, newPaymentMethod, resolvedId]
     );
 
+    await tx.query(
+      `INSERT INTO order_payments (order_id, amount, payment_method, payment_date, branch_id, seller_id, notes)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6)`,
+      [resolvedId, safeAmount, normM, order.branch_id, user?.employee_id || null, `سداد دفعة متبقية للطلب #${resolvedId}`]
+    );
+
     if (user) {
       await logActivity(
         user.id,
@@ -748,7 +754,7 @@ async function getOrderDetails(id, user) {
   }
 
   const order = orderRows[0];
-  if (user && user.role === 'branch_user' && Number(order.branch_id) !== Number(user.branch_id)) {
+  if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
     const err = new Error('Unauthorized');
     err.statusCode = 403;
     throw err;
@@ -839,7 +845,7 @@ async function updateOrder(id, body, user) {
     }
 
     const currentOrder = orderRows[0];
-    if (user && user.role === 'branch_user' && Number(currentOrder.branch_id) !== Number(user.branch_id)) {
+    if (user && user.role !== 'admin' && Number(currentOrder.branch_id) !== Number(user.branch_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -1245,7 +1251,8 @@ async function searchOrders(queryStr, branchId, user) {
 }
 
 async function createReturn(body, user, req) {
-  let { order_id, items, total_return_amount, branch_id, seller_id, offline_uuid } = body || {};
+  let { order_id, items, total_return_amount, branch_id, seller_id, offline_uuid, refund_method } = body || {};
+  const normRefundMethod = refund_method ? normalizePaymentMethod(refund_method) : 'cash';
   const returnOfflineUuid = newUuid(offline_uuid);
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -1292,7 +1299,7 @@ async function createReturn(body, user, req) {
     }
 
     const orderBranchId = orderRow.branch_id;
-    if (user && user.role === 'branch_user' && Number(orderBranchId) !== Number(user.branch_id)) {
+    if (user && user.role !== 'admin' && Number(orderBranchId) !== Number(user.branch_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -1449,8 +1456,8 @@ async function createReturn(body, user, req) {
 
     // 3. Create Return record
     const returnResult = await tx.query(
-      'INSERT INTO returns (order_id, total_return_amount, branch_id, seller_id, offline_uuid) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-      [order_id, finalReturnAmount, branch_id, s_id, returnOfflineUuid]
+      'INSERT INTO returns (order_id, total_return_amount, branch_id, seller_id, offline_uuid, refund_method) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+      [order_id, finalReturnAmount, branch_id, s_id, returnOfflineUuid, normRefundMethod]
     );
     const returnId = returnResult.rows[0].id;
 
@@ -1478,12 +1485,19 @@ async function createReturn(body, user, req) {
       [isFullyReturned ? 'returned' : 'partially_returned', order_id]
     );
 
-    // 6. Adjust customer total_spent
+    // 6. Adjust customer total_spent & wallet_balance
     if (orderRow.customer_id) {
-      await tx.query(
-        'UPDATE customers SET total_spent = GREATEST(0, total_spent - $1) WHERE id = $2',
-        [finalReturnAmount, orderRow.customer_id]
-      );
+      if (normRefundMethod === 'customer_credit' || normRefundMethod === 'wallet_credit') {
+        await tx.query(
+          'UPDATE customers SET total_spent = GREATEST(0, total_spent - $1), wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2',
+          [finalReturnAmount, orderRow.customer_id]
+        );
+      } else {
+        await tx.query(
+          'UPDATE customers SET total_spent = GREATEST(0, total_spent - $1) WHERE id = $2',
+          [finalReturnAmount, orderRow.customer_id]
+        );
+      }
     }
 
     if (user) {
@@ -1495,6 +1509,7 @@ async function createReturn(body, user, req) {
       order_id,
       order_offline_uuid: orderRow.offline_uuid || null,
       total_return_amount: finalReturnAmount,
+      refund_method: normRefundMethod,
       branch_id,
       seller_id: s_id,
       items: validatedReturnItems.map((item) => ({

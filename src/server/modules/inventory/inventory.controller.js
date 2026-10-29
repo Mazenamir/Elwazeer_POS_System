@@ -2,8 +2,23 @@ const inventoryService = require('./inventory.service');
 
 async function getMetadata(req, res, next) {
   try {
-    const metadata = await inventoryService.getMetadata();
+    const branchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
+    const metadata = await inventoryService.getMetadata(branchId);
     res.json(metadata);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getCategories(req, res, next) {
+  try {
+    const branchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
+    const metadata = await inventoryService.getMetadata(branchId);
+    res.json({
+      categories: metadata.categories || [],
+      categoryCounts: metadata.categoryCounts || {},
+      total: (metadata.categoryCounts && metadata.categoryCounts['الكل']) || 0,
+    });
   } catch (err) {
     next(err);
   }
@@ -40,6 +55,15 @@ async function listInventory(req, res, next) {
   try {
     const items = await inventoryService.listInventory(req, req.user);
     res.json(items);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getBranchMatrix(req, res, next) {
+  try {
+    const data = await inventoryService.getBranchMatrix(req.query, req.user);
+    res.json(data);
   } catch (err) {
     next(err);
   }
@@ -135,6 +159,15 @@ async function receiveTransfer(req, res, next) {
   }
 }
 
+async function listTransferLogs(req, res, next) {
+  try {
+    const result = await inventoryService.listTransferLogs(req.query, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function checkDuplicatesBatch(req, res, next) {
   try {
     const result = await inventoryService.checkDuplicatesBatch(req.body);
@@ -217,6 +250,7 @@ async function listProductNames(req, res, next) {
 
 module.exports = {
   getMetadata,
+  getCategories,
   getModels,
   getBarcodes,
   getVariants,
@@ -239,4 +273,6 @@ module.exports = {
   listSizes,
   createSize,
   listProductNames,
+  getBranchMatrix,
+  listTransferLogs,
 };

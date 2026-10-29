@@ -375,6 +375,34 @@ export function Employees() {
     }
   };
 
+  const formatTime = (timeStr) => {
+    if (!timeStr) return '-';
+    try {
+      const [h, m] = timeStr.split(':');
+      const hour = parseInt(h, 10);
+      const ampm = hour >= 12 ? 'م' : 'ص';
+      const formattedHour = hour % 12 || 12;
+      return `${formattedHour}:${m} ${ampm}`;
+    } catch {
+      return timeStr;
+    }
+  };
+
+  // Open Attendance Modal
+  const openAttendanceModal = async (emp) => {
+    setSelectedEmp(emp);
+    setShowAttendanceModal(true);
+    setLoadingAttendance(true);
+    try {
+      const res = await client.get(`/employees/${emp.id}/attendance-report`);
+      setAttendanceLogs(res.data?.logs || (Array.isArray(res.data) ? res.data : []));
+    } catch {
+      setAttendanceLogs([]);
+    } finally {
+      setLoadingAttendance(false);
+    }
+  };
+
   // Quick Attendance Toggle
   const handleToggleAttendance = async (emp) => {
     try {
@@ -430,21 +458,6 @@ export function Employees() {
     }
   };
 
-  // Open Attendance Modal
-  const openAttendanceModal = async (emp) => {
-    setSelectedEmp(emp);
-    setShowAttendanceModal(true);
-    setLoadingAttendance(true);
-    try {
-      const res = await client.get(`/employees/${emp.id}/attendance-report`);
-      setAttendanceLogs(res.data?.logs || (Array.isArray(res.data) ? res.data : []));
-    } catch {
-      setAttendanceLogs([]);
-    } finally {
-      setLoadingAttendance(false);
-    }
-  };
-
   // Open Manual Attendance Modal
   const openManualAttendance = (emp) => {
     setManualEmp(emp);
@@ -475,22 +488,6 @@ export function Employees() {
     }
   };
 
-  // Open Salary & Transactions Summary
-  const openSummaryModal = (emp) => {
-    const proceed = (pwd) => {
-      executeOpenSummary(emp, pwd);
-    };
-
-    if (salaryPassword || user?.role === 'admin') {
-      proceed(salaryPassword || '');
-    } else {
-      setPendingAuthAction(() => (pwd) => proceed(pwd));
-      setSalaryAuthInput('');
-      setSalaryAuthError('');
-      setShowSalaryAuthModal(true);
-    }
-  };
-
   const executeOpenSummary = async (emp, pwd) => {
     setSummaryEmp(emp);
     setShowSummaryModal(true);
@@ -514,6 +511,23 @@ export function Employees() {
       setLoadingSummary(false);
     }
   };
+
+  // Open Salary & Transactions Summary
+  const openSummaryModal = (emp) => {
+    const proceed = (pwd) => {
+      executeOpenSummary(emp, pwd);
+    };
+
+    if (salaryPassword || user?.role === 'admin') {
+      proceed(salaryPassword || '');
+    } else {
+      setPendingAuthAction(() => (pwd) => proceed(pwd));
+      setSalaryAuthInput('');
+      setSalaryAuthError('');
+      setShowSalaryAuthModal(true);
+    }
+  };
+
 
   // Save Financial Transaction
   const handleSaveTransaction = async (e) => {
@@ -548,22 +562,6 @@ export function Employees() {
     }
   };
 
-  // Open Payslip
-  const openPayslipModal = (emp) => {
-    const proceed = (pwd) => {
-      executeOpenPayslip(emp, pwd);
-    };
-
-    if (salaryPassword || user?.role === 'admin') {
-      proceed(salaryPassword || '');
-    } else {
-      setPendingAuthAction(() => (pwd) => proceed(pwd));
-      setSalaryAuthInput('');
-      setSalaryAuthError('');
-      setShowSalaryAuthModal(true);
-    }
-  };
-
   const executeOpenPayslip = async (emp, pwd) => {
     setPayslipEmp(emp);
     setShowPayslipModal(true);
@@ -580,6 +578,23 @@ export function Employees() {
       setLoadingPayslip(false);
     }
   };
+
+  // Open Payslip
+  const openPayslipModal = (emp) => {
+    const proceed = (pwd) => {
+      executeOpenPayslip(emp, pwd);
+    };
+
+    if (salaryPassword || user?.role === 'admin') {
+      proceed(salaryPassword || '');
+    } else {
+      setPendingAuthAction(() => (pwd) => proceed(pwd));
+      setSalaryAuthInput('');
+      setSalaryAuthError('');
+      setShowSalaryAuthModal(true);
+    }
+  };
+
 
   // Open Sales Report
   const openSalesReportModal = async (emp) => {
@@ -646,18 +661,6 @@ export function Employees() {
     return num < 0 ? `\u200E${formatted} ج.م` : `${formatted} ج.م`;
   };
 
-  const formatTime = (timeStr) => {
-    if (!timeStr) return '-';
-    try {
-      const [h, m] = timeStr.split(':');
-      const hour = parseInt(h, 10);
-      const ampm = hour >= 12 ? 'م' : 'ص';
-      const formattedHour = hour % 12 || 12;
-      return `${formattedHour}:${m} ${ampm}`;
-    } catch {
-      return timeStr;
-    }
-  };
 
   return (
     <div className="space-y-6">

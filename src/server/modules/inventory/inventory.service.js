@@ -17,6 +17,7 @@ const {
   isBranchScopedUser,
   assertBarcodeAvailable,
   getAvailableBarcode,
+  generateUniqueBarcode,
   adjustInventoryStock,
   resolveCategoryQuery,
 } = require('./inventory.helpers');
@@ -255,52 +256,50 @@ function populateCategoryCounts(categoryCounts, totalAll, totalSuits) {
   categoryCounts['كل التصنيفات'] = totalAll;
   categoryCounts['كل الأصناف'] = totalAll;
   categoryCounts['all'] = totalAll;
-  categoryCounts['بدل'] = totalSuits;
-  categoryCounts['بدل (جميع الأنواع)'] = totalSuits;
-  categoryCounts['بدل (جميع الانواع)'] = totalSuits;
-  categoryCounts['أخرى'] = categoryCounts['أخرى'] || 0;
-  categoryCounts['بدون تصنيف / أخرى'] = categoryCounts['أخرى'];
-  categoryCounts['بدون تصنيف'] = categoryCounts['أخرى'];
-  if (categoryCounts['FORMAL SUIT']) {
+
+  if (totalSuits > 0) {
+    categoryCounts['بدل'] = totalSuits;
+    categoryCounts['بدل (جميع الأنواع)'] = totalSuits;
+    categoryCounts['بدل (جميع الانواع)'] = totalSuits;
+  }
+  if (categoryCounts['أخرى'] && categoryCounts['أخرى'] > 0) {
+    categoryCounts['بدون تصنيف / أخرى'] = categoryCounts['أخرى'];
+    categoryCounts['بدون تصنيف'] = categoryCounts['أخرى'];
+  }
+  if (categoryCounts['FORMAL SUIT'] && categoryCounts['FORMAL SUIT'] > 0) {
     categoryCounts['بدل رسمية'] = categoryCounts['FORMAL SUIT'];
     categoryCounts['بدل رسمية (FORMAL SUIT)'] = categoryCounts['FORMAL SUIT'];
   }
-  if (categoryCounts['TUXEDO SUIT']) {
+  if (categoryCounts['TUXEDO SUIT'] && categoryCounts['TUXEDO SUIT'] > 0) {
     categoryCounts['بدل سموكن'] = categoryCounts['TUXEDO SUIT'];
     categoryCounts['بدل سموكن (TUXEDO SUIT)'] = categoryCounts['TUXEDO SUIT'];
   }
-  if (categoryCounts['SUIT']) {
+  if (categoryCounts['SUIT'] && categoryCounts['SUIT'] > 0) {
     categoryCounts['بدل عادية'] = categoryCounts['SUIT'];
     categoryCounts['بدل عادية (SUIT)'] = categoryCounts['SUIT'];
   }
-  if (categoryCounts['CASUAL SUIT']) {
+  if (categoryCounts['CASUAL SUIT'] && categoryCounts['CASUAL SUIT'] > 0) {
     categoryCounts['بدل كاجوال'] = categoryCounts['CASUAL SUIT'];
     categoryCounts['بدل كاجوال (CASUAL SUIT)'] = categoryCounts['CASUAL SUIT'];
   }
-  if (categoryCounts['KIDS']) {
+  if (categoryCounts['KIDS'] && categoryCounts['KIDS'] > 0) {
     categoryCounts['أطفال'] = categoryCounts['KIDS'];
     categoryCounts['أطفال (KIDS)'] = categoryCounts['KIDS'];
   }
-  if (categoryCounts['WALLET']) {
+  if (categoryCounts['WALLET'] && categoryCounts['WALLET'] > 0) {
     categoryCounts['محافظ'] = categoryCounts['WALLET'];
     categoryCounts['محافظ (WALLET)'] = categoryCounts['WALLET'];
   }
 }
 
-async function getMetadata() {
-  const cached = getInventoryMetadataCache();
-  if (cached) return cached;
-
-  const defaultCategories = ['بدل', 'بنطلون', 'قميص', 'بليزر', 'كرافت', 'بيبيون', 'حذاء', 'نصف ياقة', 'صديري', 'تيشيرت', 'جينز', 'إكسسوارات'];
+async function getMetadata(branchId = null) {
+  const bId = branchId && branchId !== 'all' ? parseInt(branchId, 10) : null;
+  if (!bId) {
+    const cached = getInventoryMetadataCache();
+    if (cached) return cached;
+  }
 
   if (config.IS_BRANCH_MODE) {
-    const cats = db.sqlite.prepare(`
-      SELECT DISTINCT TRIM(category) as category FROM (
-        SELECT category FROM inventory WHERE category IS NOT NULL AND TRIM(category) != ''
-        UNION
-        SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
-      )
-    `).all();
     const colors = db.sqlite.prepare('SELECT name FROM colors ORDER BY name COLLATE NOCASE ASC').all();
     const sizes = db.sqlite.prepare('SELECT name FROM sizes ORDER BY name COLLATE NOCASE ASC').all();
 
@@ -309,6 +308,7 @@ async function getMetadata() {
       FROM inventory
       WHERE is_deleted = 0
       GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'أخرى')
+      HAVING count(*) > 0
       ORDER BY count DESC
     `).all();
 
@@ -317,19 +317,20 @@ async function getMetadata() {
     let totalSuits = 0;
     countsRows.forEach((r) => {
       const c = Number(r.count);
-      categoryCounts[r.cat] = c;
-      totalAll += c;
-      if (r.cat.toLowerCase().includes('suit') || r.cat.includes('بدل')) {
-        totalSuits += c;
+      if (c > 0) {
+        categoryCounts[r.cat] = c;
+        totalAll += c;
+        if (r.cat.toLowerCase().includes('suit') || r.cat.includes('بدل')) {
+          totalSuits += c;
+        }
       }
     });
     populateCategoryCounts(categoryCounts, totalAll, totalSuits);
 
+    const activeCats = countsRows.map((r) => r.cat).filter(Boolean);
     const uniqueCats = Array.from(new Set([
-      'بدل',
-      ...countsRows.map((r) => r.cat),
-      ...cats.map((r) => r.category.trim()),
-      ...defaultCategories,
+      ...(totalSuits > 0 ? ['بدل'] : []),
+      ...activeCats,
     ]));
 
     const metadata = {
@@ -338,46 +339,51 @@ async function getMetadata() {
       colors: colors.map((r) => r.name),
       sizes: sizes.map((r) => r.name),
     };
-    setInventoryMetadataCache(metadata);
+    if (!bId) setInventoryMetadataCache(metadata);
     return metadata;
   }
 
-  const categoriesRes = await db.query(`
-    SELECT DISTINCT TRIM(category) as category FROM (
-      SELECT category FROM inventory WHERE category IS NOT NULL AND TRIM(category) != ''
-      UNION
-      SELECT category FROM rental_inventory WHERE category IS NOT NULL AND TRIM(category) != ''
-    ) c ORDER BY category
-  `);
   const colorsRes = await db.query('SELECT name FROM colors ORDER BY name ASC');
   const sizesRes = await db.query('SELECT name FROM sizes ORDER BY name ASC');
 
-  const countsRes = await db.query(`
-    SELECT COALESCE(NULLIF(TRIM(category), ''), 'أخرى') as cat, count(*)::int as count
-    FROM inventory
-    WHERE is_deleted = FALSE
-    GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'أخرى')
-    ORDER BY count DESC
-  `);
+  const countsQuery = bId
+    ? `SELECT COALESCE(NULLIF(TRIM(i.category), ''), 'أخرى') as cat, count(DISTINCT i.id)::int as count
+       FROM inventory i
+       JOIN inventory_branches ib ON ib.inventory_id = i.id AND ib.branch_id = $1 AND ib.stock_level > 0
+       WHERE i.is_deleted = FALSE
+       GROUP BY COALESCE(NULLIF(TRIM(i.category), ''), 'أخرى')
+       HAVING count(DISTINCT i.id) > 0
+       ORDER BY count DESC`
+    : `SELECT COALESCE(NULLIF(TRIM(category), ''), 'أخرى') as cat, count(*)::int as count
+       FROM inventory
+       WHERE is_deleted = FALSE
+       GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'أخرى')
+       HAVING count(*) > 0
+       ORDER BY count DESC`;
+  const countsParams = bId ? [bId] : [];
+  const countsRes = await db.query(countsQuery, countsParams);
 
   const categoryCounts = {};
   let totalAll = 0;
   let totalSuits = 0;
   countsRes.rows.forEach((r) => {
-    categoryCounts[r.cat] = r.count;
-    totalAll += r.count;
-    if (r.cat.toLowerCase().includes('suit') || r.cat.includes('بدل')) {
-      totalSuits += r.count;
+    const c = Number(r.count);
+    if (c > 0) {
+      categoryCounts[r.cat] = c;
+      totalAll += c;
+      if (r.cat.toLowerCase().includes('suit') || r.cat.includes('بدل')) {
+        totalSuits += c;
+      }
     }
   });
   populateCategoryCounts(categoryCounts, totalAll, totalSuits);
 
+  const activeCats = countsRes.rows.map((r) => r.cat).filter(Boolean);
   const uniqueCats = Array.from(new Set([
-    'بدل',
-    ...countsRes.rows.map((r) => r.cat),
-    ...categoriesRes.rows.map((r) => r.category.trim()),
-    ...defaultCategories,
+    ...(totalSuits > 0 ? ['بدل'] : []),
+    ...activeCats,
   ]));
+
   const uniqueCols = colorsRes.rows.map((r) => r.name);
   const uniqueSizes = sizesRes.rows.map((r) => r.name);
 
@@ -386,8 +392,9 @@ async function getMetadata() {
     categoryCounts,
     colors: uniqueCols,
     sizes: uniqueSizes,
+    branch_id: bId || 'all',
   };
-  setInventoryMetadataCache(metadata);
+  if (!bId) setInventoryMetadataCache(metadata);
   return metadata;
 }
 
@@ -759,11 +766,22 @@ async function listInventory(req, user) {
     } else if (req.query.stock_status === 'broken_sizes' || req.query.stock_status === 'missing_sizes') {
       where.push(`(${stockLevelSql} > 0 AND ${brokenSizesSql})`);
     }
+  } else if (activeBranchId && !Number.isNaN(activeBranchId)) {
+    // When a specific branch is selected and stock_status is 'all',
+    // show items that have stock in that branch by default, unless include_zero=true
+    if (req.query.include_zero !== 'true' && req.query.all_with_zero !== 'true') {
+      where.push(`${stockLevelSql} > 0`);
+    }
   }
 
-  if ((req.query.branch_only === 'true' || req.query.only_branch === 'true') && activeBranchId && !Number.isNaN(activeBranchId)) {
-    if (!req.query.stock_status || req.query.stock_status === 'all') {
-      where.push(`${stockLevelSql} > 0`);
+  if (req.query.gender && req.query.gender !== 'all') {
+    const gVal = String(req.query.gender).toLowerCase().trim();
+    if (gVal === 'men' || gVal === 'رجالي') {
+      where.push(`(i.gender = 'men' OR i.gender = 'رجالي')`);
+    } else if (gVal === 'women' || gVal === 'حريمي') {
+      where.push(`(i.gender = 'women' OR i.gender = 'حريمي')`);
+    } else if (gVal === 'both' || gVal === 'مشترك' || gVal === 'كلاهما') {
+      where.push(`(i.gender = 'both' OR i.gender = 'مشترك' OR i.gender = 'كلاهما')`);
     }
   }
 
@@ -893,6 +911,14 @@ async function createProduct(body, user, file = null) {
   const minStockLevel = min_stock_level === undefined || min_stock_level === '' ? 5 : parseNonNegativeInt(min_stock_level, 'min_stock_level');
   const b_id = parseInt(branch_id, 10) || 1;
 
+  let normalizedGender = 'men';
+  if (gender) {
+    const gLower = String(gender).toLowerCase().trim();
+    if (gLower === 'women' || gLower === 'حريمي') normalizedGender = 'women';
+    else if (gLower === 'both' || gLower === 'مشترك' || gLower === 'كلاهما') normalizedGender = 'both';
+    else normalizedGender = 'men';
+  }
+
   const numPrice = Number(price) || 0;
   const numCost = Number(cost_price) || 0;
   if (numPrice < 0 || numCost < 0) {
@@ -912,6 +938,11 @@ async function createProduct(body, user, file = null) {
 
   try {
     if (config.IS_BRANCH_MODE) {
+      if (barcode) {
+        await assertBarcodeAvailable(db, barcode);
+      } else {
+        barcode = await generateUniqueBarcode(db);
+      }
       const resolvedColor = await createOrGetColor(targetColorStr);
       const resolvedSize = await createOrGetSize(targetSizeStr);
       const colorName = resolvedColor?.name || (targetColorStr || null);
@@ -923,12 +954,12 @@ async function createProduct(body, user, file = null) {
         INSERT INTO inventory (
           name, category, size_cut, color, stock_level, min_stock_level, price,
           cost_price, image_url, barcode, preferred_supplier_id, is_deleted,
-          color_id, size_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+          color_id, size_id, gender
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
       `);
       const info = stmt.run(
         name, category, sizeName, colorName, initialStock, minStockLevel,
-        numPrice, numCost, image_url, barcode, supplier_id, colorId, sizeId
+        numPrice, numCost, image_url, barcode, supplier_id, colorId, sizeId, normalizedGender
       );
       const newId = info.lastInsertRowid;
 
@@ -980,8 +1011,11 @@ async function createProduct(body, user, file = null) {
         }
       }
 
-      barcode = await getAvailableBarcode(tx, barcode);
-      await assertBarcodeAvailable(tx, barcode);
+      if (barcode) {
+        await assertBarcodeAvailable(tx, barcode);
+      } else {
+        barcode = await generateUniqueBarcode(tx);
+      }
 
       const { rows } = await tx.query(
         `INSERT INTO inventory (
@@ -993,7 +1027,7 @@ async function createProduct(body, user, file = null) {
         [
           name, category, resolvedSizeName, resolvedColorName, initialStock, minStockLevel,
           numPrice, wholesale_price || 0, semi_wholesale_price || 0, numCost, image_url,
-          barcode, supplier_id, gender || 'both', resolvedColorId, resolvedSizeId
+          barcode, supplier_id, normalizedGender, resolvedColorId, resolvedSizeId
         ]
       );
       const newId = rows[0].id;
@@ -1087,7 +1121,7 @@ async function updateProduct(id, body, user, file = null) {
     name, category, size_cut, color, new_size, new_color,
     stock_level, min_stock_level, supplier_id, preferred_supplier_id,
     price, wholesale_price, semi_wholesale_price, cost_price, image_url,
-    barcode, branch_id, is_correction
+    barcode, branch_id, is_correction, gender
   } = body || {};
 
   name = String(name || '').trim();
@@ -1138,6 +1172,14 @@ async function updateProduct(id, body, user, file = null) {
     parsedSizes = mergeDuplicateSizeRows(parsedSizes);
   }
 
+  let normalizedGender = null;
+  if (gender !== undefined && gender !== null && gender !== '') {
+    const gLower = String(gender).toLowerCase().trim();
+    if (gLower === 'women' || gLower === 'حريمي') normalizedGender = 'women';
+    else if (gLower === 'both' || gLower === 'مشترك' || gLower === 'كلاهما') normalizedGender = 'both';
+    else normalizedGender = 'men';
+  }
+
   const numPrice = Number(price) || 0;
   const numCost = Number(cost_price) || 0;
   const targetColorStr = String(new_color || color || '').trim();
@@ -1154,6 +1196,11 @@ async function updateProduct(id, body, user, file = null) {
     }
 
     if (config.IS_BRANCH_MODE) {
+      if (barcode) {
+        await assertBarcodeAvailable(db, barcode);
+      } else {
+        barcode = await generateUniqueBarcode(db);
+      }
       const resolvedColor = await createOrGetColor(targetColorStr);
       const resolvedSize = await createOrGetSize(targetSizeStr);
       const colorName = resolvedColor?.name || (targetColorStr || null);
@@ -1163,9 +1210,9 @@ async function updateProduct(id, body, user, file = null) {
 
       db.sqlite.prepare(`
         UPDATE inventory
-        SET name = ?, category = ?, size_cut = ?, color = ?, min_stock_level = ?, preferred_supplier_id = ?, price = ?, cost_price = ?, image_url = COALESCE(?, image_url), barcode = ?, color_id = ?, size_id = ?
+        SET name = ?, category = ?, size_cut = ?, color = ?, min_stock_level = ?, preferred_supplier_id = ?, price = ?, cost_price = ?, image_url = COALESCE(?, image_url), barcode = ?, color_id = ?, size_id = ?, gender = COALESCE(?, gender)
         WHERE id = ?
-      `).run(name, category, sizeName, colorName, minStockLevel, supplier_id, numPrice, numCost, image_url, barcode, colorId, sizeId, id);
+      `).run(name, category, sizeName, colorName, minStockLevel, supplier_id, numPrice, numCost, image_url, barcode, colorId, sizeId, normalizedGender, id);
 
       if (hasMultiSizes && parsedSizes.length > 0) {
         const targetBranchId = Number(branch_id) || Number(user?.branch_id) || 1;
@@ -1216,12 +1263,12 @@ async function updateProduct(id, body, user, file = null) {
                preferred_supplier_id = $6, price = $7, wholesale_price = $8,
                semi_wholesale_price = $9, cost_price = $10,
                image_url = CASE WHEN $11::text IS NOT NULL THEN $11 ELSE image_url END,
-               barcode = $12, gender = $13, color_id = $14, size_id = $15
+               barcode = $12, gender = COALESCE($13, gender), color_id = $14, size_id = $15
            WHERE id = $16`,
           [
             name, category, resolvedSizeName, resolvedColorName, minStockLevel,
             supplier_id, numPrice, wholesale_price || 0, semi_wholesale_price || 0, numCost,
-            image_url, barcode, body.gender || 'both', resolvedColorId, resolvedSizeId, id
+            image_url, barcode, normalizedGender, resolvedColorId, resolvedSizeId, id
           ]
         );
       }
@@ -1302,7 +1349,7 @@ async function updateProduct(id, body, user, file = null) {
         await tx.query('UPDATE inventory SET stock_level = $1 WHERE id = $2', [newTotal, id]);
       }
 
-      const { rows } = await db.query(`
+      const { rows } = await tx.query(`
         SELECT i.*, s.name as supplier_name,
                (SELECT json_agg(json_build_object('branch_id', branch_id, 'stock_level', stock_level)) FROM inventory_branches WHERE inventory_id = i.id) as branch_stocks,
                (SELECT json_agg(json_build_object('id', id, 'size_name', size_name, 'color_name', color_name, 'stock_level', stock_level, 'size_id', size_id, 'barcode', barcode)) FROM inventory_sizes WHERE inventory_id = i.id AND branch_id = $2) as sizes
@@ -1445,9 +1492,11 @@ async function transferStock(body, user) {
       }
     }
 
+    const creatorId = user?.id ? Number(user.id) : null;
+    const creatorName = user?.full_name || user?.name || user?.username || null;
     await db.query(
-      'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data) VALUES ($1, $2, $3, $4, $5, $6)',
-      [inventory_id, from_branch_id, to_branch_id, transferQty, 'requested', sizesDataJson]
+      'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [inventory_id, from_branch_id, to_branch_id, transferQty, 'requested', sizesDataJson, creatorId, creatorName]
     );
     return { success: true, message: 'تم إرسال طلب بضاعة للفرع الآخر بنجاح' };
   }
@@ -1530,14 +1579,18 @@ async function transferStock(body, user) {
         });
       }
 
+      const senderId = user?.id ? Number(user.id) : null;
+      const senderName = user?.full_name || user?.name || user?.username || null;
       await tx.query(
-        'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data) VALUES ($1, $2, $3, $4, $5, $6)',
-        [inventory_id, from_branch_id, to_branch_id, transferQty, 'completed', sizesDataJson]
+        'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, sender_id, sender_name, received_by, received_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
+        [inventory_id, from_branch_id, to_branch_id, transferQty, 'completed', sizesDataJson, senderId, senderName, senderId, senderName, senderId, senderName]
       );
     } else {
+      const senderId = user?.id ? Number(user.id) : null;
+      const senderName = user?.full_name || user?.name || user?.username || null;
       await tx.query(
-        'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data) VALUES ($1, $2, $3, $4, $5, $6)',
-        [inventory_id, from_branch_id, to_branch_id, transferQty, 'pending', sizesDataJson]
+        'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, sender_id, sender_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+        [inventory_id, from_branch_id, to_branch_id, transferQty, 'pending', sizesDataJson, senderId, senderName, senderId, senderName]
       );
     }
 
@@ -1565,11 +1618,14 @@ async function listTransferRequests(user, branchIdParam) {
   let query = `
     SELECT st.*, i.name as inventory_name, i.barcode as inventory_barcode,
            i.category, i.color, i.size_cut, i.image_url,
-           b_to.name as to_branch_name, b_from.name as from_branch_name
+           b_to.name as to_branch_name, b_from.name as from_branch_name,
+           COALESCE(u_creator.full_name, e_creator.name, st.created_by_name, u_creator.username, 'غير محدد') as created_by_name
     FROM stock_transfers st
     JOIN inventory i ON st.inventory_id = i.id
     JOIN branches b_to ON st.to_branch_id = b_to.id
     JOIN branches b_from ON st.from_branch_id = b_from.id
+    LEFT JOIN users u_creator ON st.created_by = u_creator.id
+    LEFT JOIN employees e_creator ON u_creator.employee_id = e_creator.id
     WHERE st.status = 'requested'
   `;
   const params = [];
@@ -1594,7 +1650,9 @@ async function approveTransfer(transferId, user) {
 
     const transfer = transferRes.rows[0];
     if (isBranchScopedUser(user) && Number(transfer.from_branch_id) !== Number(user.branch_id)) {
-      throw new Error('Unauthorized');
+      const err = new Error('غير مصرح لك بالموافقة على طلب التحويل من هذا الفرع');
+      err.statusCode = 403;
+      throw err;
     }
     const transferQty = transfer.quantity;
 
@@ -1664,7 +1722,9 @@ async function approveTransfer(transferId, user) {
       WHERE id = $1
     `, [transfer.inventory_id]);
 
-    await tx.query("UPDATE stock_transfers SET status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [transferId]);
+    const senderId = user?.id ? Number(user.id) : null;
+    const senderName = user?.full_name || user?.name || user?.username || null;
+    await tx.query("UPDATE stock_transfers SET status = 'pending', sender_id = $1, sender_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3", [senderId, senderName, transferId]);
   });
 
   invalidateInventoryMetadata();
@@ -1694,11 +1754,16 @@ async function listIncomingTransfers(user, branchIdParam) {
   let query = `
     SELECT st.*, i.name as inventory_name, i.barcode as inventory_barcode,
            i.category, i.color, i.size_cut, i.image_url,
-           b_to.name as to_branch_name, b_from.name as from_branch_name
+           b_to.name as to_branch_name, b_from.name as from_branch_name,
+           COALESCE(u_sender.full_name, e_sender.name, st.sender_name, u_sender.username, 'غير محدد') as sender_name
     FROM stock_transfers st
     JOIN inventory i ON st.inventory_id = i.id
     JOIN branches b_to ON st.to_branch_id = b_to.id
     JOIN branches b_from ON st.from_branch_id = b_from.id
+    LEFT JOIN users u_sender ON st.sender_id = u_sender.id
+    LEFT JOIN employees e_sender ON u_sender.employee_id = e_sender.id
+    LEFT JOIN users u_creator ON st.created_by = u_creator.id
+    LEFT JOIN employees e_creator ON u_creator.employee_id = e_creator.id
     WHERE st.status = 'pending'
   `;
   const params = [];
@@ -1723,7 +1788,9 @@ async function receiveTransfer(transferId, user) {
 
     const transfer = transferRes.rows[0];
     if (isBranchScopedUser(user) && Number(transfer.to_branch_id) !== Number(user.branch_id)) {
-      throw new Error('Unauthorized');
+      const err = new Error('غير مصرح لك باستلام شحنة موجهة لفرع آخر');
+      err.statusCode = 403;
+      throw err;
     }
 
     if (transfer.sizes_data) {
@@ -1758,7 +1825,9 @@ async function receiveTransfer(transferId, user) {
       });
     }
 
-    await tx.query("UPDATE stock_transfers SET status = 'received', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [transferId]);
+    const receiverId = user?.id ? Number(user.id) : null;
+    const receiverName = user?.full_name || user?.name || user?.username || null;
+    await tx.query("UPDATE stock_transfers SET status = 'received', received_by = $1, received_by_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3", [receiverId, receiverName, transferId]);
 
     // Refresh overall inventory stock_level
     await tx.query(`
@@ -1770,6 +1839,327 @@ async function receiveTransfer(transferId, user) {
 
   invalidateInventoryMetadata();
   return { success: true, message: 'تم تأكيد استلام المخزون بنجاح' };
+}
+
+async function listTransferLogs(query = {}, user = {}) {
+  const canViewAll = hasInventoryAllBranchesAccess(user);
+  let scopedBranchId = null;
+
+  if (!canViewAll) {
+    // Non-admin without inventory_view_all_branches permission:
+    // Strictly isolate to the user's assigned branch.
+    // If user has no branch_id, lock to -1 (so they see no other branch's data).
+    scopedBranchId = user?.branch_id ? Number(user.branch_id) : -1;
+  } else if (query.branch_id && query.branch_id !== 'all') {
+    scopedBranchId = Number(query.branch_id);
+  }
+
+  const whereConditions = [];
+  const params = [];
+  const direction = (query.direction || 'all').toLowerCase().trim();
+
+  // Scoping / branch condition
+  if (scopedBranchId) {
+    if (scopedBranchId === -1) {
+      whereConditions.push('1 = 0');
+    } else if (direction === 'outgoing') {
+      params.push(scopedBranchId);
+      whereConditions.push(`st.from_branch_id = $${params.length}`);
+    } else if (direction === 'incoming') {
+      params.push(scopedBranchId);
+      whereConditions.push(`st.to_branch_id = $${params.length}`);
+    } else {
+      params.push(scopedBranchId);
+      whereConditions.push(`(st.from_branch_id = $${params.length} OR st.to_branch_id = $${params.length})`);
+    }
+  } else {
+    // Unscoped admin / manager with view-all permission:
+    // If direction was selected along with a reference branch (e.g. user.branch_id)
+    const refBranch = user?.branch_id ? Number(user.branch_id) : null;
+    if (direction === 'outgoing' && refBranch) {
+      params.push(refBranch);
+      whereConditions.push(`st.from_branch_id = $${params.length}`);
+    } else if (direction === 'incoming' && refBranch) {
+      params.push(refBranch);
+      whereConditions.push(`st.to_branch_id = $${params.length}`);
+    }
+
+    // Allow specific from / to filters
+    if (query.from_branch_id && query.from_branch_id !== 'all') {
+      params.push(Number(query.from_branch_id));
+      whereConditions.push(`st.from_branch_id = $${params.length}`);
+    }
+    if (query.to_branch_id && query.to_branch_id !== 'all') {
+      params.push(Number(query.to_branch_id));
+      whereConditions.push(`st.to_branch_id = $${params.length}`);
+    }
+  }
+
+  // Status filter
+  const status = (query.status || 'all').toLowerCase().trim();
+  if (status && status !== 'all') {
+    params.push(status);
+    whereConditions.push(`st.status = $${params.length}`);
+  }
+
+  // Search filter (Product name, barcode, branch names, sizes/colors, or ID)
+  const search = (query.search || '').trim();
+  if (search) {
+    const cleanId = search.replace(/^#/, '').trim();
+    const isNum = /^\d+$/.test(cleanId);
+    const searchPattern = `%${search.toLowerCase()}%`;
+    params.push(searchPattern);
+    const patternIdx = params.length;
+
+    if (isNum) {
+      params.push(Number(cleanId));
+      const idIdx = params.length;
+      whereConditions.push(`(
+        st.id = $${idIdx}
+        OR LOWER(COALESCE(i.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(i.barcode, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(b_from.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(b_to.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.sizes_data, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_sender.full_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_sender.username, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(e_sender.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.sender_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_receiver.full_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_receiver.username, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(e_receiver.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.received_by_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_creator.full_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_creator.username, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(e_creator.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.created_by_name, '')) LIKE $${patternIdx}
+      )`);
+    } else {
+      whereConditions.push(`(
+        LOWER(COALESCE(i.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(i.barcode, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(b_from.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(b_to.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.sizes_data, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_sender.full_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_sender.username, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(e_sender.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.sender_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_receiver.full_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_receiver.username, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(e_receiver.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.received_by_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_creator.full_name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(u_creator.username, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(e_creator.name, '')) LIKE $${patternIdx}
+        OR LOWER(COALESCE(st.created_by_name, '')) LIKE $${patternIdx}
+      )`);
+    }
+  }
+
+  // Date range filters
+  if (query.start_date) {
+    const sDate = String(query.start_date).trim().slice(0, 10);
+    params.push(`${sDate} 00:00:00`);
+    whereConditions.push(`st.transfer_date >= $${params.length}`);
+  }
+  if (query.end_date) {
+    const eDate = String(query.end_date).trim().slice(0, 10);
+    params.push(`${eDate} 23:59:59`);
+    whereConditions.push(`st.transfer_date <= $${params.length}`);
+  }
+
+  const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+  // Summary counts query
+  let summaryWhereClause = '';
+  const summaryParams = [];
+  if (scopedBranchId) {
+    if (scopedBranchId === -1) {
+      summaryWhereClause = 'WHERE 1 = 0';
+    } else {
+      summaryParams.push(scopedBranchId);
+      summaryWhereClause = `WHERE (st.from_branch_id = $1 OR st.to_branch_id = $1)`;
+    }
+  } else if (user?.branch_id && (direction === 'outgoing' || direction === 'incoming')) {
+    summaryParams.push(Number(user.branch_id));
+    summaryWhereClause = `WHERE (st.from_branch_id = $1 OR st.to_branch_id = $1)`;
+  }
+
+  const summarySql = `
+    SELECT
+      COUNT(*) as total,
+      COUNT(CASE WHEN st.status = 'requested' THEN 1 END) as requested,
+      COUNT(CASE WHEN st.status = 'pending' THEN 1 END) as pending,
+      COUNT(CASE WHEN st.status = 'received' THEN 1 END) as received,
+      COUNT(CASE WHEN st.status = 'completed' THEN 1 END) as completed,
+      COUNT(CASE WHEN st.status = 'rejected' THEN 1 END) as rejected,
+      COALESCE(SUM(st.quantity), 0) as total_quantity
+      ${summaryParams.length > 0 ? `,
+        COUNT(CASE WHEN st.from_branch_id = $1 THEN 1 END) as outgoing_count,
+        COUNT(CASE WHEN st.to_branch_id = $1 THEN 1 END) as incoming_count
+      ` : ''}
+    FROM stock_transfers st
+    ${summaryWhereClause}
+  `;
+
+  // Count query for pagination
+  const countSql = `
+    SELECT COUNT(*) as total
+    FROM stock_transfers st
+    LEFT JOIN inventory i ON st.inventory_id = i.id
+    LEFT JOIN branches b_from ON st.from_branch_id = b_from.id
+    LEFT JOIN branches b_to ON st.to_branch_id = b_to.id
+    LEFT JOIN users u_sender ON st.sender_id = u_sender.id
+    LEFT JOIN employees e_sender ON u_sender.employee_id = e_sender.id
+    LEFT JOIN users u_receiver ON st.received_by = u_receiver.id
+    LEFT JOIN employees e_receiver ON u_receiver.employee_id = e_receiver.id
+    LEFT JOIN users u_creator ON st.created_by = u_creator.id
+    LEFT JOIN employees e_creator ON u_creator.employee_id = e_creator.id
+    ${whereClause}
+  `;
+
+  // Pagination params
+  const isAll = query.limit === 'all' || query.all === 'true';
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = isAll ? 1000 : Math.min(200, Math.max(1, parseInt(query.limit, 10) || 25));
+  const offset = (page - 1) * limit;
+
+  // Main data query
+  const dataParams = [...params];
+  let dataSql = `
+    SELECT
+      st.id,
+      st.inventory_id,
+      st.from_branch_id,
+      st.to_branch_id,
+      st.quantity,
+      st.transfer_date,
+      st.status,
+      st.updated_at,
+      st.sizes_data,
+      st.created_by,
+      st.sender_id,
+      st.received_by,
+      COALESCE(
+        u_sender.full_name,
+        e_sender.name,
+        st.sender_name,
+        u_sender.username,
+        CASE
+          WHEN st.status = 'requested' THEN 'بانتظار الموافقة والإرسال'
+          WHEN st.status = 'rejected' THEN 'لم يتم الإرسال (مرفوض)'
+          ELSE COALESCE(u_creator.full_name, e_creator.name, st.created_by_name, u_creator.username, 'غير محدد')
+        END
+      ) as sender_name,
+      COALESCE(u_receiver.full_name, e_receiver.name, st.received_by_name, u_receiver.username,
+        CASE
+          WHEN st.status = 'received' THEN 'تم الاستلام'
+          WHEN st.status = 'completed' THEN COALESCE(u_sender.full_name, e_sender.name, st.sender_name, u_sender.username, 'تم الاستلام فوري')
+          WHEN st.status = 'pending' THEN 'بانتظار الاستلام'
+          WHEN st.status = 'requested' THEN 'بانتظار الموافقة'
+          WHEN st.status = 'rejected' THEN 'مرفوض'
+          ELSE '—'
+        END
+      ) as receiver_name,
+      COALESCE(u_creator.full_name, e_creator.name, st.created_by_name, u_creator.username, 'غير محدد') as created_by_name,
+      COALESCE(i.name, 'صنف #' || st.inventory_id) as inventory_name,
+      i.barcode as inventory_barcode,
+      i.category,
+      i.color,
+      i.size_cut,
+      i.image_url,
+      i.price,
+      i.cost_price,
+      COALESCE(b_from.name, 'فرع #' || st.from_branch_id) as from_branch_name,
+      COALESCE(b_to.name, 'فرع #' || st.to_branch_id) as to_branch_name
+    FROM stock_transfers st
+    LEFT JOIN inventory i ON st.inventory_id = i.id
+    LEFT JOIN branches b_from ON st.from_branch_id = b_from.id
+    LEFT JOIN branches b_to ON st.to_branch_id = b_to.id
+    LEFT JOIN users u_sender ON st.sender_id = u_sender.id
+    LEFT JOIN employees e_sender ON u_sender.employee_id = e_sender.id
+    LEFT JOIN users u_receiver ON st.received_by = u_receiver.id
+    LEFT JOIN employees e_receiver ON u_receiver.employee_id = e_receiver.id
+    LEFT JOIN users u_creator ON st.created_by = u_creator.id
+    LEFT JOIN employees e_creator ON u_creator.employee_id = e_creator.id
+    ${whereClause}
+    ORDER BY st.transfer_date DESC, st.id DESC
+  `;
+
+  if (!isAll) {
+    dataParams.push(limit);
+    dataParams.push(offset);
+    dataSql += ` LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`;
+  }
+
+  const [summaryRes, countRes, dataRes] = await Promise.all([
+    db.query(summarySql, summaryParams),
+    db.query(countSql, params),
+    db.query(dataSql, dataParams),
+  ]);
+
+  const totalFiltered = parseInt(countRes.rows[0]?.total || 0, 10);
+  const summaryRow = summaryRes.rows[0] || {};
+  const userBranchNum = user?.branch_id ? Number(user.branch_id) : null;
+
+  const items = dataRes.rows.map((row) => {
+    let parsedSizes = null;
+    if (row.sizes_data) {
+      try {
+        parsedSizes = typeof row.sizes_data === 'string' ? JSON.parse(row.sizes_data) : row.sizes_data;
+      } catch {
+        parsedSizes = null;
+      }
+    }
+
+    const fromBranchId = Number(row.from_branch_id);
+    const toBranchId = Number(row.to_branch_id);
+    const refBranch = (scopedBranchId && scopedBranchId > 0) ? scopedBranchId : userBranchNum;
+
+    const isOutgoing = refBranch ? fromBranchId === refBranch : false;
+    const isIncoming = refBranch ? toBranchId === refBranch : false;
+
+    // Permissions / action flags
+    const hasAdmin = hasInventoryAdminAccess(user);
+    const canApprove = (hasAdmin || fromBranchId === userBranchNum) && row.status === 'requested';
+    const canReject = (hasAdmin || fromBranchId === userBranchNum) && row.status === 'requested';
+    const canReceive = (hasAdmin || toBranchId === userBranchNum) && row.status === 'pending';
+
+    return {
+      ...row,
+      sizes_breakdown: parsedSizes,
+      is_outgoing: isOutgoing,
+      is_incoming: isIncoming,
+      direction_label: isOutgoing ? 'صادر' : (isIncoming ? 'وارد' : 'تحويل'),
+      can_approve: canApprove,
+      can_reject: canReject,
+      can_receive: canReceive,
+    };
+  });
+
+  return {
+    items,
+    pagination: {
+      page,
+      limit: isAll ? totalFiltered : limit,
+      total: totalFiltered,
+      totalPages: isAll ? 1 : Math.ceil(totalFiltered / limit) || 1,
+    },
+    summary: {
+      total: parseInt(summaryRow.total || 0, 10),
+      requested: parseInt(summaryRow.requested || 0, 10),
+      pending: parseInt(summaryRow.pending || 0, 10),
+      received: parseInt(summaryRow.received || 0, 10),
+      completed: parseInt(summaryRow.completed || 0, 10),
+      rejected: parseInt(summaryRow.rejected || 0, 10),
+      total_quantity: parseInt(summaryRow.total_quantity || 0, 10),
+      outgoing_count: parseInt(summaryRow.outgoing_count || 0, 10),
+      incoming_count: parseInt(summaryRow.incoming_count || 0, 10),
+    },
+    scoped_branch_id: scopedBranchId,
+    is_branch_scoped: !canViewAll,
+  };
 }
 
 async function checkDuplicatesBatch(body) {
@@ -1984,6 +2374,203 @@ async function searchInventory(query = {}, user = null) {
   return rows;
 }
 
+async function getBranchMatrix(query = {}, user = null) {
+  const branchesRes = await db.query(`
+    SELECT id, name, location, is_main_warehouse 
+    FROM branches 
+    ORDER BY is_main_warehouse DESC, id ASC
+  `);
+  const allBranches = branchesRes.rows;
+
+  const isInventoryAdmin = hasInventoryAdminAccess(user);
+  const selectedBranchId = (query.branch_id && query.branch_id !== 'all') ? parseInt(query.branch_id, 10) : null;
+
+  let activeBranches = allBranches;
+  let selectedBranchObj = null;
+  if (selectedBranchId && !Number.isNaN(selectedBranchId)) {
+    selectedBranchObj = allBranches.find((b) => b.id === selectedBranchId) || null;
+    const mainWarehouseObj = allBranches.find((b) => b.is_main_warehouse || b.id === 1) || allBranches[0];
+    if (selectedBranchObj && mainWarehouseObj) {
+      if (selectedBranchObj.id === mainWarehouseObj.id) {
+        activeBranches = [mainWarehouseObj];
+      } else {
+        activeBranches = [selectedBranchObj, mainWarehouseObj];
+      }
+    }
+  }
+
+  const where = ['i.is_deleted = FALSE'];
+  const params = [];
+
+  if (query.gender && query.gender !== 'all') {
+    params.push(query.gender);
+    where.push(`i.gender = $${params.length}`);
+  }
+
+  const catQuery = resolveCategoryQuery(query.category);
+  if (catQuery) {
+    if (catQuery.type === 'suits') {
+      where.push(`(i.category ILIKE '%SUIT%' OR i.category ILIKE '%بدل%')`);
+    } else if (catQuery.type === 'other') {
+      where.push(`(i.category IS NULL OR TRIM(i.category) = '' OR LOWER(TRIM(i.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+    } else {
+      params.push(catQuery.value);
+      where.push(`LOWER(TRIM(i.category)) = LOWER(TRIM($${params.length}))`);
+    }
+  }
+
+  if (query.search && query.search.trim()) {
+    params.push(likePattern(query.search.trim()));
+    const pIdx = params.length;
+    where.push(`(
+      i.name ILIKE $${pIdx}
+      OR i.barcode ILIKE $${pIdx}
+      OR CAST(i.id AS text) ILIKE $${pIdx}
+      OR i.category ILIKE $${pIdx}
+      OR i.color ILIKE $${pIdx}
+      OR i.size_cut ILIKE $${pIdx}
+      OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.size_name ILIKE $${pIdx})
+      OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.barcode ILIKE $${pIdx})
+    )`);
+  }
+
+  if (query.stock_status === 'in_stock') {
+    if (selectedBranchId) {
+      params.push(selectedBranchId);
+      where.push(`COALESCE((SELECT stock_level FROM inventory_branches WHERE inventory_id = i.id AND branch_id = $${params.length}), 0) > 0`);
+    } else {
+      where.push(`COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), 0) > 0`);
+    }
+  } else if (query.stock_status === 'out_of_stock') {
+    if (selectedBranchId) {
+      params.push(selectedBranchId);
+      where.push(`COALESCE((SELECT stock_level FROM inventory_branches WHERE inventory_id = i.id AND branch_id = $${params.length}), 0) <= 0`);
+    } else {
+      where.push(`COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), 0) <= 0`);
+    }
+  } else if (selectedBranchId && query.stock_status !== 'all_with_zero') {
+    params.push(selectedBranchId);
+    where.push(`COALESCE((SELECT stock_level FROM inventory_branches WHERE inventory_id = i.id AND branch_id = $${params.length}), 0) > 0`);
+  }
+
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  // 1. Overall & Branch Summary
+  const selBranchParamIdx = selectedBranchId ? (params.length + 1) : null;
+  const summaryParams = selectedBranchId ? [...params, selectedBranchId] : [...params];
+
+  const summaryRes = await db.query(`
+    SELECT 
+      COUNT(DISTINCT i.id)::int as total_products,
+      COALESCE(SUM(ib.stock_level), 0)::int as total_company_stock,
+      COALESCE(SUM(CASE WHEN b.is_main_warehouse = TRUE OR b.id = 1 THEN ib.stock_level ELSE 0 END), 0)::int as main_warehouse_stock,
+      ${selectedBranchId ? `COALESCE(SUM(CASE WHEN b.id = $${selBranchParamIdx} THEN ib.stock_level ELSE 0 END), 0)::int as selected_branch_stock,` : '0 as selected_branch_stock,'}
+      ${selectedBranchId ? `COALESCE(SUM(CASE WHEN b.id = $${selBranchParamIdx} THEN ib.stock_level * i.price ELSE 0 END), 0)::numeric as selected_branch_retail_value,` : '0 as selected_branch_retail_value,'}
+      ${selectedBranchId ? `COALESCE(SUM(CASE WHEN b.id = $${selBranchParamIdx} THEN ib.stock_level * COALESCE(i.cost_price, 0) ELSE 0 END), 0)::numeric as selected_branch_cost_value,` : '0 as selected_branch_cost_value,'}
+      COALESCE(SUM(ib.stock_level * i.price), 0)::numeric as total_retail_value,
+      COALESCE(SUM(ib.stock_level * COALESCE(i.cost_price, 0)), 0)::numeric as total_cost_value
+    FROM inventory i
+    LEFT JOIN inventory_branches ib ON ib.inventory_id = i.id
+    LEFT JOIN branches b ON b.id = ib.branch_id
+    ${whereClause}
+  `, summaryParams);
+
+  // 2. Per-branch summaries
+  const branchSummariesRes = await db.query(`
+    SELECT 
+      b.id as branch_id,
+      b.name as branch_name,
+      b.is_main_warehouse,
+      COUNT(DISTINCT CASE WHEN ib.stock_level > 0 THEN i.id END)::int as active_items_count,
+      COALESCE(SUM(ib.stock_level), 0)::int as total_stock,
+      COALESCE(SUM(ib.stock_level * i.price), 0)::numeric as retail_value,
+      COALESCE(SUM(ib.stock_level * COALESCE(i.cost_price, 0)), 0)::numeric as cost_value
+    FROM branches b
+    LEFT JOIN inventory_branches ib ON ib.branch_id = b.id
+    LEFT JOIN inventory i ON i.id = ib.inventory_id AND ${where.join(' AND ')}
+    GROUP BY b.id, b.name, b.is_main_warehouse
+    ORDER BY b.is_main_warehouse DESC, b.id ASC
+  `, params);
+
+  // 3. Products count for pagination
+  const countRes = await db.query(`SELECT COUNT(*)::int as total FROM inventory i ${whereClause}`, params);
+  const total = countRes.rows[0]?.total || 0;
+
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = query.limit === 'all' || parseInt(query.limit, 10) > 1000 ? 10000 : Math.max(10, parseInt(query.limit, 10) || 50);
+  const offset = (page - 1) * limit;
+
+  // 4. Products query
+  const productsQuery = `
+    SELECT 
+      i.id, i.name, i.category, i.gender, i.barcode, i.color, i.size_cut,
+      i.price, ${isInventoryAdmin ? 'i.cost_price' : 'NULL as cost_price'},
+      COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), 0)::int as total_stock,
+      COALESCE((
+        SELECT json_object_agg(ib.branch_id::text, ib.stock_level)
+        FROM inventory_branches ib
+        WHERE ib.inventory_id = i.id
+      ), '{}'::json) as branch_stocks,
+      COALESCE((
+        SELECT json_agg(json_build_object(
+          'size_name', s.size_name,
+          'color_name', s.color_name,
+          'total_stock', s.total_size_stock,
+          'branch_stocks', s.branch_stocks
+        ) ORDER BY s.size_name ASC)
+        FROM (
+          SELECT 
+            sz.size_name,
+            sz.color_name,
+            SUM(COALESCE(sz.stock_level, 0))::int as total_size_stock,
+            json_object_agg(sz.branch_id::text, COALESCE(sz.stock_level, 0)) as branch_stocks
+          FROM inventory_sizes sz
+          WHERE sz.inventory_id = i.id
+          GROUP BY sz.size_name, sz.color_name
+        ) s
+      ), '[]'::json) as sizes
+    FROM inventory i
+    ${whereClause}
+    ORDER BY i.id DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+
+  const productsRes = await db.query(productsQuery, params);
+
+  const summary = summaryRes.rows[0] || {
+    total_products: 0,
+    total_company_stock: 0,
+    main_warehouse_stock: 0,
+    selected_branch_stock: 0,
+    selected_branch_retail_value: 0,
+    selected_branch_cost_value: 0,
+    total_retail_value: 0,
+    total_cost_value: 0,
+  };
+
+  if (selectedBranchObj) {
+    summary.selected_branch_id = selectedBranchObj.id;
+    summary.selected_branch_name = selectedBranchObj.name;
+    summary.is_main_warehouse = selectedBranchObj.is_main_warehouse || selectedBranchObj.id === 1;
+  }
+
+  return {
+    branches: activeBranches,
+    allBranches,
+    selectedBranchId,
+    summary,
+    branchSummaries: branchSummariesRes.rows,
+    items: productsRes.rows,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 1,
+    },
+    isAdmin: isInventoryAdmin,
+  };
+}
+
 module.exports = {
   getMetadata,
   getModels,
@@ -2008,4 +2595,6 @@ module.exports = {
   listSizes,
   createOrGetSize,
   listProductNames,
+  getBranchMatrix,
+  listTransferLogs,
 };

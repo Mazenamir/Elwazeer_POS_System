@@ -2,6 +2,7 @@ const authService = require('./auth.service');
 const config = require('../../config/env');
 const db = require('../../database/connection');
 const { getDatabaseCairoNow, getCairoDateTimeParts, CAIRO_TIME_ZONE } = require('../../../shared/utils/date');
+const { PERMISSION_DEFINITIONS, normalizePermissions } = require('../../../shared/constants/permissions');
 
 async function checkSetup(req, res, next) {
   try {
@@ -60,20 +61,39 @@ async function getMe(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     if (config.IS_BRANCH_MODE) {
-      const user = db.sqlite.prepare('SELECT id, username, role, branch_id, permissions FROM users WHERE id = ?').get(req.user.id);
+      const user = db.sqlite.prepare(`
+        SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions,
+               COALESCE(u.full_name, u.username) as name,
+               b.name as branch_name
+        FROM users u
+        LEFT JOIN branches b ON u.branch_id = b.id
+        WHERE u.id = ?
+      `).get(req.user.id);
+      if (user && typeof user.permissions === 'string') {
+        try { user.permissions = JSON.parse(user.permissions); } catch {}
+      }
       if (!user) return res.status(404).json({ error: 'User not found' });
       return res.json({ user });
     }
 
     const { rows } = await db.query(`
-      SELECT u.id, u.username, u.role, u.branch_id, u.permissions, e.name as full_name
+      SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions,
+             COALESCE(u.full_name, e.name, u.username) as name,
+             COALESCE(u.full_name, e.name, u.username) as full_name,
+             b.name as branch_name
       FROM users u
       LEFT JOIN employees e ON u.employee_id = e.id
+      LEFT JOIN branches b ON u.branch_id = b.id
       WHERE u.id = $1
     `, [req.user.id]);
 
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    res.json({ user: rows[0] });
+    res.json({
+      user: {
+        ...rows[0],
+        permissions: normalizePermissions(rows[0].permissions),
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -205,6 +225,10 @@ async function getServerTime(req, res) {
   }
 }
 
+async function getPermissions(req, res) {
+  res.json(PERMISSION_DEFINITIONS);
+}
+
 module.exports = {
   checkSetup,
   setup,
@@ -212,6 +236,7 @@ module.exports = {
   logout,
   logoutGet,
   getMe,
+  getPermissions,
   verifySalaryPassword,
   verifyInvoiceEditPassword,
   verifyProfitPassword,

@@ -40,6 +40,7 @@ function IndexRedirect() {
   if (hasPermission('Reports.html')) return <Navigate to="/reports" replace />;
   if (hasPermission('Barcodes.html')) return <Navigate to="/barcodes" replace />;
   if (hasPermission('WornProducts.html')) return <Navigate to="/worn-products" replace />;
+  if (hasPermission('Settings.html')) return <Navigate to="/settings" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -72,7 +73,7 @@ export function AppRoutes() {
         <Route path="expenses" element={<ProtectedRoute permission="Expenses.html"><Expenses /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute permission="Reports.html"><Reports /></ProtectedRoute>} />
         <Route path="barcodes" element={<ProtectedRoute permission="Barcodes.html"><Barcodes /></ProtectedRoute>} />
-        <Route path="settings" element={<ProtectedRoute adminOnly={true}><Settings /></ProtectedRoute>} />
+        <Route path="settings" element={<ProtectedRoute permission="Settings.html"><Settings /></ProtectedRoute>} />
         <Route path="worn-products" element={<ProtectedRoute permission="WornProducts.html"><WornProducts /></ProtectedRoute>} />
       </Route>
 

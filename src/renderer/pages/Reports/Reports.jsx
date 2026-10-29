@@ -49,6 +49,53 @@ import {
 } from 'lucide-react';
 import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
 
+const BRANCH_NAME_ARABIC = {
+  'elraml': 'الرمل',
+  'el raml': 'الرمل',
+  'raml': 'الرمل',
+  'beshr': 'بشر',
+  'moharm bek': 'محرم بك',
+  'el amrya': 'العامرية',
+  'al agamy': 'العجمي',
+  'el agamy': 'العجمي',
+  'damnhor man': 'دمنهور رجالي',
+  'damnhor woman': 'دمنهور حريمي',
+  'antalya': 'انطاليا',
+  'el wazer': 'الوزير',
+  'elwazer': 'الوزير',
+  'main warehouse': 'المخزن الرئيسي',
+};
+
+function cleanBranchLabel(rawName) {
+  if (!rawName) return '';
+  const trimmed = String(rawName).trim();
+  const lower = trimmed.toLowerCase();
+  if (['all', 'all_branches', 'كل الفروع', 'كافة الفروع', 'كافة الفروع (مجمّع)'].includes(lower)) {
+    return 'كل الفروع';
+  }
+  if (BRANCH_NAME_ARABIC[lower]) {
+    return `فرع ${BRANCH_NAME_ARABIC[lower]}`;
+  }
+  let clean = trimmed
+    .replace(/^نظام\s+الوزير(\s+المحاسبي)?(\s+المتكامل)?/gi, '')
+    .replace(/^نظام\s+بيبيون(\s+والوزير)?/gi, '')
+    .replace(/^بيبيون\s+والوزير(\s+لإدارة\s+الفروع)?/gi, '')
+    .replace(/^بيبيون\s+للبدل\s+الرجالي(\s*[-–]\s*)?/gi, '')
+    .replace(/^بيبيون\s+ب(ال)?/gi, '')
+    .replace(/^بيبيون\s+فرع\s+/gi, '')
+    .replace(/^بيبيون\s+/gi, '')
+    .replace(/^فرع\s+/gi, '')
+    .trim();
+  const cleanLower = clean.toLowerCase();
+  if (BRANCH_NAME_ARABIC[cleanLower]) {
+    clean = BRANCH_NAME_ARABIC[cleanLower];
+  }
+  if (!clean || clean === 'كل الفروع' || clean === 'كافة الفروع') {
+    return 'كل الفروع';
+  }
+  return clean.startsWith('فرع') ? clean : `فرع ${clean}`;
+}
+
 export function Reports() {
   const { user } = useAuth();
   const { branches, isMultiBranch, activeBranchId } = useBranch();
@@ -143,6 +190,7 @@ export function Reports() {
   // Inventory report
   const [inventoryReport, setInventoryReport] = useState({ items: [], summary: {} });
   const [loadingInventory, setLoadingInventory] = useState(false);
+  const [inventoryGender, setInventoryGender] = useState('all'); // 'all' | 'men' | 'women'
 
   // Top products
   const [topProducts, setTopProducts] = useState([]);
@@ -164,16 +212,64 @@ export function Reports() {
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportingDayExcel, setExportingDayExcel] = useState(null);
   const [exportingConsolidated, setExportingConsolidated] = useState(false);
+  const exportingPdf = exportingPDF;
+  const setExportingPdf = setExportingPDF;
 
-  // Consolidated branch workbook states (OHDA, Salary, KPI)
+  // Consolidated branch workbook states (OHDA, Salary, KPI, Master)
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [masterReport, setMasterReport] = useState(null);
+  const [loadingMaster, setLoadingMaster] = useState(false);
+  const [masterSelectedDay, setMasterSelectedDay] = useState(1);
   const [ohdaReport, setOhdaReport] = useState(null);
   const [loadingOhda, setLoadingOhda] = useState(false);
   const [salaryReport, setSalaryReport] = useState(null);
   const [loadingSalary, setLoadingSalary] = useState(false);
   const [kpiReport, setKpiReport] = useState(null);
   const [loadingKpi, setLoadingKpi] = useState(false);
+
+  const currentBranchLabel = useMemo(() => {
+    if (selectedBranch === 'all' || !selectedBranch) return 'كل الفروع';
+    const found = branches.find((b) => String(b.id) === String(selectedBranch));
+    if (found?.name) {
+      return cleanBranchLabel(found.name);
+    }
+    if (masterReport?.branch_clean_name && masterReport.branch_clean_name !== 'كل الفروع') {
+      return cleanBranchLabel(masterReport.branch_clean_name);
+    }
+    if (masterReport?.branch_name && masterReport.branch_name !== 'كل الفروع') {
+      return cleanBranchLabel(masterReport.branch_name);
+    }
+    return `فرع #${selectedBranch}`;
+  }, [selectedBranch, branches, masterReport]);
+
+  const currentReportTitle = useMemo(() => {
+    if (selectedBranch === 'all' || !selectedBranch) {
+      return 'كل الفروع';
+    }
+    return currentBranchLabel;
+  }, [selectedBranch, currentBranchLabel]);
+
   const [attendanceEditState, setAttendanceEditState] = useState({});
+  const [sectionsOpen, setSectionsOpen] = useState({
+    revenue: true,
+    advances: false,
+    expenses: false,
+    tailoring: false,
+    attendance: false,
+    suppliers: false,
+  });
+
+  const toggleSection = (sec) => {
+    setSectionsOpen((prev) => ({ ...prev, [sec]: !prev[sec] }));
+  };
+
+  // Suppliers ledger state
+  const [ledgerData, setLedgerData] = useState(null);
+  const [loadingLedger, setLoadingLedger] = useState(false);
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerCategory, setLedgerCategory] = useState('all');
+  const [selectedSupplierStatement, setSelectedSupplierStatement] = useState(null);
+  const [loadingStatementModal, setLoadingStatementModal] = useState(false);
 
   const isBranchScoped = user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor';
 
@@ -356,6 +452,7 @@ export function Reports() {
       setLoadingInventory(true);
       const params = new URLSearchParams();
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
+      if (inventoryGender !== 'all') params.set('gender', inventoryGender);
 
       const res = await client.get(`/reports/inventory?${params.toString()}`);
       setInventoryReport(res.data || { items: [], summary: {} });
@@ -368,14 +465,39 @@ export function Reports() {
     } finally {
       setLoadingInventory(false);
     }
-  }, [selectedBranch, toast]);
+  }, [selectedBranch, inventoryGender, toast]);
+
+  // Load Master Sheet Report
+  const loadMasterReport = useCallback(async () => {
+    try {
+      setLoadingMaster(true);
+      const params = { month: selectedMonth, branch_id: selectedBranch };
+      const res = await reportsService.getMonthlyMaster(params);
+      const data = res?.data || res;
+      setMasterReport(data);
+      if (data?.days && data.days.length > 0) {
+        setMasterSelectedDay((prev) => {
+          const maxDay = data.days.length;
+          if (!prev || prev < 1 || prev > maxDay) return (data.days[0].day_number || data.days[0].day || 1);
+          return prev;
+        });
+      }
+    } catch (err) {
+      toast({
+        title: 'خطأ',
+        message: err.message || 'تعذر تحميل المجمع الشهري MASTER SHEET',
+        variant: 'danger',
+      });
+    } finally {
+      setLoadingMaster(false);
+    }
+  }, [selectedMonth, selectedBranch, toast]);
 
   // Load OHDA Report
   const loadOhdaReport = useCallback(async () => {
     try {
       setLoadingOhda(true);
-      const params = { month: selectedMonth };
-      if (selectedBranch !== 'all') params.branch_id = selectedBranch;
+      const params = { month: selectedMonth, branch_id: selectedBranch };
       const res = await reportsService.getMonthlyOhda(params);
       setOhdaReport(res?.data || res);
     } catch (err) {
@@ -393,8 +515,7 @@ export function Reports() {
   const loadSalaryReport = useCallback(async () => {
     try {
       setLoadingSalary(true);
-      const params = { month: selectedMonth };
-      if (selectedBranch !== 'all') params.branch_id = selectedBranch;
+      const params = { month: selectedMonth, branch_id: selectedBranch };
       const res = await reportsService.getMonthlySalarySheet(params);
       setSalaryReport(res?.data || res);
     } catch (err) {
@@ -412,8 +533,7 @@ export function Reports() {
   const loadKpiReport = useCallback(async () => {
     try {
       setLoadingKpi(true);
-      const params = { month: selectedMonth };
-      if (selectedBranch !== 'all') params.branch_id = selectedBranch;
+      const params = { month: selectedMonth, branch_id: selectedBranch };
       const res = await reportsService.getSalesKpi(params);
       setKpiReport(res?.data || res);
     } catch (err) {
@@ -427,17 +547,61 @@ export function Reports() {
     }
   }, [selectedMonth, selectedBranch, toast]);
 
+  // Load Suppliers Ledger (File 1)
+  const loadSuppliersLedger = useCallback(async () => {
+    try {
+      setLoadingLedger(true);
+      const params = {};
+      if (selectedBranch !== 'all') params.branch_id = selectedBranch;
+      if (ledgerSearch.trim()) params.search = ledgerSearch.trim();
+      if (ledgerCategory !== 'all') params.gender_category = ledgerCategory;
+      const res = await client.get('/reports/suppliers-ledger', { params });
+      setLedgerData(res?.data || res);
+    } catch (err) {
+      toast({
+        title: 'خطأ',
+        message: err.message || 'تعذر تحميل كشوف حسابات الموردين',
+        variant: 'danger',
+      });
+    } finally {
+      setLoadingLedger(false);
+    }
+  }, [selectedBranch, ledgerSearch, ledgerCategory, toast]);
+
+  // Open Detailed Statement Modal for a Supplier
+  const openSupplierStatementModal = async (supplierId) => {
+    try {
+      setLoadingStatementModal(true);
+      const params = {};
+      if (selectedBranch !== 'all') params.branch_id = selectedBranch;
+      const res = await client.get(`/suppliers/${supplierId}/statement`, { params });
+      setSelectedSupplierStatement(res?.data || res);
+    } catch (err) {
+      toast({
+        title: 'خطأ',
+        message: err.message || 'تعذر تحميل كشف حساب المورد',
+        variant: 'danger',
+      });
+    } finally {
+      setLoadingStatementModal(false);
+    }
+  };
+
   // Initial and reactive fetch
   useEffect(() => {
     loadProfitSummary();
     if (activeTab === 'daily') {
       loadDailyHistory();
+    } else if (activeTab === 'master') {
+      loadMasterReport();
     } else if (activeTab === 'ohda') {
       loadOhdaReport();
     } else if (activeTab === 'salary') {
       loadSalaryReport();
     } else if (activeTab === 'kpi') {
       loadKpiReport();
+    } else if (activeTab === 'suppliers_ledger') {
+      loadSuppliersLedger();
     } else if (activeTab === 'monthly') {
       loadMonthlyHistory();
     } else if (activeTab === 'sales') {
@@ -457,9 +621,11 @@ export function Reports() {
     selectedMonth,
     loadProfitSummary,
     loadDailyHistory,
+    loadMasterReport,
     loadOhdaReport,
     loadSalaryReport,
     loadKpiReport,
+    loadSuppliersLedger,
     loadMonthlyHistory,
     loadSalesReport,
     loadRentalsReport,
@@ -593,10 +759,16 @@ export function Reports() {
     try {
       setExportingConsolidated(true);
       const params = { month: selectedMonth };
-      if (selectedBranch !== 'all') params.branch_id = selectedBranch;
-
-      const branchObj = branches.find((b) => String(b.id) === String(selectedBranch));
-      if (branchObj) params.branch_name = branchObj.name;
+      let bName = 'كل_الفروع';
+      if (selectedBranch !== 'all') {
+        params.branch_id = selectedBranch;
+        const cleanName = currentBranchLabel;
+        params.branch_name = cleanName;
+        bName = cleanName.replace(/\s+/g, '_');
+      } else {
+        params.branch_id = 'all';
+        params.branch_name = 'كل الفروع';
+      }
 
       const res = await reportsService.exportConsolidatedExcel(params);
       const blob = res instanceof Blob
@@ -622,7 +794,6 @@ export function Reports() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const bName = branchObj ? branchObj.name.replace(/\s+/g, '_') : 'الفرع';
       const downloadFileName = `مجمع_${bName}_${selectedMonth}.xlsx`;
       link.download = downloadFileName;
       link.setAttribute('download', downloadFileName);
@@ -637,7 +808,7 @@ export function Reports() {
 
       toast({
         title: 'تم تصدير شيت المجمع',
-        message: `تم تصدير ملف الإكسيل المجمع للفرع (${selectedMonth}) بنجاح (36 شيت متكامل)`,
+        message: `تم تصدير ملف الإكسيل المجمع (${selectedBranch === 'all' ? 'كل الفروع' : (params.branch_name || 'الفرع')}) (${selectedMonth}) بنجاح (36 شيت متكامل)`,
         variant: 'success',
       });
     } catch (err) {
@@ -648,6 +819,55 @@ export function Reports() {
       });
     } finally {
       setExportingConsolidated(false);
+    }
+  };
+
+  const exportMasterPdf = async () => {
+    try {
+      setExportingPDF(true);
+      const params = { type: 'master', month: selectedMonth };
+      let bName = 'كل_الفروع';
+      if (selectedBranch !== 'all') {
+        params.branch_id = selectedBranch;
+        const cleanName = currentBranchLabel;
+        params.branch_name = cleanName;
+        bName = cleanName.replace(/\s+/g, '_');
+      } else {
+        params.branch_id = 'all';
+        params.branch_name = 'كل الفروع';
+      }
+
+      const res = await reportsService.exportPdfHtml(params);
+      const htmlContent = typeof res === 'string' ? res : (res?.data || res);
+      const defaultName = `تقرير_المجمع_${bName}_${selectedMonth}.pdf`;
+
+      if (window.electronAPI?.exportPdf) {
+        const result = await window.electronAPI.exportPdf({ html: htmlContent, defaultFileName: defaultName });
+        if (result?.success) {
+          toast({
+            title: 'تم الحفظ',
+            message: 'تم حفظ ملف PDF بنجاح',
+            variant: 'success',
+          });
+          return;
+        } else if (result?.canceled) {
+          return;
+        }
+      }
+
+      if (!htmlContent || typeof htmlContent !== 'string' || !htmlContent.trim()) {
+        throw new Error('لم يتم استلام محتوى التقرير من الخادم');
+      }
+
+      await printHtml(htmlContent, `تقرير_المجمع_${bName}_${selectedMonth}`, { iframeId: 'report-print-frame', isA4: true });
+    } catch (err) {
+      toast({
+        title: 'خطأ',
+        message: err.message || 'تعذر تصدير تقرير PDF المجمع',
+        variant: 'danger',
+      });
+    } finally {
+      setExportingPDF(false);
     }
   };
 
@@ -669,13 +889,20 @@ export function Reports() {
           : reportType;
 
       const params = new URLSearchParams({ type: mappedType, ...extraParams });
-      if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
+      let bName = 'كل_الفروع';
+      if (selectedBranch !== 'all') {
+        params.set('branch_id', selectedBranch);
+        const cleanName = currentBranchLabel;
+        params.set('branch_name', cleanName);
+        bName = cleanName.replace(/\s+/g, '_');
+      } else {
+        params.set('branch_id', 'all');
+        params.set('branch_name', 'كل الفروع');
+      }
       if (dailyFrom) params.set('date_from', dailyFrom);
       if (dailyTo) params.set('date_to', dailyTo);
       if (selectedMonth) params.set('month', selectedMonth);
-
-      const branchObj = branches.find((b) => String(b.id) === String(selectedBranch));
-      if (branchObj) params.set('branch_name', branchObj.name);
+      if (mappedType === 'inventory' && inventoryGender !== 'all') params.set('gender', inventoryGender);
 
       const res = await client.get(`/reports/export/excel?${params.toString()}`, {
         responseType: 'blob',
@@ -724,14 +951,24 @@ export function Reports() {
         ? 'ملخص-الأعمال'
         : reportType === 'ohda'
         ? `العهدة-الشهرية-${selectedMonth}`
-        : reportType === 'salary'
+        : reportType === 'salary' || reportType === 'salary_sheet'
         ? `مسير-المرتبات-${selectedMonth}`
         : reportType === 'kpi'
         ? `أداء-البائعين-${selectedMonth}`
-        : reportType === 'consolidated'
+        : reportType === 'consolidated' || reportType === 'master' || reportType === 'master_sheet' || reportType === 'monthly_master'
         ? `المجمع-الشهري-${selectedMonth}`
-        : 'الأكثر-مبيعاً';
-      const downloadFileName = `تقرير-${typeLabel}-${new Date().toISOString().split('T')[0]}.xlsx`;
+        : reportType === 'suppliers_ledger' || reportType === 'suppliers'
+        ? 'دفتر-الموردين'
+        : reportType === 'supplier_statement'
+        ? 'كشف-حساب-مورد'
+        : reportType === 'branch_matrix'
+        ? 'أرصدة-الفروع'
+        : reportType === 'transfers' || reportType === 'transfer_logs'
+        ? 'حركة-التحويلات'
+        : reportType === 'top_products'
+        ? 'الأكثر-مبيعاً'
+        : (reportType || 'عام');
+      const downloadFileName = `تقرير-${typeLabel}-${bName}-${new Date().toISOString().split('T')[0]}.xlsx`;
       link.download = downloadFileName;
       link.setAttribute('download', downloadFileName);
       link.style.display = 'none';
@@ -784,13 +1021,20 @@ export function Reports() {
           : reportType;
 
       const params = new URLSearchParams({ type: mappedType, ...extraParams });
-      if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
+      let bName = 'كل_الفروع';
+      if (selectedBranch !== 'all') {
+        params.set('branch_id', selectedBranch);
+        const cleanName = currentBranchLabel;
+        params.set('branch_name', cleanName);
+        bName = cleanName.replace(/\s+/g, '_');
+      } else {
+        params.set('branch_id', 'all');
+        params.set('branch_name', 'كل الفروع');
+      }
       if (dailyFrom) params.set('date_from', dailyFrom);
       if (dailyTo) params.set('date_to', dailyTo);
       if (selectedMonth) params.set('month', selectedMonth);
-
-      const branchObj = branches.find((b) => String(b.id) === String(selectedBranch));
-      if (branchObj) params.set('branch_name', branchObj.name);
+      if (mappedType === 'inventory' && inventoryGender !== 'all') params.set('gender', inventoryGender);
 
       const res = await client.get(`/reports/export/pdf-html?${params.toString()}`);
       const html = typeof res === 'string' ? res : (res?.data || res);
@@ -815,16 +1059,26 @@ export function Reports() {
         ? 'ملخص-الأعمال'
         : reportType === 'ohda'
         ? `العهدة-الشهرية-${selectedMonth}`
-        : reportType === 'salary'
+        : reportType === 'salary' || reportType === 'salary_sheet'
         ? `مسير-المرتبات-${selectedMonth}`
         : reportType === 'kpi'
         ? `أداء-البائعين-${selectedMonth}`
-        : reportType === 'consolidated'
+        : reportType === 'consolidated' || reportType === 'master' || reportType === 'master_sheet' || reportType === 'monthly_master'
         ? `المجمع-الشهري-${selectedMonth}`
-        : 'الأكثر-مبيعاً';
+        : reportType === 'suppliers_ledger' || reportType === 'suppliers'
+        ? 'دفتر-الموردين'
+        : reportType === 'supplier_statement'
+        ? 'كشف-حساب-مورد'
+        : reportType === 'branch_matrix'
+        ? 'أرصدة-الفروع'
+        : reportType === 'transfers' || reportType === 'transfer_logs'
+        ? 'حركة-التحويلات'
+        : reportType === 'top_products'
+        ? 'الأكثر-مبيعاً'
+        : (reportType || 'عام');
 
       if (window.electronAPI?.exportPdf) {
-        const defaultName = `تقرير-${typeLabel}-${new Date().toISOString().split('T')[0]}.pdf`;
+        const defaultName = `تقرير-${typeLabel}-${bName}-${new Date().toISOString().split('T')[0]}.pdf`;
         const result = await window.electronAPI.exportPdf({ html, defaultFileName: defaultName });
         if (result?.success) {
           toast({
@@ -895,12 +1149,27 @@ export function Reports() {
             </select>
           )}
 
+          {/* Export to Excel & PDF first */}
           <Button
-            variant="outline"
-            icon={profitVisible ? EyeOff : Eye}
-            onClick={handleToggleProfitVisibility}
+            variant="primary"
+            icon={FileSpreadsheet}
+            isLoading={exportingExcel}
+            disabled={exportingExcel || exportingPDF || exportingConsolidated}
+            onClick={() => exportToExcel()}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black shadow-sm"
           >
-            {profitVisible ? 'إخفاء الأرباح' : 'إظهار الأرباح 🔒'}
+            تصدير إكسيل (.xlsx)
+          </Button>
+
+          <Button
+            variant="primary"
+            icon={Printer}
+            isLoading={exportingPDF}
+            disabled={exportingPDF || exportingExcel || exportingConsolidated}
+            onClick={() => exportToPDF()}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-black shadow-sm"
+          >
+            طباعة / PDF
           </Button>
 
           <Button
@@ -915,23 +1184,11 @@ export function Reports() {
           </Button>
 
           <Button
-            variant="primary"
-            icon={FileSpreadsheet}
-            isLoading={exportingExcel}
-            disabled={exportingExcel || exportingPDF || exportingConsolidated}
-            onClick={() => exportToExcel()}
-          >
-            تصدير إكسيل (.xlsx)
-          </Button>
-
-          <Button
             variant="outline"
-            icon={Printer}
-            isLoading={exportingPDF}
-            disabled={exportingPDF || exportingExcel || exportingConsolidated}
-            onClick={() => exportToPDF()}
+            icon={profitVisible ? EyeOff : Eye}
+            onClick={handleToggleProfitVisibility}
           >
-            طباعة / PDF
+            {profitVisible ? 'إخفاء الأرباح' : 'إظهار الأرباح 🔒'}
           </Button>
         </div>
       </div>
@@ -1010,6 +1267,18 @@ export function Reports() {
         </button>
 
         <button
+          onClick={() => setActiveTab('master')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+            activeTab === 'master'
+              ? 'bg-slate-900 text-white shadow-sm'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>المجمع الشهري (MASTER SHEET)</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('ohda')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
             activeTab === 'ohda'
@@ -1043,6 +1312,18 @@ export function Reports() {
         >
           <Award className="w-4 h-4" />
           <span>تقييم وأداء البائعين (KPI)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('suppliers_ledger')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+            activeTab === 'suppliers_ledger'
+              ? 'bg-emerald-800 text-white shadow-sm'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+          <span>كشوف حسابات الموردين (LEDGER)</span>
         </button>
 
         <button
@@ -1319,27 +1600,71 @@ export function Reports() {
                           </div>
                         ) : (
                           <div className="space-y-6">
+                            {/* Day Quick Actions Bar (Top) */}
+                            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-white border border-slate-200 rounded-2xl shadow-sm">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                                  تصدير كشف اليومية الفعلي ليوم ({day.date}):
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="primary"
+                                  icon={FileSpreadsheet}
+                                  size="sm"
+                                  isLoading={exportingDayExcel === day.date}
+                                  disabled={exportingDayExcel === day.date || exportingDayPDF === day.date}
+                                  onClick={() => exportToExcel('daily_details', { date: day.date })}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-black"
+                                >
+                                  تصدير إكسيل (.xlsx) لليوم
+                                </Button>
+                                <Button
+                                  variant="primary"
+                                  icon={Printer}
+                                  size="sm"
+                                  isLoading={exportingDayPDF === day.date}
+                                  disabled={exportingDayPDF === day.date || exportingDayExcel === day.date}
+                                  onClick={() => exportToPDF('daily_details', { date: day.date })}
+                                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black"
+                                >
+                                  طباعة / PDF لليوم
+                                </Button>
+                              </div>
+                            </div>
+
                             {/* Extended 4 Parallel Tables + Row 76/77 Summary Bar matching Daily Sheets */}
                             {expandedDetails.extended && (
                               <div className="space-y-5">
-                                {/* Table 1: Sales Invoices */}
+                                {/* Table 1: All Daily Revenue Transactions (Collapsible) */}
                                 <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                                  <div className="p-3 bg-slate-100/90 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                                  <div
+                                    onClick={() => toggleSection('revenue')}
+                                    className="p-3 bg-slate-100/90 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 cursor-pointer hover:bg-slate-200/70 transition-colors select-none"
+                                  >
                                     <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
                                       <ShoppingBag className="w-4 h-4 text-indigo-600" />
-                                      فواتير المبيعات الصادرة ({expandedDetails.extended.sales_invoices?.length || 0})
+                                      حركات وإيرادات اليوم (مبيعات / تأجير / تفصيل / مرتجعات) ({expandedDetails.extended.sales_invoices?.length || 0})
                                     </span>
-                                    <span className="text-[11px] font-bold text-slate-600">
-                                      إجمالي المبيعات: <span className="font-black text-slate-900">{formatCurrency(expandedDetails.extended.summary?.total_sales || 0)}</span> | المحصل: <span className="font-black text-emerald-700">{formatCurrency(expandedDetails.extended.summary?.total_paid || 0)}</span>
-                                    </span>
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-[11px] font-bold text-slate-600">
+                                        إجمالي الإيرادات: <span className="font-black text-slate-900">{formatCurrency(expandedDetails.extended.summary?.total_sales || 0)}</span> | المحصل: <span className="font-black text-emerald-700">{formatCurrency(expandedDetails.extended.summary?.total_paid || 0)}</span>
+                                      </span>
+                                      <div className="w-6 h-6 rounded-md bg-white border border-slate-200 flex items-center justify-center text-slate-600">
+                                        {sectionsOpen.revenue ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="overflow-x-auto max-h-80">
+                                  {sectionsOpen.revenue && (
+                                    <div className="overflow-x-auto max-h-80">
                                     <table className="w-full text-right text-xs">
                                       <thead className="sticky top-0 bg-slate-50 text-slate-700 font-black border-b border-slate-200 z-10">
                                         <tr>
                                           <th className="py-2.5 px-3">التاريخ</th>
                                           <th className="py-2.5 px-3">رقم الفاتورة</th>
-                                          <th className="py-2.5 px-3">البيان (الأصناف والتعديلات)</th>
+                                          <th className="py-2.5 px-3">نوع الحركة</th>
+                                          <th className="py-2.5 px-3">البيان</th>
                                           <th className="py-2.5 px-3">الإجمالي</th>
                                           <th className="py-2.5 px-3">المدفوع</th>
                                           <th className="py-2.5 px-3">الباقي</th>
@@ -1351,18 +1676,33 @@ export function Reports() {
                                       <tbody className="divide-y divide-slate-100 font-bold">
                                         {expandedDetails.extended.sales_invoices?.length === 0 ? (
                                           <tr>
-                                            <td colSpan={9} className="py-6 text-center text-slate-400">
-                                              لا توجد فواتير مبيعات مسجلة في هذا اليوم
+                                            <td colSpan={10} className="py-6 text-center text-slate-400">
+                                              لا توجد حركات مسجلة في هذا اليوم
                                             </td>
                                           </tr>
                                         ) : (
                                           expandedDetails.extended.sales_invoices?.map((inv, idx) => (
-                                            <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                                            <tr key={idx} className={`hover:bg-slate-50/80 transition-colors ${inv.transaction_type === 'return' ? 'bg-rose-50/30' : ''}`}>
                                               <td className="py-2 px-3 text-slate-500 font-mono text-[11px]">{inv.invoice_date || inv.order_date_cairo || inv.date || day.date}</td>
                                               <td className="py-2 px-3 text-slate-900 font-black font-mono">#{inv.branch_invoice_number || inv.invoice_number}</td>
+                                              <td className="py-2 px-3">
+                                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                                  inv.transaction_type === 'rental'
+                                                    ? 'bg-indigo-100 text-indigo-800'
+                                                    : inv.transaction_type === 'tailoring'
+                                                    ? 'bg-purple-100 text-purple-800'
+                                                    : inv.transaction_type === 'rental_fine'
+                                                    ? 'bg-amber-100 text-amber-800'
+                                                    : inv.transaction_type === 'return'
+                                                    ? 'bg-rose-100 text-rose-800'
+                                                    : 'bg-slate-100 text-slate-800'
+                                                }`}>
+                                                  {inv.type_label || (inv.transaction_type === 'rental' ? 'إيجار' : inv.transaction_type === 'tailoring' ? 'تفصيل' : inv.transaction_type === 'return' ? 'مرتجع' : 'بيع')}
+                                                </span>
+                                              </td>
                                               <td className="py-2 px-3 text-slate-700 max-w-xs truncate" title={inv.description}>{inv.description || '-'}</td>
-                                              <td className="py-2 px-3 text-slate-900 font-black">{formatCurrency(inv.total_amount)}</td>
-                                              <td className="py-2 px-3 text-emerald-600 font-black">{formatCurrency(inv.paid_amount)}</td>
+                                              <td className={`py-2 px-3 font-black ${inv.total_amount < 0 ? 'text-rose-600' : 'text-slate-900'}`}>{formatCurrency(inv.total_amount)}</td>
+                                              <td className={`py-2 px-3 font-black ${inv.paid_amount < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{formatCurrency(inv.paid_amount)}</td>
                                               <td className="py-2 px-3 text-rose-600 font-black">{formatCurrency(inv.remaining_amount || 0)}</td>
                                               <td className="py-2 px-3">
                                                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
@@ -1379,21 +1719,31 @@ export function Reports() {
                                       </tbody>
                                     </table>
                                   </div>
+                                  )}
                                 </div>
 
                                 {/* Table 2 & Table 3 Grid (Advances & Expenses) */}
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                  {/* Table 2: Employee Advances */}
+                                  {/* Table 2: Employee Advances (Collapsible) */}
                                   <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                                    <div className="p-3 bg-amber-50/70 border-b border-amber-200 flex items-center justify-between">
+                                    <div
+                                      onClick={() => toggleSection('advances')}
+                                      className="p-3 bg-amber-50/70 border-b border-amber-200 flex items-center justify-between cursor-pointer hover:bg-amber-100/60 transition-colors select-none"
+                                    >
                                       <span className="text-xs font-black text-amber-900 flex items-center gap-1.5">
                                         <Users className="w-4 h-4 text-amber-600" />
                                         سلف الموظفين اليومية ({expandedDetails.extended.advances?.length || 0})
                                       </span>
-                                      <span className="text-xs font-black text-amber-800">
-                                        الإجمالي: {formatCurrency(expandedDetails.extended.summary?.total_advances || 0)}
-                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-black text-amber-800">
+                                          الإجمالي: {formatCurrency(expandedDetails.extended.summary?.total_advances || 0)}
+                                        </span>
+                                        <div className="w-6 h-6 rounded-md bg-white border border-amber-200 flex items-center justify-center text-amber-700">
+                                          {sectionsOpen.advances ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                        </div>
+                                      </div>
                                     </div>
+                                    {sectionsOpen.advances && (
                                     <div className="overflow-x-auto max-h-60">
                                       <table className="w-full text-right text-xs">
                                         <thead className="sticky top-0 bg-slate-50 text-slate-700 font-black border-b border-slate-200 z-10">
@@ -1422,19 +1772,29 @@ export function Reports() {
                                         </tbody>
                                       </table>
                                     </div>
+                                    )}
                                   </div>
 
-                                  {/* Table 3: Expenses */}
+                                  {/* Table 3: Expenses (Collapsible) */}
                                   <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                                    <div className="p-3 bg-rose-50/70 border-b border-rose-200 flex items-center justify-between">
+                                    <div
+                                      onClick={() => toggleSection('expenses')}
+                                      className="p-3 bg-rose-50/70 border-b border-rose-200 flex items-center justify-between cursor-pointer hover:bg-rose-100/60 transition-colors select-none"
+                                    >
                                       <span className="text-xs font-black text-rose-900 flex items-center gap-1.5">
                                         <TrendingDown className="w-4 h-4 text-rose-600" />
                                         المصروفات وطرق السداد ({expandedDetails.extended.expenses?.length || 0})
                                       </span>
-                                      <span className="text-xs font-black text-rose-800">
-                                        الإجمالي: {formatCurrency(expandedDetails.extended.summary?.total_expenses || 0)}
-                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-black text-rose-800">
+                                          الإجمالي: {formatCurrency(expandedDetails.extended.summary?.total_expenses || 0)}
+                                        </span>
+                                        <div className="w-6 h-6 rounded-md bg-white border border-rose-200 flex items-center justify-center text-rose-700">
+                                          {sectionsOpen.expenses ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                        </div>
+                                      </div>
                                     </div>
+                                    {sectionsOpen.expenses && (
                                     <div className="overflow-x-auto max-h-60">
                                       <table className="w-full text-right text-xs">
                                         <thead className="sticky top-0 bg-slate-50 text-slate-700 font-black border-b border-slate-200 z-10">
@@ -1469,21 +1829,31 @@ export function Reports() {
                                         </tbody>
                                       </table>
                                     </div>
+                                    )}
                                   </div>
                                 </div>
 
-                                {/* Table: Tailoring Payments */}
+                                {/* Table: Tailoring Payments (Collapsible) */}
                                 {(expandedDetails.tailoring?.items?.length > 0 || expandedDetails.tailoring_details?.items?.length > 0) && (
                                   <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                                    <div className="p-3 bg-purple-50/70 border-b border-purple-200 flex items-center justify-between">
+                                    <div
+                                      onClick={() => toggleSection('tailoring')}
+                                      className="p-3 bg-purple-50/70 border-b border-purple-200 flex items-center justify-between cursor-pointer hover:bg-purple-100/60 transition-colors select-none"
+                                    >
                                       <span className="text-xs font-black text-purple-900 flex items-center gap-1.5">
                                         <Scissors className="w-4 h-4 text-purple-600" />
                                         متحصلات وعقود التفصيل ({(expandedDetails.tailoring?.items || expandedDetails.tailoring_details?.items || []).length})
                                       </span>
-                                      <span className="text-xs font-black text-purple-800">
-                                        الإجمالي المحصل: {formatCurrency((expandedDetails.tailoring || expandedDetails.tailoring_details)?.total || (expandedDetails.tailoring?.items || expandedDetails.tailoring_details?.items || []).reduce((s, t) => s + Number(t.amount || 0), 0))}
-                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-black text-purple-800">
+                                          الإجمالي المحصل: {formatCurrency((expandedDetails.tailoring || expandedDetails.tailoring_details)?.total || (expandedDetails.tailoring?.items || expandedDetails.tailoring_details?.items || []).reduce((s, t) => s + Number(t.amount || 0), 0))}
+                                        </span>
+                                        <div className="w-6 h-6 rounded-md bg-white border border-purple-200 flex items-center justify-center text-purple-700">
+                                          {sectionsOpen.tailoring ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                        </div>
+                                      </div>
                                     </div>
+                                    {sectionsOpen.tailoring && (
                                     <div className="overflow-x-auto max-h-60">
                                       <table className="w-full text-right text-xs">
                                         <thead className="sticky top-0 bg-slate-50 text-slate-700 font-black border-b border-slate-200 z-10">
@@ -1526,20 +1896,30 @@ export function Reports() {
                                         </tbody>
                                       </table>
                                     </div>
+                                    )}
                                   </div>
                                 )}
 
-                                {/* Table 4: Employee Attendance & Hours with Inline Quick Editing */}
+                                {/* Table 4: Employee Attendance & Hours with Inline Quick Editing (Collapsible) */}
                                 <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                                  <div className="p-3 bg-indigo-50/80 border-b border-indigo-200 flex flex-wrap items-center justify-between gap-2">
+                                  <div
+                                    onClick={() => toggleSection('attendance')}
+                                    className="p-3 bg-indigo-50/80 border-b border-indigo-200 flex flex-wrap items-center justify-between gap-2 cursor-pointer hover:bg-indigo-100/60 transition-colors select-none"
+                                  >
                                     <span className="text-xs font-black text-indigo-900 flex items-center gap-1.5">
                                       <Clock className="w-4 h-4 text-indigo-600" />
                                       حضور وساعات الموظفين (تسجيل وتعديل سريع للدرج)
                                     </span>
-                                    <span className="text-[11px] font-bold text-indigo-700">
-                                      عدّل وقت الحضور/الانصراف أو الملاحظة واضغط "حفظ" لتحديث الساعات واليومية فوراً
-                                    </span>
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-[11px] font-bold text-indigo-700">
+                                        عدّل وقت الحضور/الانصراف أو الملاحظة واضغط "حفظ" لتحديث الساعات واليومية فوراً
+                                      </span>
+                                      <div className="w-6 h-6 rounded-md bg-white border border-indigo-200 flex items-center justify-center text-indigo-700">
+                                        {sectionsOpen.attendance ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                      </div>
+                                    </div>
                                   </div>
+                                  {sectionsOpen.attendance && (
                                   <div className="overflow-x-auto">
                                     <table className="w-full text-right text-xs">
                                       <thead className="bg-slate-50 text-slate-700 font-black border-b border-slate-200">
@@ -1650,7 +2030,55 @@ export function Reports() {
                                       </tbody>
                                     </table>
                                   </div>
+                                  )}
                                 </div>
+
+                                {/* Table: Supplier Cash Payments from Drawer (Collapsible) */}
+                                {expandedDetails.extended.supplier_payments?.length > 0 && (
+                                  <div className="border border-amber-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                                    <div
+                                      onClick={() => toggleSection('suppliers')}
+                                      className="p-3 bg-amber-50/80 border-b border-amber-200 flex items-center justify-between cursor-pointer hover:bg-amber-100/60 transition-colors select-none"
+                                    >
+                                      <span className="text-xs font-black text-amber-900 flex items-center gap-1.5">
+                                        <Wallet className="w-4 h-4 text-amber-600" />
+                                        دفعات الموردين المسددة نقداً من الدرج ({expandedDetails.extended.supplier_payments.length})
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-black text-amber-800">
+                                          الإجمالي المخصوم: {formatCurrency(expandedDetails.extended.summary?.total_supplier_cash_payments || 0)}
+                                        </span>
+                                        <div className="w-6 h-6 rounded-md bg-white border border-amber-200 flex items-center justify-center text-amber-700">
+                                          {sectionsOpen.suppliers ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {sectionsOpen.suppliers && (
+                                    <div className="overflow-x-auto max-h-48">
+                                      <table className="w-full text-right text-xs">
+                                        <thead className="bg-slate-50 text-slate-700 font-black border-b border-slate-200">
+                                          <tr>
+                                            <th className="py-2.5 px-3">المورد</th>
+                                            <th className="py-2.5 px-3">المبلغ المسدد</th>
+                                            <th className="py-2.5 px-3">البيان / الملاحظات</th>
+                                            <th className="py-2.5 px-3">الوقت</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 font-bold">
+                                          {expandedDetails.extended.supplier_payments.map((sp, idx) => (
+                                            <tr key={idx} className="hover:bg-slate-50/80">
+                                              <td className="py-2 px-3 text-slate-900">{sp.supplier_name}</td>
+                                              <td className="py-2 px-3 text-rose-600 font-black">{formatCurrency(sp.amount)}</td>
+                                              <td className="py-2 px-3 text-slate-600">{sp.notes || 'سداد دفعة للمورد من الدرج'}</td>
+                                              <td className="py-2 px-3 text-slate-400 font-mono text-[11px]">{sp.transaction_time || '-'}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                    )}
+                                  </div>
+                                )}
 
                                 {/* Daily Summary Bar (Workbook Rows 76 & 77) */}
                                 <div className="bg-slate-900 rounded-2xl p-4 text-white shadow-md space-y-3">
@@ -1668,19 +2096,47 @@ export function Reports() {
                                       </span>
                                     </div>
 
-                                    <div className="flex items-center gap-4">
+                                    <div className="flex flex-wrap items-center gap-4">
                                       <div>
-                                        <span className="text-slate-400 font-bold ml-1.5">إجمالي السلف:</span>
+                                        <span className="text-slate-400 font-bold ml-1.5">السلف:</span>
                                         <span className="text-amber-400 font-black">
                                           {formatCurrency(expandedDetails.extended.summary?.total_advances || 0)}
                                         </span>
                                       </div>
                                       <div>
-                                        <span className="text-slate-400 font-bold ml-1.5">إجمالي المصروفات:</span>
+                                        <span className="text-slate-400 font-bold ml-1.5">المصروفات:</span>
                                         <span className="text-rose-400 font-black">
                                           {formatCurrency(expandedDetails.extended.summary?.total_expenses || 0)}
                                         </span>
                                       </div>
+                                      <div>
+                                        <span className="text-slate-400 font-bold ml-1.5">سداد موردين:</span>
+                                        <span className="text-orange-400 font-black">
+                                          {formatCurrency(expandedDetails.extended.summary?.total_supplier_cash_payments || 0)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Track 3: Separate Electronic Collections vs Cash Drawer */}
+                                  <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800 text-xs">
+                                    <div className="flex flex-wrap items-center gap-3">
+                                      <span className="text-slate-400 font-bold flex items-center gap-1">
+                                        <CreditCard className="w-3.5 h-3.5 text-blue-400" />
+                                        توزيع المتحصلات الإلكترونية:
+                                      </span>
+                                      <span className="bg-slate-800 px-2 py-0.5 rounded text-blue-300 font-bold">
+                                        فيزا: {formatCurrency(expandedDetails.extended.summary?.card_collected || 0)}
+                                      </span>
+                                      <span className="bg-slate-800 px-2 py-0.5 rounded text-cyan-300 font-bold">
+                                        انستاباي: {formatCurrency(expandedDetails.extended.summary?.bank_collected || 0)}
+                                      </span>
+                                      <span className="bg-slate-800 px-2 py-0.5 rounded text-amber-300 font-bold">
+                                        فودافون كاش: {formatCurrency(expandedDetails.extended.summary?.wallet_collected || 0)}
+                                      </span>
+                                    </div>
+                                    <div className="text-slate-300 font-bold">
+                                      كاش المحصل: <span className="text-emerald-400 font-black">{formatCurrency(expandedDetails.extended.summary?.cash_collected || 0)}</span>
                                     </div>
                                   </div>
 
@@ -1688,7 +2144,7 @@ export function Reports() {
                                   <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
                                     <div className="flex items-center gap-2 text-xs">
                                       <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-                                      <span className="text-slate-300 font-bold">إجمالي المصروفات والسلف (سطر 77):</span>
+                                      <span className="text-slate-300 font-bold">إجمالي الخصومات (سطر 77 - سلف + مصروفات + موردين):</span>
                                       <span className="text-rose-300 font-black text-sm">
                                         {formatCurrency(expandedDetails.extended.summary?.total_deductions || 0)}
                                       </span>
@@ -1696,13 +2152,13 @@ export function Reports() {
 
                                     <div className="flex items-center gap-3 bg-emerald-950/80 border border-emerald-500/40 px-4 py-2 rounded-xl">
                                       <span className="text-xs font-black text-emerald-300">
-                                        صافي الكاش الفعلي المتبقي بالدرج للتوريد 💵 :
+                                        صافي كاش الدرج للتوريد (سطر 77) 💵 :
                                       </span>
                                       <span className="text-lg font-black text-emerald-400">
                                         {formatCurrency(expandedDetails.extended.summary?.cash_in_drawer || 0)}
                                       </span>
                                       <span className="text-[10px] text-emerald-200/70 font-mono">
-                                        [المدفوع - (المصروفات + السلف)]
+                                        [E76 - K77 = كاش المحصل - الخصومات]
                                       </span>
                                     </div>
                                   </div>
@@ -1925,6 +2381,396 @@ export function Reports() {
         </div>
       )}
 
+      {/* Tab: المجمع الشهري (MASTER SHEET) */}
+      {activeTab === 'master' && (
+        <div className="space-y-4">
+          {/* Branch Branding & Month Header */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              {masterReport?.branding?.logoDataUri ? (
+                <img
+                  src={masterReport.branding.logoDataUri}
+                  alt="Branch Logo"
+                  className="h-14 w-auto max-w-[120px] object-contain rounded-xl border border-slate-200 p-1 bg-white shadow-xs"
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-lg">
+                  {selectedBranch === 'all' ? 'كل' : (currentBranchLabel.replace(/^فرع\s+/, '').slice(0, 2) || 'فر')}
+                </div>
+              )}
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+                    {currentReportTitle}
+                  </h2>
+                  <Badge variant={selectedBranch === 'all' ? 'primary' : 'success'}>
+                    {selectedBranch === 'all' ? 'شامل كافة الفروع' : 'فرع نشط'}
+                  </Badge>
+                </div>
+                <p className="text-xs font-bold text-slate-500 mt-1">
+                  المجمع الشهري لحركة التشغيل والمبيعات والسلف والمصروفات والدرج اليومي لشهر {masterReport?.month || selectedMonth} ({masterReport?.daysInMonth || 30} يوماً) - نطاق: {currentBranchLabel}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                <Calendar className="w-4 h-4 text-slate-500" />
+                <span className="text-xs font-bold text-slate-600">الشهر:</span>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="bg-transparent text-xs font-black text-slate-900 focus:outline-none cursor-pointer"
+                />
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                icon={FileSpreadsheet}
+                isLoading={exportingConsolidated}
+                disabled={exportingConsolidated || loadingMaster}
+                onClick={exportConsolidatedExcel}
+                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-emerald-50/30 font-bold"
+              >
+                تصدير مجمع الفرع (36 شيت)
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                icon={Printer}
+                isLoading={exportingPDF}
+                disabled={exportingPDF || loadingMaster}
+                onClick={exportMasterPdf}
+                className="border-indigo-300 text-indigo-700 hover:bg-indigo-50 bg-indigo-50/30 font-bold"
+              >
+                طباعة / تصدير PDF
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                icon={RotateCcw}
+                onClick={loadMasterReport}
+                disabled={loadingMaster}
+                className="text-slate-600"
+              >
+                تحديث
+              </Button>
+            </div>
+          </div>
+
+          {/* Monthly Grand KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <StatCard
+              title="إجمالي مبيعات الشهر"
+              value={formatCurrency(masterReport?.summary?.total_sales || 0)}
+              icon={TrendingUp}
+              variant="default"
+              subtitle={`${masterReport?.summary?.total_orders || 0} عملية بيع`}
+            />
+            <StatCard
+              title="إجمالي النقدية المقبوضة"
+              value={formatCurrency(masterReport?.summary?.total_paid_cash ?? masterReport?.summary?.total_paid ?? 0)}
+              icon={DollarSign}
+              variant="primary"
+              subtitle="مجموع عمود E كاش"
+            />
+            <StatCard
+              title="إجمالي السلف الشهرية"
+              value={formatCurrency(masterReport?.summary?.total_advances || 0)}
+              icon={Users}
+              variant="danger"
+              subtitle="مجموع عمود J سلف"
+            />
+            <StatCard
+              title="إجمالي المصروفات والتشغيل"
+              value={formatCurrency(masterReport?.summary?.total_expenses || 0)}
+              icon={TrendingDown}
+              variant="warning"
+              subtitle="مجموع عمود L مصاريف"
+            />
+            <StatCard
+              title="كاش الدرج للتوريد (D77)"
+              value={formatCurrency(masterReport?.summary?.total_cash_drawer ?? masterReport?.summary?.net_cash_drawer ?? 0)}
+              icon={Wallet}
+              variant={(masterReport?.summary?.total_cash_drawer ?? masterReport?.summary?.net_cash_drawer ?? 0) >= 0 ? 'success' : 'danger'}
+              subtitle="الصافي بعد خصم المنصرفات"
+            />
+            <StatCard
+              title="مدفوعات إلكترونية / فيزا"
+              value={formatCurrency(masterReport?.summary?.total_electronic || 0)}
+              icon={CreditCard}
+              variant="info"
+              subtitle="تحصيلات خارج الدرج"
+            />
+          </div>
+
+          {/* Day Selector Pills Bar */}
+          <Card>
+            <div className="p-3 border-b border-slate-100 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-indigo-600" />
+                <span className="text-xs font-black text-slate-800">اختر اليوم لعرض الشيت التفصيلي (20 عمود A - T):</span>
+              </div>
+              <span className="text-xs font-bold text-slate-400">
+                اليوم المختار: يوم {masterSelectedDay || 1} من {masterReport?.daysInMonth || 30}
+              </span>
+            </div>
+
+            <div className="p-3 overflow-x-auto flex items-center gap-2 scrollbar-thin">
+              {loadingMaster ? (
+                <div className="py-4 text-center text-xs text-slate-400 w-full font-bold">جارِ تحميل أيام الشهر...</div>
+              ) : !masterReport?.days || masterReport.days.length === 0 ? (
+                <div className="py-4 text-center text-xs text-slate-400 w-full font-bold">لا توجد بيانات مسجلة لهذا الشهر</div>
+              ) : (
+                masterReport.days.map((day) => {
+                  const dayNum = day.day_number || day.day;
+                  const isSelected = (masterSelectedDay || 1) === dayNum;
+                  const dayNetCash = day.summary?.net_cash_drawer ?? (day.data?.summary?.cash_in_drawer || 0);
+                  return (
+                    <button
+                      key={dayNum}
+                      onClick={() => setMasterSelectedDay(dayNum)}
+                      className={`px-3 py-2 rounded-xl text-xs font-black flex flex-col items-center justify-center transition-all whitespace-nowrap min-w-[76px] border ${
+                        isSelected
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-md scale-105'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="text-[11px] font-bold opacity-80">يوم {dayNum}</span>
+                      <span className={`text-[10px] font-mono mt-0.5 ${isSelected ? 'text-emerald-300' : dayNetCash >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                        {formatCurrency(dayNetCash)}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </Card>
+
+          {/* Active Day 20-Column Table (Mirroring MASTER SHEET) */}
+          {(() => {
+            const currentDay =
+              masterReport?.days?.find((d) => (d.day_number || d.day) === (masterSelectedDay || 1)) ||
+              masterReport?.days?.[0];
+
+            if (!currentDay) {
+              return null;
+            }
+
+            const populatedRows = (currentDay.rows || []).filter(
+              (r) =>
+                r.col_b_invoice_number ||
+                r.col_c_description ||
+                r.col_d_total ||
+                r.col_e_paid ||
+                r.col_i_advance_emp ||
+                r.col_j_advance_amount ||
+                r.col_k_expense_desc ||
+                r.col_l_expense_amount ||
+                r.col_m_electronic_type ||
+                r.col_o_electronic_amount ||
+                r.col_p_attendance_emp ||
+                r.col_q_check_in ||
+                r.a_customer_name ||
+                r.b_seller_name ||
+                r.d_total_order
+            );
+            const displayRows = populatedRows.length > 0 ? populatedRows : (currentDay.rows || []).slice(0, 10);
+
+            return (
+              <Card>
+                <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+                  <div className="flex items-center gap-3">
+                    <span className="px-3 py-1 bg-slate-900 text-white font-mono font-black rounded-lg text-sm">
+                      يوم {currentDay.day_number || currentDay.day}
+                    </span>
+                    <div>
+                      <h3 className="font-black text-slate-900 text-sm">
+                        {formatDate(currentDay.date)}
+                      </h3>
+                      <p className="text-[11px] text-slate-500 font-bold">
+                        توزيع الـ 20 عموداً المعتمد (المبيعات، السلف، المصاريف والتشغيل، المدفوعات الإلكترونية، الحضور والانصراف)
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Cash Drawer Reconciliation Summary for the Day */}
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                    <div className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
+                      نقدية مقبوضة (E76): <span className="font-black font-mono">{formatCurrency(currentDay.summary?.total_paid_cash ?? currentDay.summary?.total_paid ?? 0)}</span>
+                    </div>
+                    <div className="px-3 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800">
+                      منصرف الدرج (K77): <span className="font-black font-mono">{formatCurrency(currentDay.summary?.total_drawer_deductions ?? 0)}</span>
+                    </div>
+                    <div className="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900">
+                      صافي التوريد (D77): <span className="font-black font-mono">{formatCurrency(currentDay.summary?.net_cash_drawer ?? currentDay.data?.summary?.cash_in_drawer ?? 0)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right border-collapse text-[11px]">
+                    <thead>
+                      {/* Category Header Row */}
+                      <tr className="bg-slate-900 text-white font-black text-center divide-x divide-slate-800">
+                        <th colSpan={8} className="py-2.5 px-2 bg-slate-950 text-indigo-200 border-b border-slate-800">
+                          المبيعات والإيرادات (أعمدة A - H)
+                        </th>
+                        <th colSpan={2} className="py-2.5 px-2 bg-rose-950 text-rose-200 border-b border-slate-800">
+                          السلف (أعمدة I - J)
+                        </th>
+                        <th colSpan={2} className="py-2.5 px-2 bg-amber-950 text-amber-200 border-b border-slate-800">
+                          المصروفات والتشغيل (أعمدة K - L)
+                        </th>
+                        <th colSpan={3} className="py-2.5 px-2 bg-blue-950 text-blue-200 border-b border-slate-800">
+                          المدفوعات الإلكترونية (أعمدة M - O)
+                        </th>
+                        <th colSpan={5} className="py-2.5 px-2 bg-emerald-950 text-emerald-200 border-b border-slate-800">
+                          الحضور والانصراف (أعمدة P - T)
+                        </th>
+                      </tr>
+
+                      {/* Exact 20 Column Header Row */}
+                      <tr className="bg-slate-800 text-slate-200 font-black text-center divide-x divide-slate-700">
+                        {/* Section 1: Sales (A to H) */}
+                        <th className="py-2 px-2 text-right min-w-[90px]">A: التاريخ</th>
+                        <th className="py-2 px-1.5 min-w-[75px]">B: رقم الفاتورة</th>
+                        <th className="py-2 px-2.5 text-right min-w-[140px]">C: البيان </th>
+                        <th className="py-2 px-2 min-w-[80px]">D: الأجمالي</th>
+                        <th className="py-2 px-2 min-w-[85px] bg-emerald-900/60 text-emerald-200">E: المدفوع </th>
+                        <th className="py-2 px-2 min-w-[75px]">F: الباقي</th>
+                        <th className="py-2 px-1.5 min-w-[80px]">G: أسم البائع</th>
+                        <th className="py-2 px-2 min-w-[90px]">H: تاريخ الأستلام</th>
+
+                        {/* Section 2: Advances (I to J) */}
+                        <th className="py-2 px-2 min-w-[90px]">I: الموظف</th>
+                        <th className="py-2 px-2 min-w-[75px] bg-rose-900/60 text-rose-200">J: السلف</th>
+
+                        {/* Section 3: Expenses (K to L) */}
+                        <th className="py-2 px-2.5 text-right min-w-[120px]">K: مصروفات آخرى</th>
+                        <th className="py-2 px-2 min-w-[75px] bg-amber-900/60 text-amber-200">L: المبلغ</th>
+
+                        {/* Section 4: Electronic Payments (M to O) */}
+                        <th className="py-2 px-2 min-w-[90px]">M: نوع الدفع الإلكتروني</th>
+                        <th className="py-2 px-2 min-w-[90px]">N: رقم المرجع / الفاتورة</th>
+                        <th className="py-2 px-2 min-w-[85px] bg-blue-900/60 text-blue-200">O: المبلغ الإلكتروني</th>
+
+                        {/* Section 5: Attendance (P to T) */}
+                        <th className="py-2 px-2 min-w-[90px]">P: أسماء الموظفين </th>
+                        <th className="py-2 px-1.5 min-w-[65px]">Q: وقت الحضور </th>
+                        <th className="py-2 px-1.5 min-w-[65px]">R: وقت الانصراف</th>
+                        <th className="py-2 px-1.5 min-w-[60px]">S: عداد الساعات</th>
+                        <th className="py-2 px-2 text-right min-w-[100px]">T: ملاحظات</th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-slate-100 font-bold">
+                      {displayRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={20} className="py-12 text-center text-slate-400 font-bold">
+                            لا توجد عمليات مسجلة لهذا اليوم
+                          </td>
+                        </tr>
+                      ) : (
+                        displayRows.map((r, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                            {/* Sales */}
+                            <td className="py-2 px-2 text-slate-600 text-center font-mono">{r.col_a_date || r.a_customer_name || currentDay.date || '-'}</td>
+                            <td className="py-2 px-1.5 text-center font-mono text-slate-800">{r.col_b_invoice_number || '-'}</td>
+                            <td className="py-2 px-2.5 text-slate-900">{r.col_c_description || r.a_customer_name || '-'}</td>
+                            <td className="py-2 px-2 text-center font-mono font-bold text-slate-800">{r.col_d_total != null ? formatCurrency(r.col_d_total) : (r.d_total_order ? formatCurrency(r.d_total_order) : '-')}</td>
+                            <td className="py-2 px-2 text-center font-mono font-black text-emerald-700 bg-emerald-50/30">
+                              {r.col_e_paid != null ? formatCurrency(r.col_e_paid) : (r.e_paid_cash ? formatCurrency(r.e_paid_cash) : '-')}
+                            </td>
+                            <td className="py-2 px-2 text-center font-mono text-slate-500">{r.col_f_remaining != null ? formatCurrency(r.col_f_remaining) : (r.f_remaining ? formatCurrency(r.f_remaining) : '-')}</td>
+                            <td className="py-2 px-1.5 text-center text-slate-700">{r.col_g_seller || r.b_seller_name || '-'}</td>
+                            <td className="py-2 px-2 text-center font-mono text-slate-500">{r.col_h_delivery_date || '-'}</td>
+
+                            {/* Advances */}
+                            <td className="py-2 px-2 text-center text-slate-800">{r.col_i_advance_emp || r.i_advance_emp_name || '-'}</td>
+                            <td className="py-2 px-2 text-center font-mono font-black text-rose-700 bg-rose-50/30">
+                              {r.col_j_advance_amount != null ? formatCurrency(r.col_j_advance_amount) : (r.j_advance_amount ? formatCurrency(r.j_advance_amount) : '-')}
+                            </td>
+
+                            {/* Expenses */}
+                            <td className="py-2 px-2.5 text-slate-700">{r.col_k_expense_desc || r.m_expense_notes || '-'}</td>
+                            <td className="py-2 px-2 text-center font-mono font-black text-amber-800 bg-amber-50/30">
+                              {r.col_l_expense_amount != null ? formatCurrency(r.col_l_expense_amount) : (r.l_expense_amount ? formatCurrency(r.l_expense_amount) : '-')}
+                            </td>
+
+                            {/* Electronic Payments */}
+                            <td className="py-2 px-2 text-center text-slate-700">{r.col_m_electronic_type || r.n_expense_category || '-'}</td>
+                            <td className="py-2 px-2 text-center font-mono text-slate-500">{r.col_n_electronic_ref || '-'}</td>
+                            <td className="py-2 px-2 text-center font-mono font-bold text-blue-700 bg-blue-50/30">
+                              {r.col_o_electronic_amount != null ? formatCurrency(r.col_o_electronic_amount) : (r.o_tailor_amount ? formatCurrency(r.o_tailor_amount) : '-')}
+                            </td>
+
+                            {/* Attendance */}
+                            <td className="py-2 px-2 text-center text-slate-800">{r.col_p_attendance_emp || r.p_emp_name || '-'}</td>
+                            <td className="py-2 px-1.5 text-center font-mono text-slate-600">{r.col_q_check_in || '-'}</td>
+                            <td className="py-2 px-1.5 text-center font-mono text-slate-600">{r.col_r_check_out || '-'}</td>
+                            <td className="py-2 px-1.5 text-center font-mono text-indigo-700">{r.col_s_hours ? (typeof r.col_s_hours === 'number' ? `${r.col_s_hours} س` : r.col_s_hours) : '-'}</td>
+                            <td className="py-2 px-2 text-slate-500">{r.col_t_notes || r.t_notes || '-'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+
+                    {/* Footer Row 76: Totals */}
+                    <tfoot>
+                      <tr className="bg-slate-100 font-black text-slate-900 border-t-2 border-slate-300">
+                        <td colSpan={3} className="py-3 px-2 text-right">
+                          اجمالى اليوم (Row 76 Totals)
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono font-black text-slate-900">
+                          {formatCurrency(currentDay.summary?.total_sales ?? currentDay.data?.summary?.total_sales ?? 0)}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono font-black text-emerald-800 bg-emerald-100/60">
+                          {formatCurrency(currentDay.summary?.total_paid ?? currentDay.summary?.total_paid_cash ?? currentDay.data?.summary?.total_paid ?? 0)}
+                        </td>
+                        <td colSpan={4} className="py-3 px-1 text-center">-</td>
+                        <td className="py-3 px-2 text-center font-mono font-black text-rose-800 bg-rose-100/60">
+                          {formatCurrency(currentDay.summary?.total_advances ?? currentDay.data?.summary?.total_advances ?? 0)}
+                        </td>
+                        <td className="py-3 px-1 text-center">-</td>
+                        <td className="py-3 px-2 text-center font-mono font-black text-amber-800 bg-amber-100/60">
+                          {formatCurrency(currentDay.summary?.total_expenses ?? currentDay.data?.summary?.total_expenses ?? 0)}
+                        </td>
+                        <td colSpan={2} className="py-3 px-1 text-center">-</td>
+                        <td className="py-3 px-2 text-center font-mono font-black text-blue-800 bg-blue-100/60">
+                          {formatCurrency(currentDay.summary?.total_electronic ?? currentDay.data?.summary?.electronic_collections ?? 0)}
+                        </td>
+                        <td colSpan={5} className="py-3 px-1 text-center">-</td>
+                      </tr>
+
+                      {/* Footer Row 77: Drawer Settlement */}
+                      <tr className="bg-slate-900 text-white font-black border-t border-slate-800">
+                        <td colSpan={8} className="py-3.5 px-4 text-emerald-300 text-xs">
+                          <span className="text-slate-400 font-normal">معادلة الدرج D77 (صافي الكاش المتبقي للتوريد = المدفوع E76 - إجمالي المنصرف K77): </span>
+                          <span className="font-mono text-sm underline mr-2">
+                            {formatCurrency(currentDay.summary?.net_cash_drawer ?? currentDay.data?.summary?.cash_in_drawer ?? 0)}
+                          </span>
+                        </td>
+                        <td colSpan={12} className="py-3.5 px-4 text-rose-300 text-xs text-left">
+                          <span className="text-slate-400 font-normal">معادلة المنصرف K77 (السلف J76 + المصروفات L76 + الإلكتروني O76): </span>
+                          <span className="font-mono text-sm underline mr-2">
+                            {formatCurrency(currentDay.summary?.total_drawer_deductions ?? ((currentDay.summary?.total_advances || 0) + (currentDay.summary?.total_expenses || 0) + (currentDay.summary?.total_electronic || 0)))}
+                          </span>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </Card>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Tab: العهدة وسلف الشهر (OHDA) */}
       {activeTab === 'ohda' && (
         <Card>
@@ -1944,6 +2790,9 @@ export function Reports() {
               <span className="text-xs font-bold text-slate-500">
                 عدد الموظفين: <span className="font-black text-slate-900">{ohdaReport?.employees?.length || 0}</span>
               </span>
+              <Badge variant={selectedBranch === 'all' ? 'primary' : 'success'}>
+                {currentBranchLabel}
+              </Badge>
             </div>
 
             <div className="flex items-center gap-2">
@@ -2112,6 +2961,9 @@ export function Reports() {
               <span className="text-xs font-bold text-slate-500">
                 معادلة الغياب: <span className="font-mono font-bold text-rose-700">الغياب * اليومية * 2</span>
               </span>
+              <Badge variant={selectedBranch === 'all' ? 'primary' : 'success'}>
+                {currentBranchLabel}
+              </Badge>
             </div>
 
             <Button
@@ -2307,7 +3159,7 @@ export function Reports() {
           <Card>
             <CardHeader
               title="تقييم وأداء البائعين (KPI)"
-              subtitle="مقارنة مبيعات البائعين بالمستهدف الشهري (50,000 ج.م) ونسب التحقيق"
+              subtitle={`مقارنة مبيعات البائعين بالمستهدف الشهري (50,000 ج.م) ونسب التحقيق - نطاق: ${currentBranchLabel}`}
             />
 
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 border-b border-slate-100">
@@ -2927,6 +3779,45 @@ export function Reports() {
             <CardHeader
               title="جرد وتقييم المخزون الحالي"
               subtitle="أرصدة الأصناف بجميع الفروع وتقييم إجمالي المبيعات والتكلفة"
+              action={
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setInventoryGender('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                        inventoryGender === 'all'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      كل الأقسام
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInventoryGender('men')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                        inventoryGender === 'men'
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-blue-700'
+                      }`}
+                    >
+                      👔 رجالي
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInventoryGender('women')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                        inventoryGender === 'women'
+                          ? 'bg-rose-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-rose-700'
+                      }`}
+                    >
+                      👗 حريمي
+                    </button>
+                  </div>
+                </div>
+              }
             />
             <div className="overflow-x-auto">
               <table className="w-full text-right border-collapse">
@@ -2935,7 +3826,7 @@ export function Reports() {
                     <th className="py-3.5 px-4">#</th>
                     <th className="py-3.5 px-4">اسم الصنف</th>
                     <th className="py-3.5 px-4">الباركود</th>
-                    <th className="py-3.5 px-4">القسم</th>
+                    <th className="py-3.5 px-4">القسم والتصنيف</th>
                     <th className="py-3.5 px-4">اللون / المقاس</th>
                     <th className="py-3.5 px-4">الرصيد</th>
                     <th className="py-3.5 px-4">حد الطلب</th>
@@ -2969,9 +3860,24 @@ export function Reports() {
                           {it.barcode ? `#${it.barcode}` : '-'}
                         </td>
                         <td className="py-3 px-4">
-                          <span className="px-2 py-0.5 rounded-full text-xs font-black bg-slate-100 text-slate-700">
-                            {it.category || 'عام'}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-2 py-0.5 rounded-full text-xs font-black bg-slate-100 text-slate-700">
+                              {it.category || 'عام'}
+                            </span>
+                            {it.gender === 'women' || it.gender === 'حريمي' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
+                                👗 حريمي
+                              </span>
+                            ) : it.gender === 'both' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-50 text-purple-700 border border-purple-200">
+                                🚻 مشترك
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-50 text-blue-700 border border-blue-200">
+                                👔 رجالي
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-4 text-xs text-slate-600">
                           {[it.color, it.size_cut].filter(Boolean).join(' / ') || '-'}
@@ -3066,6 +3972,379 @@ export function Reports() {
             </table>
           </div>
         </Card>
+      )}
+
+      {/* Tab: Suppliers Ledger & Statements (File 1) */}
+      {activeTab === 'suppliers_ledger' && (
+        <div className="space-y-4">
+          {/* Controls & Filter Bar */}
+          <Card>
+            <div className="p-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="w-64">
+                  <Input
+                    placeholder="ابحث باسم المورد، الكود، أو الهاتف..."
+                    value={ledgerSearch}
+                    onChange={(e) => setLedgerSearch(e.target.value)}
+                    className="h-10 text-xs"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">التصنيف:</span>
+                  <select
+                    value={ledgerCategory}
+                    onChange={(e) => setLedgerCategory(e.target.value)}
+                    className="h-10 px-3 rounded-xl border border-slate-200 text-xs font-bold bg-white focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  >
+                    <option value="all">كافة التصنيفات</option>
+                    <option value="men">رجالي</option>
+                    <option value="women">حريمي</option>
+                    <option value="both">مشترك</option>
+                  </select>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadSuppliersLedger}
+                  isLoading={loadingLedger}
+                  className="h-10 text-xs"
+                >
+                  تحديث البيانات
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="primary"
+                  icon={Download}
+                  isLoading={exportingExcel}
+                  onClick={() => exportToExcel('suppliers_ledger')}
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs h-10 px-4 rounded-xl"
+                >
+                  تصدير كشف حسابات الموردين (إكسيل - 2 Level)
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <StatCard
+              title="عدد الموردين"
+              value={ledgerData?.summary?.total_suppliers ?? (ledgerData?.suppliers?.length || 0)}
+              icon={Users}
+              variant="default"
+              subtitle="المسجلين بالنظام"
+            />
+            <StatCard
+              title="إجمالي التوريدات والمشتريات"
+              value={formatCurrency(ledgerData?.summary?.grand_total_purchases || 0)}
+              icon={ShoppingBag}
+              variant="default"
+              subtitle="حركات الاستلام الفعلية"
+            />
+            <StatCard
+              title="إجمالي المرتجعات"
+              value={formatCurrency(ledgerData?.summary?.grand_total_returns || 0)}
+              icon={RotateCcw}
+              variant="default"
+              subtitle="بضائع مرتجعة للموردين"
+            />
+            <StatCard
+              title="إجمالي المسدد"
+              value={formatCurrency(ledgerData?.summary?.grand_total_paid || 0)}
+              icon={Wallet}
+              variant="default"
+              subtitle="دفعات نقدية وبنكية"
+            />
+            <StatCard
+              title="صافي الرصيد المستحق"
+              value={formatCurrency(ledgerData?.summary?.grand_total_balance || 0)}
+              icon={DollarSign}
+              variant={Number(ledgerData?.summary?.grand_total_balance || 0) > 0 ? 'danger' : 'success'}
+              subtitle={ledgerData?.summary?.grand_total_balance_type || 'الرصيد التراكمي'}
+            />
+          </div>
+
+          {/* Level 1: Suppliers Summary Table */}
+          <Card>
+            <CardHeader
+              title={`ملخص أرصدة وحسابات الموردين (${ledgerData?.suppliers?.length || 0})`}
+              subtitle="اضغط على زر (كشف الحساب) للاطلاع على السجل التفصيلي وحركات الصنف وتصدير إكسيل"
+            />
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-black">
+                  <tr>
+                    <th className="py-3 px-4">#</th>
+                    <th className="py-3 px-4">كود المورد</th>
+                    <th className="py-3 px-4">اسم المورد</th>
+                    <th className="py-3 px-4">التصنيف</th>
+                    <th className="py-3 px-4">الهاتف</th>
+                    <th className="py-3 px-4">إجمالي المشتريات</th>
+                    <th className="py-3 px-4">إجمالي المرتجعات</th>
+                    <th className="py-3 px-4">إجمالي المسدد</th>
+                    <th className="py-3 px-4">صافي الرصيد الحالي</th>
+                    <th className="py-3 px-4">حالة الرصيد</th>
+                    <th className="py-3 px-4 text-center">كشف الحساب التفصيلي</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-bold">
+                  {loadingLedger ? (
+                    <tr>
+                      <td colSpan={11} className="py-16 text-center text-slate-400 font-black">
+                        جارِ تحميل كشوف حسابات الموردين...
+                      </td>
+                    </tr>
+                  ) : !ledgerData?.suppliers || ledgerData.suppliers.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} className="py-16 text-center text-slate-400 font-bold">
+                        لا يوجد موردين مطابقين لمعايير البحث
+                      </td>
+                    </tr>
+                  ) : (
+                    ledgerData.suppliers.map((sup, idx) => {
+                      const balance = Number(sup.balance || 0);
+                      const isPayable = balance > 0;
+                      const isReceivable = balance < 0;
+
+                      return (
+                        <tr key={sup.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-4 text-slate-400 font-mono">{idx + 1}</td>
+                          <td className="py-3 px-4 font-mono font-black text-slate-800">
+                            {sup.code || `#${sup.id}`}
+                          </td>
+                          <td className="py-3 px-4 font-black text-slate-900">
+                            <div>{sup.name}</div>
+                            {sup.company_name && (
+                              <div className="text-[10px] text-slate-400 font-bold">{sup.company_name}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700">
+                              {sup.gender_category === 'men' ? 'رجالي' : (sup.gender_category === 'women' ? 'حريمي' : 'مشترك')}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-mono text-slate-600">
+                            {sup.phone || '-'}
+                          </td>
+                          <td className="py-3 px-4 font-black text-slate-900">
+                            {formatCurrency(sup.total_purchases || 0)}
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-600">
+                            {formatCurrency(sup.total_returns || 0)}
+                          </td>
+                          <td className="py-3 px-4 font-black text-emerald-600">
+                            {formatCurrency(sup.total_paid || 0)}
+                          </td>
+                          <td className={`py-3 px-4 font-black text-sm ${
+                            isPayable ? 'text-rose-600' : (isReceivable ? 'text-blue-600' : 'text-slate-700')
+                          }`}>
+                            {formatCurrency(balance)}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-black ${
+                              isPayable
+                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                : isReceivable
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                            }`}>
+                              {sup.balance_type || (isPayable ? 'دائن (له)' : (isReceivable ? 'مدين (عليه)' : 'خالص'))}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              icon={FileSpreadsheet}
+                              onClick={() => openSupplierStatementModal(sup.id)}
+                              className="text-indigo-600 border-indigo-200 hover:bg-indigo-50 font-black text-xs"
+                            >
+                              عرض كشف الحساب 🔍
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          {/* Level 2: Detailed Supplier Statement Modal */}
+          {selectedSupplierStatement && (
+            <Modal
+              isOpen={!!selectedSupplierStatement}
+              onClose={() => setSelectedSupplierStatement(null)}
+              title={`كشف حساب تفصيلي - ${selectedSupplierStatement.supplier?.name || ''}`}
+              subtitle={`كود المورد: ${selectedSupplierStatement.supplier?.code || `#${selectedSupplierStatement.supplier?.id}`} | الهاتف: ${selectedSupplierStatement.supplier?.phone || '-'}`}
+              maxWidth="max-w-6xl"
+            >
+              <div className="space-y-4">
+                {/* Header Actions & KPIs */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <div className="flex flex-wrap items-center gap-6">
+                    <div>
+                      <span className="text-xs text-slate-500 font-bold block">إجمالي التوريدات</span>
+                      <span className="text-base font-black text-slate-900">
+                        {formatCurrency(selectedSupplierStatement.supplier?.total_purchases || selectedSupplierStatement.summary?.total_purchases || 0)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-xs text-slate-500 font-bold block">إجمالي المرتجعات</span>
+                      <span className="text-base font-black text-slate-600">
+                        {formatCurrency(selectedSupplierStatement.supplier?.total_returns || selectedSupplierStatement.summary?.total_returns || 0)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-xs text-slate-500 font-bold block">إجمالي المسدد</span>
+                      <span className="text-base font-black text-emerald-600">
+                        {formatCurrency(selectedSupplierStatement.supplier?.total_paid || selectedSupplierStatement.summary?.total_paid || 0)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-xs text-slate-500 font-bold block">الرصيد النهائي المستحق</span>
+                      <span className={`text-lg font-black ${
+                        Number(selectedSupplierStatement.supplier?.balance || 0) > 0 ? 'text-rose-600' : 'text-slate-900'
+                      }`}>
+                        {formatCurrency(selectedSupplierStatement.supplier?.balance || selectedSupplierStatement.summary?.balance || 0)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={Download}
+                      onClick={() => exportToExcel('supplier_statement', { supplier_id: selectedSupplierStatement.supplier?.id })}
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs"
+                    >
+                      تصدير كشف الحساب (إكسيل)
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedSupplierStatement(null)}
+                    >
+                      إغلاق
+                    </Button>
+                  </div>
+                </div>
+
+                {/* 11-Column Statement Timeline Table */}
+                <div className="overflow-x-auto border border-slate-200 rounded-2xl max-h-[60vh]">
+                  <table className="w-full text-right text-xs">
+                    <thead className="sticky top-0 bg-slate-900 text-white font-black border-b border-slate-800 z-10">
+                      <tr>
+                        <th className="p-3">التاريخ والوقت</th>
+                        <th className="p-3">نوع الحركة</th>
+                        <th className="p-3">رقم المرجع / الإذن</th>
+                        <th className="p-3">الصنف / البيان</th>
+                        <th className="p-3">الكمية</th>
+                        <th className="p-3">سعر الوحدة</th>
+                        <th className="p-3">مشتريات (مدين)</th>
+                        <th className="p-3">مرتجع (دائن)</th>
+                        <th className="p-3">مدفوعات (دائن)</th>
+                        <th className="p-3">صافي الحركة</th>
+                        <th className="p-3 text-emerald-400">الرصيد التراكمي</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-bold">
+                      {selectedSupplierStatement.transactions && selectedSupplierStatement.transactions.length > 0 ? (
+                        selectedSupplierStatement.transactions.map((tx, idx) => (
+                          <tr key={tx.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3 text-slate-600 font-mono text-[11px]">
+                              {tx.date || (tx.created_at ? String(tx.created_at).slice(0, 10) : '-')}
+                            </td>
+                            <td className="p-3">
+                              <Badge
+                                variant={
+                                  tx.transaction_type === 'payment' || tx.type === 'payment'
+                                    ? 'success'
+                                    : tx.transaction_type === 'return' || tx.type === 'return'
+                                    ? 'danger'
+                                    : 'info'
+                                }
+                              >
+                                {tx.transaction_type === 'payment' || tx.type === 'payment'
+                                  ? 'سداد دفعة'
+                                  : tx.transaction_type === 'return' || tx.type === 'return'
+                                  ? 'مرتجع بضاعة'
+                                  : 'توريد مشتريات'}
+                              </Badge>
+                            </td>
+                            <td className="p-3 font-mono font-bold text-slate-800">
+                              {tx.reference_no || '-'}
+                            </td>
+                            <td className="p-3 text-slate-800 max-w-xs truncate" title={tx.description || tx.notes}>
+                              {tx.description || tx.notes || '-'}
+                            </td>
+                            <td className="p-3 font-mono font-black text-indigo-600">
+                              {tx.quantity !== null && tx.quantity !== undefined ? tx.quantity : '-'}
+                            </td>
+                            <td className="p-3 font-mono text-slate-600">
+                              {tx.price !== null && tx.price !== undefined ? formatCurrency(tx.price) : '-'}
+                            </td>
+                            <td className="p-3 font-black text-slate-900">
+                              {tx.purchases > 0 ? formatCurrency(tx.purchases) : '-'}
+                            </td>
+                            <td className="p-3 font-bold text-rose-600">
+                              {tx.returns > 0 ? formatCurrency(tx.returns) : '-'}
+                            </td>
+                            <td className="p-3 font-black text-emerald-600">
+                              {tx.payments > 0 ? formatCurrency(tx.payments) : '-'}
+                            </td>
+                            <td className={`p-3 font-black font-mono ${
+                              Number(tx.movement || 0) > 0 ? 'text-slate-900' : 'text-emerald-700'
+                            }`}>
+                              {formatCurrency(tx.movement || 0)}
+                            </td>
+                            <td className="p-3 font-black text-sm text-indigo-700 bg-indigo-50/40 font-mono">
+                              {formatCurrency(tx.cumulative_balance || 0)}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={11} className="p-12 text-center text-slate-400 font-bold">
+                            لا توجد حركات مسجلة لهذا المورد
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                    {selectedSupplierStatement.transactions && selectedSupplierStatement.transactions.length > 0 && (
+                      <tfoot className="bg-slate-100 font-black text-xs border-t-2 border-slate-300">
+                        <tr>
+                          <td colSpan={6} className="p-3 text-left pl-4 font-black text-slate-800">الإجمالي:</td>
+                          <td className="p-3 font-black text-slate-900">
+                            {formatCurrency(selectedSupplierStatement.summary?.total_purchases || 0)}
+                          </td>
+                          <td className="p-3 font-black text-rose-600">
+                            {formatCurrency(selectedSupplierStatement.summary?.total_returns || 0)}
+                          </td>
+                          <td className="p-3 font-black text-emerald-600">
+                            {formatCurrency(selectedSupplierStatement.summary?.total_paid || selectedSupplierStatement.summary?.total_payments || 0)}
+                          </td>
+                          <td className="p-3 font-mono font-black text-slate-900">
+                            {formatCurrency((selectedSupplierStatement.summary?.total_purchases || 0) - (selectedSupplierStatement.summary?.total_returns || 0) - (selectedSupplierStatement.summary?.total_paid || selectedSupplierStatement.summary?.total_payments || 0))}
+                          </td>
+                          <td className="p-3 font-mono font-black text-indigo-800 bg-indigo-100/50">
+                            {formatCurrency(selectedSupplierStatement.summary?.balance || selectedSupplierStatement.summary?.current_balance || 0)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </div>
+            </Modal>
+          )}
+        </div>
       )}
 
       {/* Profit Password Auth Modal */}

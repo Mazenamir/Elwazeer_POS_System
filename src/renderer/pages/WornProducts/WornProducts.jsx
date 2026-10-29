@@ -41,12 +41,6 @@ export function WornProducts() {
   const [search, setSearch] = useState('');
   const [filterBranch, setFilterBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all'));
 
-  useEffect(() => {
-    if (activeBranchId) {
-      setFilterBranch(activeBranchId);
-      setPagination((prev) => ({ ...prev, page: 1 }));
-    }
-  }, [activeBranchId]);
   const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [pagination, setPagination] = useState({
@@ -55,6 +49,13 @@ export function WornProducts() {
     total: 0,
     totalPages: 1,
   });
+
+  useEffect(() => {
+    if (activeBranchId) {
+      setFilterBranch(activeBranchId);
+      setPagination((prev) => ({ ...prev, page: 1 }));
+    }
+  }, [activeBranchId]);
 
   // Modal & Form
   const [showModal, setShowModal] = useState(false);

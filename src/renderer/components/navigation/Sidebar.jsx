@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -51,9 +51,9 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
   const { user, logout, isAdmin } = useAuth();
   const { activeBranch, branches } = useBranch();
   const [isHovered, setIsHovered] = useState(false);
-  const hoverTimeoutRef = React.useRef(null);
+  const hoverTimeoutRef = useRef(null);
 
-  const displayBranch = React.useMemo(() => {
+  const displayBranch = useMemo(() => {
     if (activeBranch) return activeBranch;
     const targetId = user?.branch_id;
     if (targetId && branches?.length) {

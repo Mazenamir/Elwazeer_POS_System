@@ -319,7 +319,7 @@ async function createTailoringOrder(body, user) {
   }
 
   const offlineUuid = newUuid(body?.offline_uuid);
-  const rawBranchId = user?.role === 'branch_user' ? user.branch_id : body?.branch_id;
+  const rawBranchId = (user && user.role !== 'admin') ? user.branch_id : body?.branch_id;
   const branchId = (rawBranchId && rawBranchId !== 'all' && Number.isFinite(Number(rawBranchId))) ? Number(rawBranchId) : (user?.branch_id || 1);
 
   if (!sellerId) {
@@ -475,7 +475,7 @@ async function deleteTailoringOrder(id, user) {
   }
 
   const order = orderRows[0];
-  if (user && user.role === 'branch_user' && Number(order.branch_id) !== Number(user.branch_id)) {
+  if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
     const err = new Error('غير مصرح لك بحذف هذه الفاتورة');
     err.statusCode = 403;
     throw err;
@@ -522,7 +522,7 @@ async function payRemainingTailoringOrder(id, user, body = {}) {
     }
 
     const order = orderRows[0];
-    if (user && user.role === 'branch_user' && Number(order.branch_id) !== Number(user.branch_id)) {
+    if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
       const err = new Error('غير مصرح لك بتعديل هذه الفاتورة');
       err.statusCode = 403;
       throw err;

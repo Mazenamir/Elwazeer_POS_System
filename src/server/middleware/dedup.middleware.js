@@ -26,6 +26,7 @@ function shouldGuardDuplicateMutation(req) {
   if (!req.path.startsWith('/api/')) return false;
   if (req.path === '/api/login' || req.path === '/api/logout') return false;
   if (req.path === '/api/sync/apply' || req.headers['x-sync-apply'] === '1') return false;
+  if (req.path === '/api/rentals/scan-action') return false;
   return true;
 }
 

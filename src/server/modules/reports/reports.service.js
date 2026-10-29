@@ -14,6 +14,10 @@ const {
   parseReportDateRange,
   sanitizeFormulaValue,
   formatCairoDateTime,
+  getBranchCleanName,
+  getReportBranchTitle,
+  getBranchBranding,
+  buildDaily20ColumnRows,
 } = require('./reports.helpers');
 const { hasPermission } = require('../../../shared/constants/permissions');
 const { resolveCategoryQuery } = require('../inventory/inventory.helpers');
@@ -935,7 +939,6 @@ async function getProfitReport(query = {}, user = null) {
     total_rentals: summary.total_rentals,
     rentals: summary.total_rentals,
     total_tailoring: summary.total_tailoring,
-    tailoring: summary.total_tailoring,
     cogs: canViewProfit ? summary.cogs : undefined,
     gross_profit: canViewProfit ? gross_profit : undefined,
     expenses: summary.expenses,
@@ -2080,7 +2083,10 @@ async function getDailyReport(query = {}, user = null) {
       expenseReportParams
     ),
     db.query(
-      `SELECT r.id as invoice_number, r.total_price as amount, r.deposit as paid_amount, r.remaining as remainder, r.status, e.name as cashier_name, r.payment_method,
+      `SELECT r.id as invoice_number, r.total_price as amount,
+              COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0) as paid_amount,
+              GREATEST(r.total_price - COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0), 0) as remainder,
+              r.status, e.name as cashier_name, r.payment_method,
               r.cash_amount, r.card_amount, r.wallet_amount, r.bank_transfer_amount, r.payment_splits,
               TO_CHAR(r.booking_date, 'YYYY-MM-DD HH12:MI AM') as created_date, 'rental' as invoice_type
        FROM rentals r
@@ -2091,9 +2097,49 @@ async function getDailyReport(query = {}, user = null) {
     ),
   ]);
 
+  const overallDailySummary = report.reduce((acc, curr) => {
+    acc.total_sales += Number(curr.total_sales || 0);
+    acc.total_rentals += Number(curr.total_rentals || 0);
+    acc.total_tailoring += Number(curr.total_tailoring || 0);
+    acc.total_revenue += Number(curr.total_revenue || 0);
+    acc.expenses += Number(curr.expenses || 0);
+    acc.total_expenses += Number(curr.total_expenses || curr.expenses || 0);
+    acc.salaries += Number(curr.salaries || 0);
+    acc.total_salaries_paid += Number(curr.total_salaries_paid || 0);
+    acc.advances += Number(curr.advances || 0);
+    acc.total_advances += Number(curr.total_advances || 0);
+    acc.cash_drawer += Number(curr.cash_drawer || 0);
+    acc.cash_in_drawer += Number(curr.cash_in_drawer || 0);
+    acc.physical_cash_in_drawer += Number(curr.physical_cash_in_drawer || 0);
+    acc.net_profit += Number(curr.net_profit || 0);
+    return acc;
+  }, {
+    total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0,
+    expenses: 0, total_expenses: 0, salaries: 0, total_salaries_paid: 0,
+    advances: 0, total_advances: 0, cash_drawer: 0, cash_in_drawer: 0,
+    physical_cash_in_drawer: 0, net_profit: 0
+  });
+
+  overallDailySummary.sales = overallDailySummary.total_sales;
+  overallDailySummary.rentals = overallDailySummary.total_rentals;
+  overallDailySummary.tailoring = overallDailySummary.total_tailoring;
+  overallDailySummary.revenue = overallDailySummary.total_revenue;
+  overallDailySummary.net_cash = overallDailySummary.physical_cash_in_drawer;
+
   return {
     date,
     branch_sales: canViewProfit ? report : report.map(stripReportProfit),
+    summary: canViewProfit ? overallDailySummary : stripReportProfit(overallDailySummary),
+    revenue: overallDailySummary.total_revenue,
+    total_revenue: overallDailySummary.total_revenue,
+    sales: overallDailySummary.total_sales,
+    total_sales: overallDailySummary.total_sales,
+    rentals: overallDailySummary.total_rentals,
+    total_rentals: overallDailySummary.total_rentals,
+    total_tailoring: overallDailySummary.total_tailoring,
+    cash_in_drawer: overallDailySummary.physical_cash_in_drawer,
+    physical_cash_in_drawer: overallDailySummary.physical_cash_in_drawer,
+    net_cash: overallDailySummary.physical_cash_in_drawer,
     payments: paymentRes.rows,
     payment_methods: (paymentRes.rows || []).map(r => ({
       method: r.payment_method,
@@ -2487,6 +2533,16 @@ async function getInventoryReport(query = {}, user = null) {
   }
 
   const where = ['i.is_deleted = false'];
+  if (query.gender && query.gender !== 'all') {
+    const gVal = String(query.gender).toLowerCase().trim();
+    if (gVal === 'men' || gVal === 'رجالي') {
+      where.push(`(i.gender = 'men' OR i.gender = 'رجالي')`);
+    } else if (gVal === 'women' || gVal === 'حريمي') {
+      where.push(`(i.gender = 'women' OR i.gender = 'حريمي')`);
+    } else if (gVal === 'both' || gVal === 'مشترك' || gVal === 'كلاهما') {
+      where.push(`(i.gender = 'both' OR i.gender = 'مشترك' OR i.gender = 'كلاهما')`);
+    }
+  }
   const catQuery = resolveCategoryQuery(query.category);
   if (catQuery) {
     if (catQuery.type === 'suits') {
@@ -2504,7 +2560,7 @@ async function getInventoryReport(query = {}, user = null) {
 
   const [itemsRes, summaryRes] = await Promise.all([
     db.query(`
-      SELECT i.id, i.name, i.barcode, i.category, i.color, i.size_cut,
+      SELECT i.id, i.name, i.barcode, i.category, i.color, i.size_cut, i.gender,
              COALESCE(SUM(ib.stock_level), 0)::int as stock_level,
              COALESCE(i.min_stock_level, 5)::int as min_stock_level,
              COALESCE(i.price, 0) as price,
@@ -2515,7 +2571,7 @@ async function getInventoryReport(query = {}, user = null) {
       FROM inventory i
       LEFT JOIN inventory_branches ib ON i.id = ib.inventory_id ${branchJoin}
       ${whereSql}
-      GROUP BY i.id, i.name, i.barcode, i.category, i.color, i.size_cut, i.min_stock_level, i.price, i.cost_price
+      GROUP BY i.id, i.name, i.barcode, i.category, i.color, i.size_cut, i.gender, i.min_stock_level, i.price, i.cost_price
       ORDER BY i.name ASC
     `, params),
     db.query(`
@@ -2572,14 +2628,20 @@ async function getExtendedDailyReport(query = {}, user = null) {
 
   const range = getDayRange(date);
   const branchFilterOrders = reportBranchId ? 'AND o.branch_id = $3' : '';
+  const branchFilterRentals = reportBranchId ? 'AND r.branch_id = $3' : '';
+  const branchFilterTailoring = reportBranchId ? 'AND tp.branch_id = $3' : '';
+  const branchFilterReturns = reportBranchId ? 'AND ret.branch_id = $3' : '';
   const branchFilterEmp = reportBranchId ? 'AND e.branch_id = $3' : '';
   const branchFilterExp = reportBranchId ? 'AND e.branch_id = $3' : '';
+  const branchFilterSupplierPayment = reportBranchId ? (user && user.role !== 'admin' ? 'AND st.branch_id = $3' : 'AND (st.branch_id = $3 OR st.branch_id IS NULL)') : '';
+  const branchFilterOrderPayments = reportBranchId ? 'AND op.branch_id = $3' : '';
+  const branchFilterRentalPayments = reportBranchId ? 'AND rp.branch_id = $3' : '';
 
   const params = [range.start, range.end];
   if (reportBranchId) params.push(reportBranchId);
 
-  const [ordersRes, advancesRes, expensesRes, attendanceRes] = await Promise.all([
-    // Table 1: Sales Invoices
+  const [ordersRes, rentalsRes, rentalFinesRes, tailoringRes, returnsRes, advancesRes, expensesRes, attendanceRes, supplierPaymentsRes, orderPaymentsRes, rentalPaymentsRes, rentalPickupsRes] = await Promise.all([
+    // 1. Sales Invoices
     db.query(`
       SELECT 
         o.id,
@@ -2601,7 +2663,9 @@ async function getExtendedDailyReport(query = {}, user = null) {
         o.card_amount,
         o.bank_transfer_amount,
         o.wallet_amount,
-        o.payment_splits
+        o.payment_splits,
+        'sale' as transaction_type,
+        'بيع' as type_label
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
       LEFT JOIN inventory i ON oi.inventory_id = i.id
@@ -2618,7 +2682,132 @@ async function getExtendedDailyReport(query = {}, user = null) {
       ORDER BY o.order_date ASC, o.id ASC
     `, params),
 
-    // Table 2: Employee Advances
+    // 2. Rental Contracts Booked
+    db.query(`
+      SELECT 
+        r.id,
+        ('عقد-' || r.id::text) as invoice_number,
+        TO_CHAR(r.booking_date, 'YYYY-MM-DD') as invoice_date,
+        '12:00 PM' as invoice_time,
+        ('إيجار: ' || COALESCE(i.name, 'صنف مؤجر')) as description,
+        r.total_price as total_amount,
+        COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0) as paid_amount,
+        GREATEST(r.total_price - COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0), 0) as remaining_amount,
+        COALESCE(e.name, 'غير محدد') as seller_name,
+        TO_CHAR(COALESCE(r.pickup_date, r.booking_date), 'YYYY-MM-DD') as delivery_date,
+        ${normalizedPaymentMethodSql('r.payment_method')} as payment_method,
+        r.payment_method as raw_payment_method,
+        r.cash_amount,
+        r.card_amount,
+        r.bank_transfer_amount,
+        r.wallet_amount,
+        r.payment_splits,
+        'rental' as transaction_type,
+        'إيجار' as type_label
+      FROM rentals r
+      LEFT JOIN rental_inventory i ON r.rental_inventory_id = i.id
+      LEFT JOIN customers c ON r.customer_id = c.id
+      LEFT JOIN employees e ON r.seller_id = e.id
+      WHERE r.status <> 'cancelled'
+        AND r.booking_date >= $1::date AND r.booking_date < $2::date
+        ${branchFilterRentals}
+      ORDER BY r.booking_date ASC, r.id ASC
+    `, params),
+
+    // 3. Rental Return Delay Fines
+    db.query(`
+      SELECT 
+        r.id,
+        ('غرامة-' || r.id::text) as invoice_number,
+        TO_CHAR(r.actual_return_date, 'YYYY-MM-DD') as invoice_date,
+        '12:00 PM' as invoice_time,
+        ('غرامة تأخير إيجار #' || r.id::text || COALESCE(' (' || i.name || ')', '')) as description,
+        r.fine_amount as total_amount,
+        r.fine_amount as paid_amount,
+        0 as remaining_amount,
+        COALESCE(e.name, 'غير محدد') as seller_name,
+        TO_CHAR(r.actual_return_date, 'YYYY-MM-DD') as delivery_date,
+        'cash' as payment_method,
+        'cash' as raw_payment_method,
+        r.fine_amount as cash_amount,
+        0 as card_amount,
+        0 as bank_transfer_amount,
+        0 as wallet_amount,
+        null as payment_splits,
+        'rental_fine' as transaction_type,
+        'غرامة تأخير' as type_label
+      FROM rentals r
+      LEFT JOIN inventory i ON r.inventory_id = i.id
+      LEFT JOIN employees e ON r.seller_id = e.id
+      WHERE r.status = 'returned'
+        AND COALESCE(r.fine_amount, 0) > 0
+        AND r.actual_return_date >= $1::date AND r.actual_return_date < $2::date
+        ${branchFilterRentals}
+      ORDER BY r.actual_return_date ASC, r.id ASC
+    `, params),
+
+    // 4. Tailoring Payments Received
+    db.query(`
+      SELECT 
+        tp.id,
+        COALESCE(t.invoice_number, 'تفصيل-' || t.id::text) as invoice_number,
+        TO_CHAR(tp.payment_date, 'YYYY-MM-DD') as invoice_date,
+        TO_CHAR(tp.payment_date, 'HH12:MI AM') as invoice_time,
+        ('تفصيل: ' || COALESCE(t.product_description, 'طلب تفصيل') || CASE WHEN tp.is_remainder THEN ' (دفعة متبقية)' ELSE ' (عربون تفصيل)' END) as description,
+        CASE WHEN tp.is_remainder THEN tp.amount ELSE t.total_amount END as total_amount,
+        tp.amount as paid_amount,
+        CASE WHEN tp.is_remainder THEN 0 ELSE GREATEST(t.total_amount - tp.amount, 0) END as remaining_amount,
+        COALESCE(e.name, 'غير محدد') as seller_name,
+        TO_CHAR(COALESCE(t.due_date, tp.payment_date::date), 'YYYY-MM-DD') as delivery_date,
+        ${normalizedPaymentMethodSql("COALESCE(tp.payment_method, t.payment_method, 'cash')")} as payment_method,
+        COALESCE(tp.payment_method, t.payment_method, 'cash') as raw_payment_method,
+        CASE WHEN ${normalizedPaymentMethodSql("COALESCE(tp.payment_method, t.payment_method, 'cash')")} = 'cash' THEN tp.amount ELSE 0 END as cash_amount,
+        CASE WHEN ${normalizedPaymentMethodSql("COALESCE(tp.payment_method, t.payment_method, 'cash')")} = 'visa' THEN tp.amount ELSE 0 END as card_amount,
+        CASE WHEN ${normalizedPaymentMethodSql("COALESCE(tp.payment_method, t.payment_method, 'cash')")} = 'bank_transfer' THEN tp.amount ELSE 0 END as bank_transfer_amount,
+        CASE WHEN ${normalizedPaymentMethodSql("COALESCE(tp.payment_method, t.payment_method, 'cash')")} = 'wallet' THEN tp.amount ELSE 0 END as wallet_amount,
+        null as payment_splits,
+        'tailoring' as transaction_type,
+        'تفصيل' as type_label
+      FROM tailoring_payments tp
+      JOIN tailoring_orders t ON tp.tailoring_order_id = t.id
+      LEFT JOIN employees e ON t.seller_id = e.id
+      WHERE tp.payment_date >= $1::date AND tp.payment_date < $2::date
+        ${branchFilterTailoring}
+      ORDER BY tp.payment_date ASC, tp.id ASC
+    `, params),
+
+    // 5. Sales Returns
+    db.query(`
+      SELECT 
+        ret.id,
+        ('مرتجع-' || COALESCE(o.branch_invoice_number::text, o.id::text)) as invoice_number,
+        TO_CHAR(ret.return_date, 'YYYY-MM-DD') as invoice_date,
+        TO_CHAR(ret.return_date, 'HH12:MI AM') as invoice_time,
+        ('مرتجع فاتورة #' || COALESCE(o.branch_invoice_number::text, o.id::text) || COALESCE(' (' || ret.reason || ')', '')) as description,
+        -ret.total_return_amount as total_amount,
+        -ret.total_return_amount as paid_amount,
+        0 as remaining_amount,
+        COALESCE(e.name, oe.name, 'غير محدد') as seller_name,
+        TO_CHAR(ret.return_date, 'YYYY-MM-DD') as delivery_date,
+        COALESCE(ret.refund_method, ${normalizedPaymentMethodSql('o.payment_method')}) as payment_method,
+        COALESCE(ret.refund_method, o.payment_method) as raw_payment_method,
+        CASE WHEN COALESCE(ret.refund_method, 'cash') = 'cash' THEN -ret.total_return_amount ELSE 0 END as cash_amount,
+        CASE WHEN COALESCE(ret.refund_method, 'cash') IN ('card', 'visa') THEN -ret.total_return_amount ELSE 0 END as card_amount,
+        CASE WHEN COALESCE(ret.refund_method, 'cash') IN ('bank_transfer', 'instapay') THEN -ret.total_return_amount ELSE 0 END as bank_transfer_amount,
+        CASE WHEN COALESCE(ret.refund_method, 'cash') IN ('wallet', 'vodafone') THEN -ret.total_return_amount ELSE 0 END as wallet_amount,
+        null as payment_splits,
+        'return' as transaction_type,
+        'مرتجع' as type_label
+      FROM returns ret
+      JOIN orders o ON ret.order_id = o.id
+      LEFT JOIN employees e ON ret.seller_id = e.id
+      LEFT JOIN employees oe ON o.seller_id = oe.id
+      WHERE ret.return_date >= $1::date AND ret.return_date < $2::date
+        ${branchFilterReturns}
+      ORDER BY ret.return_date ASC, ret.id ASC
+    `, params),
+
+    // 6. Employee Advances
     db.query(`
       SELECT 
         et.id,
@@ -2635,7 +2824,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
       ORDER BY et.id ASC
     `, params),
 
-    // Table 3: Expenses and other collections
+    // 7. Expenses
     db.query(`
       SELECT 
         e.id,
@@ -2653,7 +2842,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
       ORDER BY e.id ASC
     `, params),
 
-    // Table 4: Attendance & Hours
+    // 8. Attendance & Hours
     db.query(`
       SELECT 
         e.id as employee_id,
@@ -2673,9 +2862,128 @@ async function getExtendedDailyReport(query = {}, user = null) {
         ${reportBranchId ? 'AND e.branch_id = $2' : ''}
       ORDER BY e.id ASC
     `, [range.start, ...(reportBranchId ? [reportBranchId] : [])]),
+
+    // 9. Supplier Cash Payments made from drawer on this date
+    db.query(`
+      SELECT 
+        st.id,
+        st.supplier_id,
+        s.name as supplier_name,
+        s.code as supplier_code,
+        st.amount,
+        COALESCE(NULLIF(st.notes, ''), 'سداد دفعة للمورد') as notes,
+        st.branch_id,
+        COALESCE(st.payment_method, 'cash') as payment_method,
+        COALESCE(st.paid_from_drawer, true) as paid_from_drawer,
+        TO_CHAR(st.transaction_date, 'YYYY-MM-DD') as transaction_date,
+        TO_CHAR(st.transaction_date, 'HH12:MI AM') as transaction_time
+      FROM supplier_transactions st
+      JOIN suppliers s ON st.supplier_id = s.id
+      WHERE st.transaction_type = 'payment'
+        AND COALESCE(st.paid_from_drawer, TRUE) IS TRUE
+        AND COALESCE(st.payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
+        AND st.transaction_date >= $1::date AND st.transaction_date < $2::date
+        ${branchFilterSupplierPayment}
+      ORDER BY st.id ASC
+    `, params),
+
+    // 10. Order Remaining Payments settled today
+    db.query(`
+      SELECT 
+        op.id,
+        ('سداد متبقي فاتورة #' || COALESCE(o.branch_invoice_number::text, o.id::text)) as invoice_number,
+        TO_CHAR(op.payment_date, 'YYYY-MM-DD') as invoice_date,
+        TO_CHAR(op.payment_date, 'HH12:MI AM') as invoice_time,
+        ('سداد متبقي فاتورة #' || COALESCE(o.branch_invoice_number::text, o.id::text) || COALESCE(' - ' || c.name, '')) as description,
+        op.amount as total_amount,
+        op.amount as paid_amount,
+        0 as remaining_amount,
+        COALESCE(e.name, 'غير محدد') as seller_name,
+        TO_CHAR(op.payment_date::date, 'YYYY-MM-DD') as delivery_date,
+        ${normalizedPaymentMethodSql('op.payment_method')} as payment_method,
+        op.payment_method as raw_payment_method,
+        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'cash' THEN op.amount ELSE 0 END as cash_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'card' THEN op.amount ELSE 0 END as card_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'bank_transfer' THEN op.amount ELSE 0 END as bank_transfer_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'wallet' THEN op.amount ELSE 0 END as wallet_amount,
+        null as payment_splits,
+        'order_payment' as transaction_type,
+        'سداد متبقي' as type_label
+      FROM order_payments op
+      JOIN orders o ON op.order_id = o.id
+      LEFT JOIN customers c ON o.customer_id = c.id
+      LEFT JOIN employees e ON op.seller_id = e.id
+      WHERE op.payment_date >= $1::date AND op.payment_date < $2::date
+        ${branchFilterOrderPayments}
+      ORDER BY op.payment_date ASC, op.id ASC
+    `, params),
+
+    // 11. Rental Remaining Payments settled today
+    db.query(`
+      SELECT 
+        rp.id,
+        ('سداد متبقي عقد-' || r.id::text) as invoice_number,
+        TO_CHAR(rp.payment_date, 'YYYY-MM-DD') as invoice_date,
+        TO_CHAR(rp.payment_date, 'HH12:MI AM') as invoice_time,
+        ('سداد متبقي إيجار #' || r.id::text || COALESCE(' - ' || c.name, '')) as description,
+        rp.amount as total_amount,
+        rp.amount as paid_amount,
+        0 as remaining_amount,
+        COALESCE(e.name, 'غير محدد') as seller_name,
+        TO_CHAR(rp.payment_date::date, 'YYYY-MM-DD') as delivery_date,
+        ${normalizedPaymentMethodSql('rp.payment_method')} as payment_method,
+        rp.payment_method as raw_payment_method,
+        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'cash' THEN rp.amount ELSE 0 END as cash_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'card' THEN rp.amount ELSE 0 END as card_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'bank_transfer' THEN rp.amount ELSE 0 END as bank_transfer_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'wallet' THEN rp.amount ELSE 0 END as wallet_amount,
+        null as payment_splits,
+        'rental_payment' as transaction_type,
+        'سداد متبقي إيجار' as type_label
+      FROM rental_payments rp
+      JOIN rentals r ON rp.rental_id = r.id
+      LEFT JOIN customers c ON r.customer_id = c.id
+      LEFT JOIN employees e ON rp.seller_id = e.id
+      WHERE rp.payment_date >= $1::date AND rp.payment_date < $2::date
+        ${branchFilterRentalPayments}
+      ORDER BY rp.payment_date ASC, rp.id ASC
+    `, params),
+
+    // 12. Rental Pickups (استلامات الإيجار المنفذة في هذا اليوم للبدل المحجوزة مسبقاً)
+    db.query(`
+      SELECT 
+        r.id,
+        ('استلام عقد-' || r.id::text) as invoice_number,
+        TO_CHAR(COALESCE(r.actual_pickup_date, r.pickup_date), 'YYYY-MM-DD') as invoice_date,
+        '02:00 PM' as invoice_time,
+        ('استلام بدلة تأجير: ' || COALESCE(ri.name, 'بدلة تأجير') || COALESCE(' - ' || c.name, '')) as description,
+        r.total_price as total_amount,
+        0 as paid_amount,
+        COALESCE(r.remaining, 0) as remaining_amount,
+        COALESCE(e.name, 'غير محدد') as seller_name,
+        TO_CHAR(r.pickup_date, 'YYYY-MM-DD') as delivery_date,
+        'cash' as payment_method,
+        'cash' as raw_payment_method,
+        0 as cash_amount,
+        0 as card_amount,
+        0 as bank_transfer_amount,
+        0 as wallet_amount,
+        null as payment_splits,
+        'rental_pickup' as transaction_type,
+        'استلام إيجار' as type_label
+      FROM rentals r
+      LEFT JOIN rental_inventory ri ON r.rental_inventory_id = ri.id
+      LEFT JOIN customers c ON r.customer_id = c.id
+      LEFT JOIN employees e ON r.seller_id = e.id
+      WHERE r.status IN ('active', 'returned')
+        AND r.pickup_date >= $1::date AND r.pickup_date < $2::date
+        AND NOT (r.booking_date >= $1::date AND r.booking_date < $2::date)
+        ${branchFilterRentals}
+      ORDER BY r.pickup_date ASC, r.id ASC
+    `, params),
   ]);
 
-  const salesInvoices = ordersRes.rows.map(row => {
+  const mapSplits = (row) => {
     let splits = Array.isArray(row.payment_splits)
       ? row.payment_splits
       : (typeof row.payment_splits === 'string'
@@ -2705,7 +3013,28 @@ async function getExtendedDailyReport(query = {}, user = null) {
       paid_amount: Number(row.paid_amount || 0),
       remaining_amount: Number(row.remaining_amount || 0),
     };
-  });
+  };
+
+  const mappedOrders = ordersRes.rows.map(mapSplits);
+  const mappedRentals = rentalsRes.rows.map(mapSplits);
+  const mappedRentalFines = rentalFinesRes.rows.map(mapSplits);
+  const mappedTailoring = tailoringRes.rows.map(mapSplits);
+  const mappedReturns = returnsRes.rows.map(mapSplits);
+  const mappedOrderPayments = (orderPaymentsRes?.rows || []).map(mapSplits);
+  const mappedRentalPayments = (rentalPaymentsRes?.rows || []).map(mapSplits);
+  const mappedRentalPickups = (rentalPickupsRes?.rows || []).map(mapSplits);
+
+  // Unified list of all daily transactions for tables and Excel export
+  const allDailyTransactions = [
+    ...mappedOrders,
+    ...mappedRentals,
+    ...mappedRentalFines,
+    ...mappedTailoring,
+    ...mappedReturns,
+    ...mappedOrderPayments,
+    ...mappedRentalPayments,
+    ...mappedRentalPickups,
+  ];
 
   const advances = advancesRes.rows.map(row => ({
     ...row,
@@ -2723,35 +3052,94 @@ async function getExtendedDailyReport(query = {}, user = null) {
     basic_salary: Number(row.basic_salary || 0),
   }));
 
-  const totalSales = salesInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
-  const totalPaid = salesInvoices.reduce((sum, inv) => sum + inv.paid_amount, 0);
-  const totalAdvances = advances.reduce((sum, adv) => sum + adv.amount, 0);
-  const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-  const totalDeductions = totalAdvances + totalExpenses;
+  const supplierPayments = ((supplierPaymentsRes && supplierPaymentsRes.rows) || []).map(row => ({
+    ...row,
+    amount: Number(row.amount || 0),
+  }));
 
-  const cashCollected = salesInvoices.reduce((sum, inv) => {
-    if (inv.payment_method === 'cash') return sum + inv.paid_amount;
-    if (Number(inv.cash_amount) > 0) return sum + Number(inv.cash_amount);
-    return sum;
-  }, 0);
-  const cashExpenses = expenses.reduce((sum, exp) => {
+  const totalSales = Math.round(allDailyTransactions.reduce((sum, inv) => sum + inv.total_amount, 0) * 100) / 100;
+  const totalPaid = Math.round(allDailyTransactions.reduce((sum, inv) => sum + inv.paid_amount, 0) * 100) / 100;
+  const totalAdvances = Math.round(advances.reduce((sum, adv) => sum + adv.amount, 0) * 100) / 100;
+  const totalExpenses = Math.round(expenses.reduce((sum, exp) => sum + exp.amount, 0) * 100) / 100;
+  const totalSupplierPayments = Math.round(supplierPayments.reduce((sum, sp) => sum + sp.amount, 0) * 100) / 100;
+  const totalDeductions = Math.round((totalAdvances + totalExpenses + totalSupplierPayments) * 100) / 100;
+
+  let cashCollected = 0;
+  let cardCollected = 0;
+  let bankCollected = 0;
+  let walletCollected = 0;
+
+  allDailyTransactions.forEach(inv => {
+    if (inv.payment_splits && Array.isArray(inv.payment_splits) && inv.payment_splits.length > 0) {
+      inv.payment_splits.forEach(s => {
+        const m = (s.method || '').toLowerCase();
+        const a = Number(s.amount || 0);
+        if (m === 'cash') cashCollected += a;
+        else if (m === 'card' || m === 'visa') cardCollected += a;
+        else if (m === 'bank_transfer' || m === 'bank' || m === 'instapay') bankCollected += a;
+        else if (m === 'wallet') walletCollected += a;
+        else cashCollected += a;
+      });
+    } else if (Number(inv.cash_amount) !== 0 || Number(inv.card_amount) !== 0 || Number(inv.bank_transfer_amount) !== 0 || Number(inv.wallet_amount) !== 0) {
+      cashCollected += Number(inv.cash_amount || 0);
+      cardCollected += Number(inv.card_amount || 0);
+      bankCollected += Number(inv.bank_transfer_amount || 0);
+      walletCollected += Number(inv.wallet_amount || 0);
+    } else {
+      const pm = (inv.payment_method || '').toLowerCase();
+      if (pm === 'cash') cashCollected += inv.paid_amount;
+      else if (pm === 'visa' || pm === 'card') cardCollected += inv.paid_amount;
+      else if (pm === 'bank_transfer' || pm === 'instapay') bankCollected += inv.paid_amount;
+      else if (pm === 'wallet') walletCollected += inv.paid_amount;
+      else cashCollected += inv.paid_amount;
+    }
+  });
+
+  const cashExpenses = Math.round(expenses.reduce((sum, exp) => {
     return exp.payment_method === 'cash' ? sum + exp.amount : sum;
-  }, 0);
+  }, 0) * 100) / 100;
 
-  const cashDrawerExcel = totalPaid - totalDeductions;
-  const physicalCashInDrawer = Math.max(0, cashCollected - cashExpenses - totalAdvances);
+  cashCollected = Math.round(cashCollected * 100) / 100;
+  cardCollected = Math.round(cardCollected * 100) / 100;
+  bankCollected = Math.round(bankCollected * 100) / 100;
+  walletCollected = Math.round(walletCollected * 100) / 100;
+
+  const physicalCashInDrawer = Math.max(0, Math.round((cashCollected - cashExpenses - totalAdvances - totalSupplierPayments) * 100) / 100);
+  const cashDrawerExcel = Math.round((totalPaid - totalDeductions) * 100) / 100;
+
+  const paymentMethods = [
+    { method: 'cash', total_amount: cashCollected, total: cashCollected },
+    { method: 'visa', total_amount: cardCollected, total: cardCollected },
+    { method: 'bank_transfer', total_amount: bankCollected, total: bankCollected },
+    { method: 'wallet', total_amount: walletCollected, total: walletCollected },
+  ].filter(p => p.total !== 0);
+
+  const branding = await getBranchBranding(db, reportBranchId);
 
   return {
     date,
-    sales_invoices: salesInvoices,
+    branch_id: reportBranchId,
+    branch_name: branding.branchName,
+    branch_clean_name: branding.cleanName,
+    report_title: branding.titles.daily,
+    branding,
+    sales_invoices: allDailyTransactions,
+    orders_only: mappedOrders,
+    rental_invoices: mappedRentals.concat(mappedRentalFines),
+    tailoring_invoices: mappedTailoring,
+    returns_invoices: mappedReturns,
     advances,
     expenses,
     attendance,
+    supplier_payments: supplierPayments,
+    payment_methods: paymentMethods,
     summary: {
       total_sales: totalSales,
       total_paid: totalPaid,
       total_advances: totalAdvances,
       total_expenses: totalExpenses,
+      total_supplier_cash_payments: totalSupplierPayments,
+      supplier_cash_payments: totalSupplierPayments,
       total_deductions: totalDeductions,
       cash_in_drawer: physicalCashInDrawer,
       physical_cash_in_drawer: physicalCashInDrawer,
@@ -2760,6 +3148,10 @@ async function getExtendedDailyReport(query = {}, user = null) {
       net_cash: physicalCashInDrawer,
       cash_drawer_excel: cashDrawerExcel,
       cash_collected: cashCollected,
+      card_collected: cardCollected,
+      bank_collected: bankCollected,
+      wallet_collected: walletCollected,
+      electronic_collections: cardCollected + bankCollected + walletCollected,
       cash_expenses: cashExpenses,
     }
   };
@@ -2767,7 +3159,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
 
 async function getMonthlyOhdaReport(query = {}, user = null) {
   let month = query.month;
-  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     month = (await getDatabaseCairoNow(db)).month;
   }
   const reportBranchId = getReportBranchId(user, query);
@@ -2915,9 +3307,15 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
   const totalAdvancesAll = employees.reduce((s, e) => s + (e.total_advances || 0), 0);
   const totalAttendanceAll = employees.reduce((s, e) => s + (e.total_attendance || 0), 0);
   const totalEntitlementAll = employees.reduce((s, e) => s + (e.month_entitlement || 0), 0);
+  const branding = await getBranchBranding(db, reportBranchId);
 
   return {
     month,
+    branch_id: reportBranchId,
+    branch_name: branding.branchName,
+    branch_clean_name: branding.cleanName,
+    report_title: branding.titles.ohda,
+    branding,
     daysInMonth,
     daysMeta,
     employees,
@@ -2935,7 +3333,7 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
 
 async function getMonthlySalarySheet(query = {}, user = null) {
   let month = query.month;
-  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     month = (await getDatabaseCairoNow(db)).month;
   }
   const reportBranchId = getReportBranchId(user, query);
@@ -3115,8 +3513,15 @@ async function getMonthlySalarySheet(query = {}, user = null) {
     total_other_deductions: salarySheet.reduce((s, e) => s + (e.other_deductions || 0), 0),
   };
 
+  const branding = await getBranchBranding(db, reportBranchId);
+
   return {
     month,
+    branch_id: reportBranchId,
+    branch_name: branding.branchName,
+    branch_clean_name: branding.cleanName,
+    report_title: branding.titles.salary,
+    branding,
     employees: salarySheet,
     summary,
   };
@@ -3124,7 +3529,7 @@ async function getMonthlySalarySheet(query = {}, user = null) {
 
 async function getSalesKpiReport(query = {}, user = null) {
   let month = query.month;
-  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     month = (await getDatabaseCairoNow(db)).month;
   }
   const reportBranchId = getReportBranchId(user, query);
@@ -3183,8 +3588,15 @@ async function getSalesKpiReport(query = {}, user = null) {
     };
   });
 
+  const branding = await getBranchBranding(db, reportBranchId);
+
   return {
     month,
+    branch_id: reportBranchId,
+    branch_name: branding.branchName,
+    branch_clean_name: branding.cleanName,
+    report_title: branding.titles.kpi,
+    branding,
     sellers,
     summary: {
       total_sales: sellers.reduce((sum, s) => sum + s.total_sales, 0),
@@ -3192,6 +3604,83 @@ async function getSalesKpiReport(query = {}, user = null) {
       average_achievement: sellers.length > 0
         ? Math.round((sellers.reduce((sum, s) => sum + s.achievement_percentage, 0) / sellers.length) * 10) / 10
         : 0,
+    }
+  };
+}
+
+/**
+ * Consolidated 30-day Master Report (MASTER SHEET data provider)
+ */
+async function getMonthlyMasterReport(query = {}, user = null) {
+  let month = query.month;
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    month = (await getDatabaseCairoNow(db)).month;
+  }
+  const reportBranchId = getReportBranchId(user, query);
+  if (user && user.role !== 'admin' && !reportBranchId) {
+    const err = new Error('Branch user must have a branch_id');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const branding = await getBranchBranding(db, reportBranchId);
+
+  const [yearStr, monthStr] = month.split('-');
+  const year = parseInt(yearStr, 10);
+  const monthNum = parseInt(monthStr, 10);
+  const daysInMonth = new Date(year, monthNum, 0).getDate();
+
+  const dayIndices = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const [daysData, ohdaData, salaryData, kpiData] = await Promise.all([
+    Promise.all(dayIndices.map(async (d) => {
+      const dateStr = `${month}-${String(d).padStart(2, '0')}`;
+      const dayData = await getExtendedDailyReport({ date: dateStr, branch_id: reportBranchId }, user);
+      const day20Cols = buildDaily20ColumnRows(dayData, { date: dateStr, minRows: 0 });
+      return {
+        day: d,
+        day_number: d,
+        date: dateStr,
+        rows: day20Cols.rows,
+        summary: day20Cols.summary,
+        data: dayData
+      };
+    })),
+    getMonthlyOhdaReport({ month, branch_id: reportBranchId }, user),
+    getMonthlySalarySheet({ month, branch_id: reportBranchId }, user),
+    getSalesKpiReport({ month, branch_id: reportBranchId }, user),
+  ]);
+
+  const totalMonthlySales = daysData.reduce((sum, item) => sum + (item.summary?.total_sales || item.data?.summary?.total_sales || 0), 0);
+  const totalMonthlyPaid = daysData.reduce((sum, item) => sum + (item.summary?.total_paid || item.data?.summary?.total_paid || 0), 0);
+  const totalMonthlyAdvances = daysData.reduce((sum, item) => sum + (item.summary?.total_advances || item.data?.summary?.total_advances || 0), 0);
+  const totalMonthlyExpenses = daysData.reduce((sum, item) => sum + (item.summary?.total_expenses || item.data?.summary?.total_expenses || 0), 0);
+  const totalMonthlyElectronic = daysData.reduce((sum, item) => sum + (item.summary?.total_electronic || item.data?.summary?.electronic_collections || 0), 0);
+  const totalMonthlyDeductionsK77 = daysData.reduce((sum, item) => sum + (item.summary?.total_drawer_deductions || 0), 0);
+  const totalMonthlyDrawerCashD77 = daysData.reduce((sum, item) => sum + (item.summary?.net_cash_drawer || 0), 0);
+
+  return {
+    month,
+    daysInMonth,
+    branch_id: reportBranchId,
+    branch_name: branding.branchName,
+    branch_clean_name: branding.cleanName,
+    report_title: branding.titles.master,
+    branding,
+    days: daysData,
+    ohda: ohdaData,
+    salary: salaryData,
+    kpi: kpiData,
+    summary: {
+      total_sales: Math.round(totalMonthlySales * 100) / 100,
+      total_paid: Math.round(totalMonthlyPaid * 100) / 100,
+      total_paid_cash: Math.round(totalMonthlyPaid * 100) / 100,
+      total_advances: Math.round(totalMonthlyAdvances * 100) / 100,
+      total_expenses: Math.round(totalMonthlyExpenses * 100) / 100,
+      total_electronic: Math.round(totalMonthlyElectronic * 100) / 100,
+      total_drawer_deductions: Math.round(totalMonthlyDeductionsK77 * 100) / 100,
+      total_drawer_cash: Math.round(totalMonthlyDrawerCashD77 * 100) / 100,
+      total_cash_drawer: Math.round(totalMonthlyDrawerCashD77 * 100) / 100,
+      net_cash_drawer: Math.round(totalMonthlyDrawerCashD77 * 100) / 100,
     }
   };
 }
@@ -3298,6 +3787,7 @@ module.exports = {
   getMonthlyOhdaReport,
   getMonthlySalarySheet,
   getSalesKpiReport,
+  getMonthlyMasterReport,
   updateDailyAttendanceQuick,
   getSummaryReport,
   getSalesReport,

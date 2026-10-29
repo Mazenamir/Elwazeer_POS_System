@@ -610,7 +610,7 @@ export default function MatrixVariantGenerator({
               value={bulkStockValue}
               onChange={(e) => setBulkStockValue(e.target.value)}
               placeholder="0"
-              className="w-14 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-center outline-none focus:border-indigo-600"
+              className="w-24 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-center outline-none focus:border-indigo-600"
             />
             <button
               type="button"
