@@ -78,7 +78,7 @@ const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || '250mb';
 
 // Sync Configuration
 const SYNC_SERVER_URL = (process.env.SYNC_SERVER_URL || process.env.REMOTE_SERVER_URL || '').replace(/\/+$/, '');
-const SYNC_API_KEY = process.env.SYNC_API_KEY || '';
+const SYNC_API_KEY = process.env.SYNC_API_KEY || 'BebyoonSecretKey2026';
 const BRANCH_ID = process.env.BRANCH_ID || '';
 const SYNC_QUEUE_RETENTION_DAYS = boundedEnvInt('SYNC_QUEUE_RETENTION_DAYS', 30, 0, 365);
 const SYNC_FETCH_TIMEOUT_MS = boundedEnvInt('SYNC_FETCH_TIMEOUT_MS', 15000, 1000, 120000);

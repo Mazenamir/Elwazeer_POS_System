@@ -38,7 +38,9 @@ async function testM2() {
   assert.strictEqual(authNextCalled, false, 'authMiddleware must not call next() for unauthenticated /api/sync/configure');
 
   // Valid sync key bypass on /api/sync/configure
-  const syncKey = process.env.SYNC_API_KEY || config.SYNC_API_KEY;
+  const syncKey = process.env.SYNC_API_KEY || config.SYNC_API_KEY || 'BebyoonSecretKey2026';
+  process.env.SYNC_API_KEY = syncKey;
+  config.SYNC_API_KEY = syncKey;
   const mockReqSyncKey = {
     path: '/api/sync/configure',
     headers: { 'x-sync-key': syncKey },

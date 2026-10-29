@@ -31,31 +31,40 @@ async function run() {
   const branchUser3 = { id: 3, role: 'cashier', branch_id: 3, username: 'cashier_b3' };
 
   // Setup sample test transfer data if needed
+  let testItemId;
   let testTransferId1, testTransferId2, testTransferId3;
 
   await test('SETUP: Seed distinct transfers between branches', async () => {
+    // 0. Ensure a test inventory item exists to satisfy foreign key constraints on fresh CI databases
+    const invRes = await db.query(`
+      INSERT INTO inventory (name, barcode, price, stock_level)
+      VALUES ('Test Transfer Item', 'TEST-TR-LOGS-' || floor(random() * 1000000)::text, 100, 50)
+      RETURNING id
+    `);
+    testItemId = invRes.rows[0].id;
+
     // 1. Transfer from branch 1 to branch 2 (completed)
     const ins1 = await db.query(`
       INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, transfer_date)
-      VALUES (1, 1, 2, 5, 'completed', '[{"size_name":"50","color_name":"Black","quantity":5}]', '2026-10-25 10:00:00')
+      VALUES ($1, 1, 2, 5, 'completed', '[{"size_name":"50","color_name":"Black","quantity":5}]', '2026-10-25 10:00:00')
       RETURNING id
-    `);
+    `, [testItemId]);
     testTransferId1 = ins1.rows[0].id;
 
     // 2. Transfer from branch 2 to branch 3 (pending)
     const ins2 = await db.query(`
       INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, transfer_date)
-      VALUES (1, 2, 3, 3, 'pending', '[{"size_name":"52","color_name":"Navy","quantity":3}]', '2026-10-26 12:00:00')
+      VALUES ($1, 2, 3, 3, 'pending', '[{"size_name":"52","color_name":"Navy","quantity":3}]', '2026-10-26 12:00:00')
       RETURNING id
-    `);
+    `, [testItemId]);
     testTransferId2 = ins2.rows[0].id;
 
     // 3. Transfer from branch 1 to branch 3 (requested)
     const ins3 = await db.query(`
       INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, transfer_date)
-      VALUES (1, 1, 3, 4, 'requested', '[{"size_name":"54","color_name":"Grey","quantity":4}]', '2026-10-26 14:00:00')
+      VALUES ($1, 1, 3, 4, 'requested', '[{"size_name":"54","color_name":"Grey","quantity":4}]', '2026-10-26 14:00:00')
       RETURNING id
-    `);
+    `, [testItemId]);
     testTransferId3 = ins3.rows[0].id;
 
     assert.ok(testTransferId1 && testTransferId2 && testTransferId3, 'Sample transfers created');
@@ -214,16 +223,16 @@ async function run() {
     // Ensure sufficient stock in from_branch (branch 1) for the transfer
     await db.query(`
       INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
-      VALUES (1, 1, 10)
+      VALUES ($1, 1, 10)
       ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = inventory_branches.stock_level + 10
-    `);
+    `, [testItemId]);
 
     // Seed a specific requested transfer
     const insRace = await db.query(`
       INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, transfer_date)
-      VALUES (1, 1, 2, 1, 'requested', CURRENT_TIMESTAMP)
+      VALUES ($1, 1, 2, 1, 'requested', CURRENT_TIMESTAMP)
       RETURNING id
-    `);
+    `, [testItemId]);
     const raceId = insRace.rows[0].id;
 
     // Run 2 simultaneous approvals
@@ -245,6 +254,10 @@ async function run() {
   // Cleanup sample rows
   await test('TEARDOWN: Clean up test transfers', async () => {
     await db.query('DELETE FROM stock_transfers WHERE id IN ($1, $2, $3)', [testTransferId1, testTransferId2, testTransferId3]);
+    if (testItemId) {
+      await db.query('DELETE FROM inventory_branches WHERE inventory_id = $1', [testItemId]);
+      await db.query('DELETE FROM inventory WHERE id = $1', [testItemId]);
+    }
     console.log('  Cleaned up sample test transfers.');
   });
 
