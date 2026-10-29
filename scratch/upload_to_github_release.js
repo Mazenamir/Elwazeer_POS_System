@@ -1,31 +1,38 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const pkg = require('../package.json');
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 const OWNER = 'Mazenamir';
 const REPO = 'Elwazeer_POS_System';
-const TAG = 'v1.0.7';
-const RELEASE_NAME = 'Bebyoon System v1.0.7';
+const VERSION = process.env.RELEASE_VERSION || pkg.version || '1.0.8';
+const TAG = `v${VERSION}`;
+const RELEASE_NAME = `Bebyoon System v${VERSION}`;
 
-const RELEASE_BODY = `## 🚀 التحديثات في الإصدار v1.0.7 (Release Highlights)
+const RELEASE_BODY = `## 🚀 التحديثات في الإصدار v${VERSION} (Release Highlights)
 
-### 🏬 نظام الفروع والمزامنة ثنائية الاتجاه (Offline-First Sync)
-- **العمل بدون إنترنت 100%:** تشغيل محلي في الفروع بقاعدة بيانات خفيفة وسريعة (SQLite) دون توقف للكاشير.
-- **المزامنة التلقائية:** رفع فواتير ومرتجعات الفروع تلقائياً إلى السيرفر المركزي كل 30 ثانية.
-- **نافذة تشخيص وضبط الرابط:** إمكانية تغيير رابط السيرفر ورقم الفرع مباشرة من واجهة البرنامج (Header).
-- **مراقبة الاتصال (Heartbeat & Notifications):** مؤشرات حية لحالة اتصال الفروع وإشعارات فورية.
+### 📊 نظام الحسابات وتقفيل الدرج المعتمد (Elwazeer Accounting Invariants)
+- **تقفيل الدرج النقدي:** الفصل التام بين المدفوعات النقدية والبنكية (فيزا وانستاباي)، واحتساب صافي الكاش المتبقي للتوريد: \`صافي التحصيل النقدي - (المصروفات النقدية + سلف الموظفين + مدفوعات الموردين من الدرج)\`.
+- **مسير الرواتب القياسي (268 ساعة):** اعتماد معيار 268 ساعة شهرياً، استقطاع الغياب المضاعف، السماح بـ 4 أيام إجازة شهرياً، واحتساب الأوفر تايم بمعدل 1.35x.
+- **تصدير الإكسيل المجمع (31-Day Consolidated Excel):** مطابقة تامة لهيكل الشيت المعتمد (31 شيت يومي + MASTER STAFF LIST + MASTER SHEET + OHDA + SALARY + KPI).
 
-### 💰 المبيعات ونقاط البيع (POS & Financials)
-- **دعم تجزئة طرق الدفع (Split Payments):** إمكانية دفع الفاتورة مقسمة (كاش، فيزا، آجل).
-- **التقارير المالية والأرباح:** لوحة تحكم متقدمة بحساب الأرباح الفعلية وصافي الدخل وتصدير Excel/PDF.
-- **تحسينات الأداء والواجهة:** تسريع البحث عن الأصناف والعملاء، وإصلاح نوافذ التأكيد.
+### 🔄 التحديث التلقائي الخفيف والآمن (Periodic Auto-Updater)
+- **فحص دوري خفيف في الخلفية:** فحص كل 20 دقيقة مع تباين عشوائي (Jitter ±5m) لمنع تزامن الطلبات بين الفروع.
+- **منع التزاحم وإدارة الانقطاع:** أقفال تزامن تمنع تعدد طلبات الفحص، ومضاعفة وقت الانتظار (Exponential Backoff حتى 120 دقيقة) عند انقطاع الإنترنت.
+- **الأمان والاستقرار:** منع كامل لأي أوامر \`git pull\` تلقائية على أجهزة العملاء، وفصل تام بين فحص التحديث وتحميل الحزم لتفادي أي بطء في نقطة البيع.
+
+### 🛡️ الأمان، الصلاحيات، وإدارة الفروع (Security & RBAC)
+- **لوحة صلاحيات تفصيلية:** إدارة دقيقة لصلاحيات المستخدمين لكل صفحة وميزة.
+- **حماية المبيعات والمخزون:** منع التلاعب في الأسعار من المتصفح والتحقق الحاسم على الخادم، مع تتبع دقيق للمقاسات والألوان والتحويلات بين الفروع.
+- **ترقية حزم التبعيات:** معالجة الثغرات الأمنية في التبعيات الخارجية بنجاح 100%.
 
 ---
 
-### 📦 ملفات التثبيت المرفقة:
-1. **\`Bebyoon-System-Setup-1.0.7.exe\`**: النسخة الكاملة للسيرفر المركزي (Master Server).
-2. **\`Bebyoon-Branch-Setup-1.0.7.exe\`**: النسخة الخفيفة المخصصة لأجهزة الفروع والكاشير (Branch Setup).
+### 📦 ملفات التثبيت المرفقة (Installation Packages):
+1. **\`Bebyoon-System-Setup-${VERSION}.exe\`**: النسخة الكاملة للسيرفر المركزي (Master Server).
+2. **\`Bebyoon-Branch-Setup-${VERSION}.exe\`**: النسخة المخصصة لأجهزة الفروع ونقاط البيع (Branch Setup).
+3. **ملفات التحقق والترقية التلقائية (\`latest.yml\` & \`.blockmap\`)**.
 `;
 
 function apiRequest(options, data = null) {
@@ -110,6 +117,11 @@ function uploadAsset(uploadUrl, filePath, assetName) {
 }
 
 async function main() {
+  if (!GITHUB_TOKEN) {
+    console.error('❌ GITHUB_TOKEN or GH_TOKEN is required to publish the release.');
+    process.exit(1);
+  }
+
   console.log(`🚀 Checking release ${TAG} on GitHub...`);
 
   let release;
@@ -150,24 +162,24 @@ async function main() {
 
   const filesToUpload = [
     {
-      path: path.join(__dirname, '../dist/Bebyoon System Setup 1.0.7.exe'),
-      name: 'Bebyoon-System-Setup-1.0.7.exe',
+      path: path.join(__dirname, `../dist/Bebyoon System Setup ${VERSION}.exe`),
+      name: `Bebyoon-System-Setup-${VERSION}.exe`,
     },
     {
-      path: path.join(__dirname, '../dist/Bebyoon System Setup 1.0.7.exe.blockmap'),
-      name: 'Bebyoon-System-Setup-1.0.7.exe.blockmap',
+      path: path.join(__dirname, `../dist/Bebyoon System Setup ${VERSION}.exe.blockmap`),
+      name: `Bebyoon-System-Setup-${VERSION}.exe.blockmap`,
     },
     {
       path: path.join(__dirname, '../dist/latest.yml'),
       name: 'latest.yml',
     },
     {
-      path: path.join(__dirname, '../dist-branch/Bebyoon Branch Setup 1.0.7.exe'),
-      name: 'Bebyoon-Branch-Setup-1.0.7.exe',
+      path: path.join(__dirname, `../dist-branch/Bebyoon Branch Setup ${VERSION}.exe`),
+      name: `Bebyoon-Branch-Setup-${VERSION}.exe`,
     },
     {
-      path: path.join(__dirname, '../dist-branch/Bebyoon Branch Setup 1.0.7.exe.blockmap'),
-      name: 'Bebyoon-Branch-Setup-1.0.7.exe.blockmap',
+      path: path.join(__dirname, `../dist-branch/Bebyoon Branch Setup ${VERSION}.exe.blockmap`),
+      name: `Bebyoon-Branch-Setup-${VERSION}.exe.blockmap`,
     },
   ];
 
