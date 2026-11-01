@@ -120,7 +120,8 @@ async function runAutoUpdaterTests() {
     await new Promise(r => setTimeout(r, 80));
     assert.strictEqual(mock.checkCount, 1);
     assert.strictEqual(manager.getStatus().lastCheckStatus, 'available');
-    assert.strictEqual(manager.isDownloading, true, 'isDownloading flag must be active');
+    assert.strictEqual(manager.isDownloading, false, 'isDownloading flag must NOT be falsely active');
+    assert.strictEqual(manager.getStatus().state, 'update-available', 'State must be update-available');
     manager.stop();
   });
 

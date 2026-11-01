@@ -104,6 +104,12 @@ const suites = [
     domain: 'Reports & Routing',
     script: 'scratch/test_reports_routes_parity.js',
   },
+  {
+    id: 16,
+    name: 'Secure Auto-Update, Isolation, Drain & ACL Suite',
+    domain: 'Update & Protection',
+    script: 'scratch/test_secure_auto_update_system.js',
+  },
 ];
 
 console.log('========================================================================================================');
@@ -144,7 +150,7 @@ for (let i = 0; i < suites.length; i++) {
     cwd: ROOT_DIR,
     encoding: 'utf8',
     env: { ...process.env },
-    timeout: 180000, // 3-minute timeout per suite
+    timeout: 300000, // 5-minute timeout per suite
     maxBuffer: 50 * 1024 * 1024,
   });
 

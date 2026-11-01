@@ -8,6 +8,7 @@ const cookieParser = require('cookie-parser');
 const config = require('./config/env');
 const { duplicateMutationGuard } = require('./middleware/dedup.middleware');
 const { authMiddleware } = require('./middleware/auth.middleware');
+const { drainCoordinator } = require('./core/drain-coordinator');
 const { errorHandler } = require('./middleware/error.middleware');
 const { PUBLIC_STATIC_FILES } = require('../shared/constants/system');
 
@@ -104,6 +105,7 @@ app.use(duplicateMutationGuard);
 
 // Global Authentication & Authorization Middleware
 app.use(authMiddleware);
+app.use(drainCoordinator.getMiddleware());
 
 // Static file protection & serving (serves React SPA dist first, then renderer fallback)
 const rendererPath = fs.existsSync(path.join(config.appRoot, 'src/renderer'))
@@ -203,6 +205,31 @@ app.use('/api', syncRoutes);
 app.use('/api', wornRoutes);
 app.use('/api', notificationsRoutes);
 app.use('/api', searchRoutes);
+
+// Internal System Maintenance & Safe Drain Control API (Strictly localhost only)
+app.get('/api/internal/system/drain-status', (req, res) => {
+  const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip || req.socket.remoteAddress);
+  if (!isLocal) return res.status(403).json({ error: 'unauthorized_remote_access' });
+  res.json({ success: true, ...drainCoordinator.getStatus() });
+});
+
+app.post('/api/internal/system/maintenance', async (req, res) => {
+  const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip || req.socket.remoteAddress);
+  if (!isLocal) return res.status(403).json({ error: 'unauthorized_remote_access' });
+
+  const { action, reason, timeoutMs } = req.body || {};
+  if (action === 'activate') {
+    const status = drainCoordinator.activateMaintenance(reason);
+    return res.json({ success: true, ...status });
+  } else if (action === 'deactivate') {
+    const status = drainCoordinator.deactivateMaintenance();
+    return res.json({ success: true, ...status });
+  } else if (action === 'drain') {
+    const result = await drainCoordinator.waitForDrain(Number(timeoutMs) || 45000);
+    return res.json({ success: true, ...result });
+  }
+  res.status(400).json({ error: 'invalid_action' });
+});
 
 // SPA client fallback for HTML5 History API
 app.use((req, res, next) => {

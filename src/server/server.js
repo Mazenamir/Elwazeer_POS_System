@@ -7,6 +7,7 @@ const config = require('./config/env');
 const db = require('./database/connection');
 const { runMigrations } = require('./database/migrator');
 const syncService = require('./modules/sync/sync.service');
+const { drainCoordinator } = require('./core/drain-coordinator');
 
 function isPortOpen(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
@@ -387,9 +388,29 @@ async function startServer() {
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('message', (msg) => {
+    process.on('message', async (msg) => {
       if (msg === 'shutdown' || msg?.type === 'shutdown') {
         shutdown('IPC_SHUTDOWN');
+      } else if (msg?.type === 'drain-and-shutdown') {
+        try {
+          drainCoordinator.activateMaintenance('System update requested safe drain');
+          const timeoutMs = Number(msg.timeoutMs) || 45000;
+          const drainResult = await drainCoordinator.waitForDrain(timeoutMs);
+          if (!drainResult.drained) {
+            if (typeof process.send === 'function') {
+              process.send({ type: 'drain-failed', details: drainResult });
+            }
+            return;
+          }
+          if (typeof process.send === 'function') {
+            process.send({ type: 'drain-complete' });
+          }
+          shutdown('SAFE_UPDATE_SHUTDOWN');
+        } catch (err) {
+          if (typeof process.send === 'function') {
+            process.send({ type: 'drain-failed', error: err.message });
+          }
+        }
       }
     });
 

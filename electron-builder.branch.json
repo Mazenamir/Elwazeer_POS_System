@@ -92,7 +92,8 @@
   "publish": {
     "provider": "github",
     "owner": "Mazenamir",
-    "repo": "Elwazeer_POS_System"
+    "repo": "Elwazeer_POS_System",
+    "channel": "branch"
   },
   "electronVersion": "30.0.0"
 }

@@ -51,6 +51,8 @@ scratch/*
 !scratch/test_transfer_logs_suite.js
 !scratch/test_dynamic_categories_and_filters.js
 !scratch/test_reports_routes_parity.js
+!scratch/test_secure_auto_update_system.js
 !scratch/cleanup_test_data.js
 
 .agents/teamwork/
+manual_screenshots/

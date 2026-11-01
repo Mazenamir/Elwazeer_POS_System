@@ -164,6 +164,59 @@ class ServerSupervisor {
     return this.process;
   }
 
+  async drainAndStop(timeoutMs = 45000) {
+    if (!this.process || this.isExternal) {
+      return { success: true, reason: 'no_child_process_or_external' };
+    }
+    this.log(`[Supervisor] Requesting server process to drain active operations and stop (Timeout: ${timeoutMs}ms)...`);
+    return new Promise((resolve) => {
+      let resolved = false;
+      const cleanupTimer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this.log('[Supervisor] Warning: drainAndStop timed out waiting for server drain.');
+          resolve({ success: false, reason: 'drain_timeout' });
+        }
+      }, timeoutMs + 5000);
+
+      const messageHandler = (msg) => {
+        if (msg?.type === 'drain-complete') {
+          this.log('[Supervisor] Server confirmed all operations drained cleanly.');
+        } else if (msg?.type === 'drain-failed') {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(cleanupTimer);
+            this.process?.removeListener('message', messageHandler);
+            resolve({ success: false, reason: 'drain_rejected_by_server', details: msg.details });
+          }
+        }
+      };
+
+      this.process.on('message', messageHandler);
+
+      this.process.once('exit', (code) => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(cleanupTimer);
+          this.process?.removeListener('message', messageHandler);
+          this.process = null;
+          this.log(`[Supervisor] Server process exited cleanly with code ${code}.`);
+          resolve({ success: true, code });
+        }
+      });
+
+      try {
+        this.process.send({ type: 'drain-and-shutdown', timeoutMs });
+      } catch (err) {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(cleanupTimer);
+          resolve({ success: false, reason: err.message });
+        }
+      }
+    });
+  }
+
   stop() {
     this.isStopping = true;
     if (this.process) {

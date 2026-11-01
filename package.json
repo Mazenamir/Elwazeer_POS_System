@@ -1,6 +1,6 @@
 {
   "name": "bebyoon-system",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Bebyoon / El-Wazeer POS & Management System",
   "main": "src/main/index.js",
   "scripts": {
@@ -170,7 +170,8 @@
     "publish": {
       "provider": "github",
       "owner": "Mazenamir",
-      "repo": "Elwazeer_POS_System"
+      "repo": "Elwazeer_POS_System",
+      "channel": "latest"
     },
     "electronVersion": "30.0.0"
   }

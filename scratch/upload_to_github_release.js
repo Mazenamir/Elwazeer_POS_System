@@ -3,7 +3,21 @@ const path = require('path');
 const https = require('https');
 const pkg = require('../package.json');
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+function getGitCredentialToken() {
+  try {
+    const { spawnSync } = require('child_process');
+    const res = spawnSync('git', ['credential', 'fill'], {
+      input: 'protocol=https\nhost=github.com\n\n',
+      encoding: 'utf8',
+    });
+    const passLine = (res.stdout || '').split('\n').find((l) => l.startsWith('password='));
+    return passLine ? passLine.slice(9).trim() : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || getGitCredentialToken();
 const OWNER = 'Mazenamir';
 const REPO = 'Elwazeer_POS_System';
 const VERSION = process.env.RELEASE_VERSION || pkg.version || '1.0.8';
@@ -180,6 +194,18 @@ async function main() {
     {
       path: path.join(__dirname, `../dist-branch/Bebyoon Branch Setup ${VERSION}.exe.blockmap`),
       name: `Bebyoon-Branch-Setup-${VERSION}.exe.blockmap`,
+    },
+    {
+      path: path.join(__dirname, '../dist-branch/branch.yml'),
+      name: 'branch.yml',
+    },
+    {
+      path: path.join(__dirname, '../dist/update-policy.json'),
+      name: 'update-policy-master.json',
+    },
+    {
+      path: path.join(__dirname, '../dist-branch/update-policy.json'),
+      name: 'update-policy-branch.json',
     },
   ];
 

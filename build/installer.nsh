@@ -48,8 +48,13 @@ init_app_dirs:
   CreateDirectory "$R0\Bebyoon Branch System\data"
   CreateDirectory "$R0\Bebyoon Branch System\data\uploads"
   CreateDirectory "$R0\Bebyoon Branch System\data\uploads\products"
-  ExecWait '"$SYSDIR\icacls.exe" "$R0\Bebyoon System" /grant *S-1-1-0:(OI)(CI)F /T /Q' $0
-  ExecWait '"$SYSDIR\icacls.exe" "$R0\Bebyoon Branch System" /grant *S-1-1-0:(OI)(CI)F /T /Q' $0
+  ; Hardened Least-Privilege Windows ACLs:
+  ; SYSTEM (*S-1-5-18): Full Control (OI)(CI)F
+  ; Built-in Administrators (*S-1-5-32-544): Full Control (OI)(CI)F
+  ; Authenticated Users (*S-1-5-11): Modify (OI)(CI)M
+  ; Explicitly eliminates Everyone (*S-1-1-0) Full Control vulnerability
+  ExecWait '"$SYSDIR\icacls.exe" "$R0\Bebyoon System" /remove:g *S-1-1-0 /grant *S-1-5-18:(OI)(CI)F /grant *S-1-5-32-544:(OI)(CI)F /grant *S-1-5-11:(OI)(CI)M /T /Q' $0
+  ExecWait '"$SYSDIR\icacls.exe" "$R0\Bebyoon Branch System" /remove:g *S-1-1-0 /grant *S-1-5-18:(OI)(CI)F /grant *S-1-5-32-544:(OI)(CI)F /grant *S-1-5-11:(OI)(CI)M /T /Q' $0
 !macroend
 
 !macro customUnInstall

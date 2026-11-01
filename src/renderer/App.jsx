@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import { BranchProvider } from './context/BranchContext';
 import { ToastProvider } from './context/ToastContext';
 import AppRoutes from './routes/AppRoutes';
+import { UpdateStatusBanner } from './components/updater/UpdateStatusBanner';
 
 export function App() {
   return (
@@ -12,6 +13,7 @@ export function App() {
         <AuthProvider>
           <BranchProvider>
             <AppRoutes />
+            <UpdateStatusBanner />
           </BranchProvider>
         </AuthProvider>
       </ToastProvider>

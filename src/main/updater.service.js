@@ -1,11 +1,26 @@
 /**
+ * src/main/updater.service.js
  * Modular Periodic Auto-Updater Service
- * Manages periodic, lightweight, background update checks using electron-updater.
- * Strictly adheres to zero-client-side-git-pull, jittered scheduling, bounded backoff,
- * concurrency locks, decoupled check/download, and safe non-intrusive operations.
+ *
+ * Implements:
+ * - Explicit, validated Update State Machine
+ * - Decoupled update checking and background silent downloading
+ * - Fixed false isDownloading bug on update-available
+ * - Elimination of intrusive native confirmation dialogs
+ * - Master vs Branch edition & channel isolation
+ * - Cryptographic policy and package integrity verification
+ * - Safe Operation Drain Coordinator integration for graceful zero-interruption updates
+ * - Jittered scheduling and bounded exponential backoff
  */
 
 const { EventEmitter } = require('events');
+const { UpdateStateMachine } = require('./update-state-machine');
+const {
+  validatePolicyContract,
+  verifyPolicySignature,
+  verifyFileSha512,
+} = require('./security/update-policy.verifier');
+const { DEFAULT_UPDATE_PUBLIC_KEY_PEM } = require('./security/public-keys');
 
 class AutoUpdateManager extends EventEmitter {
   constructor(options = {}) {
@@ -29,12 +44,23 @@ class AutoUpdateManager extends EventEmitter {
     this.updater = options.updater || defaultUpdater;
     this.app = options.app || defaultApp;
     this.dialog = options.dialog || defaultDialog;
+    this.serverSupervisor = options.serverSupervisor || null;
     this.log = options.log || console.log;
 
     const isPackagedDefault = this.app && this.app.isPackaged !== undefined ? this.app.isPackaged : false;
     this.isPackaged = options.isPackaged !== undefined ? options.isPackaged : isPackagedDefault;
 
-    // Configuration
+    // Edition & Channel Configuration (Strict Isolation)
+    const envMode = process.env.APP_MODE === 'branch' ? 'branch' : 'master';
+    this.edition = (options.edition || envMode).toLowerCase();
+    this.appId = options.appId || (this.edition === 'branch' ? 'com.bebyoon.branch.system' : 'com.bebyoon.system');
+    this.channel = options.channel || (this.edition === 'branch' ? 'branch' : 'latest');
+    let defaultVer = '1.0.9';
+    try { defaultVer = require('../../package.json').version || '1.0.9'; } catch (_) {}
+    this.currentVersion = options.currentVersion || (this.app?.getVersion ? this.app.getVersion() : defaultVer);
+    this.publicKeyPem = options.publicKeyPem || DEFAULT_UPDATE_PUBLIC_KEY_PEM;
+
+    // Timing Configuration
     const envIntervalMin = parseInt(process.env.UPDATE_CHECK_INTERVAL_MINUTES, 10);
     const defaultIntervalMin = !isNaN(envIntervalMin) && envIntervalMin >= 5 ? envIntervalMin : 20;
 
@@ -48,10 +74,15 @@ class AutoUpdateManager extends EventEmitter {
     this.maxJitterMs = options.maxJitterMs !== undefined ? options.maxJitterMs : 5 * 60 * 1000; // ±5 min jitter (300,000 ms)
 
     // Bounded backoff settings
-    this.baseBackoffMs = 5 * 60 * 1000; // 5 minutes initial failure backoff
+    this.baseBackoffMs = 5 * 60 * 1000;
     this.maxBackoffMs = 120 * 60 * 1000; // 120 minutes max backoff (7,200,000 ms)
 
-    // State tracking
+    // State Tracking via Validated State Machine
+    this.stateMachine = new UpdateStateMachine({
+      log: this.log,
+      initialState: 'idle',
+    });
+
     this.timer = null;
     this.isChecking = false;
     this.isDownloading = false;
@@ -61,6 +92,9 @@ class AutoUpdateManager extends EventEmitter {
     this.isStopped = false;
     this.lastCheckTime = null;
     this.lastCheckStatus = 'idle';
+    this.availableUpdateInfo = null;
+    this.downloadedFilePath = null;
+    this.activePolicy = null;
   }
 
   init() {
@@ -74,6 +108,11 @@ class AutoUpdateManager extends EventEmitter {
       return;
     }
 
+    // Configure updater channel for edition isolation
+    if (this.updater) {
+      this.updater.channel = this.channel;
+    }
+
     this.attachEventListeners();
     this.scheduleNextCheck(this.initialDelayMs);
   }
@@ -82,73 +121,106 @@ class AutoUpdateManager extends EventEmitter {
     if (this.listenersAttached || !this.updater) return;
     this.listenersAttached = true;
 
-    // Decouple check from binary download per Requirement R5
+    // Decouple check from binary download per Requirement R5 & Section 10
     this.updater.autoDownload = false;
-    this.updater.autoInstallOnAppQuit = true;
+    this.updater.autoInstallOnAppQuit = false;
 
     this._onChecking = () => {
+      this.isChecking = true;
       this.lastCheckStatus = 'checking';
-      this.log('[UPDATER] Checking for published updates...');
+      if (this.stateMachine.canTransitionTo('checking')) {
+        this.stateMachine.transition('checking');
+      }
+      this.log(`[UPDATER] Checking for updates on channel '${this.channel}' (Edition: ${this.edition})...`);
       this.emit('status', 'updater:checking');
     };
 
     this._onAvailable = (info) => {
+      this.isChecking = false;
+      // CRITICAL FIX: Do NOT set this.isDownloading = true here!
+      this.isDownloading = false;
       this.lastCheckStatus = 'available';
-      this.isDownloading = true;
+      this.availableUpdateInfo = info;
+
       const ver = info && info.version ? info.version : 'unknown';
-      this.log(`[UPDATER] Update available: ${ver}.`);
+      this.log(`[UPDATER] Update available: ${ver} for edition ${this.edition}.`);
+
+      // Verify edition contract if metadata contains edition/appId
+      if (info && info.edition && info.edition.toLowerCase() !== this.edition.toLowerCase()) {
+        const mismatchMsg = `Cross-edition update rejected: downloaded info is for '${info.edition}', but running edition is '${this.edition}'.`;
+        this.log(`[UPDATER] REJECTED: ${mismatchMsg}`);
+        this.stateMachine.transition('failed', { error: mismatchMsg });
+        this.emit('status', 'updater:error', { error: mismatchMsg });
+        return;
+      }
+
+      if (this.stateMachine.canTransitionTo('update-available')) {
+        this.stateMachine.transition('update-available', { version: ver, info });
+      }
       this.emit('status', 'updater:available', info);
     };
 
     this._onNotAvailable = (info) => {
-      this.lastCheckStatus = 'up-to-date';
+      this.isChecking = false;
       this.isDownloading = false;
+      this.lastCheckStatus = 'up-to-date';
       const ver = info && info.version ? info.version : 'current';
       this.log(`[UPDATER] Application is up-to-date. Current release: ${ver}`);
+      if (this.stateMachine.canTransitionTo('up-to-date')) {
+        this.stateMachine.transition('up-to-date', { version: ver });
+        // Automatically settle to idle
+        if (this.stateMachine.canTransitionTo('idle')) {
+          this.stateMachine.transition('idle');
+        }
+      }
       this.emit('status', 'updater:not-available', info);
     };
 
     this._onProgress = (progress) => {
       const pct = progress && progress.percent ? Math.round(progress.percent) : 0;
       this.log(`[UPDATER] Background download progress: ${pct}%`);
+      this.stateMachine.context.progress = pct;
       this.emit('status', 'updater:progress', progress);
     };
 
-    this._onDownloaded = (info) => {
+    this._onDownloaded = async (info) => {
       this.isDownloading = false;
       this.updateDownloaded = true;
       this.lastCheckStatus = 'downloaded';
       const ver = info && info.version ? info.version : 'new';
-      this.log(`[UPDATER] Update downloaded successfully: version ${ver}`);
-      this.emit('status', 'updater:downloaded', info);
+      this.log(`[UPDATER] Update downloaded silently: version ${ver}`);
 
-      if (this.dialog && typeof this.dialog.showMessageBox === 'function') {
-        try {
-          this.dialog.showMessageBox({
-            type: 'info',
-            title: 'تحديث جديد متوفر',
-            message: `تم تنزيل التحديث الجديد (الإصدار ${ver}) بنجاح.\nهل ترغب في إعادة تشغيل البرنامج الآن لتطبيق التحديث؟`,
-            buttons: ['إعادة التشغيل وتطبيق التحديث الآن', 'لاحقاً عند إغلاق البرنامج'],
-            defaultId: 0,
-            cancelId: 1,
-          }).then((result) => {
-            if (result && result.response === 0 && this.updater && typeof this.updater.quitAndInstall === 'function') {
-              this.updater.quitAndInstall();
-            }
-          }).catch((e) => {
-            this.log(`[UPDATER] Dialog handling error: ${e.message}`);
-          });
-        } catch (e) {
-          this.log(`[UPDATER] Could not display update dialog: ${e.message}`);
-        }
+      if (info?.downloadedFile) {
+        this.downloadedFilePath = info.downloadedFile;
       }
+
+      if (this.stateMachine.canTransitionTo('downloaded')) {
+        this.stateMachine.transition('downloaded', { version: ver, info });
+      }
+
+      // Transition to waiting-for-safe-point
+      if (this.stateMachine.canTransitionTo('waiting-for-safe-point')) {
+        this.stateMachine.transition('waiting-for-safe-point', { version: ver });
+      }
+
+      // Notify renderer without intrusive native dialog
+      this.emit('status', 'updater:downloaded', info);
+      this.emit('status', 'updater:waiting-for-safe-point', { version: ver });
     };
 
     this._onError = (err) => {
+      this.isChecking = false;
       this.isDownloading = false;
       this.lastCheckStatus = 'error';
       const safeMsg = this.sanitizeErrorMessage(err ? err.message : 'Unknown error');
       this.log(`[UPDATER] Update error: ${safeMsg}`);
+
+      if (this.stateMachine.canTransitionTo('failed')) {
+        this.stateMachine.transition('failed', { error: safeMsg });
+      } else {
+        this.stateMachine.reset('error_recovery');
+      }
+
       this.emit('status', 'updater:error', { error: safeMsg });
     };
 
@@ -213,7 +285,7 @@ class AutoUpdateManager extends EventEmitter {
     this.lastCheckTime = new Date().toISOString();
 
     try {
-      this.log('[UPDATER] Executing periodic background check...');
+      this.log(`[UPDATER] Executing periodic background check on channel '${this.channel}'...`);
       if (this.updater && typeof this.updater.checkForUpdates === 'function') {
         await this.updater.checkForUpdates();
       }
@@ -232,21 +304,127 @@ class AutoUpdateManager extends EventEmitter {
     if (this.isDownloading) {
       return { status: 'already_downloading' };
     }
+
     if (this.updater && typeof this.updater.downloadUpdate === 'function') {
       this.isDownloading = true;
+      if (this.stateMachine.canTransitionTo('downloading')) {
+        this.stateMachine.transition('downloading');
+      }
+      this.emit('status', 'updater:downloading');
+
       try {
-        return await this.updater.downloadUpdate();
+        const res = await this.updater.downloadUpdate();
+        return res;
       } catch (err) {
         this.isDownloading = false;
+        if (this.stateMachine.canTransitionTo('failed')) {
+          this.stateMachine.transition('failed', { error: err.message });
+        }
         throw err;
       }
     }
     return { status: 'no_updater' };
   }
 
+  /**
+   * Verify an authenticated update policy and package digest before installation
+   */
+  async verifyUpdateAuthenticity(policyData, signatureBase64, downloadedFilePath = null) {
+    if (!policyData) {
+      return { verified: false, error: 'no_policy_provided' };
+    }
+
+    // 1. Verify digital signature
+    const sigResult = verifyPolicySignature(policyData, signatureBase64, this.publicKeyPem);
+    if (!sigResult.valid) {
+      this.log(`[UPDATER] Signature verification failed: ${sigResult.error}`);
+      return { verified: false, error: sigResult.error };
+    }
+
+    // 2. Validate contract against running edition and channel
+    const contractResult = validatePolicyContract(policyData, {
+      expectedAppId: this.appId,
+      expectedEdition: this.edition,
+      expectedChannel: this.channel,
+      currentVersion: this.currentVersion,
+    });
+    if (!contractResult.valid) {
+      this.log(`[UPDATER] Policy contract validation failed: ${contractResult.error}`);
+      return { verified: false, error: contractResult.error };
+    }
+
+    // 3. Verify SHA-512 digest of the downloaded file if available
+    const targetFile = downloadedFilePath || this.downloadedFilePath;
+    if (targetFile) {
+      const digestResult = await verifyFileSha512(targetFile, policyData.artifactDigest);
+      if (!digestResult.valid) {
+        this.log(`[UPDATER] Artifact SHA-512 mismatch: ${digestResult.error}`);
+        return { verified: false, error: digestResult.error };
+      }
+    }
+
+    this.activePolicy = policyData;
+    this.log(`[UPDATER] Update authenticity verified successfully for ${policyData.edition} v${policyData.version}.`);
+    return { verified: true, error: null, policy: policyData };
+  }
+
+  /**
+   * Safe graceful installation flow with Operation Drain Coordinator
+   */
+  async executeSafeInstall(options = {}) {
+    const {
+      timeoutMs = 45000,
+      isCritical = false,
+      reason = 'Scheduled update installation',
+    } = options;
+
+    this.log(`[UPDATER] Starting safe installation procedure (Critical: ${isCritical}, Timeout: ${timeoutMs}ms)...`);
+
+    // 1. Prepare maintenance
+    if (this.stateMachine.canTransitionTo('preparing-maintenance')) {
+      this.stateMachine.transition('preparing-maintenance', { reason });
+    }
+    this.emit('status', 'updater:preparing-maintenance', { isCritical, reason });
+
+    // 2. Drain active business operations
+    if (this.stateMachine.canTransitionTo('draining-operations')) {
+      this.stateMachine.transition('draining-operations');
+    }
+    this.emit('status', 'updater:draining-operations');
+
+    if (this.serverSupervisor && typeof this.serverSupervisor.drainAndStop === 'function') {
+      const drainRes = await this.serverSupervisor.drainAndStop(timeoutMs);
+      if (!drainRes.success) {
+        this.log(`[UPDATER] Safe drain could not complete: ${drainRes.reason}. Suspending installation.`);
+        if (this.stateMachine.canTransitionTo('waiting-for-safe-point')) {
+          this.stateMachine.transition('waiting-for-safe-point', { reason: 'drain_timeout' });
+        }
+        this.emit('status', 'updater:drain-timeout', drainRes);
+        return { success: false, reason: drainRes.reason, details: drainRes.details };
+      }
+    }
+
+    // 3. Stop remaining local services cleanly
+    if (this.stateMachine.canTransitionTo('stopping-services')) {
+      this.stateMachine.transition('stopping-services');
+    }
+    this.emit('status', 'updater:stopping-services');
+
+    // 4. Installing
+    if (this.stateMachine.canTransitionTo('installing')) {
+      this.stateMachine.transition('installing');
+    }
+    this.emit('status', 'updater:installing');
+
+    // Launch NSIS installer (silent = false, isForceRunAfter = true)
+    this.quitAndInstall();
+    return { success: true };
+  }
+
   quitAndInstall() {
     if (this.updater && typeof this.updater.quitAndInstall === 'function') {
-      this.updater.quitAndInstall();
+      this.log('[UPDATER] Invoking updater.quitAndInstall()...');
+      this.updater.quitAndInstall(false, true);
     }
   }
 
@@ -270,6 +448,7 @@ class AutoUpdateManager extends EventEmitter {
       if (this._onError) this.updater.removeListener('error', this._onError);
     }
     this.listenersAttached = false;
+    this.stateMachine.reset('destroyed');
     this.removeAllListeners();
   }
 
@@ -282,6 +461,11 @@ class AutoUpdateManager extends EventEmitter {
       lastCheckTime: this.lastCheckTime,
       lastCheckStatus: this.lastCheckStatus,
       checkIntervalMs: this.checkIntervalMs,
+      edition: this.edition,
+      appId: this.appId,
+      channel: this.channel,
+      state: this.stateMachine.getState(),
+      context: this.stateMachine.getContext(),
     };
   }
 }
@@ -332,11 +516,18 @@ function quitAndInstall() {
   }
 }
 
+function executeSafeInstall(options = {}) {
+  if (defaultManager) {
+    return defaultManager.executeSafeInstall(options);
+  }
+  return Promise.resolve({ success: false, reason: 'uninitialized' });
+}
+
 function getStatus() {
   if (defaultManager) {
     return defaultManager.getStatus();
   }
-  return { lastCheckStatus: 'uninitialized' };
+  return { lastCheckStatus: 'uninitialized', state: 'idle' };
 }
 
 module.exports = {
@@ -348,5 +539,6 @@ module.exports = {
   checkForUpdates,
   downloadUpdate,
   quitAndInstall,
+  executeSafeInstall,
   getStatus,
 };

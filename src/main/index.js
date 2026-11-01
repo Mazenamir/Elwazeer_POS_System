@@ -7,6 +7,7 @@ const {
   checkForUpdates,
   downloadUpdate,
   quitAndInstall,
+  executeSafeInstall,
   getStatus: getUpdaterStatus,
 } = require('./updater.service');
 const ServerSupervisor = require('./server-supervisor');
@@ -125,6 +126,19 @@ ipcMain.handle('updater-quit-install', (event) => {
   }
   quitAndInstall();
   return { success: true };
+});
+
+ipcMain.handle('updater-safe-install', async (event, options) => {
+  if (!validateSender(event)) {
+    log('Security: Rejected updater-safe-install IPC from untrusted sender frame');
+    return { success: false, error: 'Unauthorized sender frame origin' };
+  }
+  try {
+    const res = await executeSafeInstall(options || {});
+    return { success: Boolean(res?.success), result: res };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle('updater-status', (event) => {
@@ -352,7 +366,7 @@ function createWindow(targetUrl, isDevMode = false) {
 app.on('ready', async () => {
   logPath = path.join(app.getPath('userData'), 'debug.log');
 
-  setupAutoUpdater({ log });
+  // Updater initialized below after detecting application edition (Master vs Branch)
 
   log('--- APP START (MODULAR ARCHITECTURE) ---');
   if (isDev) log('[DEV MODE] Running in Development mode');
@@ -368,6 +382,21 @@ app.on('ready', async () => {
     } catch {}
   }
   const appDataFolderName = isBranchApp ? 'Bebyoon Branch System' : 'Bebyoon System';
+
+  const updaterManager = setupAutoUpdater({
+    log,
+    edition: isBranchApp ? 'branch' : 'master',
+    appId: isBranchApp ? 'com.bebyoon.branch.system' : 'com.bebyoon.system',
+    channel: isBranchApp ? 'branch' : 'latest',
+  });
+
+  updaterManager.on('status', (channel, data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.send(channel, data);
+      } catch {}
+    }
+  });
 
   const defaultDataDir = app.isPackaged
     ? (process.env.ProgramData ? path.join(process.env.ProgramData, appDataFolderName) : path.join(app.getPath('userData'), 'data'))
@@ -426,6 +455,7 @@ app.on('ready', async () => {
       if (hasLaunched) return;
       hasLaunched = true;
       if (fallbackTimer) clearTimeout(fallbackTimer);
+      updaterManager.serverSupervisor = serverSupervisor;
       log('Server ready signal received, launching UI...');
       await launchUI();
     };

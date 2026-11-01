@@ -101,6 +101,11 @@ async function runReportsRouteTests() {
   console.log('\n--- 2. Live HTTP Route Matching Against Express App ---');
 
   const server = http.createServer(app);
+  const activeSockets = new Set();
+  server.on('connection', (sock) => {
+    activeSockets.add(sock);
+    sock.once('close', () => activeSockets.delete(sock));
+  });
   await new Promise((resolve) => server.listen(0, resolve));
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -239,6 +244,9 @@ async function runReportsRouteTests() {
     });
 
   } finally {
+    for (const sock of activeSockets) {
+      try { sock.destroy(); } catch (_) {}
+    }
     await new Promise((resolve) => server.close(resolve));
   }
 

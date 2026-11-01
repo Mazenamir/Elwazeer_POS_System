@@ -1,5 +1,5 @@
 /**
- * updater.js
+ * src/main/updater.js
  * Proxy / Bridge to Modular Periodic Auto-Updater Service (updater.service.js).
  * Maintains backwards compatibility for any modules or tests importing from ./updater.
  */
@@ -15,5 +15,6 @@ module.exports = {
   checkForUpdates: updaterService.checkForUpdates,
   downloadUpdate: updaterService.downloadUpdate,
   quitAndInstall: updaterService.quitAndInstall,
+  executeSafeInstall: updaterService.executeSafeInstall,
   getStatus: updaterService.getStatus,
 };

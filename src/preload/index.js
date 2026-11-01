@@ -1,76 +1,86 @@
+/**
+ * src/preload/index.js
+ * Hardened Preload Script with Strict Context Isolation
+ *
+ * Restricts IPC communication to explicit whitelisted channels.
+ * Validates payloads and prevents arbitrary IPC execution.
+ */
+
 const { ipcRenderer, webFrame, contextBridge } = require('electron');
 
-try {
-  contextBridge.exposeInMainWorld('electronAPI', {
-    exportPdf: (payload) => ipcRenderer.invoke('export-pdf', payload),
-    changeZoom: (delta) => {
-      const nextZoom = Math.min(2, Math.max(0.5, webFrame.getZoomFactor() + Number(delta || 0)));
-      webFrame.setZoomFactor(nextZoom);
-      try {
-        window.localStorage.setItem('app-zoom', nextZoom.toString());
-      } catch (e) {}
-      return nextZoom;
+const VALID_STATUS_CHANNELS = Object.freeze([
+  'updater:checking',
+  'updater:available',
+  'updater:not-available',
+  'updater:progress',
+  'updater:downloaded',
+  'updater:waiting-for-safe-point',
+  'updater:preparing-maintenance',
+  'updater:draining-operations',
+  'updater:stopping-services',
+  'updater:installing',
+  'updater:drain-timeout',
+  'updater:error',
+]);
+
+const electronAPI = {
+  isElectron: true,
+  exportPdf: (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return Promise.reject(new Error('Invalid export-pdf payload'));
+    }
+    return ipcRenderer.invoke('export-pdf', {
+      html: String(payload.html || ''),
+      defaultFileName: payload.defaultFileName ? String(payload.defaultFileName) : undefined,
+      dialogTitle: payload.dialogTitle ? String(payload.dialogTitle) : undefined,
+      pageSize: payload.pageSize ? String(payload.pageSize) : 'A4',
+      preferCSSPageSize: Boolean(payload.preferCSSPageSize),
+      marginsType: Number(payload.marginsType) || 1,
+      landscape: Boolean(payload.landscape),
+    });
+  },
+  changeZoom: (delta) => {
+    const num = Number(delta) || 0;
+    const nextZoom = Math.min(2, Math.max(0.5, webFrame.getZoomFactor() + num));
+    webFrame.setZoomFactor(nextZoom);
+    try {
+      window.localStorage.setItem('app-zoom', nextZoom.toString());
+    } catch {}
+    return nextZoom;
+  },
+  updater: {
+    checkForUpdates: () => ipcRenderer.invoke('updater-check'),
+    downloadUpdate: () => ipcRenderer.invoke('updater-download'),
+    safeInstall: (options = {}) => ipcRenderer.invoke('updater-safe-install', options),
+    quitAndInstall: () => ipcRenderer.invoke('updater-quit-install'),
+    getStatus: () => ipcRenderer.invoke('updater-status'),
+    onStatus: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      const subs = VALID_STATUS_CHANNELS.map((ch) => {
+        const handler = (_event, data) => {
+          try {
+            callback(ch, data);
+          } catch (e) {
+            console.error(`[Preload] Error in updater status callback for ${ch}:`, e);
+          }
+        };
+        ipcRenderer.on(ch, handler);
+        return () => ipcRenderer.removeListener(ch, handler);
+      });
+      return () => subs.forEach((unsub) => unsub());
     },
-    isElectron: true,
-    updater: {
-      checkForUpdates: () => ipcRenderer.invoke('updater-check'),
-      downloadUpdate: () => ipcRenderer.invoke('updater-download'),
-      quitAndInstall: () => ipcRenderer.invoke('updater-quit-install'),
-      getStatus: () => ipcRenderer.invoke('updater-status'),
-      onStatus: (callback) => {
-        const channels = [
-          'updater:checking',
-          'updater:available',
-          'updater:not-available',
-          'updater:progress',
-          'updater:downloaded',
-          'updater:error',
-        ];
-        const subs = channels.map((ch) => {
-          const handler = (_event, data) => callback(ch, data);
-          ipcRenderer.on(ch, handler);
-          return () => ipcRenderer.removeListener(ch, handler);
-        });
-        return () => subs.forEach((unsub) => unsub());
-      },
-    },
-  });
-} catch (e) {
-  // If contextBridge is not enabled or fails, fallback to window assignment
-  window.electronAPI = {
-    exportPdf: (payload) => ipcRenderer.invoke('export-pdf', payload),
-    changeZoom: (delta) => {
-      const nextZoom = Math.min(2, Math.max(0.5, webFrame.getZoomFactor() + Number(delta || 0)));
-      webFrame.setZoomFactor(nextZoom);
-      try {
-        window.localStorage.setItem('app-zoom', nextZoom.toString());
-      } catch (e) {}
-      return nextZoom;
-    },
-    isElectron: true,
-    updater: {
-      checkForUpdates: () => ipcRenderer.invoke('updater-check'),
-      downloadUpdate: () => ipcRenderer.invoke('updater-download'),
-      quitAndInstall: () => ipcRenderer.invoke('updater-quit-install'),
-      getStatus: () => ipcRenderer.invoke('updater-status'),
-      onStatus: (callback) => {
-        const channels = [
-          'updater:checking',
-          'updater:available',
-          'updater:not-available',
-          'updater:progress',
-          'updater:downloaded',
-          'updater:error',
-        ];
-        const subs = channels.map((ch) => {
-          const handler = (_event, data) => callback(ch, data);
-          ipcRenderer.on(ch, handler);
-          return () => ipcRenderer.removeListener(ch, handler);
-        });
-        return () => subs.forEach((unsub) => unsub());
-      },
-    },
-  };
+  },
+};
+
+// Securely expose API via contextBridge only
+if (process.contextIsolated) {
+  try {
+    contextBridge.exposeInMainWorld('electronAPI', electronAPI);
+  } catch (err) {
+    console.error('[Preload] Failed to expose electronAPI via contextBridge:', err);
+  }
+} else {
+  console.warn('[Preload] Warning: contextIsolation is disabled. Electron API exposure restricted.');
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -124,13 +134,13 @@ window.addEventListener('message', (event) => {
       webFrame.setZoomFactor(newZoom);
       try {
         window.localStorage.setItem('app-zoom', newZoom.toString());
-      } catch (e) {}
+      } catch {}
     } else if (event.data.type === 'zoom-out') {
       const newZoom = webFrame.getZoomFactor() - 0.1;
       webFrame.setZoomFactor(newZoom);
       try {
         window.localStorage.setItem('app-zoom', newZoom.toString());
-      } catch (e) {}
+      } catch {}
     }
   }
 });
