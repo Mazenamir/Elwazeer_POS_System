@@ -514,7 +514,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       full_name TEXT,
       branch_scope TEXT DEFAULT 'single',
       branch_ids TEXT DEFAULT '[]',
-      token_version INTEGER DEFAULT 1
+      token_version INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -571,6 +572,9 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   } catch {}
   try {
     sqlite.exec("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 1");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP");
   } catch {}
   try {
     sqlite.exec("UPDATE users SET branch_scope = 'all' WHERE role = 'admin' AND (branch_scope IS NULL OR branch_scope = 'single')");
@@ -704,55 +708,64 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
     `);
   } catch {}
 
-  try {
-    const allBranchUsers = sqlite.prepare("SELECT id, username, role, permissions, branch_id, branch_scope, branch_ids FROM users").all();
-    const requiredBranchPerms = [
-      'Dashboard.html',
-      'index.html',
-      'Barcodes.html',
-      'Customers.html',
-      'Suppliers.html',
-      'Alterations.html',
-      'Tailoring.html',
-      'Expenses.html',
-      'Reports.html',
-      'Employees.html',
-      'WornProducts.html',
-      'Rentals.html',
-      'RentalInventory.html',
-      'inventory_admin',
-    ];
+  function syncBranchUserPermissionsAndScopes(sqliteDb) {
+    try {
+      const allBranchUsers = sqliteDb.prepare("SELECT id, username, role, permissions, branch_id, branch_scope, branch_ids FROM users").all();
+      const requiredBranchPerms = [
+        'Dashboard.html',
+        'index.html',
+        'Barcodes.html',
+        'Customers.html',
+        'Suppliers.html',
+        'Alterations.html',
+        'Tailoring.html',
+        'Expenses.html',
+        'Reports.html',
+        'Employees.html',
+        'WornProducts.html',
+        'Rentals.html',
+        'RentalInventory.html',
+        'inventory_admin',
+      ];
 
-    for (const u of allBranchUsers) {
-      if (u.role === 'admin') continue;
-      let perms = [];
-      try {
-        perms = JSON.parse(u.permissions || '[]');
-      } catch {
-        perms = [];
-      }
-      for (const p of requiredBranchPerms) {
-        if (!perms.includes(p)) perms.push(p);
-      }
+      for (const u of allBranchUsers) {
+        if (u.role === 'admin') {
+          if (u.branch_scope !== 'all') {
+            sqliteDb.prepare("UPDATE users SET branch_scope = 'all' WHERE id = ?").run(u.id);
+          }
+          continue;
+        }
+        let perms = [];
+        try {
+          perms = JSON.parse(u.permissions || '[]');
+        } catch {
+          perms = [];
+        }
+        for (const p of requiredBranchPerms) {
+          if (!perms.includes(p)) perms.push(p);
+        }
 
-      let bScope = u.branch_scope || 'single';
-      let bIds = u.branch_ids || '[]';
-      if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
-        bScope = 'selected';
-        bIds = '[9, 10]';
-      }
+        let bScope = u.branch_scope || 'single';
+        let bIds = u.branch_ids || '[]';
+        if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
+          bScope = 'selected';
+          bIds = '[9, 10]';
+        }
 
-      sqlite.prepare(`
-        UPDATE users 
-        SET branch_scope = ?, 
-            branch_ids = ?,
-            permissions = ?
-        WHERE id = ?
-      `).run(bScope, bIds, JSON.stringify(perms), u.id);
+        sqliteDb.prepare(`
+          UPDATE users 
+          SET branch_scope = ?, 
+              branch_ids = ?,
+              permissions = ?
+          WHERE id = ?
+        `).run(bScope, bIds, JSON.stringify(perms), u.id);
+      }
+    } catch (err) {
+      console.warn('Error updating all branch users in SQLite:', err.message);
     }
-  } catch (err) {
-    console.warn('Error updating all branch users in SQLite:', err.message);
   }
+
+  syncBranchUserPermissionsAndScopes(sqlite);
 
   try {
     sqlite.exec("ALTER TABLE orders ADD COLUMN branch_invoice_number TEXT");
@@ -1002,12 +1015,18 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
         const seedData = JSON.parse(fs.readFileSync(seedFile, 'utf8'));
         if (Array.isArray(seedData.users)) {
           const insertUser = sqlite.prepare(`
-            INSERT OR REPLACE INTO users (id, username, password_hash, role, branch_id, permissions, employee_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO users (id, username, password_hash, role, branch_id, permissions, employee_id, branch_scope, branch_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `);
           for (const u of seedData.users) {
             const perms = typeof u.permissions === 'object' ? JSON.stringify(u.permissions) : (u.permissions || '[]');
-            insertUser.run(u.id, u.username, u.password_hash, u.role, u.branch_id, perms, u.employee_id || null);
+            let bScope = u.branch_scope || (u.role === 'admin' ? 'all' : 'single');
+            let bIds = Array.isArray(u.branch_ids) ? JSON.stringify(u.branch_ids) : (u.branch_ids || '[]');
+            if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
+              bScope = 'selected';
+              bIds = '[9, 10]';
+            }
+            insertUser.run(u.id, u.username, u.password_hash, u.role, u.branch_id, perms, u.employee_id || null, bScope, bIds);
           }
           console.log(`🌱 Seeded ${seedData.users.length} initial users into branch SQLite.`);
         }
@@ -1031,6 +1050,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   } catch (err) {
     console.warn('Could not seed initial users into SQLite:', err.message);
   }
+  syncBranchUserPermissionsAndScopes(sqlite);
 
   // Always ensure clean static logo URLs for standard branches in SQLite
   try {

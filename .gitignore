@@ -56,3 +56,7 @@ scratch/*
 
 .agents/teamwork/
 manual_screenshots/
+
+!scratch/test_branch_comprehensive_suite.js
+!scratch/audit_schema_parity_pg_vs_sqlite.js
+update-policy*.json

@@ -116,6 +116,18 @@ const suites = [
     domain: 'Access Control & Security',
     script: 'scratch/test_rbac_branch_scope_sensitive_ops.js',
   },
+  {
+    id: 18,
+    name: 'Branch SQLite Comprehensive Integration Suite',
+    domain: 'Branch SQLite & Offline',
+    script: 'scratch/test_branch_comprehensive_suite.js',
+  },
+  {
+    id: 19,
+    name: 'Full Schema Parity Audit (PostgreSQL vs SQLite)',
+    domain: 'Database Schema Parity',
+    script: 'scratch/audit_schema_parity_pg_vs_sqlite.js',
+  },
 ];
 
 console.log('========================================================================================================');

@@ -68,6 +68,8 @@ function replaceExtract(sql) {
       result += `CAST(strftime('%M', ${innerExpr}) AS INTEGER)`;
     } else if (unit === 'SECOND') {
       result += `CAST(strftime('%S', ${innerExpr}) AS INTEGER)`;
+    } else if (unit === 'DOW') {
+      result += `CAST(strftime('%w', ${innerExpr}) AS INTEGER)`;
     } else {
       result += `unixepoch(${innerExpr})`;
     }
@@ -101,16 +103,69 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'users', 'branch_scope', "TEXT DEFAULT 'single'");
   ensureSqliteColumn(sqlite, 'users', 'branch_ids', "TEXT DEFAULT '[]'");
   ensureSqliteColumn(sqlite, 'users', 'token_version', 'INTEGER DEFAULT 1');
+  ensureSqliteColumn(sqlite, 'users', 'created_at', "TEXT DEFAULT CURRENT_TIMESTAMP");
   ensureSqliteColumn(sqlite, 'branches', 'rentals_enabled', 'INTEGER DEFAULT 1');
   ensureSqliteColumn(sqlite, 'branches', 'allowed_gender', "TEXT DEFAULT 'both'");
   ensureSqliteColumn(sqlite, 'branches', 'cashier_footer', 'TEXT');
   ensureSqliteColumn(sqlite, 'branches', 'rental_footer', 'TEXT');
 }
 
+function registerSqliteFunctions(dbInstance) {
+  if (!dbInstance || dbInstance._functionsRegistered) return;
+  dbInstance._functionsRegistered = true;
+
+  dbInstance.function('gen_random_uuid', () => crypto.randomUUID());
+  dbInstance.function('now', () => new Date().toISOString());
+  dbInstance.function('timezone', { varargs: true }, (tz, dt) => dt || new Date().toISOString());
+  dbInstance.function('date_trunc', { varargs: true }, (unit, dateStr) => {
+    if (!dateStr) return null;
+    const str = String(dateStr).trim();
+    if (unit === 'month') return str.slice(0, 7) + '-01';
+    if (unit === 'year') return str.slice(0, 4) + '-01-01';
+    if (unit === 'day') return str.slice(0, 10);
+    return str;
+  });
+  dbInstance.function('greatest', { varargs: true }, (...args) => {
+    const nonNull = args.filter((a) => a !== null && a !== undefined);
+    return nonNull.length ? Math.max(...nonNull) : null;
+  });
+  dbInstance.function('least', { varargs: true }, (...args) => {
+    const nonNull = args.filter((a) => a !== null && a !== undefined);
+    return nonNull.length ? Math.min(...nonNull) : null;
+  });
+  dbInstance.function('concat', { varargs: true }, (...args) => {
+    return args.map((a) => a ?? '').join('');
+  });
+  dbInstance.function('concat_ws', { varargs: true }, (sep, ...args) => {
+    return args.filter((a) => a !== null && a !== undefined).join(sep || '');
+  });
+  dbInstance.function('pg_advisory_xact_lock', { varargs: true }, () => 1);
+  dbInstance.function('pg_advisory_lock', { varargs: true }, () => 1);
+  dbInstance.function('pg_advisory_unlock', { varargs: true }, () => 1);
+  dbInstance.function('to_char', { varargs: true }, (val, fmt) => {
+    if (!val) return null;
+    if (typeof val === 'number' && typeof fmt === 'string' && !fmt.startsWith('YY') && !fmt.startsWith('HH')) {
+      return String(val);
+    }
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    if (fmt === 'YYYY-MM-DD') return d.toISOString().slice(0, 10);
+    if (fmt === 'YYYY-MM') return d.toISOString().slice(0, 7);
+    if (fmt === 'HH24:MI') return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    if (fmt === 'HH12:MI AM') {
+      const hours = d.getHours();
+      const h12 = hours % 12 || 12;
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      return `${String(h12).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} ${ampm}`;
+    }
+    return String(val);
+  });
+}
+
 function translatePgToSqlite(sql) {
   if (typeof sql !== 'string') return { isAdvisoryLock: false, sql };
   let s = replaceExtract(sql);
-  if (/pg_advisory_xact_lock/i.test(s)) {
+  if (/pg_advisory(?:_xact)?_lock/i.test(s)) {
     return { isAdvisoryLock: true, sql: 'SELECT 1 AS lock' };
   }
 
@@ -131,10 +186,10 @@ function translatePgToSqlite(sql) {
   s = s.replace(/\bBOOL_AND\b/gi, 'MIN');
 
   // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
-  s = s.replace(/::[a-zA-Z0-9_]+(\s*\[\s*\])?/g, '');
+  s = s.replace(/::(?:double\s+precision|character\s+varying|[a-zA-Z0-9_]+)(?:\s*\[\s*\])?/g, '');
 
   // Strip FOR UPDATE
-  s = s.replace(/\bFOR\s+UPDATE\b/gi, '');
+  s = s.replace(/\bFOR\s+(?:NO\s+KEY\s+|KEY\s+)?(?:UPDATE|SHARE)\b/gi, '');
 
   // json_agg -> json_group_array, json_build_object -> json_object, json_object_agg -> json_group_object
   s = s.replace(/\bjson_agg\b/gi, 'json_group_array');
@@ -144,6 +199,7 @@ function translatePgToSqlite(sql) {
 
   // = ANY($1) -> IN (SELECT value FROM json_each(?1))
   s = s.replace(/=\s*ANY\s*\(\s*\$(\d+)\s*\)/gi, 'IN (SELECT value FROM json_each(?$1))');
+  s = s.replace(/(!=|<>)\s*ALL\s*\(\s*\$(\d+)\s*\)/gi, 'NOT IN (SELECT value FROM json_each(?$2))');
 
   // EXTRACT translations to SQLite equivalents
   // STRING_AGG translations
@@ -189,6 +245,7 @@ if (config.IS_BRANCH_MODE) {
   sqliteDb = new DatabaseSync(config.BRANCH_SQLITE_PATH);
   sqliteDb.exec('PRAGMA journal_mode = WAL;');
   ensureSqliteCoreColumns(sqliteDb);
+  registerSqliteFunctions(sqliteDb);
 
   // Register custom SQLite functions for seamless Postgres compatibility
   sqliteDb.function('gen_random_uuid', () => crypto.randomUUID());
@@ -368,6 +425,7 @@ if (config.IS_BRANCH_MODE) {
   function executeSqliteQuery(targetDb, rawSql, params = []) {
     const sDb = targetDb;
     if (!sDb) throw new Error('No SQLite database attached for branch query execution');
+    registerSqliteFunctions(sDb);
     const { isAdvisoryLock, sql } = translatePgToSqlite(rawSql);
     if (isAdvisoryLock) {
       return { rows: [{ pg_advisory_xact_lock: 1 }], rowCount: 1 };
