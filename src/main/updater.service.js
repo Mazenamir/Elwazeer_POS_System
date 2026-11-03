@@ -121,8 +121,8 @@ class AutoUpdateManager extends EventEmitter {
     if (this.listenersAttached || !this.updater) return;
     this.listenersAttached = true;
 
-    // Decouple check from binary download per Requirement R5 & Section 10
-    this.updater.autoDownload = false;
+    // Auto-download silently in background as soon as update is detected
+    this.updater.autoDownload = true;
     this.updater.autoInstallOnAppQuit = false;
 
     this._onChecking = () => {
@@ -137,27 +137,29 @@ class AutoUpdateManager extends EventEmitter {
 
     this._onAvailable = (info) => {
       this.isChecking = false;
-      // CRITICAL FIX: Do NOT set this.isDownloading = true here!
-      this.isDownloading = false;
+      // autoDownload=true means electron-updater starts downloading immediately after this event
+      this.isDownloading = true;
       this.lastCheckStatus = 'available';
       this.availableUpdateInfo = info;
 
       const ver = info && info.version ? info.version : 'unknown';
-      this.log(`[UPDATER] Update available: ${ver} for edition ${this.edition}.`);
+      this.log(`[UPDATER] Update available: ${ver} for edition ${this.edition}. Auto-download starting...`);
 
       // Verify edition contract if metadata contains edition/appId
       if (info && info.edition && info.edition.toLowerCase() !== this.edition.toLowerCase()) {
         const mismatchMsg = `Cross-edition update rejected: downloaded info is for '${info.edition}', but running edition is '${this.edition}'.`;
         this.log(`[UPDATER] REJECTED: ${mismatchMsg}`);
+        this.isDownloading = false;
         this.stateMachine.transition('failed', { error: mismatchMsg });
         this.emit('status', 'updater:error', { error: mismatchMsg });
         return;
       }
 
-      if (this.stateMachine.canTransitionTo('update-available')) {
-        this.stateMachine.transition('update-available', { version: ver, info });
+      if (this.stateMachine.canTransitionTo('downloading')) {
+        this.stateMachine.transition('downloading', { version: ver, info });
       }
-      this.emit('status', 'updater:available', info);
+      // Emit progress event at 0% so the banner immediately shows the progress bar
+      this.emit('status', 'updater:progress', { percent: 0, version: ver });
     };
 
     this._onNotAvailable = (info) => {

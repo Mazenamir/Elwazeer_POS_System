@@ -30,10 +30,12 @@ export function UpdateStatusBanner() {
         break;
 
       case 'updater:available':
-        setUpdaterState('available');
+        // autoDownload=true: download starts immediately, show progress bar at 0%
+        setUpdaterState('downloading');
         setTargetVersion(data?.version || null);
+        setProgress(0);
         setMessage({
-          ar: `يتوفر تحديث جديد (الإصدار ${data?.version || ''}). جاري التنزيل تلقائياً في الخلفية...`,
+          ar: `يتوفر تحديث جديد (الإصدار ${data?.version || ''}). جاري التنزيل في الخلفية...`,
           en: `New update available (${data?.version || ''}). Downloading in background...`,
         });
         setVisible(true);
