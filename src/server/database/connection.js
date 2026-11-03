@@ -142,6 +142,8 @@ function registerSqliteFunctions(dbInstance) {
   dbInstance.function('pg_advisory_xact_lock', { varargs: true }, () => 1);
   dbInstance.function('pg_advisory_lock', { varargs: true }, () => 1);
   dbInstance.function('pg_advisory_unlock', { varargs: true }, () => 1);
+  dbInstance.function('setval', { varargs: true }, () => 1);
+  dbInstance.function('pg_get_serial_sequence', { varargs: true }, () => '');
   dbInstance.function('to_char', { varargs: true }, (val, fmt) => {
     if (!val) return null;
     if (typeof val === 'number' && typeof fmt === 'string' && !fmt.startsWith('YY') && !fmt.startsWith('HH')) {
@@ -168,6 +170,14 @@ function translatePgToSqlite(sql) {
   if (/pg_advisory(?:_xact)?_lock/i.test(s)) {
     return { isAdvisoryLock: true, sql: 'SELECT 1 AS lock' };
   }
+
+  // TRUNCATE TABLE t1, t2 ... RESTART IDENTITY CASCADE -> DELETE FROM ...
+  s = s.replace(/\bTRUNCATE\s+(?:TABLE\s+)?([\w\s,]+?)(?:\s+RESTART\s+IDENTITY)?(?:\s+CASCADE)?\s*(?:;|$)/gi, (match, tableList) => {
+    const tables = tableList.split(',').map((t) => t.trim()).filter(Boolean);
+    const deleteStmts = tables.map((t) => `DELETE FROM ${t};`).join(' ');
+    const resetSeq = `DELETE FROM sqlite_sequence WHERE name IN (${tables.map((t) => `'${t}'`).join(', ')});`;
+    return `${deleteStmts} ${resetSeq}`;
+  });
 
   // Cairo now & date
   s = s.replace(/\(now\(\)\s+AT\s+TIME\s+ZONE\s+'[^']+'\)::date/gi, "date('now', 'localtime')");
@@ -268,6 +278,8 @@ if (config.IS_BRANCH_MODE) {
   sqliteDb.function('pg_advisory_xact_lock', { varargs: true }, () => 1);
   sqliteDb.function('pg_advisory_lock', { varargs: true }, () => 1);
   sqliteDb.function('pg_advisory_unlock', { varargs: true }, () => 1);
+  sqliteDb.function('setval', { varargs: true }, () => 1);
+  sqliteDb.function('pg_get_serial_sequence', { varargs: true }, () => '');
   sqliteDb.function('to_char', { varargs: true }, (val, fmt) => {
     if (!val) return null;
     const d = new Date(val);
