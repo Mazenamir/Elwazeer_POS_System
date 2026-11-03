@@ -234,6 +234,25 @@ export function UpdateStatusBanner() {
             {message.en}
           </p>
 
+          {(updaterState === 'waiting-for-safe-point' || updaterState === 'downloaded') && (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.electronAPI?.updater?.safeInstall) {
+                    window.electronAPI.updater.safeInstall();
+                  } else if (window.electronAPI?.updater?.quitAndInstall) {
+                    window.electronAPI.updater.quitAndInstall();
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white text-xs font-black shadow-md transition-all cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>بدء التثبيت وإعادة التشغيل الآن</span>
+              </button>
+            </div>
+          )}
+
           {isProgress && (
             <div className="mt-2.5 w-full bg-black/30 rounded-full h-1.5 overflow-hidden">
               <div

@@ -72,6 +72,44 @@ export function Header({ onToggleMobileMenu }) {
   const [searchCategory, setSearchCategory] = useState('all');
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const searchContainerRef = useRef(null);
+  const [updateReady, setUpdateReady] = useState(false);
+  const [updateVersion, setUpdateVersion] = useState('');
+
+  useEffect(() => {
+    if (!window.electronAPI?.updater) return;
+
+    window.electronAPI.updater.getStatus().then((res) => {
+      if (res?.success && res.status) {
+        if (
+          res.status.updateDownloaded ||
+          res.status.state === 'waiting-for-safe-point' ||
+          res.status.state === 'downloaded'
+        ) {
+          setUpdateReady(true);
+          setUpdateVersion(res.status.context?.version || '');
+        }
+      }
+    }).catch(() => {});
+
+    const unsubscribe = window.electronAPI.updater.onStatus((channel, data) => {
+      if (channel === 'updater:downloaded' || channel === 'updater:waiting-for-safe-point') {
+        setUpdateReady(true);
+        if (data?.version) setUpdateVersion(data.version);
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
+
+  const handleInstallUpdate = useCallback(() => {
+    if (window.electronAPI?.updater?.safeInstall) {
+      window.electronAPI.updater.safeInstall();
+    } else if (window.electronAPI?.updater?.quitAndInstall) {
+      window.electronAPI.updater.quitAndInstall();
+    }
+  }, []);
   const searchDebounceRef = useRef(null);
 
   // Close search dropdown on click outside
@@ -990,6 +1028,19 @@ export function Header({ onToggleMobileMenu }) {
             <ZoomOut className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Update Ready Install Button (Top App Bar) */}
+        {updateReady && (
+          <button
+            type="button"
+            onClick={handleInstallUpdate}
+            title="التحديث الجديد جاهز، اضغط هنا لتثبيته وإعادة التشغيل فوراً"
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-black bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white border border-emerald-400 shadow-md shadow-emerald-600/30 animate-pulse transition-all cursor-pointer select-none"
+          >
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            <span>بدء التثبيت الآن {updateVersion ? `(v${updateVersion})` : ''}</span>
+          </button>
+        )}
 
         {/* Online / Sync Status Pill (Clickable for diagnostics) - Only visible in Branch Mode */}
         {syncStatus?.is_branch_mode && (

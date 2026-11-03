@@ -345,7 +345,12 @@ function createWindow(targetUrl, isDevMode = false) {
 
   mainWindow.on('close', () => {
     isQuiting = true;
-  stopAutoUpdater();
+    if (updaterManager && updaterManager.updateDownloaded) {
+      log('[APP] Update downloaded, executing quitAndInstall on window close...');
+      updaterManager.quitAndInstall();
+      return;
+    }
+    stopAutoUpdater();
     app.quit();
   });
 

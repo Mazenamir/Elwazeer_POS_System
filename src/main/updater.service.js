@@ -96,6 +96,7 @@ class AutoUpdateManager extends EventEmitter {
     this.availableUpdateInfo = null;
     this.downloadedFilePath = null;
     this.activePolicy = null;
+    this.autoInstallTimer = null;
   }
 
   init() {
@@ -216,6 +217,22 @@ class AutoUpdateManager extends EventEmitter {
       // Notify renderer without intrusive native dialog
       this.emit('status', 'updater:downloaded', info);
       this.emit('status', 'updater:waiting-for-safe-point', { version: ver });
+
+      // AUTOMATIC AUTONOMOUS INSTALL:
+      // Schedule automatic safe install after 6 seconds grace period
+      if (this.autoInstallTimer) {
+        clearTimeout(this.autoInstallTimer);
+      }
+      this.autoInstallTimer = setTimeout(async () => {
+        if (!this.isStopped && this.updateDownloaded && this.stateMachine.getState() === 'waiting-for-safe-point') {
+          this.log('[UPDATER] Grace window elapsed. Automatically executing safe installation...');
+          try {
+            await this.executeSafeInstall({ timeoutMs: 15000 });
+          } catch (e) {
+            this.log(`[UPDATER] Automatic safe install error: ${e.message}`);
+          }
+        }
+      }, 6000);
     };
 
     this._onError = (err) => {
@@ -432,6 +449,13 @@ class AutoUpdateManager extends EventEmitter {
   }
 
   quitAndInstall() {
+    if (this.autoInstallTimer) {
+      clearTimeout(this.autoInstallTimer);
+      this.autoInstallTimer = null;
+    }
+    if (this.serverSupervisor && typeof this.serverSupervisor.stop === 'function') {
+      try { this.serverSupervisor.stop(); } catch {}
+    }
     if (this.updater && typeof this.updater.quitAndInstall === 'function') {
       this.log('[UPDATER] Invoking updater.quitAndInstall()...');
       this.updater.quitAndInstall(false, true);
@@ -443,6 +467,10 @@ class AutoUpdateManager extends EventEmitter {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.autoInstallTimer) {
+      clearTimeout(this.autoInstallTimer);
+      this.autoInstallTimer = null;
     }
     this.log('[UPDATER] Periodic update checker stopped cleanly.');
   }
