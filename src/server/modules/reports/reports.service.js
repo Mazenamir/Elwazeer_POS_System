@@ -202,9 +202,28 @@ async function getDashboard(query = {}, user = null) {
     topProducts = topProductsFallbackRes.rows;
   }
 
+  const isBranchMode = Boolean(config.IS_BRANCH_MODE || db._isBranchMode || db.sqlite);
   let revenueTrendQuery = '';
   if (range === 'today') {
-    revenueTrendQuery = `
+    revenueTrendQuery = isBranchMode ? `
+      WITH RECURSIVE hours(h) AS (
+        SELECT (${CAIRO_DATE_SQL})
+        UNION ALL
+        SELECT datetime(h, '+1 hour') FROM hours WHERE h < datetime((${CAIRO_DATE_SQL}), '+23 hours')
+      )
+      SELECT 
+        TO_CHAR(h, 'HH24:00') as day, 
+        COALESCE(SUM(o.total_amount), 0) - COALESCE((
+          SELECT SUM(total_return_amount) 
+          FROM returns r 
+          WHERE r.return_date >= h AND r.return_date < datetime(h, '+1 hour') ${branchFilter ? 'AND r.branch_id = $1' : ''}
+        ), 0) as total, 
+        h as date_val
+      FROM hours
+      LEFT JOIN orders o ON o.status <> 'cancelled' AND o.order_date >= h AND o.order_date < datetime(h, '+1 hour') ${branchFilter ? 'AND o.branch_id = $1' : ''}
+      GROUP BY h
+      ORDER BY h ASC
+    ` : `
       SELECT 
         TO_CHAR(h, 'HH24:00') as day, 
         COALESCE(SUM(o.total_amount), 0) - COALESCE((
@@ -219,7 +238,25 @@ async function getDashboard(query = {}, user = null) {
       ORDER BY h ASC
     `;
   } else if (range === 'yesterday') {
-    revenueTrendQuery = `
+    revenueTrendQuery = isBranchMode ? `
+      WITH RECURSIVE hours(h) AS (
+        SELECT date((${CAIRO_DATE_SQL}), '-1 day')
+        UNION ALL
+        SELECT datetime(h, '+1 hour') FROM hours WHERE h < datetime(date((${CAIRO_DATE_SQL}), '-1 day'), '+23 hours')
+      )
+      SELECT 
+        TO_CHAR(h, 'HH24:00') as day, 
+        COALESCE(SUM(o.total_amount), 0) - COALESCE((
+          SELECT SUM(total_return_amount) 
+          FROM returns r 
+          WHERE r.return_date >= h AND r.return_date < datetime(h, '+1 hour') ${branchFilter ? 'AND r.branch_id = $1' : ''}
+        ), 0) as total, 
+        h as date_val
+      FROM hours
+      LEFT JOIN orders o ON o.status <> 'cancelled' AND o.order_date >= h AND o.order_date < datetime(h, '+1 hour') ${branchFilter ? 'AND o.branch_id = $1' : ''}
+      GROUP BY h
+      ORDER BY h ASC
+    ` : `
       SELECT 
         TO_CHAR(h, 'HH24:00') as day, 
         COALESCE(SUM(o.total_amount), 0) - COALESCE((
@@ -234,7 +271,25 @@ async function getDashboard(query = {}, user = null) {
       ORDER BY h ASC
     `;
   } else if (range === 'this_month') {
-    revenueTrendQuery = `
+    revenueTrendQuery = isBranchMode ? `
+      WITH RECURSIVE days(d) AS (
+        SELECT date(DATE_TRUNC('month', ${CAIRO_DATE_SQL}))
+        UNION ALL
+        SELECT date(d, '+1 day') FROM days WHERE d < date(${CAIRO_DATE_SQL})
+      )
+      SELECT 
+        TO_CHAR(d, 'DD/MM') as day, 
+        COALESCE(SUM(o.total_amount), 0) - COALESCE((
+          SELECT SUM(total_return_amount) 
+          FROM returns r 
+          WHERE r.return_date >= d AND r.return_date < datetime(d, '+1 day') ${branchFilter ? 'AND r.branch_id = $1' : ''}
+        ), 0) as total, 
+        d as date_val
+      FROM days
+      LEFT JOIN orders o ON o.status <> 'cancelled' AND o.order_date >= d AND o.order_date < datetime(d, '+1 day') ${branchFilter ? 'AND o.branch_id = $1' : ''}
+      GROUP BY d
+      ORDER BY d ASC
+    ` : `
       SELECT 
         TO_CHAR(d, 'DD/MM') as day, 
         COALESCE(SUM(o.total_amount), 0) - COALESCE((
@@ -249,7 +304,25 @@ async function getDashboard(query = {}, user = null) {
       ORDER BY d ASC
     `;
   } else if (range === '30days') {
-    revenueTrendQuery = `
+    revenueTrendQuery = isBranchMode ? `
+      WITH RECURSIVE days(d) AS (
+        SELECT date(${CAIRO_DATE_SQL}, '-29 days')
+        UNION ALL
+        SELECT date(d, '+1 day') FROM days WHERE d < date(${CAIRO_DATE_SQL})
+      )
+      SELECT 
+        TO_CHAR(d, 'DD/MM') as day, 
+        COALESCE(SUM(o.total_amount), 0) - COALESCE((
+          SELECT SUM(total_return_amount) 
+          FROM returns r 
+          WHERE r.return_date >= d AND r.return_date < datetime(d, '+1 day') ${branchFilter ? 'AND r.branch_id = $1' : ''}
+        ), 0) as total, 
+        d as date_val
+      FROM days
+      LEFT JOIN orders o ON o.status <> 'cancelled' AND o.order_date >= d AND o.order_date < datetime(d, '+1 day') ${branchFilter ? 'AND o.branch_id = $1' : ''}
+      GROUP BY d
+      ORDER BY d ASC
+    ` : `
       SELECT 
         TO_CHAR(d, 'DD/MM') as day, 
         COALESCE(SUM(o.total_amount), 0) - COALESCE((
@@ -265,7 +338,25 @@ async function getDashboard(query = {}, user = null) {
     `;
   } else {
     // 7days
-    revenueTrendQuery = `
+    revenueTrendQuery = isBranchMode ? `
+      WITH RECURSIVE days(d) AS (
+        SELECT date(${CAIRO_DATE_SQL}, '-6 days')
+        UNION ALL
+        SELECT date(d, '+1 day') FROM days WHERE d < date(${CAIRO_DATE_SQL})
+      )
+      SELECT 
+        TO_CHAR(d, 'Day') as day, 
+        COALESCE(SUM(o.total_amount), 0) - COALESCE((
+          SELECT SUM(total_return_amount) 
+          FROM returns r 
+          WHERE r.return_date >= d AND r.return_date < datetime(d, '+1 day') ${branchFilter ? 'AND r.branch_id = $1' : ''}
+        ), 0) as total, 
+        d as date_val
+      FROM days
+      LEFT JOIN orders o ON o.status <> 'cancelled' AND o.order_date >= d AND o.order_date < datetime(d, '+1 day') ${branchFilter ? 'AND o.branch_id = $1' : ''}
+      GROUP BY d
+      ORDER BY d ASC
+    ` : `
       SELECT 
         TO_CHAR(d, 'Day') as day, 
         COALESCE(SUM(o.total_amount), 0) - COALESCE((
@@ -1047,18 +1138,29 @@ async function getMonthlyHistory(query = {}, user = null) {
     params.push(reportBranchId);
   }
 
+  const isBranch = Boolean(config.IS_BRANCH_MODE || db._isBranchMode || db.sqlite);
+  const monthsCte = isBranch
+    ? `months(month_start) AS (
+         SELECT date((SELECT start_month FROM bounds))
+         UNION ALL
+         SELECT date(month_start, '+1 month')
+         FROM months
+         WHERE month_start < date(${currentMonthExpr})
+       )`
+    : `months AS (
+         SELECT generate_series(
+           (SELECT start_month FROM bounds),
+           ${currentMonthExpr},
+           '1 month'
+         )::date as month_start
+       )`;
+
   const sqlQuery = `
-    WITH bounds AS (
+    WITH ${isBranch ? 'RECURSIVE' : ''} bounds AS (
       SELECT ${startMonthExpr} as start_month,
              ${endMonthExpr} as end_month
     ),
-    months AS (
-      SELECT generate_series(
-        (SELECT start_month FROM bounds),
-        ${currentMonthExpr},
-        '1 month'
-      )::date as month_start
-    ),
+    ${monthsCte},
     orders_m AS (
       SELECT DATE_TRUNC('month', order_date)::date as month_start, SUM(total_amount) as total
       FROM orders, bounds
@@ -1230,18 +1332,29 @@ async function getDailyHistory(query = {}, user = null) {
     params.push(reportBranchId);
   }
 
+  const isBranch = Boolean(config.IS_BRANCH_MODE || db._isBranchMode || db.sqlite);
+  const daysCte = isBranch
+    ? `days(report_date) AS (
+         SELECT date((SELECT start_day FROM bounds))
+         UNION ALL
+         SELECT date(report_date, '+1 day')
+         FROM days
+         WHERE report_date < date(${currentDayExpr})
+       )`
+    : `days AS (
+         SELECT generate_series(
+           (SELECT start_day FROM bounds),
+           ${currentDayExpr},
+           '1 day'
+         )::date as report_date
+       )`;
+
   const sqlQuery = `
-    WITH bounds AS (
+    WITH ${isBranch ? 'RECURSIVE' : ''} bounds AS (
       SELECT ${startDayExpr} as start_day,
              ${endDayExpr} as end_day
     ),
-    days AS (
-      SELECT generate_series(
-        (SELECT start_day FROM bounds),
-        ${currentDayExpr},
-        '1 day'
-      )::date as report_date
-    ),
+    ${daysCte},
     orders_d AS (
       SELECT order_date::date as report_date, SUM(total_amount) as total
       FROM orders, bounds
@@ -3193,7 +3306,6 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
       SELECT 
         a.employee_id,
         TO_CHAR(a.date, 'YYYY-MM-DD') as date,
-        EXTRACT(DAY FROM a.date)::int as day,
         a.status,
         a.notes,
         a.total_hours
@@ -3207,7 +3319,6 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
       SELECT 
         et.employee_id,
         TO_CHAR(et.transaction_date, 'YYYY-MM-DD') as date,
-        EXTRACT(DAY FROM et.transaction_date)::int as day,
         et.amount,
         et.notes
       FROM employee_transactions et
@@ -3233,13 +3344,17 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
 
   const attendanceMap = new Map();
   attendanceRes.rows.forEach(row => {
-    attendanceMap.set(`${row.employee_id}_${row.day}`, row);
+    const day = row.day || (row.date ? parseInt(String(row.date).slice(8, 10), 10) : null);
+    if (day) attendanceMap.set(`${row.employee_id}_${day}`, row);
   });
 
   const advancesMap = new Map();
   advancesRes.rows.forEach(row => {
-    const key = `${row.employee_id}_${row.day}`;
-    advancesMap.set(key, (advancesMap.get(key) || 0) + Number(row.amount || 0));
+    const day = row.day || (row.date ? parseInt(String(row.date).slice(8, 10), 10) : null);
+    if (day) {
+      const key = `${row.employee_id}_${day}`;
+      advancesMap.set(key, (advancesMap.get(key) || 0) + Number(row.amount || 0));
+    }
   });
 
   const employees = employeesRes.rows.map(emp => {

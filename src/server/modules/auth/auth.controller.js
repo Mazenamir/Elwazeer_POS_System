@@ -1,8 +1,14 @@
 const authService = require('./auth.service');
+const sensitiveService = require('./sensitivePassword.service');
 const config = require('../../config/env');
 const db = require('../../database/connection');
 const { getDatabaseCairoNow, getCairoDateTimeParts, CAIRO_TIME_ZONE } = require('../../../shared/utils/date');
-const { PERMISSION_DEFINITIONS, normalizePermissions } = require('../../../shared/constants/permissions');
+const {
+  HIERARCHICAL_CATALOG,
+  PERMISSION_DEFINITIONS,
+  normalizePermissions,
+  hasPermission,
+} = require('../../../shared/constants/permissions');
 
 async function checkSetup(req, res, next) {
   try {
@@ -41,6 +47,8 @@ async function login(req, res, next) {
       user,
       role: user.role,
       branch_id: user.branch_id,
+      branch_scope: user.branch_scope,
+      branch_ids: user.branch_ids,
     });
   } catch (err) {
     next(err);
@@ -63,21 +71,34 @@ async function getMe(req, res, next) {
     if (config.IS_BRANCH_MODE) {
       const user = db.sqlite.prepare(`
         SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions,
+               u.branch_scope, u.branch_ids, u.token_version,
                COALESCE(u.full_name, u.username) as name,
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
         WHERE u.id = ?
       `).get(req.user.id);
-      if (user && typeof user.permissions === 'string') {
-        try { user.permissions = JSON.parse(user.permissions); } catch {}
-      }
       if (!user) return res.status(404).json({ error: 'User not found' });
-      return res.json({ user });
+
+      let branchIds = [];
+      if (Array.isArray(user.branch_ids)) branchIds = user.branch_ids;
+      else if (typeof user.branch_ids === 'string') {
+        try { branchIds = JSON.parse(user.branch_ids); } catch {}
+      }
+
+      return res.json({
+        user: {
+          ...user,
+          branch_scope: user.branch_scope || (user.role === 'admin' ? 'all' : 'single'),
+          branch_ids: branchIds,
+          permissions: normalizePermissions(user.permissions),
+        },
+      });
     }
 
     const { rows } = await db.query(`
       SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions,
+             u.branch_scope, u.branch_ids, u.token_version,
              COALESCE(u.full_name, e.name, u.username) as name,
              COALESCE(u.full_name, e.name, u.username) as full_name,
              b.name as branch_name
@@ -88,9 +109,18 @@ async function getMe(req, res, next) {
     `, [req.user.id]);
 
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    let branchIds = [];
+    if (Array.isArray(rows[0].branch_ids)) branchIds = rows[0].branch_ids;
+    else if (typeof rows[0].branch_ids === 'string') {
+      try { branchIds = JSON.parse(rows[0].branch_ids); } catch {}
+    }
+
     res.json({
       user: {
         ...rows[0],
+        branch_scope: rows[0].branch_scope || (rows[0].role === 'admin' ? 'all' : 'single'),
+        branch_ids: branchIds,
         permissions: normalizePermissions(rows[0].permissions),
       },
     });
@@ -101,14 +131,36 @@ async function getMe(req, res, next) {
 
 async function verifySalaryPassword(req, res, next) {
   try {
-    const { password } = req.body;
-    if (!password) return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    if (!req.user) {
+      return res.status(401).json({ ok: false, error: 'يجب تسجيل الدخول أولاً' });
+    }
+    if (!hasPermission(req.user, 'employees.payroll.view') && !hasPermission(req.user, 'Employees.html')) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بالوصول لمسير الرواتب' });
+    }
 
-    const ok = await authService.verifySalaryPassword(password);
+    const { password } = req.body;
+    if (password === null || password === undefined || password === '') {
+      return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    }
+
+    const targetBranch = req.body?.branch_id || req.user?.branch_id;
+    const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
+    if (targetBranch && !hasBranchAccess(req.user, targetBranch)) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بالوصول لبيانات هذا الفرع' });
+    }
+
+    const ok = await sensitiveService.verifyPassword('salary', password, { user: req.user, req, branchId: targetBranch });
     if (!ok) {
       return res.status(400).json({ ok: false, error: 'كلمة المرور غير صحيحة' });
     }
-    res.json({ ok: true });
+
+    const approval = sensitiveService.generateApprovalToken({
+      op: 'salary',
+      user: req.user,
+      branchId: targetBranch,
+    });
+
+    res.json({ ok: true, ...approval });
   } catch (err) {
     next(err);
   }
@@ -116,30 +168,204 @@ async function verifySalaryPassword(req, res, next) {
 
 async function verifyInvoiceEditPassword(req, res, next) {
   try {
-    const { password } = req.body;
-    if (!password) return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    if (!req.user) {
+      return res.status(401).json({ ok: false, error: 'يجب تسجيل الدخول أولاً' });
+    }
+    if (!hasPermission(req.user, 'pos.invoices.edit')) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بتعديل الفواتير' });
+    }
 
-    const ok = await authService.verifyInvoiceEditPassword(password);
+    const { password, order_id } = req.body;
+    if (password === null || password === undefined || password === '') {
+      return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    }
+
+    const targetBranch = req.body?.branch_id || req.user?.branch_id;
+    const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
+    if (targetBranch && !hasBranchAccess(req.user, targetBranch)) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بالوصول لبيانات هذا الفرع' });
+    }
+
+    const ok = await sensitiveService.verifyPassword('invoice_edit', password, {
+      user: req.user,
+      req,
+      resourceId: order_id,
+      branchId: targetBranch,
+    });
+
     if (!ok) {
       return res.status(400).json({ ok: false, error: 'كلمة المرور غير صحيحة' });
     }
-    res.json({ ok: true });
+
+    const approval = sensitiveService.generateApprovalToken({
+      op: 'invoice_edit',
+      user: req.user,
+      resourceId: order_id,
+      branchId: targetBranch,
+    });
+
+    res.json({ ok: true, ...approval });
   } catch (err) {
     next(err);
   }
 }
 
-
 async function verifyProfitPassword(req, res, next) {
   try {
-    const { password } = req.body;
-    if (!password) return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    if (!req.user) {
+      return res.status(401).json({ ok: false, error: 'يجب تسجيل الدخول أولاً' });
+    }
+    if (!hasPermission(req.user, 'reports.profits.view')) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بعرض بيانات الأرباح' });
+    }
 
-    const ok = await authService.verifyProfitPassword(password);
+    const { password } = req.body;
+    if (password === null || password === undefined || password === '') {
+      return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    }
+
+    const targetBranch = req.body?.branch_id || req.user?.branch_id;
+    const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
+    if (targetBranch && !hasBranchAccess(req.user, targetBranch)) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بالوصول لبيانات هذا الفرع' });
+    }
+
+    const ok = await sensitiveService.verifyPassword('profit', password, { user: req.user, req, branchId: targetBranch });
     if (!ok) {
       return res.status(400).json({ ok: false, error: 'كلمة مرور الأرباح غير صحيحة' });
     }
-    res.json({ ok: true, message: 'تم التحقق بنجاح' });
+
+    const approval = sensitiveService.generateApprovalToken({
+      op: 'profit',
+      user: req.user,
+      branchId: targetBranch,
+    });
+
+    res.json({ ok: true, message: 'تم التحقق بنجاح', ...approval });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function verifyReturnPassword(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ ok: false, error: 'يجب تسجيل الدخول أولاً' });
+    }
+    if (!hasPermission(req.user, 'pos.invoices.refund')) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك باسترجاع الفواتير' });
+    }
+
+    const { password, order_id } = req.body;
+    if (password === null || password === undefined || password === '') {
+      return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    }
+
+    const targetBranch = req.body?.branch_id || req.user?.branch_id;
+    const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
+    if (targetBranch && !hasBranchAccess(req.user, targetBranch)) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بالوصول لبيانات هذا الفرع' });
+    }
+
+    const ok = await sensitiveService.verifyPassword('return', password, {
+      user: req.user,
+      req,
+      resourceId: order_id,
+      branchId: targetBranch,
+    });
+
+    if (!ok) {
+      return res.status(400).json({ ok: false, error: 'كلمة مرور الاسترجاع غير صحيحة' });
+    }
+
+    const approval = sensitiveService.generateApprovalToken({
+      op: 'return',
+      user: req.user,
+      resourceId: order_id,
+      branchId: targetBranch,
+    });
+
+    res.json({ ok: true, message: 'تم التحقق بنجاح', ...approval });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function verifyInventoryPassword(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ ok: false, error: 'يجب تسجيل الدخول أولاً' });
+    }
+
+    const { password, product_id, action } = req.body;
+
+    if (action === 'delete') {
+      if (!hasPermission(req.user, 'inventory.products.delete') && !hasPermission(req.user, 'inventory_admin')) {
+        return res.status(403).json({ ok: false, error: 'غير مصرح لك بحذف الأصناف' });
+      }
+    } else if (action === 'duplicate') {
+      if (!hasPermission(req.user, 'inventory.products.duplicate') && !hasPermission(req.user, 'inventory_admin')) {
+        return res.status(403).json({ ok: false, error: 'غير مصرح لك بنسخ وتكرار الأصناف' });
+      }
+    } else {
+      if (
+        !hasPermission(req.user, 'inventory.products.edit') &&
+        !hasPermission(req.user, 'inventory.products.delete') &&
+        !hasPermission(req.user, 'inventory.products.duplicate') &&
+        !hasPermission(req.user, 'inventory_admin')
+      ) {
+        return res.status(403).json({ ok: false, error: 'غير مصرح لك بإدارة وتعديل المخزون' });
+      }
+    }
+    if (password === null || password === undefined || password === '') {
+      return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
+    }
+
+    const targetBranch = req.body?.branch_id || req.user?.branch_id;
+    const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
+    if (targetBranch && !hasBranchAccess(req.user, targetBranch)) {
+      return res.status(403).json({ ok: false, error: 'غير مصرح لك بالوصول لبيانات هذا الفرع' });
+    }
+
+    const ok = await sensitiveService.verifyPassword('inventory', password, {
+      user: req.user,
+      req,
+      resourceId: product_id,
+      branchId: targetBranch,
+    });
+
+    if (!ok) {
+      return res.status(400).json({ ok: false, error: 'كلمة مرور إدارة المخزون غير صحيحة' });
+    }
+
+    const approval = sensitiveService.generateApprovalToken({
+      op: action || 'inventory',
+      user: req.user,
+      resourceId: product_id,
+      branchId: targetBranch,
+    });
+
+    res.json({ ok: true, message: 'تم التحقق بنجاح', ...approval });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getSensitivePasswordStatus(req, res, next) {
+  try {
+    const status = await sensitiveService.getSensitivePasswordStatus();
+    res.json(status);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateSensitivePassword(req, res, next) {
+  try {
+    const { type, password, confirm_password } = req.body;
+    if (!type) return res.status(400).json({ error: 'نوع العملية الحساسة مطلوب' });
+    const result = await sensitiveService.updateSensitivePassword(type, { password, confirm_password }, req.user);
+    res.json(result);
   } catch (err) {
     next(err);
   }
@@ -148,7 +374,7 @@ async function verifyProfitPassword(req, res, next) {
 async function updateOwnAccount(req, res, next) {
   try {
     const userId = req.user.id;
-    const { token } = await authService.updateOwnAccount(userId, req.body);
+    const { token, user } = await authService.updateOwnAccount(userId, req.body);
 
     const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
     res.cookie('token', token, {
@@ -158,7 +384,7 @@ async function updateOwnAccount(req, res, next) {
       maxAge: 12 * 60 * 60 * 1000,
     });
 
-    res.json({ success: true, message: 'Account updated' });
+    res.json({ success: true, message: 'Account updated', token, user });
   } catch (err) {
     next(err);
   }
@@ -226,7 +452,10 @@ async function getServerTime(req, res) {
 }
 
 async function getPermissions(req, res) {
-  res.json(PERMISSION_DEFINITIONS);
+  res.json({
+    hierarchical: HIERARCHICAL_CATALOG,
+    flat: PERMISSION_DEFINITIONS,
+  });
 }
 
 module.exports = {
@@ -240,6 +469,10 @@ module.exports = {
   verifySalaryPassword,
   verifyInvoiceEditPassword,
   verifyProfitPassword,
+  verifyReturnPassword,
+  verifyInventoryPassword,
+  getSensitivePasswordStatus,
+  updateSensitivePassword,
   updateOwnAccount,
   createBranchUser,
   listBranchUsers,

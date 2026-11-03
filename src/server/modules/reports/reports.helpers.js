@@ -3,14 +3,36 @@ const { getCairoDateTimeParts, addDays, getMonthRange } = require('../../../shar
 
 function getReportBranchId(user, query = {}) {
   if (user && user.role !== 'admin') {
-    if (!user.branch_id) {
-      const err = new Error('Branch user must have a branch_id');
+    if (user.branch_scope === 'all') {
+      if (query.branch_id && query.branch_id !== 'all') {
+        return String(query.branch_id);
+      }
+      return null;
+    }
+
+    if (user.branch_scope === 'selected') {
+      const { getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
+      const authBranchIds = (getUserAuthorizedBranchIds(user) || []).map(String);
+      if (query.branch_id && query.branch_id !== 'all') {
+        if (!authBranchIds.includes(String(query.branch_id))) {
+          const err = new Error('Forbidden: Cannot access other branch reports');
+          err.statusCode = 403;
+          err.status = 403;
+          throw err;
+        }
+        return String(query.branch_id);
+      }
+      return String(user.branch_id || authBranchIds[0] || 1);
+    }
+
+    if (query.branch_id === 'all') {
+      const err = new Error('Forbidden: Cannot access other branch reports');
       err.statusCode = 403;
       err.status = 403;
       throw err;
     }
-    if (query.branch_id === 'all') {
-      const err = new Error('Forbidden: Only administrators can view consolidated multi-branch reports');
+    if (!user.branch_id) {
+      const err = new Error('Branch user must have a branch_id');
       err.statusCode = 403;
       err.status = 403;
       throw err;
@@ -36,6 +58,18 @@ function canViewReportProfit(user) {
 function stripReportProfit(row) {
   const { net_profit, profit, cogs, total_inventory_value, today_profit, month_profit, ...rest } = row || {};
   return rest;
+}
+
+function maskProfitMetrics(metrics, isAllowed = false) {
+  if (isAllowed) return { ...metrics };
+  const masked = { ...metrics };
+  if ('net_profit' in masked) masked.net_profit = '[PROTECTED]';
+  if ('profit' in masked) masked.profit = '[PROTECTED]';
+  if ('profit_margin' in masked) masked.profit_margin = '[PROTECTED]';
+  if ('cogs' in masked) masked.cogs = '[PROTECTED]';
+  if ('today_profit' in masked) masked.today_profit = '[PROTECTED]';
+  if ('month_profit' in masked) masked.month_profit = '[PROTECTED]';
+  return masked;
 }
 
 function employeeTransactionReportAmountSql(alias = 'et') {
@@ -703,6 +737,7 @@ module.exports = {
   getReportBranchId,
   canViewReportProfit,
   stripReportProfit,
+  maskProfitMetrics,
   employeeTransactionReportAmountSql,
   employeeTransactionRemainingDeltaSql,
   normalizePaymentMethod,

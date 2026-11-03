@@ -24,8 +24,64 @@ async function getTopProductsByBranch(req, res, next) {
 
 async function getProfitReport(req, res, next) {
   try {
+    const sensitiveService = require('../auth/sensitivePassword.service');
+    const auditService = require('../audit/audit.service');
+
+    let isUnlocked = req.user?.role === 'admin';
+    const token = req.headers['x-approval-token'] || req.query?.approval_token;
+    const pwd = req.headers['x-profit-password'] || req.headers['x-sensitive-password'] || req.query?.profit_password;
+
+    if (!isUnlocked) {
+      if (token) {
+        try {
+          sensitiveService.consumeApprovalToken(token, { op: 'profit', user: req.user });
+          isUnlocked = true;
+        } catch (_) {}
+      } else if (pwd) {
+        isUnlocked = await sensitiveService.verifyPassword('profit', pwd, { user: req.user, req });
+      }
+    }
+
     const report = await reportsService.getProfitReport(req.query, req.user);
-    res.json(report);
+
+    if (isUnlocked) {
+      await auditService.log({
+        userId: req.user?.id,
+        username: req.user?.username,
+        action: 'profit_analytics_accessed',
+        resourceType: 'report',
+        branchId: req.user?.branch_id,
+        outcome: 'success',
+      });
+      return res.json({ ...report, is_profit_locked: false });
+    }
+
+    // Server-side mask sensitive profit data
+    const maskedSummary = {
+      ...(report.summary || {}),
+      cogs: null,
+      gross_profit: null,
+      net_profit: null,
+      profit_margin: null,
+      today_profit: null,
+      month_profit: null,
+    };
+
+    const maskedBranches = (report.branches || []).map((b) => ({
+      ...b,
+      cogs: null,
+      gross_profit: null,
+      net_profit: null,
+      profit_margin: null,
+    }));
+
+    res.json({
+      ...report,
+      summary: maskedSummary,
+      branches: maskedBranches,
+      is_profit_locked: true,
+      message: 'بيانات الأرباح والتكاليف محمية بكلمة سر',
+    });
   } catch (err) {
     next(err);
   }
@@ -242,6 +298,36 @@ async function exportExcel(req, res, next) {
         break;
       }
       case 'profit': {
+        const sensitiveService = require('../auth/sensitivePassword.service');
+        let isUnlocked = req.user?.role === 'admin';
+        const token = req.headers['x-approval-token'] || req.query?.approval_token;
+        const pwd = req.headers['x-profit-password'] || req.headers['x-sensitive-password'] || req.query?.profit_password;
+
+        if (!isUnlocked) {
+          if (token) {
+            try {
+              sensitiveService.consumeApprovalToken(token, { op: 'profit', user: req.user });
+              isUnlocked = true;
+            } catch (err) {
+              return res.status(err.statusCode || 403).json({ error: err.message, code: 'INVALID_APPROVAL_TOKEN' });
+            }
+          } else if (pwd) {
+            try {
+              isUnlocked = await sensitiveService.verifyPassword('profit', pwd, { user: req.user, req });
+            } catch (err) {
+              return res.status(err.statusCode || 403).json({ error: err.message });
+            }
+          }
+        }
+
+        if (!isUnlocked) {
+          return res.status(403).json({
+            error: 'كلمة مرور عرض الأرباح مطلوبة لتصدير تقرير الأرباح والتكاليف',
+            code: 'PASSWORD_REQUIRED',
+            passwordType: 'profit',
+          });
+        }
+
         const data = await reportsService.getProfitReport(req.query, req.user);
         const period = data.date_from && data.date_to ? `${data.date_from} إلى ${data.date_to}` : (data.month || '-');
         buffer = await reportsExcel.generateProfitReportExcel(data, { branchName, period });
@@ -439,6 +525,36 @@ async function exportPdfHtml(req, res, next) {
         break;
       }
       case 'profit': {
+        const sensitiveService = require('../auth/sensitivePassword.service');
+        let isUnlocked = req.user?.role === 'admin';
+        const token = req.headers['x-approval-token'] || req.query?.approval_token;
+        const pwd = req.headers['x-profit-password'] || req.headers['x-sensitive-password'] || req.query?.profit_password;
+
+        if (!isUnlocked) {
+          if (token) {
+            try {
+              sensitiveService.consumeApprovalToken(token, { op: 'profit', user: req.user });
+              isUnlocked = true;
+            } catch (err) {
+              return res.status(err.statusCode || 403).json({ error: err.message, code: 'INVALID_APPROVAL_TOKEN' });
+            }
+          } else if (pwd) {
+            try {
+              isUnlocked = await sensitiveService.verifyPassword('profit', pwd, { user: req.user, req });
+            } catch (err) {
+              return res.status(err.statusCode || 403).json({ error: err.message });
+            }
+          }
+        }
+
+        if (!isUnlocked) {
+          return res.status(403).json({
+            error: 'كلمة مرور عرض الأرباح مطلوبة لتصدير تقرير الأرباح والتكاليف',
+            code: 'PASSWORD_REQUIRED',
+            passwordType: 'profit',
+          });
+        }
+
         const data = await reportsService.getProfitReport(req.query, req.user);
         const period = data.date_from && data.date_to ? `${data.date_from} إلى ${data.date_to}` : (data.month || '-');
         html = reportsPdf.generateProfitReportPdfHtml(data, { branchName, period });

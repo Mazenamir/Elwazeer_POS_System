@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api, { registerUnauthorizedHandler } from '../services/api/client';
+import { hasPermission as checkPermission } from '../constants/permissions';
 
 const AuthContext = createContext(null);
 
@@ -86,19 +87,7 @@ export function AuthProvider({ children }) {
 
   const hasPermission = (perm) => {
     if (!user) return false;
-    if (user.role === 'admin') return true;
-    let perms = user.permissions;
-    if (typeof perms === 'string') {
-      try {
-        perms = JSON.parse(perms);
-      } catch {
-        perms = [];
-      }
-    }
-    if (Array.isArray(perms)) {
-      return perms.includes(perm);
-    }
-    return false;
+    return checkPermission(user, perm);
   };
 
   const value = {

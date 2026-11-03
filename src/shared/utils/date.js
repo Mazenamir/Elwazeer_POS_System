@@ -59,7 +59,7 @@ function daysBetween(start, end) {
 }
 
 async function getDatabaseCairoNow(db) {
-  if (!db || db._isBranchMode) {
+  if (!db || db._isBranchMode || db.sqlite || process.env.APP_MODE === 'branch') {
     const parts = getCairoDateTimeParts();
     return {
       cairo_now: `${parts.date}T${parts.time}:00`,

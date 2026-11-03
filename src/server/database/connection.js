@@ -1,14 +1,115 @@
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../config/env');
 
 let pool = null;
 let sqliteDb = null;
 
+function replaceExtract(sql) {
+  let result = '';
+  let i = 0;
+  while (i < sql.length) {
+    const match = sql.slice(i).match(/^EXTRACT\s*\(\s*([a-zA-Z_]+)\s+FROM\s+/i);
+    if (!match) {
+      result += sql[i];
+      i++;
+      continue;
+    }
+    const unit = match[1].toUpperCase();
+    const startInner = i + match[0].length;
+    let depth = 1;
+    let j = startInner;
+    while (j < sql.length && depth > 0) {
+      if (sql[j] === '(') depth++;
+      else if (sql[j] === ')') depth--;
+      if (depth === 0) break;
+      j++;
+    }
+    const innerExpr = sql.slice(startInner, j).trim();
+    i = j + 1; // skip closing ')'
+
+    if (unit === 'EPOCH') {
+      if (/^(?:now\(\)|current_timestamp)$/i.test(innerExpr)) {
+        result += 'unixepoch()';
+      } else {
+        let clean = innerExpr.trim();
+        if (clean.startsWith('(') && clean.endsWith(')')) {
+          clean = clean.slice(1, -1).trim();
+        }
+        let depthSub = 0;
+        let minusIdx = -1;
+        for (let k = 0; k < clean.length; k++) {
+          if (clean[k] === '(') depthSub++;
+          else if (clean[k] === ')') depthSub--;
+          else if (depthSub === 0 && clean[k] === '-') {
+            minusIdx = k;
+            break;
+          }
+        }
+        if (minusIdx !== -1) {
+          const left = clean.slice(0, minusIdx).trim();
+          const right = clean.slice(minusIdx + 1).trim();
+          result += `(unixepoch(${left}) - unixepoch(${right}))`;
+        } else {
+          result += `unixepoch(${innerExpr})`;
+        }
+      }
+    } else if (unit === 'DAY') {
+      result += `CAST(strftime('%d', ${innerExpr}) AS INTEGER)`;
+    } else if (unit === 'MONTH') {
+      result += `CAST(strftime('%m', ${innerExpr}) AS INTEGER)`;
+    } else if (unit === 'YEAR') {
+      result += `CAST(strftime('%Y', ${innerExpr}) AS INTEGER)`;
+    } else if (unit === 'HOUR') {
+      result += `CAST(strftime('%H', ${innerExpr}) AS INTEGER)`;
+    } else if (unit === 'MINUTE') {
+      result += `CAST(strftime('%M', ${innerExpr}) AS INTEGER)`;
+    } else if (unit === 'SECOND') {
+      result += `CAST(strftime('%S', ${innerExpr}) AS INTEGER)`;
+    } else {
+      result += `unixepoch(${innerExpr})`;
+    }
+  }
+  return result;
+}
+
+function ensureSqliteColumn(sqlite, table, column, typeDef) {
+  try {
+    const tableExists = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+    if (!tableExists) return;
+    const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name.toLowerCase());
+    if (!cols.includes(column.toLowerCase())) {
+      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeDef}`);
+    }
+  } catch {}
+}
+
+function ensureSqliteCoreColumns(sqlite) {
+  if (!sqlite) return;
+  ensureSqliteColumn(sqlite, 'inventory', 'color_id', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'inventory', 'size_id', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'inventory', 'gender', "TEXT DEFAULT 'both'");
+  ensureSqliteColumn(sqlite, 'inventory', 'wholesale_price', 'REAL DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'inventory', 'semi_wholesale_price', 'REAL DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'rental_inventory', 'color_id', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'rental_inventory', 'size_id', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'rental_inventory', 'gender', "TEXT DEFAULT 'both'");
+  ensureSqliteColumn(sqlite, 'order_items', 'size', 'TEXT');
+  ensureSqliteColumn(sqlite, 'users', 'full_name', 'TEXT');
+  ensureSqliteColumn(sqlite, 'users', 'branch_scope', "TEXT DEFAULT 'single'");
+  ensureSqliteColumn(sqlite, 'users', 'branch_ids', "TEXT DEFAULT '[]'");
+  ensureSqliteColumn(sqlite, 'users', 'token_version', 'INTEGER DEFAULT 1');
+  ensureSqliteColumn(sqlite, 'branches', 'rentals_enabled', 'INTEGER DEFAULT 1');
+  ensureSqliteColumn(sqlite, 'branches', 'allowed_gender', "TEXT DEFAULT 'both'");
+  ensureSqliteColumn(sqlite, 'branches', 'cashier_footer', 'TEXT');
+  ensureSqliteColumn(sqlite, 'branches', 'rental_footer', 'TEXT');
+}
+
 function translatePgToSqlite(sql) {
   if (typeof sql !== 'string') return { isAdvisoryLock: false, sql };
-  let s = sql;
+  let s = replaceExtract(sql);
   if (/pg_advisory_xact_lock/i.test(s)) {
     return { isAdvisoryLock: true, sql: 'SELECT 1 AS lock' };
   }
@@ -20,9 +121,14 @@ function translatePgToSqlite(sql) {
   // ILIKE -> LIKE
   s = s.replace(/\bILIKE\b/gi, 'LIKE');
 
+  // Strip DISTINCT ON (...) -> DISTINCT
+  s = s.replace(/\bDISTINCT\s+ON\s*\([^)]+\)/gi, 'DISTINCT');
+
   // GREATEST -> MAX, LEAST -> MIN (SQLite scalar equivalents)
   s = s.replace(/\bGREATEST\b/gi, 'MAX');
   s = s.replace(/\bLEAST\b/gi, 'MIN');
+  s = s.replace(/\bBOOL_OR\b/gi, 'MAX');
+  s = s.replace(/\bBOOL_AND\b/gi, 'MIN');
 
   // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
   s = s.replace(/::[a-zA-Z0-9_]+(\s*\[\s*\])?/g, '');
@@ -32,11 +138,17 @@ function translatePgToSqlite(sql) {
 
   // json_agg -> json_group_array, json_build_object -> json_object, json_object_agg -> json_group_object
   s = s.replace(/\bjson_agg\b/gi, 'json_group_array');
+  s = s.replace(/\barray_agg\b/gi, 'json_group_array');
   s = s.replace(/\bjson_build_object\b/gi, 'json_object');
   s = s.replace(/\bjson_object_agg\b/gi, 'json_group_object');
 
   // = ANY($1) -> IN (SELECT value FROM json_each(?1))
   s = s.replace(/=\s*ANY\s*\(\s*\$(\d+)\s*\)/gi, 'IN (SELECT value FROM json_each(?$1))');
+
+  // EXTRACT translations to SQLite equivalents
+  // STRING_AGG translations
+  s = s.replace(/STRING_AGG\s*\(\s*DISTINCT\s+([^,]+?)\s*,\s*('[^']+')\s*\)(?:\s*FILTER\s*\(\s*WHERE\s+[^)]+\))?/gi, "replace(group_concat(DISTINCT $1), ',', $2)");
+  s = s.replace(/STRING_AGG\s*\(\s*([^,]+?)\s*,\s*('[^']+')\s*\)(?:\s*FILTER\s*\(\s*WHERE\s+[^)]+\))?/gi, "group_concat($1, $2)");
 
   // Handle NOW() / CURRENT_TIMESTAMP - INTERVAL 'X unit(s)'
   s = s.replace(/\b(?:now\(\)|current_timestamp)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', '-$1 $2')");
@@ -47,6 +159,14 @@ function translatePgToSqlite(sql) {
   s = s.replace(/date\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date('now', 'localtime', '+$1 $2')");
   s = s.replace(/datetime\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', 'localtime', '-$1 $2')");
   s = s.replace(/date\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date('now', 'localtime', '-$1 $2')");
+
+  // Handle DATE_TRUNC(...) +/- INTERVAL 'X unit'
+  s = s.replace(/(DATE_TRUNC\s*\([^)]*(?:\([^)]*\)[^)]*)*\))\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date($1, '+$2 $3')");
+  s = s.replace(/(DATE_TRUNC\s*\([^)]*(?:\([^)]*\)[^)]*)*\))\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date($1, '-$2 $3')");
+
+  // Handle 'literal' +/- INTERVAL 'X unit'
+  s = s.replace(/('[^']+')\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date($1, '+$2 $3')");
+  s = s.replace(/('[^']+')\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date($1, '-$2 $3')");
 
   s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime($1, '+$2 $3')");
   s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime($1, '-$2 $3')");
@@ -60,30 +180,33 @@ function translatePgToSqlite(sql) {
   return { isAdvisoryLock: false, sql: s };
 }
 
+let txMutex = Promise.resolve();
+
 if (config.IS_BRANCH_MODE) {
   // Branch Mode - SQLite Adapter
   const { DatabaseSync } = require('node:sqlite');
   fs.mkdirSync(path.dirname(config.BRANCH_SQLITE_PATH), { recursive: true });
   sqliteDb = new DatabaseSync(config.BRANCH_SQLITE_PATH);
   sqliteDb.exec('PRAGMA journal_mode = WAL;');
+  ensureSqliteCoreColumns(sqliteDb);
 
   // Register custom SQLite functions for seamless Postgres compatibility
+  sqliteDb.function('gen_random_uuid', () => crypto.randomUUID());
   sqliteDb.function('now', () => new Date().toISOString());
   sqliteDb.function('timezone', { varargs: true }, (tz, dt) => dt || new Date().toISOString());
   sqliteDb.function('date_trunc', { varargs: true }, (unit, dateStr) => {
     if (!dateStr) return null;
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return null;
+    const str = String(dateStr).trim();
     if (unit === 'month') {
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      return str.slice(0, 7) + '-01';
     }
     if (unit === 'year') {
-      return `${d.getFullYear()}-01-01`;
+      return str.slice(0, 4) + '-01-01';
     }
     if (unit === 'day') {
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return str.slice(0, 10);
     }
-    return dateStr;
+    return str;
   });
   sqliteDb.function('pg_advisory_xact_lock', { varargs: true }, () => 1);
   sqliteDb.function('pg_advisory_lock', { varargs: true }, () => 1);
@@ -129,14 +252,27 @@ if (config.IS_BRANCH_MODE) {
     const isSelect = /^(SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(trimmed);
     const hasReturning = /\bRETURNING\b/i.test(trimmed);
 
+    let maxParamIdx = 0;
+    const numberedMatches = sql.match(/\?(\d+)/g);
+    if (numberedMatches) {
+      for (const m of numberedMatches) {
+        const idx = parseInt(m.slice(1), 10);
+        if (idx > maxParamIdx) maxParamIdx = idx;
+      }
+    } else {
+      const qMatches = sql.match(/\?/g);
+      if (qMatches) maxParamIdx = qMatches.length;
+    }
+    const safeParams = maxParamIdx > 0 ? normalizedParams.slice(0, maxParamIdx) : [];
+
     const stmt = sDb.prepare(sql);
 
     if (isSelect || hasReturning) {
-      const rawRows = stmt.all(...normalizedParams);
+      const rawRows = stmt.all(...safeParams);
       const rows = rawRows.map((r) => ({ ...r }));
       return { rows, rowCount: rows.length };
     } else {
-      const res = stmt.run(...normalizedParams);
+      const res = stmt.run(...safeParams);
       return { rows: [], rowCount: res.changes, lastInsertRowid: res.lastInsertRowid };
     }
   }
@@ -148,10 +284,17 @@ if (config.IS_BRANCH_MODE) {
       return executeSqliteQuery(module.exports.sqlite || sqliteDb, text, params);
     },
     transaction: async (callback) => {
+      let unlock;
+      const prevLock = txMutex;
+      txMutex = new Promise((resolve) => { unlock = resolve; });
+      await prevLock;
+
       const sDb = module.exports.sqlite || sqliteDb;
       sDb.exec('BEGIN IMMEDIATE');
       try {
         const tx = {
+          _isBranchMode: true,
+          sqlite: sDb,
           query: async (text, params = []) => executeSqliteQuery(sDb, text, params),
         };
         const result = await callback(tx);
@@ -162,6 +305,8 @@ if (config.IS_BRANCH_MODE) {
           sDb.exec('ROLLBACK');
         } catch {}
         throw err;
+      } finally {
+        unlock();
       }
     },
     isPrimaryDbAvailable: async () => {
@@ -240,14 +385,27 @@ if (config.IS_BRANCH_MODE) {
     const isSelect = /^(SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(trimmed);
     const hasReturning = /\bRETURNING\b/i.test(trimmed);
 
+    let maxParamIdx = 0;
+    const numberedMatches = sql.match(/\?(\d+)/g);
+    if (numberedMatches) {
+      for (const m of numberedMatches) {
+        const idx = parseInt(m.slice(1), 10);
+        if (idx > maxParamIdx) maxParamIdx = idx;
+      }
+    } else {
+      const qMatches = sql.match(/\?/g);
+      if (qMatches) maxParamIdx = qMatches.length;
+    }
+    const safeParams = maxParamIdx > 0 ? normalizedParams.slice(0, maxParamIdx) : [];
+
     const stmt = sDb.prepare(sql);
 
     if (isSelect || hasReturning) {
-      const rawRows = stmt.all(...normalizedParams);
+      const rawRows = stmt.all(...safeParams);
       const rows = rawRows.map((r) => ({ ...r }));
       return { rows, rowCount: rows.length };
     } else {
-      const res = stmt.run(...normalizedParams);
+      const res = stmt.run(...safeParams);
       return { rows: [], rowCount: res.changes, lastInsertRowid: res.lastInsertRowid };
     }
   }

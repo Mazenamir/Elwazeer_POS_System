@@ -27,7 +27,13 @@ router.get('/me', controller.getMe);
 router.post('/verify-password', controller.verifySalaryPassword);
 router.post('/verify-invoice-edit-password', controller.verifyInvoiceEditPassword);
 router.post('/verify-profit-password', controller.verifyProfitPassword);
+router.post('/verify-return-password', controller.verifyReturnPassword);
+router.post('/verify-inventory-password', controller.verifyInventoryPassword);
 router.put('/users/me', controller.updateOwnAccount);
+
+// Admin-managed protected operation passwords
+router.get('/sensitive-passwords/status', requireAdmin, controller.getSensitivePasswordStatus);
+router.post('/sensitive-passwords', requireAdmin, controller.updateSensitivePassword);
 
 // Admin-managed branch users
 router.post('/users/branch', requireAdmin, controller.createBranchUser);

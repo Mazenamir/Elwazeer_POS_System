@@ -2,14 +2,135 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../../database/connection');
 const config = require('../../config/env');
-const { ALL_PERMISSIONS, normalizePermissions, defaultPermissionsForRole } = require('../../../shared/constants/permissions');
+const {
+  ALL_PERMISSIONS,
+  ALL_GRANULAR_PERMISSIONS,
+  normalizePermissions,
+  defaultPermissionsForRole,
+} = require('../../../shared/constants/permissions');
 const { DEFAULT_SETTINGS } = require('../../../shared/constants/system');
 const { getDatabaseCairoNow } = require('../../../shared/utils/date');
+const auditService = require('../audit/audit.service');
+const sensitiveService = require('./sensitivePassword.service');
 
 // In-memory lockout tracker: username -> { count, lockedUntil }
 const loginAttempts = new Map();
 const LOGIN_MAX_ATTEMPTS = 10;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+// User session cache: userId -> { token_version, role, branch_id, branch_scope, branch_ids, permissions, cachedAt }
+const userCache = new Map();
+const CACHE_TTL_MS = 30 * 1000; // 30 seconds freshness window
+
+// Set of explicitly revoked / deleted user IDs
+const revokedUserIds = new Set();
+
+function isUserRevoked(userId) {
+  if (!userId) return false;
+  return revokedUserIds.has(Number(userId));
+}
+
+function revokeUserId(userId) {
+  if (!userId) return;
+  const num = Number(userId);
+  revokedUserIds.add(num);
+  invalidateUserCache(num);
+}
+
+async function hasAnyUser() {
+  try {
+    if (config.IS_BRANCH_MODE) {
+      if (!db.sqlite) return false;
+      const row = db.sqlite.prepare('SELECT COUNT(*) as count FROM users').get();
+      return Number(row?.count || 0) > 0;
+    }
+    const { rows } = await db.query('SELECT COUNT(*) as count FROM users');
+    return Number(rows[0]?.count || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+function invalidateUserCache(userId) {
+  if (userId) {
+    userCache.delete(Number(userId));
+    userCache.delete(String(userId));
+  } else {
+    userCache.clear();
+  }
+}
+
+async function invalidateUser(userId) {
+  const numId = Number(userId);
+  invalidateUserCache(numId);
+  let newVersion = 1;
+  if (config.IS_BRANCH_MODE) {
+    if (db.sqlite) {
+      db.sqlite.prepare('UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = ?').run(numId);
+      const row = db.sqlite.prepare('SELECT token_version FROM users WHERE id = ?').get(numId);
+      newVersion = Number(row?.token_version || 1);
+    }
+  } else {
+    const { rows } = await db.query(
+      'UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version',
+      [numId]
+    );
+    newVersion = Number(rows[0]?.token_version || 1);
+  }
+  return newVersion;
+}
+
+async function getUserFreshData(userId) {
+  if (!userId) return null;
+  const numId = Number(userId);
+
+  const cached = userCache.get(numId);
+  if (cached && (Date.now() - cached.cachedAt) < CACHE_TTL_MS) {
+    return cached;
+  }
+
+  let user = null;
+  if (config.IS_BRANCH_MODE) {
+    if (!db.sqlite) return null;
+    user = db.sqlite.prepare(`
+      SELECT id, username, role, branch_id, branch_scope, branch_ids, permissions, token_version
+      FROM users WHERE id = ?
+    `).get(numId);
+  } else {
+    const { rows } = await db.query(`
+      SELECT id, username, role, branch_id, branch_scope, branch_ids, permissions, token_version
+      FROM users WHERE id = $1
+    `, [numId]);
+    user = rows[0] || null;
+  }
+
+  if (!user) {
+    userCache.delete(numId);
+    return null;
+  }
+
+  let branchIds = [];
+  if (Array.isArray(user.branch_ids)) {
+    branchIds = user.branch_ids;
+  } else if (typeof user.branch_ids === 'string') {
+    try { branchIds = JSON.parse(user.branch_ids); } catch { branchIds = []; }
+  }
+
+  const fresh = {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    branch_id: user.branch_id,
+    branch_scope: user.branch_scope || (user.role === 'admin' ? 'all' : 'single'),
+    branch_ids: branchIds,
+    permissions: normalizePermissions(user.permissions),
+    token_version: Number(user.token_version || 1),
+    cachedAt: Date.now(),
+  };
+
+  userCache.set(numId, fresh);
+  return fresh;
+}
 
 async function checkNeedsSetup() {
   if (config.IS_BRANCH_MODE) {
@@ -56,10 +177,12 @@ async function executeSetup({ username, password, full_name }) {
       branchId = branchRes.rows[0].id;
     }
 
-    // 2. Create the admin user
+    // 2. Create the admin user with all-branch scope and all permissions
+    const allPerms = [...ALL_PERMISSIONS, ...ALL_GRANULAR_PERMISSIONS];
     await tx.query(
-      'INSERT INTO users (full_name, username, password_hash, role, branch_id, permissions) VALUES ($1, $2, $3, $4, $5, $6)',
-      [full_name.trim(), username.trim(), passwordHash, 'admin', branchId, JSON.stringify(ALL_PERMISSIONS)]
+      `INSERT INTO users (full_name, username, password_hash, role, branch_id, permissions, branch_scope, branch_ids, token_version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [full_name.trim(), username.trim(), passwordHash, 'admin', branchId, JSON.stringify(allPerms), 'all', JSON.stringify([]), 1]
     );
 
     // 3. Initialize default settings
@@ -94,12 +217,7 @@ async function authenticateUser(username, password) {
       // Fallback: normalize Arabic hamza variants (أ إ آ → ا) for comparison
       const normalized = cleanUsername.replace(/[أإآ]/g, 'ا');
       const all = db.sqlite.prepare('SELECT * FROM users').all();
-      user = all.find(u => u.username.replace(/[أإآ]/g, 'ا').toLowerCase() === normalized.toLowerCase()) || null;
-    }
-    if (user && typeof user.permissions === 'string') {
-      try {
-        user.permissions = JSON.parse(user.permissions);
-      } catch {}
+      user = all.find((u) => u.username.replace(/[أإآ]/g, 'ا').toLowerCase() === normalized.toLowerCase()) || null;
     }
   } else {
     // Try exact match first
@@ -143,6 +261,16 @@ async function authenticateUser(username, password) {
 
   const permissions = normalizePermissions(user.permissions);
   const displayName = user.full_name || user.username;
+  const branchScope = user.branch_scope || (user.role === 'admin' ? 'all' : 'single');
+  let branchIds = [];
+  if (Array.isArray(user.branch_ids)) {
+    branchIds = user.branch_ids;
+  } else if (typeof user.branch_ids === 'string') {
+    try { branchIds = JSON.parse(user.branch_ids); } catch { branchIds = []; }
+  }
+
+  const tokenVersion = Number(user.token_version || 1);
+
   const token = jwt.sign(
     {
       id: user.id,
@@ -151,6 +279,9 @@ async function authenticateUser(username, password) {
       name: displayName,
       role: user.role,
       branch_id: user.branch_id,
+      branch_scope: branchScope,
+      branch_ids: branchIds,
+      token_version: tokenVersion,
       permissions,
     },
     config.JWT_SECRET,
@@ -168,6 +299,27 @@ async function authenticateUser(username, password) {
     }
   }
 
+  // Populate cache immediately
+  userCache.set(Number(user.id), {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    branch_id: user.branch_id,
+    branch_scope: branchScope,
+    branch_ids: branchIds,
+    permissions,
+    token_version: tokenVersion,
+    cachedAt: Date.now(),
+  });
+
+  await auditService.log({
+    userId: user.id,
+    username: user.username,
+    action: 'user_login',
+    branchId: user.branch_id,
+    outcome: 'success',
+  });
+
   return {
     token,
     user: {
@@ -176,51 +328,65 @@ async function authenticateUser(username, password) {
       name: displayName,
       full_name: user.full_name || null,
       branch_name: branchName,
+      branch_scope: branchScope,
+      branch_ids: branchIds,
+      token_version: tokenVersion,
     },
   };
 }
 
+// Sensitive Operations Password Verifications
 async function verifySalaryPassword(password) {
-  if (!password) return false;
-  let globalPassword = '123';
-  if (config.IS_BRANCH_MODE) {
-    const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'salary_password'").get();
-    if (row?.value) globalPassword = row.value;
-  } else {
-    const { rows } = await db.query("SELECT value FROM settings WHERE key = 'salary_password'");
-    if (rows.length > 0 && rows[0].value) globalPassword = rows[0].value;
-  }
-  return String(password).trim() === String(globalPassword).trim();
+  if (password === null || password === undefined || password === '') return false;
+  return sensitiveService.verifyPassword('salary', password);
 }
 
 async function verifyInvoiceEditPassword(password) {
-  if (!password) return false;
-  let invoicePassword = '123456';
-  if (config.IS_BRANCH_MODE) {
-    const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'invoice_edit_password'").get();
-    if (row?.value) invoicePassword = row.value;
-  } else {
-    const { rows } = await db.query("SELECT value FROM settings WHERE key = 'invoice_edit_password'");
-    if (rows.length > 0 && rows[0].value) invoicePassword = rows[0].value;
-  }
-  return String(password).trim() === String(invoicePassword).trim();
+  if (password === null || password === undefined || password === '') return false;
+  return sensitiveService.verifyPassword('invoice_edit', password);
 }
 
 async function verifyProfitPassword(password) {
-  if (!password) return false;
-  let profitPassword = '123';
-  if (config.IS_BRANCH_MODE) {
-    const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'profit_password'").get();
-    if (row?.value) profitPassword = row.value;
-  } else {
-    const { rows } = await db.query("SELECT value FROM settings WHERE key = 'profit_password'");
-    if (rows.length > 0 && rows[0].value) profitPassword = rows[0].value;
-  }
-  return String(password).trim() === String(profitPassword).trim();
+  if (password === null || password === undefined || password === '') return false;
+  return sensitiveService.verifyPassword('profit', password);
 }
 
-async function updateOwnAccount(userId, { username, password, full_name }) {
-  const cleanUsername = String(username || '').trim();
+async function verifyReturnPassword(password) {
+  if (password === null || password === undefined || password === '') return false;
+  return sensitiveService.verifyPassword('return', password);
+}
+
+async function verifyInventoryPassword(password) {
+  if (password === null || password === undefined || password === '') return false;
+  return sensitiveService.verifyPassword('inventory', password);
+}
+
+/**
+ * Update personal admin/user account details (username, full_name, personal password)
+ * Requires current_password verification when password update is requested.
+ */
+async function updateOwnAccount(userId, { current_password, password, new_password, confirm_password, confirmPassword, username, full_name }) {
+  // Fetch current user from DB
+  let existingUser = null;
+  if (config.IS_BRANCH_MODE) {
+    existingUser = db.sqlite.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  } else {
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+    existingUser = rows[0] || null;
+  }
+
+  if (!existingUser) {
+    const err = new Error('المستخدم غير موجود');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Admin is allowed to change personal username; branch users keep their assigned username
+  let cleanUsername = existingUser.username;
+  if (existingUser.role === 'admin' && username !== undefined && String(username).trim() !== '') {
+    cleanUsername = String(username).trim();
+  }
+
   const cleanFullName = full_name !== undefined ? String(full_name || '').trim() : undefined;
   if (!cleanUsername) {
     const err = new Error('اسم المستخدم مطلوب');
@@ -228,49 +394,122 @@ async function updateOwnAccount(userId, { username, password, full_name }) {
     throw err;
   }
 
-  const existing = await db.query(
-    'SELECT id FROM users WHERE username = $1 AND id != $2',
-    [cleanUsername, userId]
-  );
-  if (existing.rows.length > 0) {
-    const err = new Error('اسم المستخدم مستخدم بالفعل');
-    err.statusCode = 400;
-    throw err;
+  // Check unique username collision
+  if (cleanUsername !== existingUser.username) {
+    let check = null;
+    if (config.IS_BRANCH_MODE) {
+      check = db.sqlite.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanUsername, userId);
+    } else {
+      const res = await db.query('SELECT id FROM users WHERE username = $1 AND id != $2', [cleanUsername, userId]);
+      check = res.rows[0];
+    }
+    if (check) {
+      const err = new Error('اسم المستخدم مستخدم بالفعل');
+      err.statusCode = 400;
+      throw err;
+    }
   }
 
-  await db.transaction(async (tx) => {
-    let updateSql = 'UPDATE users SET username = $1';
-    const params = [cleanUsername];
+  let newPasswordHash = null;
+  let incrementVersion = false;
 
-    if (cleanFullName !== undefined) {
-      params.push(cleanFullName);
-      updateSql += `, full_name = $${params.length}`;
+  const targetPassword = password || new_password;
+  const targetConfirm = confirm_password !== undefined ? confirm_password : confirmPassword;
+
+  // If password update requested: require and verify current password
+  if (targetPassword && String(targetPassword).trim() !== '') {
+    const cleanNewPassword = String(targetPassword).trim();
+    if (cleanNewPassword.length < 4) {
+      const err = new Error('كلمة المرور الجديدة يجب ألا تقل عن 4 أحرف');
+      err.statusCode = 400;
+      throw err;
     }
 
-    if (password && password.trim() !== '') {
-      const passwordHash = await bcrypt.hash(password, 10);
-      params.push(passwordHash);
-      updateSql += `, password_hash = $${params.length}`;
+    if (targetConfirm !== undefined && String(targetConfirm).trim() !== cleanNewPassword) {
+      const err = new Error('كلمة المرور الجديدة وتأكيدها غير متطابقين');
+      err.statusCode = 400;
+      throw err;
     }
 
-    params.push(userId);
-    updateSql += ` WHERE id = $${params.length}`;
-    await tx.query(updateSql, params);
+    if (!current_password) {
+      const err = new Error('كلمة المرور الحالية مطلوبة لتحديث كلمة المرور');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const currentMatches = await bcrypt.compare(String(current_password).trim(), existingUser.password_hash);
+    if (!currentMatches) {
+      const err = new Error('كلمة المرور الحالية غير صحيحة');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    newPasswordHash = await bcrypt.hash(cleanNewPassword, 10);
+    incrementVersion = true;
+  }
+
+  const nextVersion = incrementVersion ? (Number(existingUser.token_version || 1) + 1) : Number(existingUser.token_version || 1);
+
+  if (config.IS_BRANCH_MODE) {
+    db.sqlite.prepare(`
+      UPDATE users
+      SET username = ?,
+          full_name = COALESCE(?, full_name),
+          password_hash = COALESCE(?, password_hash),
+          token_version = ?
+      WHERE id = ?
+    `).run(cleanUsername, cleanFullName !== undefined ? cleanFullName : null, newPasswordHash, nextVersion, userId);
+  } else {
+    await db.query(`
+      UPDATE users
+      SET username = $1,
+          full_name = COALESCE($2, full_name),
+          password_hash = COALESCE($3, password_hash),
+          token_version = $4
+      WHERE id = $5
+    `, [cleanUsername, cleanFullName !== undefined ? cleanFullName : null, newPasswordHash, nextVersion, userId]);
+  }
+
+  invalidateUserCache(userId);
+
+  await auditService.log({
+    userId,
+    username: cleanUsername,
+    action: incrementVersion ? 'user_password_change' : 'user_profile_update',
+    branchId: existingUser.branch_id,
+    outcome: 'success',
   });
 
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
-  const user = rows[0];
-  const displayName = user.full_name || user.username;
+  // Re-fetch updated user record
+  let updatedUser = null;
+  if (config.IS_BRANCH_MODE) {
+    updatedUser = db.sqlite.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  } else {
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+    updatedUser = rows[0];
+  }
 
-  const permissions = normalizePermissions(user.permissions);
+  const permissions = normalizePermissions(updatedUser.permissions);
+  const displayName = updatedUser.full_name || updatedUser.username;
+  const branchScope = updatedUser.branch_scope || (updatedUser.role === 'admin' ? 'all' : 'single');
+  let branchIds = [];
+  if (Array.isArray(updatedUser.branch_ids)) {
+    branchIds = updatedUser.branch_ids;
+  } else if (typeof updatedUser.branch_ids === 'string') {
+    try { branchIds = JSON.parse(updatedUser.branch_ids); } catch { branchIds = []; }
+  }
+
   const newToken = jwt.sign(
     {
-      id: user.id,
-      username: user.username,
-      full_name: user.full_name || null,
+      id: updatedUser.id,
+      username: updatedUser.username,
+      full_name: updatedUser.full_name || null,
       name: displayName,
-      role: user.role,
-      branch_id: user.branch_id,
+      role: updatedUser.role,
+      branch_id: updatedUser.branch_id,
+      branch_scope: branchScope,
+      branch_ids: branchIds,
+      token_version: nextVersion,
       permissions,
     },
     config.JWT_SECRET,
@@ -280,19 +519,32 @@ async function updateOwnAccount(userId, { username, password, full_name }) {
   return {
     token: newToken,
     user: {
-      ...user,
+      ...updatedUser,
       permissions,
       name: displayName,
-      full_name: user.full_name || null,
+      full_name: updatedUser.full_name || null,
+      branch_scope: branchScope,
+      branch_ids: branchIds,
     },
   };
 }
 
-async function createBranchUser({ full_name, name, username, password, branch_id, role, permissions, employee_id }) {
+async function createBranchUser({
+  full_name,
+  name,
+  username,
+  password,
+  branch_id,
+  branch_scope = 'single',
+  branch_ids = [],
+  role,
+  permissions,
+  employee_id,
+}) {
   const cleanUsername = String(username || '').trim();
   const cleanFullName = String(full_name || name || '').trim();
   if (!cleanUsername || !password) {
-    const err = new Error('Username and password required');
+    const err = new Error('اسم المستخدم وكلمة المرور مطلوبان');
     err.statusCode = 400;
     throw err;
   }
@@ -313,6 +565,25 @@ async function createBranchUser({ full_name, name, username, password, branch_id
     throw err;
   }
 
+  const assignedScope = assignedRole === 'admin' ? 'all' : (['all', 'selected', 'single'].includes(branch_scope) ? branch_scope : 'single');
+
+  // Format and validate branch_ids
+  let finalBranchIds = [];
+  if (Array.isArray(branch_ids)) {
+    finalBranchIds = branch_ids.map(Number).filter((id) => id > 0);
+  } else if (typeof branch_ids === 'string') {
+    try {
+      finalBranchIds = JSON.parse(branch_ids).map(Number).filter((id) => id > 0);
+    } catch {
+      finalBranchIds = [];
+    }
+  }
+
+  // Ensure default assigned branch is part of branch_ids if scope is selected
+  if (assignedScope === 'selected' && assignedBranchId && !finalBranchIds.includes(assignedBranchId)) {
+    finalBranchIds.push(assignedBranchId);
+  }
+
   let finalPermissions;
   if (Array.isArray(permissions)) {
     finalPermissions = normalizePermissions(permissions);
@@ -326,7 +597,7 @@ async function createBranchUser({ full_name, name, username, password, branch_id
   if (config.IS_BRANCH_MODE) {
     const userCheck = db.sqlite.prepare('SELECT id FROM users WHERE username = ?').get(cleanUsername);
     if (userCheck) {
-      const err = new Error('Username already exists');
+      const err = new Error('اسم المستخدم مستخدم بالفعل');
       err.statusCode = 400;
       throw err;
     }
@@ -343,18 +614,41 @@ async function createBranchUser({ full_name, name, username, password, branch_id
 
     const passwordHash = await bcrypt.hash(password, 10);
     const info = db.sqlite.prepare(`
-      INSERT INTO users (full_name, username, password_hash, role, branch_id, permissions, employee_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(cleanFullName || null, cleanUsername, passwordHash, assignedRole, assignedBranchId, JSON.stringify(finalPermissions), assignedEmployeeId);
+      INSERT INTO users (
+        full_name, username, password_hash, role, branch_id,
+        permissions, employee_id, branch_scope, branch_ids, token_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      cleanFullName || null,
+      cleanUsername,
+      passwordHash,
+      assignedRole,
+      assignedBranchId,
+      JSON.stringify(finalPermissions),
+      assignedEmployeeId,
+      assignedScope,
+      JSON.stringify(finalBranchIds)
+    );
+
+    const newId = info.lastInsertRowid;
+    await auditService.log({
+      action: 'user_created',
+      resourceType: 'user',
+      resourceId: newId,
+      branchId: assignedBranchId,
+      details: { username: cleanUsername, role: assignedRole, branch_scope: assignedScope },
+    });
 
     return {
-      id: info.lastInsertRowid,
+      id: newId,
       full_name: cleanFullName || null,
       name: cleanFullName || cleanUsername,
       username: cleanUsername,
       role: assignedRole,
       branch_id: assignedBranchId,
       branch_name: branch?.name || null,
+      branch_scope: assignedScope,
+      branch_ids: finalBranchIds,
       permissions: finalPermissions,
       employee_id: assignedEmployeeId,
     };
@@ -362,7 +656,7 @@ async function createBranchUser({ full_name, name, username, password, branch_id
 
   const userCheck = await db.query('SELECT id FROM users WHERE username = $1', [cleanUsername]);
   if (userCheck.rows.length > 0) {
-    const err = new Error('Username already exists');
+    const err = new Error('اسم المستخدم مستخدم بالفعل');
     err.statusCode = 400;
     throw err;
   }
@@ -380,24 +674,48 @@ async function createBranchUser({ full_name, name, username, password, branch_id
 
   const passwordHash = await bcrypt.hash(password, 10);
   const { rows } = await db.query(
-    `INSERT INTO users (full_name, username, password_hash, role, branch_id, permissions, employee_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, full_name, username, role, branch_id, permissions, employee_id`,
-    [cleanFullName || null, cleanUsername, passwordHash, assignedRole, assignedBranchId, JSON.stringify(finalPermissions), assignedEmployeeId]
+    `INSERT INTO users (
+       full_name, username, password_hash, role, branch_id,
+       permissions, employee_id, branch_scope, branch_ids, token_version
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
+     RETURNING id, full_name, username, role, branch_id, permissions, employee_id, branch_scope, branch_ids`,
+    [
+      cleanFullName || null,
+      cleanUsername,
+      passwordHash,
+      assignedRole,
+      assignedBranchId,
+      JSON.stringify(finalPermissions),
+      assignedEmployeeId,
+      assignedScope,
+      JSON.stringify(finalBranchIds),
+    ]
   );
 
+  const newUser = rows[0];
+  await auditService.log({
+    action: 'user_created',
+    resourceType: 'user',
+    resourceId: newUser.id,
+    branchId: assignedBranchId,
+    details: { username: cleanUsername, role: assignedRole, branch_scope: assignedScope },
+  });
+
   return {
-    ...rows[0],
-    name: rows[0].full_name || rows[0].username,
+    ...newUser,
+    name: newUser.full_name || newUser.username,
     branch_name: branchName,
-    permissions: normalizePermissions(rows[0].permissions),
+    branch_scope: newUser.branch_scope || assignedScope,
+    branch_ids: finalBranchIds,
+    permissions: normalizePermissions(newUser.permissions),
   };
 }
 
 async function listBranchUsers() {
   if (config.IS_BRANCH_MODE) {
     const rows = db.sqlite.prepare(`
-      SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions, u.employee_id,
+      SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions,
+             u.employee_id, u.branch_scope, u.branch_ids,
              COALESCE(u.full_name, u.username) as name,
              b.name as branch_name
       FROM users u
@@ -405,14 +723,24 @@ async function listBranchUsers() {
       WHERE u.role != 'admin'
       ORDER BY u.id DESC
     `).all();
-    return rows.map((r) => ({
-      ...r,
-      permissions: normalizePermissions(r.permissions),
-    }));
+    return rows.map((r) => {
+      let bIds = [];
+      if (Array.isArray(r.branch_ids)) bIds = r.branch_ids;
+      else if (typeof r.branch_ids === 'string') {
+        try { bIds = JSON.parse(r.branch_ids); } catch {}
+      }
+      return {
+        ...r,
+        branch_scope: r.branch_scope || 'single',
+        branch_ids: bIds,
+        permissions: normalizePermissions(r.permissions),
+      };
+    });
   }
 
   const { rows } = await db.query(`
-    SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions, u.employee_id,
+    SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.permissions,
+           u.employee_id, u.branch_scope, u.branch_ids,
            COALESCE(u.full_name, e.name, u.username) as name,
            COALESCE(u.full_name, e.name, u.username) as full_name,
            b.name as branch_name,
@@ -423,13 +751,34 @@ async function listBranchUsers() {
     WHERE u.role != 'admin'
     ORDER BY u.id DESC
   `);
-  return rows.map((r) => ({
-    ...r,
-    permissions: normalizePermissions(r.permissions),
-  }));
+
+  return rows.map((r) => {
+    let bIds = [];
+    if (Array.isArray(r.branch_ids)) bIds = r.branch_ids;
+    else if (typeof r.branch_ids === 'string') {
+      try { bIds = JSON.parse(r.branch_ids); } catch {}
+    }
+    return {
+      ...r,
+      branch_scope: r.branch_scope || 'single',
+      branch_ids: bIds,
+      permissions: normalizePermissions(r.permissions),
+    };
+  });
 }
 
-async function updateBranchUser(id, { full_name, name, username, password, branch_id, role, permissions, employee_id }) {
+async function updateBranchUser(id, {
+  full_name,
+  name,
+  username,
+  password,
+  branch_id,
+  branch_scope,
+  branch_ids,
+  role,
+  permissions,
+  employee_id,
+}) {
   let cleanUsername = username !== undefined ? String(username || '').trim() : undefined;
   if (cleanUsername === '') {
     const err = new Error('Username cannot be empty');
@@ -458,6 +807,17 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
     finalPermissions = [...new Set(finalPermissions)];
   }
 
+  let finalBranchIds;
+  if (Array.isArray(branch_ids)) {
+    finalBranchIds = branch_ids.map(Number).filter((b) => b > 0);
+  } else if (typeof branch_ids === 'string') {
+    try {
+      finalBranchIds = JSON.parse(branch_ids).map(Number).filter((b) => b > 0);
+    } catch {
+      finalBranchIds = [];
+    }
+  }
+
   if (config.IS_BRANCH_MODE) {
     const existing = db.sqlite.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!existing) {
@@ -477,6 +837,7 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
     const targetRole = assignedRole || existing.role || 'branch_user';
     const targetBranchId = assignedBranchId !== undefined ? assignedBranchId : existing.branch_id;
     const targetEmployeeId = assignedEmployeeId !== undefined ? assignedEmployeeId : existing.employee_id;
+    const targetScope = branch_scope !== undefined ? branch_scope : (existing.branch_scope || 'single');
 
     if (targetRole !== 'admin' && (!targetBranchId || Number(targetBranchId) <= 0)) {
       const err = new Error('الفرع المخصص مطلوب لحساب المستخدم');
@@ -493,7 +854,16 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
       }
     }
 
+    let bIdsToSave = existing.branch_ids || '[]';
+    if (finalBranchIds !== undefined) {
+      if (targetScope === 'selected' && targetBranchId && !finalBranchIds.includes(targetBranchId)) {
+        finalBranchIds.push(targetBranchId);
+      }
+      bIdsToSave = JSON.stringify(finalBranchIds);
+    }
+
     const permissionsToSave = finalPermissions !== undefined ? JSON.stringify(finalPermissions) : existing.permissions;
+    const nextTokenVersion = (Number(existing.token_version || 1) + 1);
 
     if (password && password.trim() !== '') {
       const passwordHash = await bcrypt.hash(password, 10);
@@ -505,7 +875,10 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
             role = ?,
             branch_id = ?,
             permissions = ?,
-            employee_id = COALESCE(?, employee_id)
+            employee_id = COALESCE(?, employee_id),
+            branch_scope = ?,
+            branch_ids = ?,
+            token_version = ?
         WHERE id = ?
       `).run(
         cleanFullName !== undefined ? cleanFullName : null,
@@ -515,6 +888,9 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
         targetBranchId,
         permissionsToSave,
         targetEmployeeId,
+        targetScope,
+        bIdsToSave,
+        nextTokenVersion,
         id
       );
     } else {
@@ -525,7 +901,10 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
             role = ?,
             branch_id = ?,
             permissions = ?,
-            employee_id = COALESCE(?, employee_id)
+            employee_id = COALESCE(?, employee_id),
+            branch_scope = ?,
+            branch_ids = ?,
+            token_version = ?
         WHERE id = ?
       `).run(
         cleanFullName !== undefined ? cleanFullName : null,
@@ -534,12 +913,26 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
         targetBranchId,
         permissionsToSave,
         targetEmployeeId,
+        targetScope,
+        bIdsToSave,
+        nextTokenVersion,
         id
       );
     }
 
+    invalidateUserCache(id);
+
+    await auditService.log({
+      action: 'user_updated',
+      resourceType: 'user',
+      resourceId: id,
+      branchId: targetBranchId,
+      details: { username: cleanUsername, role: targetRole, branch_scope: targetScope },
+    });
+
     const updated = db.sqlite.prepare(`
-      SELECT u.id, u.full_name, u.username, u.role, u.branch_id, u.permissions, u.employee_id,
+      SELECT u.id, u.full_name, u.username, u.role, u.branch_id, u.permissions,
+             u.employee_id, u.branch_scope, u.branch_ids,
              COALESCE(u.full_name, u.username) as name,
              b.name as branch_name
       FROM users u
@@ -547,8 +940,13 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
       WHERE u.id = ?
     `).get(id);
 
+    let parsedBIds = [];
+    try { parsedBIds = JSON.parse(updated?.branch_ids || '[]'); } catch {}
+
     return {
       ...updated,
+      branch_scope: updated?.branch_scope || 'single',
+      branch_ids: parsedBIds,
       permissions: normalizePermissions(updated?.permissions),
     };
   }
@@ -573,6 +971,7 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
   const targetRole = assignedRole || existing.role || 'branch_user';
   const targetBranchId = assignedBranchId !== undefined ? assignedBranchId : existing.branch_id;
   const targetEmployeeId = assignedEmployeeId !== undefined ? assignedEmployeeId : existing.employee_id;
+  const targetScope = branch_scope !== undefined ? branch_scope : (existing.branch_scope || 'single');
 
   if (targetRole !== 'admin' && (!targetBranchId || Number(targetBranchId) <= 0)) {
     const err = new Error('الفرع المخصص مطلوب لحساب المستخدم');
@@ -589,8 +988,18 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
     }
   }
 
-  let query = 'UPDATE users SET username = $1, role = $2, branch_id = $3';
-  const params = [cleanUsername, targetRole, targetBranchId];
+  let bIdsToSave = existing.branch_ids || [];
+  if (finalBranchIds !== undefined) {
+    if (targetScope === 'selected' && targetBranchId && !finalBranchIds.includes(targetBranchId)) {
+      finalBranchIds.push(targetBranchId);
+    }
+    bIdsToSave = finalBranchIds;
+  }
+
+  const nextTokenVersion = (Number(existing.token_version || 1) + 1);
+
+  let query = 'UPDATE users SET username = $1, role = $2, branch_id = $3, branch_scope = $4, branch_ids = $5, token_version = $6';
+  const params = [cleanUsername, targetRole, targetBranchId, targetScope, JSON.stringify(bIdsToSave), nextTokenVersion];
 
   if (cleanFullName !== undefined) {
     params.push(cleanFullName);
@@ -614,31 +1023,59 @@ async function updateBranchUser(id, { full_name, name, username, password, branc
   }
 
   params.push(id);
-  query += ` WHERE id = $${params.length} RETURNING id, full_name, username, role, branch_id, permissions, employee_id`;
+  query += ` WHERE id = $${params.length} RETURNING id, full_name, username, role, branch_id, permissions, employee_id, branch_scope, branch_ids`;
 
   const { rows } = await db.query(query, params);
   const updatedUser = rows[0];
 
+  invalidateUserCache(id);
+
+  await auditService.log({
+    action: 'user_updated',
+    resourceType: 'user',
+    resourceId: id,
+    branchId: targetBranchId,
+    details: { username: cleanUsername, role: targetRole, branch_scope: targetScope },
+  });
+
   let branchName = null;
-  if (assignedBranchId) {
-    const bRes = await db.query('SELECT name FROM branches WHERE id = $1', [assignedBranchId]);
+  if (targetBranchId) {
+    const bRes = await db.query('SELECT name FROM branches WHERE id = $1', [targetBranchId]);
     branchName = bRes.rows[0]?.name || null;
+  }
+
+  let parsedBIds = [];
+  if (Array.isArray(updatedUser.branch_ids)) parsedBIds = updatedUser.branch_ids;
+  else if (typeof updatedUser.branch_ids === 'string') {
+    try { parsedBIds = JSON.parse(updatedUser.branch_ids); } catch {}
   }
 
   return {
     ...updatedUser,
     name: updatedUser.full_name || updatedUser.username,
     branch_name: branchName,
+    branch_scope: updatedUser.branch_scope || targetScope,
+    branch_ids: parsedBIds,
     permissions: normalizePermissions(updatedUser.permissions),
   };
 }
 
 async function deleteBranchUser(id) {
+  revokeUserId(id);
+
   if (config.IS_BRANCH_MODE) {
     db.sqlite.prepare("DELETE FROM users WHERE id = ? AND role != 'admin'").run(id);
-    return { success: true };
+  } else {
+    await db.query("DELETE FROM users WHERE id = $1 AND role != 'admin'", [id]);
   }
-  await db.query("DELETE FROM users WHERE id = $1 AND role != 'admin'", [id]);
+
+  await auditService.log({
+    action: 'user_deleted',
+    resourceType: 'user',
+    resourceId: id,
+    outcome: 'success',
+  });
+
   return { success: true };
 }
 
@@ -646,9 +1083,17 @@ module.exports = {
   checkNeedsSetup,
   executeSetup,
   authenticateUser,
+  getUserFreshData,
+  invalidateUserCache,
+  invalidateUser,
+  isUserRevoked,
+  revokeUserId,
+  hasAnyUser,
   verifySalaryPassword,
   verifyInvoiceEditPassword,
   verifyProfitPassword,
+  verifyReturnPassword,
+  verifyInventoryPassword,
   updateOwnAccount,
   createBranchUser,
   listBranchUsers,

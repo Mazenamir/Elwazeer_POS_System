@@ -23,16 +23,26 @@ import WornProducts from '../pages/WornProducts';
 import NotFound from '../pages/NotFound';
 
 import { useAuth } from '../context/AuthContext';
+import { useBranch } from '../context/BranchContext';
+
+function BranchRentalsRoute({ children }) {
+  const { rentalsEnabled } = useBranch();
+  if (!rentalsEnabled) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+}
 
 function IndexRedirect() {
   const { user, isAdmin, hasPermission } = useAuth();
+  const { rentalsEnabled } = useBranch();
   if (!user) return <Navigate to="/login" replace />;
   if (isAdmin || hasPermission('Dashboard.html')) return <Navigate to="/dashboard" replace />;
   if (hasPermission('index.html')) return <Navigate to="/pos" replace />;
-  if (hasPermission('Rentals.html')) return <Navigate to="/rentals" replace />;
+  if (rentalsEnabled && hasPermission('Rentals.html')) return <Navigate to="/rentals" replace />;
   if (hasPermission('Customers.html')) return <Navigate to="/customers" replace />;
   if (hasPermission('Suppliers.html')) return <Navigate to="/suppliers" replace />;
-  if (hasPermission('RentalInventory.html')) return <Navigate to="/rental-inventory" replace />;
+  if (rentalsEnabled && hasPermission('RentalInventory.html')) return <Navigate to="/rental-inventory" replace />;
   if (hasPermission('Alterations.html')) return <Navigate to="/alterations" replace />;
   if (hasPermission('Tailoring.html')) return <Navigate to="/tailoring" replace />;
   if (hasPermission('Employees.html')) return <Navigate to="/employees" replace />;
@@ -63,8 +73,8 @@ export function AppRoutes() {
         <Route index element={<IndexRedirect />} />
         <Route path="dashboard" element={<ProtectedRoute permission="Dashboard.html"><Dashboard /></ProtectedRoute>} />
         <Route path="pos" element={<ProtectedRoute permission="index.html"><POS /></ProtectedRoute>} />
-        <Route path="rentals" element={<ProtectedRoute permission="Rentals.html"><Rentals /></ProtectedRoute>} />
-        <Route path="rental-inventory" element={<ProtectedRoute permission="RentalInventory.html"><RentalInventory /></ProtectedRoute>} />
+        <Route path="rentals" element={<ProtectedRoute permission="Rentals.html"><BranchRentalsRoute><Rentals /></BranchRentalsRoute></ProtectedRoute>} />
+        <Route path="rental-inventory" element={<ProtectedRoute permission="RentalInventory.html"><BranchRentalsRoute><RentalInventory /></BranchRentalsRoute></ProtectedRoute>} />
         <Route path="alterations" element={<ProtectedRoute permission="Alterations.html"><Alterations /></ProtectedRoute>} />
         <Route path="tailoring" element={<ProtectedRoute permission="Tailoring.html"><Tailoring /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute permission="Customers.html"><Customers /></ProtectedRoute>} />

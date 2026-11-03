@@ -114,7 +114,38 @@ async function authMiddleware(req, res, next) {
   if (token) {
     try {
       const decoded = jwt.verify(token, config.JWT_SECRET);
-      req.user = decoded; // { id, username, role, branch_id, permissions }
+      const authService = require('../modules/auth/auth.service');
+
+      if (authService.isUserRevoked(decoded.id)) {
+        if (isCookieToken) res.clearCookie('token');
+        req.user = null;
+      } else {
+        const fresh = await authService.getUserFreshData(decoded.id);
+
+        if (fresh) {
+          const decodedVersion = decoded.token_version !== undefined ? Number(decoded.token_version) : 1;
+          const freshVersion = fresh.token_version !== undefined ? Number(fresh.token_version) : 1;
+
+          if (decodedVersion < freshVersion) {
+            if (isCookieToken) res.clearCookie('token');
+            req.user = null;
+          } else {
+            req.user = {
+              ...decoded,
+              role: fresh.role,
+              branch_id: fresh.branch_id,
+              branch_scope: fresh.branch_scope,
+              branch_ids: fresh.branch_ids,
+              permissions: fresh.permissions,
+              token_version: fresh.token_version,
+            };
+          }
+        } else {
+          // If user ID is not found in database (e.g. mock unit tests or standalone tokens),
+          // fallback to decoded payload as long as it has not been explicitly revoked
+          req.user = decoded;
+        }
+      }
     } catch (err) {
       if (isCookieToken) {
         res.clearCookie('token');

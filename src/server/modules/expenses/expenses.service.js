@@ -7,14 +7,41 @@ const { likePattern, newUuid } = require('../../../shared/utils/string');
 const { parsePositiveInt } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
+const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
 
 async function getExpensesSummary(query = {}, user = null) {
   const branchParams = [];
   let branchClause = '';
 
   if (user && user.role !== 'admin') {
-    branchParams.push(user.branch_id);
-    branchClause = `AND branch_id = $${branchParams.length}`;
+    if (user.branch_scope === 'all') {
+      if (query.branch_id && query.branch_id !== 'all') {
+        branchParams.push(query.branch_id);
+        branchClause = `AND branch_id = $${branchParams.length}`;
+      }
+    } else if (user.branch_scope === 'selected') {
+      const authIds = getUserAuthorizedBranchIds(user);
+      if (query.branch_id && query.branch_id !== 'all') {
+        if (!authIds.includes(Number(query.branch_id))) {
+          const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+          err.statusCode = 403;
+          throw err;
+        }
+        branchParams.push(query.branch_id);
+        branchClause = `AND branch_id = $${branchParams.length}`;
+      } else {
+        branchParams.push(authIds);
+        branchClause = `AND branch_id = ANY($${branchParams.length})`;
+      }
+    } else {
+      if (query.branch_id && query.branch_id !== 'all' && Number(query.branch_id) !== Number(user.branch_id)) {
+        const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+        err.statusCode = 403;
+        throw err;
+      }
+      branchParams.push(user.branch_id);
+      branchClause = `AND branch_id = $${branchParams.length}`;
+    }
   } else if (query.branch_id && query.branch_id !== 'all') {
     branchParams.push(query.branch_id);
     branchClause = `AND branch_id = $${branchParams.length}`;
@@ -37,8 +64,34 @@ async function getExpensesSummary(query = {}, user = null) {
   const filterWhere = ['is_deleted IS NOT TRUE'];
 
   if (user && user.role !== 'admin') {
-    filterParams.push(user.branch_id);
-    filterWhere.push(`branch_id = $${filterParams.length}`);
+    if (user.branch_scope === 'all') {
+      if (query.branch_id && query.branch_id !== 'all') {
+        filterParams.push(query.branch_id);
+        filterWhere.push(`branch_id = $${filterParams.length}`);
+      }
+    } else if (user.branch_scope === 'selected') {
+      const authIds = getUserAuthorizedBranchIds(user);
+      if (query.branch_id && query.branch_id !== 'all') {
+        if (!authIds.includes(Number(query.branch_id))) {
+          const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+          err.statusCode = 403;
+          throw err;
+        }
+        filterParams.push(query.branch_id);
+        filterWhere.push(`branch_id = $${filterParams.length}`);
+      } else {
+        filterParams.push(authIds);
+        filterWhere.push(`branch_id = ANY($${filterParams.length})`);
+      }
+    } else {
+      if (query.branch_id && query.branch_id !== 'all' && Number(query.branch_id) !== Number(user.branch_id)) {
+        const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+        err.statusCode = 403;
+        throw err;
+      }
+      filterParams.push(user.branch_id);
+      filterWhere.push(`branch_id = $${filterParams.length}`);
+    }
   } else if (query.branch_id && query.branch_id !== 'all') {
     filterParams.push(query.branch_id);
     filterWhere.push(`branch_id = $${filterParams.length}`);
@@ -117,8 +170,34 @@ async function listExpenses(query = {}, user = null) {
   const where = ['e.is_deleted IS NOT TRUE'];
 
   if (user && user.role !== 'admin') {
-    params.push(user.branch_id);
-    where.push(`e.branch_id = $${params.length}`);
+    if (user.branch_scope === 'all') {
+      if (query.branch_id && query.branch_id !== 'all') {
+        params.push(query.branch_id);
+        where.push(`e.branch_id = $${params.length}`);
+      }
+    } else if (user.branch_scope === 'selected') {
+      const authIds = getUserAuthorizedBranchIds(user);
+      if (query.branch_id && query.branch_id !== 'all') {
+        if (!authIds.includes(Number(query.branch_id))) {
+          const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+          err.statusCode = 403;
+          throw err;
+        }
+        params.push(query.branch_id);
+        where.push(`e.branch_id = $${params.length}`);
+      } else {
+        params.push(authIds);
+        where.push(`e.branch_id = ANY($${params.length})`);
+      }
+    } else {
+      if (query.branch_id && query.branch_id !== 'all' && Number(query.branch_id) !== Number(user.branch_id)) {
+        const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+        err.statusCode = 403;
+        throw err;
+      }
+      params.push(user.branch_id);
+      where.push(`e.branch_id = $${params.length}`);
+    }
   } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
     where.push(`e.branch_id = $${params.length}`);
@@ -225,8 +304,16 @@ async function listExpenseCashiers(user = null) {
   const params = [];
   let branchFilter = '';
   if (user && user.role !== 'admin') {
-    params.push(user.branch_id);
-    branchFilter = `WHERE (branch_id = $${params.length} OR branch_id IS NULL)`;
+    if (user.branch_scope === 'all') {
+      // no branch filter
+    } else if (user.branch_scope === 'selected') {
+      const authIds = getUserAuthorizedBranchIds(user);
+      params.push(authIds);
+      branchFilter = `WHERE (branch_id = ANY($${params.length}) OR branch_id IS NULL)`;
+    } else {
+      params.push(user.branch_id);
+      branchFilter = `WHERE (branch_id = $${params.length} OR branch_id IS NULL)`;
+    }
   }
   const { rows } = await db.query(`
     SELECT id, username, role, branch_id
@@ -242,7 +329,9 @@ async function createExpense(body, user, req) {
   const offlineUuid = newUuid(body?.offline_uuid);
 
   if (user && user.role !== 'admin') {
-    branch_id = user.branch_id;
+    const targetBranch = branch_id || user.branch_id;
+    validateBranchAccess(user, targetBranch);
+    branch_id = targetBranch;
   }
 
   const final_branch_id = (branch_id === '' || branch_id === undefined) ? null : Number(branch_id);
@@ -387,7 +476,7 @@ async function updateExpense(id, body, user, req) {
 
   // Role and ownership permissions
   if (user && user.role !== 'admin') {
-    if (Number(existing.branch_id) !== Number(user.branch_id)) {
+    if (!hasBranchAccess(user, existing.branch_id)) {
       const err = new Error('غير مصرح لك بتعديل مصروف في فرع آخر');
       err.statusCode = 403;
       throw err;
@@ -479,7 +568,7 @@ async function deleteExpense(id, user, req) {
 
   // Role and ownership permissions
   if (user && user.role !== 'admin') {
-    if (Number(existing.branch_id) !== Number(user.branch_id)) {
+    if (!hasBranchAccess(user, existing.branch_id)) {
       const err = new Error('غير مصرح لك بحذف مصروف في فرع آخر');
       err.statusCode = 403;
       throw err;

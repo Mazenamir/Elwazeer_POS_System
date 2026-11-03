@@ -275,6 +275,7 @@ total: 0,
   const [showBarcodePrintModal, setShowBarcodePrintModal] = useState(false);
   const [selectedProductForBarcode, setSelectedProductForBarcode] = useState(null);
   const [isBarcodeNewlyCreated, setIsBarcodeNewlyCreated] = useState(false);
+  const [isRentalProduct, setIsRentalProduct] = useState(false);
   const [pName, setPName] = useState('');
   const [productGender, setProductGender] = useState('men'); // 'men' (رجالي) | 'women' (حريمي)
   const [isNewProductName, setIsNewProductName] = useState(false);
@@ -859,12 +860,14 @@ total: 0,
     if (fileInputRef.current) fileInputRef.current.value = '';
     setPSupplierId(suppliers[0]?.id ? String(suppliers[0].id) : '');
     fetchDropdownOptions();
+    setIsRentalProduct(false);
     setShowProductModal(true);
   };
 
   // Open Edit Product Modal
   const openEditProduct = (p) => {
     setEditingProduct(p);
+    setIsRentalProduct(false);
     setPName(p.name || '');
     setProductGender(p.gender === 'women' || p.gender === 'حريمي' ? 'women' : 'men');
     setIsNewProductName(false);
@@ -1010,7 +1013,67 @@ total: 0,
         return;
       }
 
-        let createdProductResult = null;
+              if (isRentalProduct) {
+        if (editingProduct) {
+          // Convert existing product to rental
+          await api.post('/rental-inventory/transfer-from-sales', {
+            inventory_id: editingProduct.id,
+            from_branch: targetBranchId,
+            to_branch: targetBranchId,
+            branch_id: targetBranchId,
+            quantity: finalStock || 1,
+            rental_price: Number(pPrice) || 0,
+            price: Number(pPrice) || 0,
+            deposit: Number(pPrice) ? Math.round(Number(pPrice) * 0.5) : 0,
+            transfer_mode: 'full_suit',
+            gender: finalGender,
+          });
+          toast.success('تم تحويل الصنف بالكامل إلى مخزون الإيجار بنجاح! ✨');
+        } else if (selectedImageFile) {
+          const formData = new FormData();
+          formData.append('image', selectedImageFile);
+          formData.append('name', finalName);
+          formData.append('category', finalCategory);
+          formData.append('color', finalColor);
+          formData.append('size_cut', finalSizeCut);
+          formData.append('sizes', JSON.stringify(cleanedSizes));
+          formData.append('price', Number(pPrice) || 0);
+          formData.append('rental_price', Number(pPrice) || 0);
+          formData.append('barcode', pBarcode.trim());
+          formData.append('gender', finalGender);
+          formData.append('stock_level', finalStock);
+          formData.append('branch_stocks', JSON.stringify([{ branch_id: targetBranchId, stock_level: finalStock }]));
+          await api.post('/rental-inventory', formData);
+          toast.success('تمت إضافة المنتج مباشرة لمخزون الإيجار بنجاح! ✨');
+        } else {
+          const rentalPayload = {
+            name: finalName,
+            category: finalCategory,
+            color: finalColor,
+            size_cut: finalSizeCut,
+            sizes: cleanedSizes,
+            price: Number(pPrice) || 0,
+            rental_price: Number(pPrice) || 0,
+            barcode: pBarcode.trim(),
+            image_url: pImage.trim(),
+            gender: finalGender,
+            stock_level: finalStock,
+            branch_stocks: [
+              { branch_id: targetBranchId, stock_level: finalStock }
+            ]
+          };
+          await api.post('/rental-inventory', rentalPayload);
+          toast.success('تمت إضافة المنتج مباشرة لمخزون الإيجار بنجاح! ✨');
+        }
+
+        setShowProductModal(false);
+        fetchProducts();
+        fetchDropdownOptions();
+        fetchMetadata(activeBranchId);
+        return;
+      }
+
+      let createdProductResult = null;
         if (selectedImageFile) {
           // Method 2: Local Upload via Multipart FormData
           const formData = new FormData();
@@ -1355,6 +1418,38 @@ total: 0,
       toast.error(err.message || 'فشل تحويل المنتج لمخزون التأجير');
     } finally {
       setRentalSubmitting(false);
+    }
+  };
+
+  // Quick 1-click convert product from sales to rental
+  const handleQuickRentalConvert = async (product) => {
+    if (!product) return;
+    const confirmMsg = `هل تريد تحويل الصنف "${product.name}" بالكامل من مخزون البيع إلى مخزون الإيجار الآن؟`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const targetBranch = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : (user?.branch_id || branches[0]?.id || 1);
+      const stock = Number(product.stock_level ?? product.stock_quantity ?? product.stock ?? 1) || 1;
+      const rPrice = product.price ? Math.round(Number(product.price) * 0.4) : 200;
+
+      await api.post('/rental-inventory/transfer-from-sales', {
+        inventory_id: product.id,
+        from_branch: targetBranch,
+        to_branch: targetBranch,
+        branch_id: targetBranch,
+        quantity: stock,
+        rental_price: rPrice,
+        price: rPrice,
+        deposit: product.price ? Math.round(Number(product.price) * 0.5) : 300,
+        transfer_mode: 'full_suit',
+        gender: product.gender || 'both',
+      });
+
+      toast.success(`تم تحويل الصنف "${product.name}" بنجاح إلى مخزون الإيجار! 👗✨`);
+      fetchProducts();
+      fetchMetadata(isAdmin ? inventoryBranchFilter : activeBranchId);
+    } catch (err) {
+      toast.error(err.message || 'فشل تحويل المنتج لمخزون الإيجار');
     }
   };
 
@@ -2679,13 +2774,22 @@ total: 0,
                           </td>
                           <td className="py-3 pl-4 text-center">
                             <div className="flex items-center justify-center gap-1.5">
-                              {/* Transfer to Rental Button */}
+                              {/* Quick 1-Click Convert to Rental */}
                               <button
-                                onClick={() => openRentalTransferModal(p)}
-                                className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
-                                title="تحويل لمخزون التأجير"
+                                onClick={() => handleQuickRentalConvert(p)}
+                                className="p-1.5 text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors border border-purple-200"
+                                title="تحويل فوري وسريع لمخزون الإيجار بنقرة واحدة ⚡"
                               >
                                 <Sparkles className="w-4 h-4" />
+                              </button>
+
+                              {/* Transfer to Rental with Options */}
+                              <button
+                                onClick={() => openRentalTransferModal(p)}
+                                className="p-1.5 text-slate-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="تخصيص تحويل لمخزون التأجير بالتفصيل"
+                              >
+                                <ArrowRightLeft className="w-4 h-4 text-purple-500" />
                               </button>
 
                               {/* Duplicate Product Button */}
@@ -3251,6 +3355,36 @@ total: 0,
             </div>
           )}
 
+          {/* RENTAL CONVERT / ADD CHECKBOX */}
+          <div className="flex items-center justify-between p-3.5 bg-gradient-to-r from-purple-50 via-purple-50/70 to-indigo-50 border-2 border-purple-300 rounded-2xl shadow-xs transition-all">
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                id="isRentalProductCheckbox"
+                checked={isRentalProduct}
+                onChange={(e) => setIsRentalProduct(e.target.checked)}
+                className="w-5 h-5 text-purple-600 rounded-md border-purple-300 focus:ring-purple-500 cursor-pointer"
+              />
+              <div>
+                <span className="text-sm font-black text-purple-950 flex items-center gap-1.5">
+                  تحويل هذا السجل لمخزون الإيجار
+                </span>
+                <p className="text-[11px] font-bold text-purple-700 mt-0.5">
+                  {isRentalProduct
+                    ? '✨ مفعل: سيتم إدراج هذا الصنف ومقاساته مباشرة في مخزون قسم التأجير والحجوزات'
+                    : 'صندوق غير مفعل: يتم حفظ الصنف في مخزون البيع العادي'}
+                </p>
+              </div>
+            </label>
+            <span className={`text-xs font-black px-2.5 py-1 rounded-xl border ${
+              isRentalProduct 
+                ? 'bg-purple-600 text-white border-purple-700 shadow-sm'
+                : 'bg-white text-slate-500 border-slate-200'
+            }`}>
+              {isRentalProduct ? 'مخزون إيجار 🏷️' : 'مخزون بيع 📦'}
+            </span>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* 1. PRODUCT NAME: SEARCHABLE COMBOBOX OR NEW PRODUCT INPUT */}
             <div className="space-y-1 sm:col-span-1">
@@ -3475,7 +3609,7 @@ total: 0,
 
             {/* SELLING PRICE */}
             <Input
-              label="سعر البيع (ج.م) *"
+              label={isRentalProduct ? "سعر التأجير (ج.م) *" : "سعر البيع (ج.م) *"}
               type="number"
               value={pPrice}
               onChange={(e) => setPPrice(e.target.value)}
@@ -3631,9 +3765,15 @@ total: 0,
               variant="primary"
               size="lg"
               isLoading={productSubmitting}
-              className="flex-1 !bg-indigo-600 hover:!bg-indigo-700 font-black"
+              className={`flex-1 font-black ${
+                isRentalProduct
+                  ? '!bg-purple-600 hover:!bg-purple-700 shadow-md'
+                  : '!bg-indigo-600 hover:!bg-indigo-700'
+              }`}
             >
-              {editingProduct ? 'حفظ التعديلات' : 'إضافة المنتج'}
+              {isRentalProduct
+                ? (editingProduct ? 'تحويل الصنف لمخزون الإيجار ✨' : 'إضافة لمخزون الإيجار مباشرة ✨')
+                : (editingProduct ? 'حفظ التعديلات' : 'إضافة المنتج')}
             </Button>
             <Button
               type="button"

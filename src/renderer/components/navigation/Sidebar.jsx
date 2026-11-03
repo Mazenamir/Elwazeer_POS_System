@@ -49,7 +49,7 @@ const ALL_NAV_ITEMS = [
 
 export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePin }) {
   const { user, logout, isAdmin } = useAuth();
-  const { activeBranch, branches } = useBranch();
+  const { activeBranch, branches, rentalsEnabled } = useBranch();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef(null);
 
@@ -96,14 +96,17 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
 
   const navItems = React.useMemo(() => {
     if (!user) return [];
-    const items = ALL_NAV_ITEMS.map((item) => ({
+    let items = ALL_NAV_ITEMS.map((item) => ({
       ...item,
       label: item.to === '/suppliers' ? (isAdmin ? item.adminLabel : item.staffLabel) : item.label,
     }));
+    if (rentalsEnabled === false) {
+      items = items.filter((item) => item.to !== '/rentals' && item.to !== '/rental-inventory');
+    }
     if (user.role === 'admin') return items;
     if (!Array.isArray(userPerms)) return [];
     return items.filter((item) => userPerms.includes(item.perm));
-  }, [user, userPerms, isAdmin]);
+  }, [user, userPerms, isAdmin, rentalsEnabled]);
 
   return (
     <>

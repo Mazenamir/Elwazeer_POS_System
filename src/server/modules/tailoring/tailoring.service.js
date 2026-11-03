@@ -1,4 +1,5 @@
 const db = require('../../database/connection');
+const { hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
 const { CAIRO_DATE_SQL, CAIRO_NOW_SQL } = require('../../../shared/constants/system');
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
@@ -30,14 +31,12 @@ async function listAlterations(query = {}, user = null, req = null) {
     LEFT JOIN customers c ON alt.customer_id = c.id
     LEFT JOIN branches b ON alt.branch_id = b.id
     LEFT JOIN inventory ai ON alt.inventory_id = ai.id
-    LEFT JOIN LATERAL (
-      SELECT i.id, i.name, i.category, i.barcode, i.image_url, i.color, i.size_cut
+    LEFT JOIN (
+      SELECT oi.order_id, i.id, i.name, i.category, i.barcode, i.image_url, i.color, i.size_cut
       FROM order_items oi
       JOIN inventory i ON oi.inventory_id = i.id
-      WHERE oi.order_id = alt.order_id
-      ORDER BY oi.id
-      LIMIT 1
-    ) first_item ON TRUE
+      GROUP BY oi.order_id
+    ) first_item ON first_item.order_id = alt.order_id
   `;
 
   let countQuery = `
@@ -45,14 +44,12 @@ async function listAlterations(query = {}, user = null, req = null) {
     FROM alterations alt
     LEFT JOIN customers c ON alt.customer_id = c.id
     LEFT JOIN inventory ai ON alt.inventory_id = ai.id
-    LEFT JOIN LATERAL (
-      SELECT i.id, i.name, i.category, i.barcode
+    LEFT JOIN (
+      SELECT oi.order_id, i.id, i.name, i.category, i.barcode
       FROM order_items oi
       JOIN inventory i ON oi.inventory_id = i.id
-      WHERE oi.order_id = alt.order_id
-      ORDER BY oi.id
-      LIMIT 1
-    ) first_item ON TRUE
+      GROUP BY oi.order_id
+    ) first_item ON first_item.order_id = alt.order_id
   `;
 
   const params = [];
@@ -475,7 +472,7 @@ async function deleteTailoringOrder(id, user) {
   }
 
   const order = orderRows[0];
-  if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
+  if (user && !hasBranchAccess(user, order.branch_id)) {
     const err = new Error('غير مصرح لك بحذف هذه الفاتورة');
     err.statusCode = 403;
     throw err;
@@ -522,7 +519,7 @@ async function payRemainingTailoringOrder(id, user, body = {}) {
     }
 
     const order = orderRows[0];
-    if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, order.branch_id)) {
       const err = new Error('غير مصرح لك بتعديل هذه الفاتورة');
       err.statusCode = 403;
       throw err;

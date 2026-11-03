@@ -110,6 +110,12 @@ const suites = [
     domain: 'Update & Protection',
     script: 'scratch/test_secure_auto_update_system.js',
   },
+  {
+    id: 17,
+    name: 'Granular RBAC, Multi-Branch Scoping & Sensitive Ops',
+    domain: 'Access Control & Security',
+    script: 'scratch/test_rbac_branch_scope_sensitive_ops.js',
+  },
 ];
 
 console.log('========================================================================================================');

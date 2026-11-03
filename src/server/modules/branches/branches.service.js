@@ -22,6 +22,9 @@ async function createBranch(data) {
   const branchType = type || 'men';
   const isMain = Boolean(is_main_warehouse);
   const allowedGender = data.allowed_gender || 'both';
+  const rentalsEnabled = data.rentals_enabled !== undefined
+    ? (data.rentals_enabled === true || data.rentals_enabled === 'true' || data.rentals_enabled === 1 || data.rentals_enabled === '1')
+    : true;
 
   return await db.transaction(async (tx) => {
     if (config.IS_BRANCH_MODE) {
@@ -30,14 +33,14 @@ async function createBranch(data) {
           name, location, phone, type, is_main_warehouse, logo_url,
           invoice_logo_height, invoice_logo_spacing, invoice_logo_filter,
           invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end,
-          allowed_gender
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          allowed_gender, rentals_enabled
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const info = stmt.run(
         name, branchLocation, phone, branchType, isMain ? 1 : 0, logo_url || null,
         logoSettings.invoice_logo_height, logoSettings.invoice_logo_spacing, logoSettings.invoice_logo_filter,
         logoSettings.invoice_logo_bg_enabled ? 1 : 0, logoSettings.invoice_logo_bg_start, logoSettings.invoice_logo_bg_end,
-        allowedGender
+        allowedGender, rentalsEnabled ? 1 : 0
       );
       const newBranch = db.sqlite.prepare('SELECT * FROM branches WHERE id = ?').get(info.lastInsertRowid);
       db.sqlite.prepare(`
@@ -52,8 +55,8 @@ async function createBranch(data) {
         name, location, phone, type, is_main_warehouse, logo_url,
         invoice_logo_height, invoice_logo_spacing, invoice_logo_filter,
         invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end,
-        allowed_gender
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        allowed_gender, rentals_enabled
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *`,
       [
         name,
@@ -69,6 +72,7 @@ async function createBranch(data) {
         logoSettings.invoice_logo_bg_start,
         logoSettings.invoice_logo_bg_end,
         allowedGender,
+        rentalsEnabled,
       ]
     );
     const newBranch = rows[0];
@@ -87,19 +91,37 @@ async function updateBranch(id, data) {
   const { name, phone, type, logo_url } = data;
   const branchLocation = data.location !== undefined ? data.location : (data.address ?? null);
   const logoSettings = normalizeBranchInvoiceLogoSettings(data);
+  const rentalsEnabled = data.rentals_enabled !== undefined
+    ? (data.rentals_enabled === true || data.rentals_enabled === 'true' || data.rentals_enabled === 1 || data.rentals_enabled === '1' ? 1 : 0)
+    : null;
+  const pgRentalsEnabled = data.rentals_enabled !== undefined
+    ? Boolean(data.rentals_enabled === true || data.rentals_enabled === 'true' || data.rentals_enabled === 1 || data.rentals_enabled === '1')
+    : null;
 
   if (config.IS_BRANCH_MODE) {
     const stmt = db.sqlite.prepare(`
       UPDATE branches
-      SET name = ?, location = ?, phone = ?, type = ?, logo_url = ?,
-          invoice_logo_height = ?, invoice_logo_spacing = ?, invoice_logo_filter = ?,
-          invoice_logo_bg_enabled = ?, invoice_logo_bg_start = ?, invoice_logo_bg_end = ?
+      SET name = COALESCE(?, name), location = COALESCE(?, location), phone = COALESCE(?, phone), type = COALESCE(?, type), logo_url = COALESCE(?, logo_url),
+          invoice_logo_height = COALESCE(?, invoice_logo_height), invoice_logo_spacing = COALESCE(?, invoice_logo_spacing), invoice_logo_filter = COALESCE(?, invoice_logo_filter),
+          invoice_logo_bg_enabled = COALESCE(?, invoice_logo_bg_enabled), invoice_logo_bg_start = COALESCE(?, invoice_logo_bg_start), invoice_logo_bg_end = COALESCE(?, invoice_logo_bg_end),
+          allowed_gender = COALESCE(?, allowed_gender),
+          rentals_enabled = COALESCE(?, rentals_enabled)
       WHERE id = ?
     `);
     stmt.run(
-      name, branchLocation, phone, type || 'men', logo_url || null,
-      logoSettings.invoice_logo_height, logoSettings.invoice_logo_spacing, logoSettings.invoice_logo_filter,
-      logoSettings.invoice_logo_bg_enabled ? 1 : 0, logoSettings.invoice_logo_bg_start, logoSettings.invoice_logo_bg_end,
+      name !== undefined ? name : null,
+      branchLocation !== undefined ? branchLocation : null,
+      phone !== undefined ? phone : null,
+      type !== undefined ? type : null,
+      logo_url !== undefined ? logo_url : null,
+      data.invoice_logo_height !== undefined ? logoSettings.invoice_logo_height : null,
+      data.invoice_logo_spacing !== undefined ? logoSettings.invoice_logo_spacing : null,
+      data.invoice_logo_filter !== undefined ? logoSettings.invoice_logo_filter : null,
+      data.invoice_logo_bg_enabled !== undefined ? (logoSettings.invoice_logo_bg_enabled ? 1 : 0) : null,
+      data.invoice_logo_bg_start !== undefined ? logoSettings.invoice_logo_bg_start : null,
+      data.invoice_logo_bg_end !== undefined ? logoSettings.invoice_logo_bg_end : null,
+      data.allowed_gender !== undefined ? data.allowed_gender : null,
+      rentalsEnabled,
       id
     );
     return db.sqlite.prepare('SELECT * FROM branches WHERE id = ?').get(id);
@@ -107,36 +129,39 @@ async function updateBranch(id, data) {
 
   const { rows } = await db.query(
     `UPDATE branches
-     SET name = $1,
-         location = $2,
-         phone = $3,
-         type = $4,
-         logo_url = $5,
-         invoice_logo_height = $6,
-         invoice_logo_spacing = $7,
-         invoice_logo_filter = $8,
-         invoice_logo_bg_enabled = $9,
-         invoice_logo_bg_start = $10,
-         invoice_logo_bg_end = $11,
-         allowed_gender = $12
-     WHERE id = $13
+     SET name = COALESCE($1, name),
+         location = COALESCE($2, location),
+         phone = COALESCE($3, phone),
+         type = COALESCE($4, type),
+         logo_url = COALESCE($5, logo_url),
+         invoice_logo_height = COALESCE($6, invoice_logo_height),
+         invoice_logo_spacing = COALESCE($7, invoice_logo_spacing),
+         invoice_logo_filter = COALESCE($8, invoice_logo_filter),
+         invoice_logo_bg_enabled = COALESCE($9, invoice_logo_bg_enabled),
+         invoice_logo_bg_start = COALESCE($10, invoice_logo_bg_start),
+         invoice_logo_bg_end = COALESCE($11, invoice_logo_bg_end),
+         allowed_gender = COALESCE($12, allowed_gender),
+         rentals_enabled = COALESCE($13, rentals_enabled)
+     WHERE id = $14
      RETURNING *`,
     [
-      name,
-      branchLocation,
-      phone,
-      type || 'men',
-      logo_url || null,
-      logoSettings.invoice_logo_height,
-      logoSettings.invoice_logo_spacing,
-      logoSettings.invoice_logo_filter,
-      logoSettings.invoice_logo_bg_enabled,
-      logoSettings.invoice_logo_bg_start,
-      logoSettings.invoice_logo_bg_end,
-      data.allowed_gender || 'both',
+      name !== undefined ? name : null,
+      branchLocation !== undefined ? branchLocation : null,
+      phone !== undefined ? phone : null,
+      type !== undefined ? type : null,
+      logo_url !== undefined ? logo_url : null,
+      data.invoice_logo_height !== undefined ? logoSettings.invoice_logo_height : null,
+      data.invoice_logo_spacing !== undefined ? logoSettings.invoice_logo_spacing : null,
+      data.invoice_logo_filter !== undefined ? logoSettings.invoice_logo_filter : null,
+      data.invoice_logo_bg_enabled !== undefined ? logoSettings.invoice_logo_bg_enabled : null,
+      data.invoice_logo_bg_start !== undefined ? logoSettings.invoice_logo_bg_start : null,
+      data.invoice_logo_bg_end !== undefined ? logoSettings.invoice_logo_bg_end : null,
+      data.allowed_gender !== undefined ? data.allowed_gender : null,
+      pgRentalsEnabled,
       id,
     ]
   );
+
   if (rows.length === 0) {
     const err = new Error('Branch not found');
     err.statusCode = 404;

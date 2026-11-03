@@ -1,4 +1,5 @@
 const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
+const config = require('../../config/env');
 
 async function getRentalAvailability(queryable, rentalInventoryId, branchId, pickupDate, returnDate, options = {}) {
   if (options.lockStockRow) {
@@ -8,8 +9,22 @@ async function getRentalAvailability(queryable, rentalInventoryId, branchId, pic
     );
   }
 
+  const isBranch = Boolean(config.IS_BRANCH_MODE || queryable?._isBranchMode || queryable?.sqlite);
+
+  const datesCte = isBranch
+    ? `dates(day) AS (
+         SELECT date($3)
+         UNION ALL
+         SELECT date(day, '+1 day')
+         FROM dates
+         WHERE day < date($4)
+       )`
+    : `dates AS (
+         SELECT generate_series($3::date, $4::date, '1 day'::interval)::date AS day
+       )`;
+
   const { rows } = await queryable.query(`
-    WITH stock AS (
+    WITH ${isBranch ? 'RECURSIVE' : ''} stock AS (
       SELECT COALESCE(stock_level, 0)::int as stock_level
       FROM rental_inventory_branches
       WHERE rental_inventory_id = $1 AND branch_id = $2
@@ -21,9 +36,7 @@ async function getRentalAvailability(queryable, rentalInventoryId, branchId, pic
         AND branch_id = $2
         AND status = 'active'
     ),
-    dates AS (
-      SELECT generate_series($3::date, $4::date, '1 day'::interval)::date AS day
-    ),
+    ${datesCte},
     daily_reserved AS (
       SELECT d.day, COUNT(r.id)::int as reserved_qty
       FROM dates d

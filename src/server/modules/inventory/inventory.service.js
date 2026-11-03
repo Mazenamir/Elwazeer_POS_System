@@ -22,7 +22,11 @@ const {
   resolveCategoryQuery,
 } = require('./inventory.helpers');
 
+const { hasPermission, getUserPermissions } = require('../../../shared/constants/permissions');
+const { hasBranchAccess, getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
 const { removeUploadedFile } = require('../../middleware/upload.middleware');
+const { queueSyncOperation } = require('../../database/sync.helpers');
+const auditService = require('../audit/audit.service');
 
 const TRANSFER_LIST_LIMIT = 200;
 
@@ -461,15 +465,20 @@ async function getVariants(name, requestedBranchId, user) {
 
   const canViewAll = hasInventoryAllBranchesAccess(user);
   let branchId = Number.parseInt(requestedBranchId, 10) || Number(user?.branch_id) || 1;
-  if (!canViewAll && user) branchId = Number(user.branch_id);
+  if (!canViewAll && user && !hasBranchAccess(user, branchId)) {
+    branchId = Number(user.branch_id);
+  }
 
   if (config.IS_BRANCH_MODE) {
     const rows = db.sqlite.prepare(`
-      SELECT i.*, 0 as stock_level
+      SELECT i.*, COALESCE(ib.stock_level, 0) as stock_level, s.name as supplier_name
       FROM inventory i
+      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
+      LEFT JOIN inventory_branches ib ON ib.inventory_id = i.id AND ib.branch_id = ?
       WHERE i.is_deleted = 0 AND LOWER(TRIM(i.name)) = LOWER(TRIM(?))
+      ORDER BY COALESCE(NULLIF(TRIM(i.color), ''), 'zzzz'), COALESCE(NULLIF(TRIM(i.size_cut), ''), 'zzzz'), i.id
       LIMIT 500
-    `).all(cleanName);
+    `).all(branchId, cleanName);
     return rows;
   }
 
@@ -511,7 +520,29 @@ async function listInventory(req, user) {
     const where = ['i.is_deleted = 0'];
     const params = [];
 
-    if (req.query.search) {
+    const reqBranchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
+    let activeBranchId = 1;
+    if (reqBranchId && (canViewAllBranches || hasBranchAccess(user, reqBranchId))) {
+      activeBranchId = reqBranchId;
+    } else if (user?.branch_id && hasBranchAccess(user, user.branch_id)) {
+      activeBranchId = parseInt(user.branch_id, 10);
+    } else if (reqBranchId) {
+      activeBranchId = reqBranchId;
+    }
+    const bId = activeBranchId;
+
+    const targetBranchForGender = reqBranchId || (!canViewAllBranches ? activeBranchId : null);
+  if (targetBranchForGender) {
+    params.push(targetBranchForGender);
+    const pParam = '$' + params.length;
+    where.push(`(
+      (SELECT allowed_gender FROM branches WHERE id = ${pParam}) = 'both' 
+      OR i.gender = 'both' 
+      OR i.gender = (SELECT allowed_gender FROM branches WHERE id = ${pParam})
+    )`);
+  }
+
+  if (req.query.search) {
       params.push(likePattern(req.query.search));
       params.push(likePattern(req.query.search));
       params.push(likePattern(req.query.search));
@@ -546,20 +577,23 @@ async function listInventory(req, user) {
         }
       }
     }
+    const branchStockSql = `COALESCE((SELECT stock_level FROM inventory_branches WHERE inventory_id = i.id AND branch_id = ${bId}), 0)`;
     if (req.query.stock_status && req.query.stock_status !== 'all') {
       if (req.query.stock_status === 'in_stock') {
-        where.push('CAST(i.stock_level AS REAL) > 0');
+        where.push(`${branchStockSql} > 0`);
       } else if (req.query.stock_status === 'in_stock_safe') {
-        where.push('CAST(i.stock_level AS REAL) > COALESCE(i.min_stock_level, 5)');
+        where.push(`${branchStockSql} > COALESCE(i.min_stock_level, 5)`);
       } else if (req.query.stock_status === 'all_low' || req.query.stock_status === 'low_stock_all') {
-        where.push('CAST(i.stock_level AS REAL) <= COALESCE(i.min_stock_level, 5)');
+        where.push(`${branchStockSql} <= COALESCE(i.min_stock_level, 5)`);
       } else if (req.query.stock_status === 'low_stock' || req.query.stock_status === 'low_stock_near') {
-        where.push('CAST(i.stock_level AS REAL) > 0 AND CAST(i.stock_level AS REAL) <= COALESCE(i.min_stock_level, 5)');
+        where.push(`${branchStockSql} > 0 AND ${branchStockSql} <= COALESCE(i.min_stock_level, 5)`);
       } else if (req.query.stock_status === 'out_of_stock') {
-        where.push('CAST(i.stock_level AS REAL) <= 0');
+        where.push(`${branchStockSql} <= 0`);
       } else if (req.query.stock_status === 'broken_sizes' || req.query.stock_status === 'missing_sizes') {
-        where.push('CAST(i.stock_level AS REAL) > 0 AND EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.stock_level <= 0)');
+        where.push(`${branchStockSql} > 0 AND EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.branch_id = ${bId} AND sz.stock_level <= 0)`);
       }
+    } else if (req.query.branch_only === 'true') {
+      where.push(`${branchStockSql} > 0`);
     }
 
     let sqliteOrder = 'ORDER BY i.id DESC';
@@ -577,7 +611,23 @@ async function listInventory(req, user) {
     const whereClause = `WHERE ${where.join(' AND ')}`;
     const total = db.sqlite.prepare(`SELECT COUNT(*) as count FROM inventory i ${whereClause}`).get(...params).count;
 
-    const bId = (!canViewAllBranches ? parseInt(user?.branch_id, 10) : (req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null)) || 1;
+    const mapSqliteRow = (r) => {
+      const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND (branch_id = ? OR branch_id IS NULL) ORDER BY id ASC').all(r.id, bId);
+      const branchStockRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(r.id, bId);
+      const stock = branchStockRow !== undefined && branchStockRow !== null ? Number(branchStockRow.stock_level || 0) : 0;
+      const branchStockRows = db.sqlite.prepare(`
+        SELECT ib.branch_id, b.name as branch_name, ib.stock_level
+        FROM inventory_branches ib
+        JOIN branches b ON b.id = ib.branch_id
+        WHERE ib.inventory_id = ? AND ib.stock_level > 0
+      `).all(r.id);
+      const available_branches = branchStockRows.map((bs) => ({
+        branch_id: bs.branch_id,
+        branch_name: bs.branch_name,
+        stock_level: Number(bs.stock_level || 0),
+      }));
+      return { ...r, stock_level: stock, total_stock: Number(r.stock_level || 0), sizes, available_branches };
+    };
 
     if (pagination.enabled) {
       const rows = db.sqlite.prepare(`
@@ -588,14 +638,7 @@ async function listInventory(req, user) {
         LIMIT ? OFFSET ?
       `).all(...params, pagination.limit, pagination.offset);
 
-      const rowsWithSizes = rows.map((r) => {
-        const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND (branch_id = ? OR branch_id IS NULL) ORDER BY id ASC').all(r.id, bId);
-        const branchStockRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(r.id, bId);
-        const stock = branchStockRow !== undefined && branchStockRow !== null ? Number(branchStockRow.stock_level || 0) : Number(r.stock_level || 0);
-        const available_branches = stock > 0 ? [{ branch_id: bId, branch_name: 'الفرع الحالي', stock_level: stock }] : [];
-        return { ...r, stock_level: stock, total_stock: Number(r.stock_level || 0), sizes, available_branches };
-      });
-
+      const rowsWithSizes = rows.map(mapSqliteRow);
       return paginatedPayload(rowsWithSizes, total, pagination);
     }
 
@@ -606,13 +649,7 @@ async function listInventory(req, user) {
       ${sqliteOrder}
     `).all(...params);
 
-    const rowsWithSizes = rows.map((r) => {
-      const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND (branch_id = ? OR branch_id IS NULL) ORDER BY id ASC').all(r.id, bId);
-      const branchStockRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(r.id, bId);
-      const stock = branchStockRow !== undefined && branchStockRow !== null ? Number(branchStockRow.stock_level || 0) : Number(r.stock_level || 0);
-      const available_branches = stock > 0 ? [{ branch_id: bId, branch_name: 'الفرع الحالي', stock_level: stock }] : [];
-      return { ...r, stock_level: stock, total_stock: Number(r.stock_level || 0), sizes, available_branches };
-    });
+    const rowsWithSizes = rows.map(mapSqliteRow);
 
     return paginatedPayload(rowsWithSizes, total, { page: 1, limit: total, total });
   }
@@ -623,7 +660,14 @@ async function listInventory(req, user) {
   }
 
   const reqBranchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
-  const activeBranchId = !canViewAllBranches ? parseInt(user?.branch_id, 10) : reqBranchId;
+  let activeBranchId = null;
+  if (reqBranchId && (canViewAllBranches || hasBranchAccess(user, reqBranchId))) {
+    activeBranchId = reqBranchId;
+  } else if (user?.branch_id && hasBranchAccess(user, user.branch_id)) {
+    activeBranchId = parseInt(user.branch_id, 10);
+  } else if (reqBranchId) {
+    activeBranchId = reqBranchId;
+  }
 
   const totalStockSql = 'COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), i.stock_level, 0)';
   let stockLevelSql = totalStockSql;
@@ -686,13 +730,14 @@ async function listInventory(req, user) {
 
   const params = [];
   const where = ['i.is_deleted = FALSE'];
-  if (!canViewAllBranches && user?.branch_id) {
-    params.push(user.branch_id);
-    where.push(`$${params.length}::int IS NOT NULL`);
+  const targetBranchForGender = reqBranchId || (!canViewAllBranches ? activeBranchId : null);
+  if (targetBranchForGender) {
+    params.push(targetBranchForGender);
+    const pIdx = params.length;
     where.push(`(
-      (SELECT allowed_gender FROM branches WHERE id = $${params.length}) = 'both' 
+      (SELECT allowed_gender FROM branches WHERE id = $${pIdx}) = 'both' 
       OR i.gender = 'both' 
-      OR i.gender = (SELECT allowed_gender FROM branches WHERE id = $${params.length})
+      OR i.gender = (SELECT allowed_gender FROM branches WHERE id = $${pIdx})
     )`);
   }
 
@@ -832,7 +877,17 @@ async function listInventory(req, user) {
 }
 
 async function createProduct(body, user, file = null) {
-  if (!hasInventoryAdminAccess(user)) {
+  const isBranch = Boolean(config.IS_BRANCH_MODE || db._isBranchMode || db.sqlite || process.env.APP_MODE === 'branch');
+  const userPerms = user ? getUserPermissions(user) : [];
+  const canCreate = user && (
+    user.role === 'admin' ||
+    userPerms.includes('inventory_admin') ||
+    userPerms.includes('admin') ||
+    userPerms.includes('manage_inventory') ||
+    hasPermission(user, 'inventory.products.create') ||
+    (isBranch && (user.role === 'branch_user' || user.branch_id || user.branch_scope))
+  );
+  if (!canCreate) {
     if (file) removeUploadedFile(file.path);
     const err = new Error('غير مصرح لك بإضافة منتجات للمخزون');
     err.statusCode = 403;
@@ -868,7 +923,12 @@ async function createProduct(body, user, file = null) {
 
   barcode = normalizeBarcodeInput(barcode);
   if (isBranchScopedUser(user)) {
-    branch_id = user.branch_id;
+    const targetBranchId = branch_id ? parseInt(branch_id, 10) : parseInt(user?.branch_id, 10);
+    if (hasBranchAccess(user, targetBranchId)) {
+      branch_id = targetBranchId;
+    } else {
+      branch_id = parseInt(user?.branch_id, 10) || 1;
+    }
   }
   if (!supplier_id) {
     supplier_id = preferred_supplier_id;
@@ -917,6 +977,15 @@ async function createProduct(body, user, file = null) {
     if (gLower === 'women' || gLower === 'حريمي') normalizedGender = 'women';
     else if (gLower === 'both' || gLower === 'مشترك' || gLower === 'كلاهما') normalizedGender = 'both';
     else normalizedGender = 'men';
+  } else if (b_id) {
+    try {
+      if (config.IS_BRANCH_MODE && db.sqlite) {
+        const bRow = db.sqlite.prepare('SELECT allowed_gender FROM branches WHERE id = ?').get(b_id);
+        if (bRow?.allowed_gender === 'women') {
+          normalizedGender = 'women';
+        }
+      }
+    } catch {}
   }
 
   const numPrice = Number(price) || 0;
@@ -950,18 +1019,34 @@ async function createProduct(body, user, file = null) {
       const sizeName = resolvedSize?.name || (targetSizeStr || null);
       const sizeId = resolvedSize?.id || null;
 
+      const safeSupplierId = supplier_id ? (Number(supplier_id) || null) : null;
+      const safeColorId = colorId || null;
+      const safeSizeId = sizeId || null;
+      const safeImageUrl = image_url || null;
+      const safeCategory = category || null;
+      const safeNormalizedGender = normalizedGender || 'both';
+
+      const numWholesale = Number(wholesale_price) || 0;
+      const numSemiWholesale = Number(semi_wholesale_price) || 0;
+
       const stmt = db.sqlite.prepare(`
         INSERT INTO inventory (
           name, category, size_cut, color, stock_level, min_stock_level, price,
           cost_price, image_url, barcode, preferred_supplier_id, is_deleted,
-          color_id, size_id, gender
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+          color_id, size_id, gender, wholesale_price, semi_wholesale_price
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
       `);
       const info = stmt.run(
-        name, category, sizeName, colorName, initialStock, minStockLevel,
-        numPrice, numCost, image_url, barcode, supplier_id, colorId, sizeId, normalizedGender
+        name, safeCategory, sizeName, colorName, initialStock, minStockLevel,
+        numPrice, numCost, safeImageUrl, barcode, safeSupplierId, safeColorId, safeSizeId, safeNormalizedGender,
+        numWholesale, numSemiWholesale
       );
       const newId = info.lastInsertRowid;
+
+      db.sqlite.prepare(`
+        INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
+        SELECT ?, id, CASE WHEN id = ? THEN ? ELSE 0 END FROM branches
+      `).run(newId, b_id, initialStock);
 
       if (hasMultiSizes && parsedSizes.length > 0) {
         for (const s of parsedSizes) {
@@ -975,11 +1060,37 @@ async function createProduct(body, user, file = null) {
         db.sqlite.prepare(`
           INSERT INTO inventory_sizes (inventory_id, size_id, size_name, stock_level, branch_id)
           VALUES (?, ?, ?, ?, ?)
-        `).run(newId, sizeId, sizeName, initialStock, b_id);
+        `).run(newId, safeSizeId, sizeName, initialStock, b_id);
       }
 
       if ((hasMultiSizes && parsedSizes.length > 0) || sizeName) {
         recalcStockFromSizesSqlite(newId, b_id);
+      }
+
+      try {
+        await queueSyncOperation(db, null, 'product', 'create', newId, b_id, {
+          id: newId,
+          name,
+          category: safeCategory,
+          size_cut: sizeName,
+          color: colorName,
+          barcode,
+          stock_level: initialStock,
+          min_stock_level: minStockLevel,
+          price: numPrice,
+          cost_price: numCost,
+          image_url: safeImageUrl,
+          preferred_supplier_id: safeSupplierId,
+          color_id: safeColorId,
+          size_id: safeSizeId,
+          gender: safeNormalizedGender,
+          wholesale_price: numWholesale,
+          semi_wholesale_price: numSemiWholesale,
+          branch_id: b_id,
+          sizes: (hasMultiSizes && parsedSizes.length > 0) ? parsedSizes : (sizeName ? [{ size: sizeName, color: colorName, stock: initialStock }] : [])
+        });
+      } catch (e) {
+        console.warn('Failed to queue product sync operation:', e.message);
       }
 
       invalidateInventoryMetadata();
@@ -1110,7 +1221,8 @@ async function createProduct(body, user, file = null) {
 }
 
 async function updateProduct(id, body, user, file = null) {
-  if (!hasInventoryAdminAccess(user)) {
+  const userPerms = user ? getUserPermissions(user) : [];
+  if (!user || (user.role !== 'admin' && !hasPermission(user, 'inventory.products.edit') && !userPerms.includes('inventory_admin') && !userPerms.includes('admin') && !userPerms.includes('manage_inventory'))) {
     if (file) removeUploadedFile(file.path);
     const err = new Error('غير مصرح لك بتعديل بيانات هذا المنتج');
     err.statusCode = 403;
@@ -1208,11 +1320,44 @@ async function updateProduct(id, body, user, file = null) {
       const sizeName = resolvedSize?.name || (targetSizeStr || null);
       const sizeId = resolvedSize?.id || null;
 
+      const safeSupplierId = supplier_id ? (Number(supplier_id) || null) : null;
+      const safeColorId = colorId || null;
+      const safeSizeId = sizeId || null;
+      const safeImageUrl = image_url || null;
+      const safeCategory = category || null;
+      const safeNormalizedGender = normalizedGender || 'both';
+      const numWholesale = wholesale_price !== undefined ? (Number(wholesale_price) || 0) : null;
+      const numSemiWholesale = semi_wholesale_price !== undefined ? (Number(semi_wholesale_price) || 0) : null;
+
       db.sqlite.prepare(`
         UPDATE inventory
-        SET name = ?, category = ?, size_cut = ?, color = ?, min_stock_level = ?, preferred_supplier_id = ?, price = ?, cost_price = ?, image_url = COALESCE(?, image_url), barcode = ?, color_id = ?, size_id = ?, gender = COALESCE(?, gender)
+        SET name = ?, category = ?, size_cut = ?, color = ?, min_stock_level = ?, preferred_supplier_id = ?, price = ?, cost_price = ?, image_url = COALESCE(?, image_url), barcode = ?, color_id = ?, size_id = ?, gender = COALESCE(?, gender), wholesale_price = COALESCE(?, wholesale_price), semi_wholesale_price = COALESCE(?, semi_wholesale_price)
         WHERE id = ?
-      `).run(name, category, sizeName, colorName, minStockLevel, supplier_id, numPrice, numCost, image_url, barcode, colorId, sizeId, normalizedGender, id);
+      `).run(name, safeCategory, sizeName, colorName, minStockLevel, safeSupplierId, numPrice, numCost, safeImageUrl, barcode, safeColorId, safeSizeId, safeNormalizedGender, numWholesale, numSemiWholesale, id);
+
+      try {
+        await queueSyncOperation(db, null, 'product', 'update', id, Number(branch_id) || Number(user?.branch_id) || 1, {
+          id,
+          name,
+          category: safeCategory,
+          size_cut: sizeName,
+          color: colorName,
+          barcode,
+          min_stock_level: minStockLevel,
+          price: numPrice,
+          cost_price: numCost,
+          image_url: safeImageUrl,
+          preferred_supplier_id: safeSupplierId,
+          color_id: safeColorId,
+          size_id: safeSizeId,
+          gender: safeNormalizedGender,
+          wholesale_price: numWholesale,
+          semi_wholesale_price: numSemiWholesale,
+          branch_id: Number(branch_id) || Number(user?.branch_id) || 1
+        });
+      } catch (e) {
+        console.warn('Failed to queue product update sync:', e.message);
+      }
 
       if (hasMultiSizes && parsedSizes.length > 0) {
         const targetBranchId = Number(branch_id) || Number(user?.branch_id) || 1;
@@ -1362,6 +1507,15 @@ async function updateProduct(id, body, user, file = null) {
     });
 
     invalidateInventoryMetadata();
+    await auditService.log({
+      userId: user?.id,
+      username: user?.username,
+      action: 'inventory_product_update',
+      resourceType: 'inventory',
+      resourceId: id,
+      branchId: user?.branch_id,
+      outcome: 'success',
+    });
     return item;
   } catch (err) {
     if (file) removeUploadedFile(file.path);
@@ -1422,7 +1576,8 @@ async function getInventoryById(id, requestedBranchId, user) {
 }
 
 async function deleteProduct(id, user) {
-  if (!hasInventoryAdminAccess(user)) {
+  const userPerms = user ? getUserPermissions(user) : [];
+  if (!user || (user.role !== 'admin' && !hasPermission(user, 'inventory.products.delete') && !userPerms.includes('inventory_admin') && !userPerms.includes('admin') && !userPerms.includes('manage_inventory'))) {
     const err = new Error('Admin only');
     err.statusCode = 403;
     throw err;
@@ -1430,13 +1585,64 @@ async function deleteProduct(id, user) {
 
   if (config.IS_BRANCH_MODE) {
     db.sqlite.prepare('UPDATE inventory SET is_deleted = 1 WHERE id = ?').run(id);
-    invalidateInventoryMetadata();
-    return { success: true };
+  } else {
+    await db.query('UPDATE inventory SET is_deleted = TRUE WHERE id = $1', [id]);
   }
 
-  await db.query('UPDATE inventory SET is_deleted = TRUE WHERE id = $1', [id]);
   invalidateInventoryMetadata();
+  await auditService.log({
+    userId: user?.id,
+    username: user?.username,
+    action: 'inventory_product_delete',
+    resourceType: 'inventory',
+    resourceId: id,
+    branchId: user?.branch_id,
+    outcome: 'success',
+  });
+
   return { success: true };
+}
+
+async function duplicateProduct(id, body = {}, user) {
+  const userPerms = user ? getUserPermissions(user) : [];
+  if (!user || (user.role !== 'admin' && !hasPermission(user, 'inventory.products.duplicate') && !userPerms.includes('inventory_admin') && !userPerms.includes('admin') && !userPerms.includes('manage_inventory'))) {
+    const err = new Error('غير مصرح لك بنسخ وتكرار الأصناف');
+    err.statusCode = 403;
+    throw err;
+  }
+  const itemId = Number(id);
+  if (!itemId) {
+    const err = new Error('Product ID is required');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const orig = await getInventoryById(itemId, user?.branch_id || 1, user);
+  const newName = (body.name || `${orig.name} (نسخة)`).trim();
+  const randSuffix = Math.floor(1000 + Math.random() * 9000);
+  const newBarcode = (body.barcode || `${orig.barcode || 'PRD'}-${randSuffix}`).trim();
+
+  const newProductData = {
+    ...orig,
+    name: newName,
+    barcode: newBarcode,
+    stock_level: 0,
+    sizes: Array.isArray(orig.sizes) ? orig.sizes.map((s) => ({ ...s, stock: 0 })) : [],
+  };
+
+  const created = await createProduct(newProductData, user);
+  await auditService.log({
+    userId: user?.id,
+    username: user?.username,
+    action: 'inventory_product_duplicate',
+    resourceType: 'inventory',
+    resourceId: created.id,
+    branchId: user?.branch_id,
+    outcome: 'success',
+    details: { original_id: itemId, new_name: newName, new_barcode: newBarcode },
+  });
+
+  return created;
 }
 
 async function transferStock(body, user) {
@@ -1613,7 +1819,13 @@ async function transferStock(body, user) {
 
 async function listTransferRequests(user, branchIdParam) {
   let branch_id = branchIdParam;
-  if (isBranchScopedUser(user)) branch_id = user.branch_id;
+  if (isBranchScopedUser(user)) {
+    if (branchIdParam && hasBranchAccess(user, branchIdParam)) {
+      branch_id = branchIdParam;
+    } else {
+      branch_id = user.branch_id;
+    }
+  }
 
   let query = `
     SELECT st.*, i.name as inventory_name, i.barcode as inventory_barcode,
@@ -1649,7 +1861,7 @@ async function approveTransfer(transferId, user) {
     if (transferRes.rows.length === 0) throw new Error('الطلب غير موجود أو تم التعامل معه بالفعل');
 
     const transfer = transferRes.rows[0];
-    if (isBranchScopedUser(user) && Number(transfer.from_branch_id) !== Number(user.branch_id)) {
+    if (isBranchScopedUser(user) && !hasBranchAccess(user, transfer.from_branch_id)) {
       const err = new Error('غير مصرح لك بالموافقة على طلب التحويل من هذا الفرع');
       err.statusCode = 403;
       throw err;
@@ -1735,8 +1947,19 @@ async function rejectTransfer(transferId, user) {
   const params = [transferId];
   let branchFilter = '';
   if (isBranchScopedUser(user)) {
-    params.push(user.branch_id);
-    branchFilter = ' AND from_branch_id = $2';
+    const authIds = getUserAuthorizedBranchIds(user);
+    if (authIds && authIds.length > 0) {
+      if (authIds.length === 1) {
+        params.push(authIds[0]);
+        branchFilter = ' AND from_branch_id = $2';
+      } else {
+        params.push(authIds);
+        branchFilter = ' AND from_branch_id = ANY($2)';
+      }
+    } else {
+      params.push(user.branch_id);
+      branchFilter = ' AND from_branch_id = $2';
+    }
   }
   const res = await db.query(`UPDATE stock_transfers SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'requested'${branchFilter}`, params);
   if (res.rowCount === 0) {
@@ -1749,7 +1972,13 @@ async function rejectTransfer(transferId, user) {
 
 async function listIncomingTransfers(user, branchIdParam) {
   let branch_id = branchIdParam;
-  if (isBranchScopedUser(user)) branch_id = user.branch_id;
+  if (isBranchScopedUser(user)) {
+    if (branchIdParam && hasBranchAccess(user, branchIdParam)) {
+      branch_id = branchIdParam;
+    } else {
+      branch_id = user.branch_id;
+    }
+  }
 
   let query = `
     SELECT st.*, i.name as inventory_name, i.barcode as inventory_barcode,
@@ -1787,7 +2016,7 @@ async function receiveTransfer(transferId, user) {
     if (transferRes.rows.length === 0) throw new Error('التحويل غير موجود أو تم استلامه بالفعل');
 
     const transfer = transferRes.rows[0];
-    if (isBranchScopedUser(user) && Number(transfer.to_branch_id) !== Number(user.branch_id)) {
+    if (isBranchScopedUser(user) && !hasBranchAccess(user, transfer.to_branch_id)) {
       const err = new Error('غير مصرح لك باستلام شحنة موجهة لفرع آخر');
       err.statusCode = 403;
       throw err;
@@ -2180,6 +2409,47 @@ async function checkDuplicatesBatch(body) {
     return { duplicates: [] };
   }
 
+  if (config.IS_BRANCH_MODE && db.sqlite) {
+    const duplicates = [];
+    const selectStmt = db.sqlite.prepare(`
+      SELECT id, name, category, color, size_cut, barcode, price, image_url
+      FROM ${table}
+      WHERE is_deleted = 0
+        AND LOWER(TRIM(COALESCE(name, ''))) = ?
+        AND LOWER(TRIM(COALESCE(category, ''))) = ?
+        AND LOWER(TRIM(COALESCE(color, ''))) = ?
+        AND LOWER(TRIM(COALESCE(size_cut, ''))) = ?
+      ORDER BY id DESC
+      LIMIT 5
+    `);
+
+    for (const c of normalizedCandidates) {
+      const nameKey = c.name.toLowerCase().trim();
+      const catKey = c.category.toLowerCase().trim();
+      const colorKey = c.color.toLowerCase().trim();
+      const sizeKey = c.size.toLowerCase().trim();
+
+      const matchedRows = selectStmt.all(nameKey, catKey, colorKey, sizeKey);
+      if (matchedRows.length > 0) {
+        duplicates.push({
+          candidate: c,
+          matched_count: matchedRows.length,
+          matches: matchedRows.map(m => ({
+            id: m.id,
+            name: m.name,
+            category: m.category,
+            color: m.color,
+            size: m.size_cut,
+            barcode: m.barcode,
+            price: Number(m.price || 0),
+            image_url: m.image_url,
+          })),
+        });
+      }
+    }
+    return { duplicates };
+  }
+
   const { rows } = await db.query(
     `WITH candidates AS (
        SELECT DISTINCT
@@ -2309,6 +2579,20 @@ async function searchInventory(query = {}, user = null) {
   }
 
   if (config.IS_BRANCH_MODE) {
+    let genderClause = '';
+    const params = [branchIdToUse];
+    if (!canViewAll && branchIdToUse) {
+      const bRow = db.sqlite.prepare('SELECT allowed_gender FROM branches WHERE id = ?').get(branchIdToUse);
+      const bGender = bRow?.allowed_gender || 'both';
+      if (bGender !== 'both') {
+        genderClause = ` AND (i.gender = 'both' OR i.gender = ? OR i.gender IS NULL)`;
+        params.push(bGender);
+      }
+    }
+    for (let k = 0; k < 8; k++) {
+      params.push(searchPattern);
+    }
+
     const rows = db.sqlite.prepare(`
       SELECT 
         i.id, 
@@ -2320,10 +2604,11 @@ async function searchInventory(query = {}, user = null) {
         i.price,
         i.wholesale_price,
         i.semi_wholesale_price,
-        COALESCE(ib.stock_level, i.stock_level, 0) as stock_level
+        COALESCE(ib.stock_level, 0) as stock_level
       FROM inventory i
       LEFT JOIN inventory_branches ib ON i.id = ib.inventory_id AND ib.branch_id = ?
       WHERE i.is_deleted = 0
+        ${genderClause}
         AND (
           i.name LIKE ? 
           OR i.barcode LIKE ? 
@@ -2334,10 +2619,10 @@ async function searchInventory(query = {}, user = null) {
         )
       ORDER BY 
         CASE WHEN i.name LIKE ? THEN 1 ELSE 2 END,
-        COALESCE(ib.stock_level, i.stock_level, 0) DESC,
+        COALESCE(ib.stock_level, 0) DESC,
         i.name
       LIMIT 20
-    `).all(branchIdToUse, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+    `).all(...params);
     return rows;
   }
 
@@ -2581,6 +2866,7 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
+  duplicateProduct,
   transferStock,
   listTransferRequests,
   approveTransfer,

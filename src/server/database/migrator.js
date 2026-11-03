@@ -115,12 +115,14 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       invoice_logo_bg_enabled INTEGER DEFAULT 0,
       invoice_logo_bg_start TEXT DEFAULT '#ffffff',
       invoice_logo_bg_end TEXT DEFAULT '#ffffff',
-      allowed_gender TEXT DEFAULT 'both'
+      allowed_gender TEXT DEFAULT 'both',
+      rentals_enabled INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS suppliers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      code TEXT,
       initials TEXT,
       category TEXT,
       contact_person TEXT,
@@ -167,7 +169,12 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       image_url TEXT,
       is_deleted INTEGER DEFAULT 0,
       offline_uuid TEXT UNIQUE,
-      pending_sync INTEGER DEFAULT 0
+      pending_sync INTEGER DEFAULT 0,
+      color_id INTEGER,
+      size_id INTEGER,
+      wholesale_price REAL DEFAULT 0,
+      semi_wholesale_price REAL DEFAULT 0,
+      gender TEXT DEFAULT 'both'
     );
 
     CREATE TABLE IF NOT EXISTS orders (
@@ -203,7 +210,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       quantity INTEGER NOT NULL,
       price_at_time REAL NOT NULL,
       discount REAL DEFAULT 0,
-      discount_type TEXT DEFAULT 'amount'
+      discount_type TEXT DEFAULT 'amount',
+      size TEXT
     );
 
     CREATE TABLE IF NOT EXISTS returns (
@@ -239,13 +247,18 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       actual_return_date TEXT,
       total_price REAL NOT NULL,
       deposit_amount REAL DEFAULT 0,
+      deposit REAL DEFAULT 0,
       paid_amount REAL DEFAULT 0,
       remaining_amount REAL DEFAULT 0,
+      remaining REAL DEFAULT 0,
       status TEXT DEFAULT 'booked',
       notes TEXT,
       daily_fine REAL DEFAULT 50,
       fine_amount REAL DEFAULT 0,
       payment_method TEXT DEFAULT 'cash',
+      national_id TEXT,
+      id_card_guarantee INTEGER DEFAULT 0,
+      sale_order_id INTEGER,
       offline_uuid TEXT UNIQUE,
       rental_group_uuid TEXT,
       pending_sync INTEGER DEFAULT 1
@@ -261,7 +274,10 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       price REAL DEFAULT 0,
       image_url TEXT,
       is_deleted INTEGER DEFAULT 0,
-      stock_level INTEGER DEFAULT 0
+      stock_level INTEGER DEFAULT 0,
+      color_id INTEGER,
+      size_id INTEGER,
+      gender TEXT DEFAULT 'both'
     );
 
     CREATE TABLE IF NOT EXISTS employees (
@@ -336,6 +352,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       status TEXT NOT NULL DEFAULT 'pending',
       order_date TEXT DEFAULT CURRENT_TIMESTAMP,
       delivery_date TEXT,
+      due_date TEXT,
       notes TEXT,
       seller_id INTEGER,
       branch_id INTEGER,
@@ -494,13 +511,47 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       branch_id INTEGER,
       permissions TEXT DEFAULT '[]',
       employee_id INTEGER,
-      full_name TEXT
+      full_name TEXT,
+      branch_scope TEXT DEFAULT 'single',
+      branch_ids TEXT DEFAULT '[]',
+      token_version INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      username TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      branch_id INTEGER,
+      outcome TEXT DEFAULT 'success',
+      details TEXT,
+      ip_address TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_uuid TEXT UNIQUE NOT NULL,
+      entity_type TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity_id INTEGER,
+      branch_id INTEGER,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      synced_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sync_queue_status_attempts ON sync_queue(status, attempts);
+    CREATE INDEX IF NOT EXISTS idx_sync_queue_created_at ON sync_queue(created_at DESC);
   `);
 
   // Seed default system settings into SQLite
@@ -513,11 +564,195 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
     sqlite.exec("ALTER TABLE users ADD COLUMN full_name TEXT");
   } catch {}
   try {
+    sqlite.exec("ALTER TABLE users ADD COLUMN branch_scope TEXT DEFAULT 'single'");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE users ADD COLUMN branch_ids TEXT DEFAULT '[]'");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 1");
+  } catch {}
+  try {
+    sqlite.exec("UPDATE users SET branch_scope = 'all' WHERE role = 'admin' AND (branch_scope IS NULL OR branch_scope = 'single')");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE branches ADD COLUMN rentals_enabled INTEGER DEFAULT 1");
+  } catch {}
+  try {
     sqlite.exec("ALTER TABLE branches ADD COLUMN allowed_gender TEXT DEFAULT 'both'");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE inventory ADD COLUMN color_id INTEGER");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE inventory ADD COLUMN size_id INTEGER");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE inventory ADD COLUMN wholesale_price REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE inventory ADD COLUMN semi_wholesale_price REAL DEFAULT 0");
   } catch {}
   try {
     sqlite.exec("ALTER TABLE inventory ADD COLUMN gender TEXT DEFAULT 'both'");
   } catch {}
+
+  try {
+    sqlite.exec("ALTER TABLE rental_inventory ADD COLUMN color_id INTEGER");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rental_inventory ADD COLUMN size_id INTEGER");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rental_inventory ADD COLUMN gender TEXT DEFAULT 'both'");
+  } catch {}
+
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN deposit REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN remaining REAL DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN national_id TEXT");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN id_card_guarantee INTEGER DEFAULT 0");
+  } catch {}
+  try {
+    sqlite.exec("ALTER TABLE rentals ADD COLUMN sale_order_id INTEGER");
+  } catch {}
+
+  try {
+    sqlite.exec("ALTER TABLE tailoring_orders ADD COLUMN due_date TEXT");
+  } catch {}
+  try {
+    sqlite.exec("UPDATE tailoring_orders SET due_date = delivery_date WHERE due_date IS NULL AND delivery_date IS NOT NULL");
+  } catch {}
+
+  try {
+    sqlite.exec("ALTER TABLE suppliers ADD COLUMN code TEXT");
+  } catch {}
+
+  try {
+    sqlite.exec(`
+      UPDATE rentals SET deposit = deposit_amount WHERE (deposit IS NULL OR deposit = 0) AND deposit_amount > 0;
+      UPDATE rentals SET remaining = remaining_amount WHERE (remaining IS NULL OR remaining = 0) AND remaining_amount > 0;
+    `);
+  } catch {}
+
+  try {
+    sqlite.exec("UPDATE branches SET allowed_gender = 'men', type = 'men' WHERE id IN (2, 3, 4, 5, 6, 7, 8, 9)");
+    sqlite.exec("UPDATE branches SET allowed_gender = 'women', type = 'women', rentals_enabled = 1 WHERE id = 10");
+    sqlite.exec("UPDATE branches SET allowed_gender = 'both' WHERE id = 1");
+  } catch {}
+  // Missing columns migration across tables for full branch parity
+  try { sqlite.exec("ALTER TABLE rentals ADD COLUMN is_prepared INTEGER DEFAULT 0"); } catch {}
+  try { sqlite.exec("ALTER TABLE rentals ADD COLUMN prepared_at TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE rentals ADD COLUMN prepared_by INTEGER"); } catch {}
+  try { sqlite.exec("ALTER TABLE rentals ADD COLUMN prep_notes TEXT"); } catch {}
+
+  try { sqlite.exec("ALTER TABLE branches ADD COLUMN cashier_footer TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE branches ADD COLUMN rental_footer TEXT"); } catch {}
+
+  try { sqlite.exec("ALTER TABLE order_items ADD COLUMN size TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE return_items ADD COLUMN discount REAL DEFAULT 0"); } catch {}
+  try { sqlite.exec("ALTER TABLE return_items ADD COLUMN discount_type TEXT DEFAULT 'amount'"); } catch {}
+
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN extra_phone TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN email TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN address TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN city TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN country TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN supplier_type TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN company_name TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN tax_id TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN payment_method TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN payment_terms TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN currency TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN moq INTEGER"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN lead_time INTEGER"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN rating REAL"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN total_paid REAL DEFAULT 0"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN purchase_count INTEGER DEFAULT 0"); } catch {}
+  try { sqlite.exec("ALTER TABLE suppliers ADD COLUMN logo_url TEXT"); } catch {}
+
+  try { sqlite.exec("ALTER TABLE supply_records ADD COLUMN supplier_transaction_id INTEGER"); } catch {}
+
+  try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN occurred_at TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN reported_by INTEGER"); } catch {}
+  try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN status TEXT DEFAULT 'pending'"); } catch {}
+
+  try { sqlite.exec("ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1"); } catch {}
+  try { sqlite.exec("ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0"); } catch {}
+
+  try { sqlite.exec("ALTER TABLE stock_transfers ADD COLUMN updated_at TEXT"); } catch {}
+
+
+  // Update existing menswear categories from 'both' to 'men' so women branch (Branch 10) does not see them
+  try {
+    sqlite.exec(`
+      UPDATE inventory 
+      SET gender = 'men' 
+      WHERE (gender IS NULL OR gender = 'both') 
+        AND (
+          category LIKE '%SUIT%' 
+          OR category LIKE '%suit%' 
+          OR category LIKE '%بدل%' 
+          OR category IN ('بنطلون', 'قميص', 'قمصان', 'تيشيرت', 'ترنج', 'WALLET', 'KIDS')
+        );
+    `);
+  } catch {}
+
+  try {
+    const allBranchUsers = sqlite.prepare("SELECT id, username, role, permissions, branch_id, branch_scope, branch_ids FROM users").all();
+    const requiredBranchPerms = [
+      'Dashboard.html',
+      'index.html',
+      'Barcodes.html',
+      'Customers.html',
+      'Suppliers.html',
+      'Alterations.html',
+      'Tailoring.html',
+      'Expenses.html',
+      'Reports.html',
+      'Employees.html',
+      'WornProducts.html',
+      'Rentals.html',
+      'RentalInventory.html',
+      'inventory_admin',
+    ];
+
+    for (const u of allBranchUsers) {
+      if (u.role === 'admin') continue;
+      let perms = [];
+      try {
+        perms = JSON.parse(u.permissions || '[]');
+      } catch {
+        perms = [];
+      }
+      for (const p of requiredBranchPerms) {
+        if (!perms.includes(p)) perms.push(p);
+      }
+
+      let bScope = u.branch_scope || 'single';
+      let bIds = u.branch_ids || '[]';
+      if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
+        bScope = 'selected';
+        bIds = '[9, 10]';
+      }
+
+      sqlite.prepare(`
+        UPDATE users 
+        SET branch_scope = ?, 
+            branch_ids = ?,
+            permissions = ?
+        WHERE id = ?
+      `).run(bScope, bIds, JSON.stringify(perms), u.id);
+    }
+  } catch (err) {
+    console.warn('Error updating all branch users in SQLite:', err.message);
+  }
 
   try {
     sqlite.exec("ALTER TABLE orders ADD COLUMN branch_invoice_number TEXT");

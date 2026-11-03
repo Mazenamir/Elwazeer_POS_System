@@ -9,7 +9,7 @@ router.get('/public/settings', controller.getPublicSettings);
 
 // Protected settings endpoints
 router.get('/settings', requirePermission('Settings.html'), controller.getSettings);
-router.post('/settings', requirePermission('Settings.html'), controller.saveSettings);
+router.post('/settings', requireAdmin, controller.saveSettings);
 
 // Database backup & restore endpoints
 router.get('/backup/groups', requireAdmin, controller.getBackupGroups);
@@ -18,5 +18,8 @@ router.post('/backup/restore', requireAdmin, controller.restoreBackup);
 
 // Administrative reset endpoint
 router.post('/reset', requireAdmin, controller.resetSystem);
+
+// Audit logging endpoint
+router.get('/audit-logs', requireAdmin, controller.getAuditLogs);
 
 module.exports = router;

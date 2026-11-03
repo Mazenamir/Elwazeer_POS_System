@@ -66,6 +66,16 @@ async function resetSystem(req, res, next) {
   }
 }
 
+async function getAuditLogs(req, res, next) {
+  try {
+    const auditService = require('../audit/audit.service');
+    const logs = await auditService.listAuditLogs(req.query);
+    res.json(logs);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getPublicSettings,
   getSettings,
@@ -74,4 +84,5 @@ module.exports = {
   exportBackup,
   restoreBackup,
   resetSystem,
+  getAuditLogs,
 };

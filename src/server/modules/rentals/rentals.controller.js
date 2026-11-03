@@ -11,6 +11,15 @@ async function listRentalInventory(req, res, next) {
 
 async function createRentalInventory(req, res, next) {
   try {
+    if (req.file) {
+      req.body.image_url = `/uploads/${req.file.filename}`;
+    }
+    if (typeof req.body.sizes === 'string') {
+      try { req.body.sizes = JSON.parse(req.body.sizes); } catch {}
+    }
+    if (typeof req.body.branch_stocks === 'string') {
+      try { req.body.branch_stocks = JSON.parse(req.body.branch_stocks); } catch {}
+    }
     const result = await service.createRentalInventory(req.body, req.user);
     res.json(result);
   } catch (err) {

@@ -1,13 +1,16 @@
 const express = require('express');
 const controller = require('./rentals.controller');
 const { requirePermission } = require('../../middleware/auth.middleware');
+const { productUploadMiddleware } = require('../../middleware/upload.middleware');
+const { requireBranchRentalsEnabled } = require('../../middleware/branchScope.middleware');
 
 const router = express.Router();
+router.use(requireBranchRentalsEnabled);
 
 // Rental Inventory - Specific routes before parameterized :id
 router.get('/rental-inventory', requirePermission('Rentals.html', 'RentalInventory.html'), controller.listRentalInventory);
 router.get('/rental-inventory/categories', requirePermission('Rentals.html', 'RentalInventory.html'), controller.getRentalCategories);
-router.post('/rental-inventory', requirePermission('Rentals.html', 'RentalInventory.html'), controller.createRentalInventory);
+router.post('/rental-inventory', requirePermission('Rentals.html', 'RentalInventory.html'), productUploadMiddleware, controller.createRentalInventory);
 router.post('/rental-inventory/transfer-from-sales', requirePermission('Rentals.html', 'RentalInventory.html'), controller.transferFromSales);
 router.get('/rental-inventory/:id/availability', requirePermission('Rentals.html', 'RentalInventory.html'), controller.checkAvailability);
 router.put('/rental-inventory/:id', requirePermission('Rentals.html', 'RentalInventory.html'), controller.updateRentalInventory);

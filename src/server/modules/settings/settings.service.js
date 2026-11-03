@@ -60,11 +60,13 @@ async function getPublicSettings() {
   return result;
 }
 
-function isAhmedUser(user) {
-  if (!user || !user.username) return false;
-  const u = String(user.username).trim().toLowerCase();
-  return u === 'احمد' || u === 'ahmed' || u.includes('احمد') || u.includes('ahmed');
-}
+const SENSITIVE_PASSWORD_KEYS = [
+  'profit_password',
+  'salary_password',
+  'invoice_edit_password',
+  'return_password',
+  'inventory_password',
+];
 
 async function getSettings(user = null) {
   const result = { ...DEFAULT_SETTINGS };
@@ -76,9 +78,11 @@ async function getSettings(user = null) {
     for (const r of rows) result[r.key] = r.value;
   }
 
-  // If user is not 'احمد', do not expose the profit_password
-  if (user && !isAhmedUser(user)) {
-    result.profit_password = '';
+  // Never expose plaintext sensitive passwords or hashes in settings responses
+  for (const key of Object.keys(result)) {
+    if (key.endsWith('_hash') || key.includes('password')) {
+      delete result[key];
+    }
   }
 
   return result;
@@ -87,25 +91,18 @@ async function getSettings(user = null) {
 async function saveSettings(settingsObj, user = null) {
   const entriesToSave = { ...settingsObj };
 
-  // Only user 'احمد' is authorized to change profit_password
-  if (entriesToSave.profit_password !== undefined) {
-    if (!isAhmedUser(user)) {
-      let currentProfitPassword = '123';
-      if (config.IS_BRANCH_MODE) {
-        const row = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'profit_password'").get();
-        if (row?.value) currentProfitPassword = row.value;
-      } else {
-        const { rows } = await db.query("SELECT value FROM settings WHERE key = 'profit_password'");
-        if (rows.length > 0 && rows[0].value) currentProfitPassword = rows[0].value;
-      }
-
-      if (String(entriesToSave.profit_password).trim() !== String(currentProfitPassword).trim()) {
-        const err = new Error('تعديل كلمة سر عرض الأرباح متاح حصرياً لحساب المستخدم (احمد)');
-        err.statusCode = 403;
+  // Disallow raw plaintext password saves or direct hash modification; require using /api/sensitive-passwords
+  for (const key of Object.keys(entriesToSave)) {
+    if (key.endsWith('_hash') || key.includes('password')) {
+      if (entriesToSave[key] !== undefined && entriesToSave[key] !== null && String(entriesToSave[key]).trim() !== '') {
+        const err = new Error('تعديل كلمات المرور للعمليات الحساسة يتم حصرياً عبر واجهة إدارة كلمات السر الحساسة (/api/sensitive-passwords)');
+        err.statusCode = 400;
         throw err;
-      } else {
-        delete entriesToSave.profit_password;
       }
+      delete entriesToSave[key];
+    }
+    if (key.startsWith('has_')) {
+      delete entriesToSave[key];
     }
   }
 

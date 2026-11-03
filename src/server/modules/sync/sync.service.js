@@ -822,6 +822,150 @@ async function applyOperation(operation) {
         }
         await tx.query("UPDATE rentals SET status = 'sold', actual_return_date = CURRENT_DATE, total_price = $1 WHERE id = $2", [sellPrice, rental.id]);
       }
+      return;
+    }
+
+    if (operation.entity_type === 'product' || operation.entity_type === 'inventory') {
+      const branchId = payload.branch_id || operation.branch_id || 1;
+      const initialStock = Number(payload.stock_level ?? 0);
+
+      if (operation.action === 'create') {
+        let existing = null;
+        if (payload.barcode) {
+          const check = await tx.query('SELECT id FROM inventory WHERE barcode = $1 LIMIT 1', [payload.barcode]);
+          if (check.rows.length) existing = check.rows[0];
+        }
+        if (!existing) {
+          const insertRes = await tx.query(
+            `INSERT INTO inventory (
+              name, category, size_cut, color, barcode, stock_level, min_stock_level,
+              preferred_supplier_id, price, cost_price, image_url, is_deleted,
+              color_id, size_id, wholesale_price, semi_wholesale_price, gender
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE, $12, $13, $14, $15, $16)
+            RETURNING id`,
+            [
+              payload.name,
+              payload.category || null,
+              payload.size_cut || null,
+              payload.color || null,
+              payload.barcode || null,
+              initialStock,
+              payload.min_stock_level || 5,
+              payload.preferred_supplier_id || null,
+              payload.price || 0,
+              payload.cost_price || 0,
+              payload.image_url || null,
+              payload.color_id || null,
+              payload.size_id || null,
+              payload.wholesale_price || 0,
+              payload.semi_wholesale_price || 0,
+              payload.gender || 'both',
+            ]
+          );
+          existing = insertRes.rows[0];
+        }
+
+        if (existing && branchId) {
+          await tx.query(
+            `INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (inventory_id, branch_id)
+             DO UPDATE SET stock_level = EXCLUDED.stock_level`,
+            [existing.id, branchId, initialStock]
+          );
+        }
+      } else if (operation.action === 'update') {
+        const prodId = payload.id || operation.entity_id;
+        if (prodId) {
+          await tx.query(
+            `UPDATE inventory
+             SET name = COALESCE($1, name),
+                 category = COALESCE($2, category),
+                 size_cut = COALESCE($3, size_cut),
+                 color = COALESCE($4, color),
+                 barcode = COALESCE($5, barcode),
+                 min_stock_level = COALESCE($6, min_stock_level),
+                 preferred_supplier_id = COALESCE($7, preferred_supplier_id),
+                 price = COALESCE($8, price),
+                 cost_price = COALESCE($9, cost_price),
+                 image_url = COALESCE($10, image_url),
+                 color_id = COALESCE($11, color_id),
+                 size_id = COALESCE($12, size_id),
+                 wholesale_price = COALESCE($13, wholesale_price),
+                 semi_wholesale_price = COALESCE($14, semi_wholesale_price),
+                 gender = COALESCE($15, gender)
+             WHERE id = $16`,
+            [
+              payload.name || null,
+              payload.category || null,
+              payload.size_cut || null,
+              payload.color || null,
+              payload.barcode || null,
+              payload.min_stock_level !== undefined ? payload.min_stock_level : null,
+              payload.preferred_supplier_id || null,
+              payload.price !== undefined ? payload.price : null,
+              payload.cost_price !== undefined ? payload.cost_price : null,
+              payload.image_url || null,
+              payload.color_id || null,
+              payload.size_id || null,
+              payload.wholesale_price !== undefined ? payload.wholesale_price : null,
+              payload.semi_wholesale_price !== undefined ? payload.semi_wholesale_price : null,
+              payload.gender || null,
+              prodId,
+            ]
+          );
+        }
+      }
+      return;
+    }
+
+    if (operation.entity_type === 'employee') {
+      const branchId = payload.branch_id || operation.branch_id || 1;
+      if (operation.action === 'create') {
+        await tx.query(
+          `INSERT INTO employees (name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end)
+           VALUES ($1, $2, $3, $4, $5, COALESCE($6::date, CURRENT_DATE), COALESCE($7, 'active'), $8, $9)`,
+          [
+            payload.name,
+            payload.position || null,
+            branchId,
+            payload.basic_salary || 0,
+            payload.phone || null,
+            payload.join_date || null,
+            payload.status || 'active',
+            payload.shift_start || null,
+            payload.shift_end || null,
+          ]
+        );
+      } else if (operation.action === 'update') {
+        const empId = payload.id || operation.entity_id;
+        if (empId) {
+          await tx.query(
+            `UPDATE employees
+             SET name = COALESCE($1, name),
+                 position = COALESCE($2, position),
+                 branch_id = COALESCE($3, branch_id),
+                 basic_salary = COALESCE($4, basic_salary),
+                 phone = COALESCE($5, phone),
+                 shift_start = COALESCE($6, shift_start),
+                 shift_end = COALESCE($7, shift_end),
+                 status = COALESCE($8, status)
+             WHERE id = $9`,
+            [
+              payload.name || null,
+              payload.position || null,
+              payload.branch_id || null,
+              payload.basic_salary !== undefined ? payload.basic_salary : null,
+              payload.phone || null,
+              payload.shift_start || null,
+              payload.shift_end || null,
+              payload.status || null,
+              empId,
+            ]
+          );
+        }
+      }
+      return;
     }
   });
 }
@@ -1029,19 +1173,19 @@ async function exportCatalogForBranch(branchId = null) {
     employeesRes,
     suppliersRes,
   ] = await Promise.all([
-    db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id FROM users'),
-    db.query('SELECT id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender FROM branches'),
-    db.query('SELECT id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted FROM inventory WHERE is_deleted = FALSE'),
+    db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users'),
+    db.query('SELECT id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender, rentals_enabled FROM branches'),
+    db.query('SELECT id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted, color_id, size_id, wholesale_price, semi_wholesale_price, gender FROM inventory WHERE is_deleted = FALSE'),
     db.query('SELECT inventory_id, branch_id, stock_level FROM inventory_branches'),
-    db.query('SELECT id, name, category, size_cut, color, barcode, price, image_url, is_deleted FROM rental_inventory WHERE is_deleted = FALSE'),
+    db.query('SELECT id, name, category, size_cut, color, barcode, price, image_url, is_deleted, color_id, size_id, gender FROM rental_inventory WHERE is_deleted = FALSE'),
     db.query('SELECT rental_inventory_id, branch_id, stock_level FROM rental_inventory_branches'),
     db.query('SELECT id, name FROM colors'),
     db.query('SELECT id, name FROM sizes'),
     db.query('SELECT inventory_id, size_id, size_name, color_name, barcode, stock_level, branch_id FROM inventory_sizes'),
     db.query('SELECT key, value FROM settings'),
     db.query('SELECT id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid FROM customers'),
-    db.query("SELECT id, name, position, branch_id, basic_salary, phone, status FROM employees WHERE status = 'active'"),
-    db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at FROM suppliers'),
+    db.query("SELECT id, name, position, branch_id, basic_salary, phone, status, shift_start, shift_end FROM employees WHERE status = 'active'"),
+    db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code FROM suppliers'),
   ]);
 
   return {
@@ -1072,27 +1216,47 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // 1. Users
     if (Array.isArray(catalog.users)) {
       const uStmt = sqlite.prepare(`
-        INSERT INTO users (id, username, password_hash, role, branch_id, permissions, employee_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO users (id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           username = excluded.username,
           password_hash = excluded.password_hash,
           role = excluded.role,
           branch_id = excluded.branch_id,
           permissions = excluded.permissions,
-          employee_id = excluded.employee_id
+          employee_id = excluded.employee_id,
+          full_name = COALESCE(excluded.full_name, users.full_name),
+          branch_scope = COALESCE(excluded.branch_scope, users.branch_scope),
+          branch_ids = COALESCE(excluded.branch_ids, users.branch_ids)
       `);
       for (const u of catalog.users) {
-        const perms = typeof u.permissions === 'object' ? JSON.stringify(u.permissions) : (u.permissions || '[]');
-        uStmt.run(u.id, u.username, u.password_hash, u.role, u.branch_id, perms, u.employee_id || null);
+        let perms = [];
+        try {
+          perms = typeof u.permissions === 'string' ? JSON.parse(u.permissions) : (u.permissions || []);
+        } catch {
+          perms = [];
+        }
+        if (u.role !== 'admin') {
+          const reqPerms = ['Dashboard.html', 'index.html', 'Barcodes.html', 'Customers.html', 'Suppliers.html', 'Alterations.html', 'Tailoring.html', 'Expenses.html', 'Reports.html', 'Employees.html', 'WornProducts.html', 'Rentals.html', 'RentalInventory.html', 'inventory_admin'];
+          for (const p of reqPerms) {
+            if (!perms.includes(p)) perms.push(p);
+          }
+        }
+        let bScope = u.branch_scope || 'single';
+        let bIds = typeof u.branch_ids === 'object' ? JSON.stringify(u.branch_ids) : (u.branch_ids || '[]');
+        if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
+          bScope = 'selected';
+          bIds = '[9, 10]';
+        }
+        uStmt.run(u.id, u.username, u.password_hash, u.role, u.branch_id, JSON.stringify(perms), u.employee_id || null, u.full_name || null, bScope, bIds);
       }
     }
 
     // 2. Branches
     if (Array.isArray(catalog.branches)) {
       const bStmt = sqlite.prepare(`
-        INSERT INTO branches (id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO branches (id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender, rentals_enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           location = excluded.location,
@@ -1106,15 +1270,20 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           invoice_logo_bg_enabled = excluded.invoice_logo_bg_enabled,
           invoice_logo_bg_start = excluded.invoice_logo_bg_start,
           invoice_logo_bg_end = excluded.invoice_logo_bg_end,
-          allowed_gender = excluded.allowed_gender
+          allowed_gender = excluded.allowed_gender,
+          rentals_enabled = excluded.rentals_enabled
       `);
       for (const b of catalog.branches) {
+        let gender = b.allowed_gender || 'both';
+        if ([2, 3, 4, 5, 6, 7, 8, 9].includes(Number(b.id))) gender = 'men';
+        if (Number(b.id) === 10) gender = 'women';
         bStmt.run(
           b.id, b.name, b.location || null, b.type || null, b.is_main_warehouse ? 1 : 0,
           b.phone || null, b.logo_url || null, b.invoice_logo_height || 160, b.invoice_logo_spacing || 8,
           b.invoice_logo_filter || 'black', b.invoice_logo_bg_enabled ? 1 : 0,
           b.invoice_logo_bg_start || '#ffffff', b.invoice_logo_bg_end || '#ffffff',
-          b.allowed_gender || 'both'
+          gender,
+          b.rentals_enabled !== undefined ? (b.rentals_enabled ? 1 : 0) : 1
         );
       }
     }
@@ -1134,8 +1303,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // 4. Inventory
     if (Array.isArray(catalog.inventory)) {
       const invStmt = sqlite.prepare(`
-        INSERT INTO inventory (id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO inventory (id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted, color_id, size_id, wholesale_price, semi_wholesale_price, gender)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           category = excluded.category,
@@ -1148,14 +1317,20 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           price = excluded.price,
           cost_price = excluded.cost_price,
           image_url = excluded.image_url,
-          is_deleted = excluded.is_deleted
+          is_deleted = excluded.is_deleted,
+          color_id = excluded.color_id,
+          size_id = excluded.size_id,
+          wholesale_price = excluded.wholesale_price,
+          semi_wholesale_price = excluded.semi_wholesale_price,
+          gender = excluded.gender
       `);
       for (const i of catalog.inventory) {
         invStmt.run(
           i.id, i.name, i.category || null, i.size_cut || null, i.color || null,
           i.barcode || null, i.stock_level || 0, i.min_stock_level || 5,
           i.preferred_supplier_id || null, i.price || 0, i.cost_price || 0,
-          i.image_url || null, i.is_deleted ? 1 : 0
+          i.image_url || null, i.is_deleted ? 1 : 0,
+          i.color_id || null, i.size_id || null, i.wholesale_price || 0, i.semi_wholesale_price || 0, i.gender || 'both'
         );
       }
     }
@@ -1175,8 +1350,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // 6. Rental Inventory
     if (Array.isArray(catalog.rental_inventory)) {
       const riStmt = sqlite.prepare(`
-        INSERT INTO rental_inventory (id, name, category, size_cut, color, barcode, price, image_url, is_deleted, stock_level)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO rental_inventory (id, name, category, size_cut, color, barcode, price, image_url, is_deleted, stock_level, color_id, size_id, gender)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           category = excluded.category,
@@ -1186,12 +1361,16 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           price = excluded.price,
           image_url = excluded.image_url,
           is_deleted = excluded.is_deleted,
-          stock_level = excluded.stock_level
+          stock_level = excluded.stock_level,
+          color_id = excluded.color_id,
+          size_id = excluded.size_id,
+          gender = excluded.gender
       `);
       for (const ri of catalog.rental_inventory) {
         riStmt.run(
           ri.id, ri.name, ri.category || null, ri.size_cut || null, ri.color || null,
-          ri.barcode || null, ri.price || 0, ri.image_url || null, ri.is_deleted ? 1 : 0, ri.stock_level || 0
+          ri.barcode || null, ri.price || 0, ri.image_url || null, ri.is_deleted ? 1 : 0, ri.stock_level || 0,
+          ri.color_id || null, ri.size_id || null, ri.gender || 'both'
         );
       }
     }
@@ -1290,26 +1469,38 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // 10. Employees
     if (Array.isArray(catalog.employees)) {
       const empStmt = sqlite.prepare(`
-        INSERT INTO employees (id, name, position, branch_id, basic_salary, phone, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (id, name, position, branch_id, basic_salary, phone, status, shift_start, shift_end)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           position = excluded.position,
           branch_id = excluded.branch_id,
           basic_salary = excluded.basic_salary,
           phone = excluded.phone,
-          status = excluded.status
+          status = excluded.status,
+          shift_start = excluded.shift_start,
+          shift_end = excluded.shift_end
       `);
       for (const emp of catalog.employees) {
-        empStmt.run(emp.id, emp.name, emp.position || null, emp.branch_id || null, Number(emp.basic_salary || 0), emp.phone || null, emp.status || 'active');
+        empStmt.run(
+          emp.id,
+          emp.name,
+          emp.position || null,
+          emp.branch_id || null,
+          Number(emp.basic_salary || 0),
+          emp.phone || null,
+          emp.status || 'active',
+          emp.shift_start || null,
+          emp.shift_end || null
+        );
       }
     }
 
     // 11. Suppliers
     if (Array.isArray(catalog.suppliers)) {
       const supStmt = sqlite.prepare(`
-        INSERT INTO suppliers (id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+        INSERT INTO suppliers (id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           initials = excluded.initials,
@@ -1319,7 +1510,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           supply_type = excluded.supply_type,
           balance = excluded.balance,
           status = excluded.status,
-          created_at = COALESCE(excluded.created_at, suppliers.created_at)
+          created_at = COALESCE(excluded.created_at, suppliers.created_at),
+          code = excluded.code
       `);
       for (const sup of catalog.suppliers) {
         const createdAtStr = sup.created_at
@@ -1335,7 +1527,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           sup.supply_type || null,
           Number(sup.balance || 0),
           sup.status || 'active',
-          createdAtStr
+          createdAtStr,
+          sup.code || null
         );
       }
     }

@@ -55,8 +55,8 @@ class AutoUpdateManager extends EventEmitter {
     this.edition = (options.edition || envMode).toLowerCase();
     this.appId = options.appId || (this.edition === 'branch' ? 'com.bebyoon.branch.system' : 'com.bebyoon.system');
     this.channel = options.channel || (this.edition === 'branch' ? 'branch' : 'latest');
-    let defaultVer = '1.0.9';
-    try { defaultVer = require('../../package.json').version || '1.0.9'; } catch (_) {}
+    let defaultVer = '1.1.0';
+    try { defaultVer = require('../../package.json').version || '1.1.0'; } catch (_) {}
     this.currentVersion = options.currentVersion || (this.app?.getVersion ? this.app.getVersion() : defaultVer);
     this.publicKeyPem = options.publicKeyPem || DEFAULT_UPDATE_PUBLIC_KEY_PEM;
 

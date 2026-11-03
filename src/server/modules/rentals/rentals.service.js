@@ -10,6 +10,7 @@ const { normalizeBarcodeInput, getAvailableBarcode, assertBarcodeAvailable, gene
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { getRentalAvailability, getRentalGroupRows, getOrCreateSalesInventoryForRental } = require('./rentals.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
+const { hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
 
 function isValidIsoDate(str) {
   if (typeof str !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
@@ -28,22 +29,24 @@ async function listRentalInventory(query = {}, user = null, req = null) {
 
   let branchJoinFilter = '';
   const params = [];
-  if (targetRentalBranchId) {
-    params.push(targetRentalBranchId);
-    branchJoinFilter = `AND rib.branch_id = $${params.length}`;
-  }
-
   const where = ['ri.is_deleted = FALSE'];
   if (targetRentalBranchId) {
     params.push(targetRentalBranchId);
+    const branchParamIdx = params.length;
+    branchJoinFilter = `AND rib.branch_id = $${branchParamIdx}`;
     const stockFilter = (query.stock_status === 'in_stock' || query.only_branch === 'true' || query.branch_only === 'true')
       ? 'AND rib_filter.stock_level > 0'
       : '';
     where.push(`EXISTS (
       SELECT 1 FROM rental_inventory_branches rib_filter
       WHERE rib_filter.rental_inventory_id = ri.id
-        AND rib_filter.branch_id = $${params.length}
+        AND rib_filter.branch_id = $${branchParamIdx}
         ${stockFilter}
+    )`);
+    where.push(`(
+      (SELECT allowed_gender FROM branches WHERE id = $${branchParamIdx}) = 'both'
+      OR ri.gender = 'both'
+      OR ri.gender = (SELECT allowed_gender FROM branches WHERE id = $${branchParamIdx})
     )`);
   }
 
@@ -118,15 +121,69 @@ async function listRentalInventory(query = {}, user = null, req = null) {
 }
 
 async function createRentalInventory(body, user) {
-  let { name, category, size_cut, color, barcode, image_url, branch_stocks, stock_level, price, rental_price } = body || {};
+  let { name, category, size_cut, color, barcode, image_url, branch_stocks, stock_level, price, rental_price, gender, sizes } = body || {};
   barcode = normalizeBarcodeInput(barcode);
   const itemPrice = Number(price ?? rental_price ?? 0) || 0;
+  const itemGender = gender || 'both';
 
   if (isBranchScopedUser(user)) {
     branch_stocks = [{ branch_id: user.branch_id, stock_level: stock_level || 0 }];
   }
 
+  const targetBranch = user?.branch_id || (Array.isArray(branch_stocks) && branch_stocks[0]?.branch_id);
+  if (targetBranch) {
+    const { isBranchRentalsEnabled } = require('../../middleware/branchScope.middleware');
+    if (!await isBranchRentalsEnabled(targetBranch)) {
+      const err = new Error('قسم التأجير معطل في هذا الفرع');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
   const item = await db.transaction(async (tx) => {
+    if (sizes && Array.isArray(sizes) && sizes.length > 0) {
+      let firstItem = null;
+      for (const s of sizes) {
+        const sQty = Math.max(0, Number(s.stock_level) || 0);
+        const sName = String(s.size_name || size_cut || '').trim();
+        const sColor = String(s.color_name || color || '').trim();
+        let sBarcode = s.barcode ? normalizeBarcodeInput(s.barcode) : null;
+        if (sBarcode) {
+          try {
+            await assertBarcodeAvailable(tx, sBarcode);
+          } catch {
+            sBarcode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+          }
+        } else {
+          sBarcode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+        }
+
+        const { rows } = await tx.query(
+          `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url, gender) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+          [name, category, sName, sColor, sBarcode, itemPrice, image_url, itemGender]
+        );
+        const newItem = rows[0];
+        if (!firstItem) firstItem = newItem;
+
+        const effectiveStocks = Array.isArray(branch_stocks) && branch_stocks.length > 0
+          ? branch_stocks
+          : (targetBranch ? [{ branch_id: targetBranch, stock_level: sQty }] : []);
+
+        for (const bs of effectiveStocks) {
+          if (bs.branch_id) {
+            const bQty = bs.branch_id === targetBranch ? sQty : Number(bs.stock_level || 0);
+            await tx.query(
+              `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level) VALUES ($1, $2, $3)
+               ON CONFLICT (rental_inventory_id, branch_id) DO UPDATE SET stock_level = $3`,
+              [newItem.id, bs.branch_id, bQty]
+            );
+          }
+        }
+      }
+      return firstItem;
+    }
+
     if (barcode) {
       await assertBarcodeAvailable(tx, barcode);
     } else {
@@ -134,9 +191,9 @@ async function createRentalInventory(body, user) {
     }
 
     const { rows } = await tx.query(
-      `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [name, category, size_cut, color, barcode, itemPrice, image_url]
+      `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url, gender) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [name, category, size_cut, color, barcode, itemPrice, image_url, itemGender]
     );
     const newItem = rows[0];
 
@@ -318,7 +375,7 @@ async function transferFromSales(body, user) {
   }
 
   if (isBranchScopedUser(user)) {
-    if (from_branch != user.branch_id || to_branch != user.branch_id) {
+    if (!hasBranchAccess(user, from_branch) || !hasBranchAccess(user, to_branch)) {
       const err = new Error('غير مسموح بالتحويل لفرع آخر');
       err.statusCode = 403;
       throw err;
@@ -369,11 +426,15 @@ async function transferFromSales(body, user) {
             }
           } else {
             let newBarcode = invItem.barcode ? normalizeBarcodeInput(`${invItem.barcode}${sr.size_id || 9}`) : null;
-            newBarcode = await getAvailableBarcode(tx, newBarcode);
+            try {
+              newBarcode = await getAvailableBarcode(tx, newBarcode);
+            } catch {
+              newBarcode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+            }
             const insRes = await tx.query(
-              `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url)
-               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-              [transferredItemName, invItem.category, sName, sColor, newBarcode, effectiveRentalPrice, invItem.image_url]
+              `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url, gender)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+              [transferredItemName, invItem.category, sName, sColor, newBarcode, effectiveRentalPrice, invItem.image_url, invItem.gender || 'both']
             );
             rId = insRes.rows[0].id;
           }
@@ -418,11 +479,15 @@ async function transferFromSales(body, user) {
           rentalItemId = rentalInvRes.rows[0].id;
         } else {
           let newBarcode = invItem.barcode ? normalizeBarcodeInput(`${invItem.barcode}9`) : null;
-          newBarcode = await getAvailableBarcode(tx, newBarcode);
+          try {
+            newBarcode = await getAvailableBarcode(tx, newBarcode);
+          } catch {
+            newBarcode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+          }
           const newRentalRes = await tx.query(
-            `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-            [transferredItemName, invItem.category, invItem.size_cut, effectiveColor, newBarcode, effectiveRentalPrice, invItem.image_url]
+            `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url, gender) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+            [transferredItemName, invItem.category, invItem.size_cut, effectiveColor, newBarcode, effectiveRentalPrice, invItem.image_url, invItem.gender || 'both']
           );
           rentalItemId = newRentalRes.rows[0].id;
         }
@@ -484,11 +549,15 @@ async function transferFromSales(body, user) {
         }
       } else {
         let newBarcode = invItem.barcode ? normalizeBarcodeInput(`${invItem.barcode}${effectiveSize || '9'}`) : null;
-        newBarcode = await getAvailableBarcode(tx, newBarcode);
+        try {
+          newBarcode = await getAvailableBarcode(tx, newBarcode);
+        } catch {
+          newBarcode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+        }
         const newRentalRes = await tx.query(
-          `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url) 
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-          [transferredItemName, invItem.category, targetSize, effectiveColor, newBarcode, effectiveRentalPrice, invItem.image_url]
+          `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url, gender) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+          [transferredItemName, invItem.category, targetSize, effectiveColor, newBarcode, effectiveRentalPrice, invItem.image_url, invItem.gender || 'both']
         );
         rentalItemId = newRentalRes.rows[0].id;
 
@@ -807,7 +876,15 @@ async function listRentals(query = {}, user = null, req = null) {
           customArr = typeof r.custom_items === 'string' ? JSON.parse(r.custom_items) : r.custom_items;
         } catch {}
       }
-      const baseItems = Array.isArray(r.items) ? r.items.filter((it) => it && (it.rental_inventory_id || it.product_name)) : [];
+      let itemsList = r.items;
+      if (typeof itemsList === 'string') {
+        try { itemsList = JSON.parse(itemsList); } catch {}
+      }
+      let rentalIds = r.rental_ids;
+      if (typeof rentalIds === 'string') {
+        try { rentalIds = JSON.parse(rentalIds); } catch {}
+      }
+      const baseItems = Array.isArray(itemsList) ? itemsList.filter((it) => it && (it.rental_inventory_id || it.product_name)) : [];
       const allItems = [...baseItems, ...(Array.isArray(customArr) ? customArr : [])];
       let splits = null;
       if (r.payment_splits) {
@@ -865,6 +942,16 @@ async function createRental(body, user, req) {
     offline_uuid,
     rental_group_uuid,
   } = body || {};
+
+  const targetBranch = branch_id || user?.branch_id;
+  if (targetBranch) {
+    const { isBranchRentalsEnabled } = require('../../middleware/branchScope.middleware');
+    if (!await isBranchRentalsEnabled(targetBranch)) {
+      const err = new Error('قسم التأجير معطل في هذا الفرع');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
 
   const customItemsList = Array.isArray(custom_items)
     ? custom_items
@@ -1164,7 +1251,7 @@ async function pickupRental(id, user) {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
     const branchId = rentals[0].branch_id;
 
-    if (user && user.role === 'branch_user' && Number(branchId) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, branchId)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -1218,7 +1305,7 @@ async function cancelRental(id, user, req) {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
     const branchId = rentals[0].branch_id;
 
-    if (user && user.role === 'branch_user' && Number(branchId) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, branchId)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -1271,7 +1358,7 @@ async function returnRental(id, bodyOrFine, user, req) {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
     const branchId = rentals[0].branch_id;
 
-    if (user && user.role === 'branch_user' && Number(branchId) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, branchId)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -1485,7 +1572,7 @@ async function settleRentalPayment(id, body, user, req) {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
     const branchId = rentals[0].branch_id;
 
-    if (user && user.role === 'branch_user' && Number(branchId) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, branchId)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -1647,7 +1734,7 @@ async function sellRental(id, sellPrice, paymentMethod, offlineUuid, user, req) 
     }
     const rental = rentalRes.rows[0];
 
-    if (user && user.role === 'branch_user' && Number(rental.branch_id) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, rental.branch_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -1750,7 +1837,7 @@ async function updateRentalStatus(id, newStatus, options = {}, user = null, req 
       throw err;
     }
     const branchId = rentals[0].branch_id;
-    if (user && user.role === 'branch_user' && Number(branchId) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, branchId)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -2334,7 +2421,7 @@ async function addRentalItems(id, body, user) {
 
     const mainRental = rentals[0];
     const b_id = mainRental.branch_id;
-    if (user && user.role === 'branch_user' && Number(b_id) !== Number(user.branch_id)) {
+    if (user && !hasBranchAccess(user, b_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;

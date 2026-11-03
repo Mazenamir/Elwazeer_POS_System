@@ -83,8 +83,35 @@ async function listOrders(query = {}, user = null, req = null) {
   const where = [`COALESCE(o.order_source, 'cashier') = 'cashier'`];
 
   if (user && user.role !== 'admin') {
-    params.push(user.branch_id);
-    where.push(`o.branch_id = $${params.length}`);
+    if (user.branch_scope === 'all') {
+      if (query.branch_id && query.branch_id !== 'all') {
+        params.push(query.branch_id);
+        where.push(`o.branch_id = $${params.length}`);
+      }
+    } else if (user.branch_scope === 'selected') {
+      const { getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
+      const authIds = getUserAuthorizedBranchIds(user);
+      if (query.branch_id && query.branch_id !== 'all') {
+        if (!authIds.includes(Number(query.branch_id))) {
+          const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+          err.statusCode = 403;
+          throw err;
+        }
+        params.push(query.branch_id);
+        where.push(`o.branch_id = $${params.length}`);
+      } else {
+        params.push(authIds);
+        where.push(`o.branch_id = ANY($${params.length})`);
+      }
+    } else {
+      if (query.branch_id && query.branch_id !== 'all' && Number(query.branch_id) !== Number(user.branch_id)) {
+        const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+        err.statusCode = 403;
+        throw err;
+      }
+      params.push(user.branch_id);
+      where.push(`o.branch_id = $${params.length}`);
+    }
   } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
     where.push(`o.branch_id = $${params.length}`);
@@ -168,10 +195,12 @@ async function createOrder(body, user, req) {
 
   const orderOfflineUuid = newUuid(offline_uuid);
 
-  if (user && user.role !== 'admin' && user.branch_id) {
-    branch_id = user.branch_id;
+  const { validateBranchAccess } = require('../../middleware/branchScope.middleware');
+  let targetBranch = branch_id ? parseInt(branch_id, 10) : (user?.branch_id || 1);
+  if (user) {
+    validateBranchAccess(user, targetBranch);
   }
-  const b_id = parseInt(branch_id, 10) || 1;
+  const b_id = targetBranch;
   const p_method = payment_method || 'cash';
 
   // Server mode: reject if database is unavailable
@@ -599,10 +628,9 @@ async function payRemaining(id, amount, paymentMethod, user, req) {
     }
 
     const order = rows[0];
-    if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
-      const err = new Error('Unauthorized');
-      err.statusCode = 403;
-      throw err;
+    if (user) {
+      const { validateBranchAccess } = require('../../middleware/branchScope.middleware');
+      validateBranchAccess(user, order.branch_id);
     }
 
     if (order.status === 'returned') {
@@ -799,17 +827,27 @@ async function updateOrder(id, body, user) {
     invoice_edit_password,
   } = body || {};
 
-  // SEC-02: Enforce invoice edit password verification on backend
+  // SEC-02: Enforce invoice edit password verification or single-use approval token on backend
   const authService = require('../auth/auth.service');
+  const sensitiveService = require('../auth/sensitivePassword.service');
   if (!user || user.role !== 'admin') {
-    if (!invoice_edit_password) {
-      const err = new Error('كلمة مرور تعديل الفاتورة مطلوبة');
-      err.statusCode = 403;
-      throw err;
-    }
-    const isValidPassword = await authService.verifyInvoiceEditPassword(invoice_edit_password);
-    if (!isValidPassword) {
-      const err = new Error('كلمة مرور تعديل الفاتورة غير صحيحة');
+    const approvalToken = body?.approval_token;
+    if (approvalToken) {
+      sensitiveService.consumeApprovalToken(approvalToken, {
+        op: 'invoice_edit',
+        user,
+        resourceId: id,
+        branchId: user?.branch_id,
+      });
+    } else if (invoice_edit_password) {
+      const isValidPassword = await authService.verifyInvoiceEditPassword(invoice_edit_password);
+      if (!isValidPassword) {
+        const err = new Error('كلمة مرور تعديل الفاتورة غير صحيحة');
+        err.statusCode = 403;
+        throw err;
+      }
+    } else {
+      const err = new Error('كلمة مرور تعديل الفاتورة مطلوبة أو رمز الموافقة مطلوب');
       err.statusCode = 403;
       throw err;
     }
@@ -835,6 +873,7 @@ async function updateOrder(id, body, user) {
     throw err;
   }
 
+  let currentOrder = null;
   await db.transaction(async (tx) => {
     // 1. Read & lock order inside transaction
     const { rows: orderRows } = await tx.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [resolvedId]);
@@ -844,11 +883,10 @@ async function updateOrder(id, body, user) {
       throw err;
     }
 
-    const currentOrder = orderRows[0];
-    if (user && user.role !== 'admin' && Number(currentOrder.branch_id) !== Number(user.branch_id)) {
-      const err = new Error('Unauthorized');
-      err.statusCode = 403;
-      throw err;
+    currentOrder = orderRows[0];
+    const { validateBranchAccess } = require('../../middleware/branchScope.middleware');
+    if (user) {
+      validateBranchAccess(user, currentOrder.branch_id);
     }
 
     if (currentOrder.status === 'returned') {
@@ -1154,6 +1192,17 @@ async function updateOrder(id, body, user) {
     }
   });
 
+  const auditService = require('../audit/audit.service');
+  await auditService.log({
+    userId: user?.id,
+    username: user?.username,
+    action: 'order_update',
+    resourceType: 'order',
+    resourceId: resolvedId,
+    branchId: currentOrder.branch_id,
+    outcome: 'success',
+  });
+
   return { message: 'تم تحديث الفاتورة بنجاح' };
 }
 
@@ -1167,9 +1216,23 @@ async function searchOrders(queryStr, branchId, user) {
       `COALESCE(o.order_source, 'cashier') = 'cashier'`,
     ];
 
-    if (user && user.role === 'branch_user') {
-      offParams.push(user.branch_id);
-      offWhere.push(`o.branch_id = $${offParams.length}`);
+    if (user && user.role !== 'admin') {
+      const { getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
+      const authIds = getUserAuthorizedBranchIds(user);
+      if (authIds !== null) {
+        if (branchId && branchId !== 'all') {
+          if (!authIds.includes(Number(branchId))) {
+            const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+            err.statusCode = 403;
+            throw err;
+          }
+          offParams.push(branchId);
+          offWhere.push(`o.branch_id = $${offParams.length}`);
+        } else {
+          offParams.push(authIds);
+          offWhere.push(`o.branch_id = ANY($${offParams.length})`);
+        }
+      }
     } else if (branchId && branchId !== 'all') {
       offParams.push(branchId);
       offWhere.push(`o.branch_id = $${offParams.length}`);
@@ -1199,7 +1262,7 @@ async function searchOrders(queryStr, branchId, user) {
        WHERE ${offWhere.join(' AND ')}
        GROUP BY o.id, c.name, c.phone, b.name, b.logo_url, b.phone, b.location
        ORDER BY o.order_date DESC
-       LIMIT 10`,
+       LIMIT 50`,
       offParams
     );
     return rows;
@@ -1212,9 +1275,23 @@ async function searchOrders(queryStr, branchId, user) {
     `COALESCE(o.order_source, 'cashier') = 'cashier'`,
   ];
 
-  if (user && user.role === 'branch_user') {
-    params.push(user.branch_id);
-    where.push(`o.branch_id = $${params.length}`);
+  if (user && user.role !== 'admin') {
+    const { getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
+    const authIds = getUserAuthorizedBranchIds(user);
+    if (authIds !== null) {
+      if (branchId && branchId !== 'all') {
+        if (!authIds.includes(Number(branchId))) {
+          const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
+          err.statusCode = 403;
+          throw err;
+        }
+        params.push(branchId);
+        where.push(`o.branch_id = $${params.length}`);
+      } else {
+        params.push(authIds);
+        where.push(`o.branch_id = ANY($${params.length})`);
+      }
+    }
   } else if (branchId && branchId !== 'all') {
     params.push(branchId);
     where.push(`o.branch_id = $${params.length}`);
@@ -1299,10 +1376,9 @@ async function createReturn(body, user, req) {
     }
 
     const orderBranchId = orderRow.branch_id;
-    if (user && user.role !== 'admin' && Number(orderBranchId) !== Number(user.branch_id)) {
-      const err = new Error('Unauthorized');
-      err.statusCode = 403;
-      throw err;
+    const { validateBranchAccess } = require('../../middleware/branchScope.middleware');
+    if (user) {
+      validateBranchAccess(user, orderBranchId);
     }
 
     branch_id = orderBranchId;
@@ -1522,6 +1598,18 @@ async function createReturn(body, user, req) {
     });
 
     return { returnId };
+  });
+
+  const auditService = require('../audit/audit.service');
+  await auditService.log({
+    userId: user?.id,
+    username: user?.username,
+    action: 'order_return',
+    resourceType: 'order',
+    resourceId: order_id,
+    branchId: branch_id,
+    outcome: 'success',
+    details: { total_return_amount, refund_method },
   });
 
   return { success: true, returnId: returnData.returnId };

@@ -1,6 +1,6 @@
 const express = require('express');
 const controller = require('./inventory.controller');
-const { requireInventoryAdmin } = require('../../middleware/rbac.middleware');
+const { requireInventoryAdmin, requirePermission } = require('../../middleware/rbac.middleware');
 const { productUploadMiddleware } = require('../../middleware/upload.middleware');
 
 const router = express.Router();
@@ -36,6 +36,10 @@ router.post('/inventory/transfers/:id/receive', controller.receiveTransfer);
 router.get('/inventory/transfers/logs', controller.listTransferLogs);
 router.get('/inventory/transfers', controller.listTransferLogs);
 
+const { requireSensitiveOperation } = require('../../middleware/sensitiveOperation.middleware');
+
+const requireInventoryPassword = requireSensitiveOperation('inventory', 'inventory_mutation');
+
 // Products CRUD
 router.get('/inventory/branch-matrix', controller.getBranchMatrix);
 router.post('/inventory/duplicate-check', controller.checkDuplicatesBatch);
@@ -45,7 +49,8 @@ router.get('/inventory', controller.listInventory);
 router.get('/products', controller.listInventory);
 router.get('/inventory/:id', controller.getInventoryById);
 router.post('/inventory', requireInventoryAdmin, productUploadMiddleware, controller.createProduct);
-router.put('/inventory/:id', requireInventoryAdmin, productUploadMiddleware, controller.updateProduct);
-router.delete('/inventory/:id', requireInventoryAdmin, controller.deleteProduct);
+router.put('/inventory/:id', requireInventoryAdmin, requireInventoryPassword, productUploadMiddleware, controller.updateProduct);
+router.delete('/inventory/:id', requireInventoryAdmin, requireInventoryPassword, controller.deleteProduct);
+router.post('/inventory/:id/duplicate', requireInventoryAdmin, requireInventoryPassword, controller.duplicateProduct);
 
 module.exports = router;

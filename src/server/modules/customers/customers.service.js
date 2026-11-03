@@ -4,17 +4,30 @@ const { parsePagination, appendPagination, paginatedPayload } = require('../../.
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
 const { queueSyncOperation } = require('../../database/sync.helpers');
+const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
 
 
 async function listCustomers(req, user) {
+  if (!req || !req.query) {
+    req = { query: req || {} };
+  }
   const pagination = parsePagination(req, 50, 200, true);
 
   if (config.IS_BRANCH_MODE) {
     const where = [];
     const params = [];
     if (user && user.role !== 'admin' && !req.query.search && !req.query.phone && !req.query.name) {
-      params.push(user.branch_id);
-      where.push('c.branch_id = ?');
+      if (user.branch_scope === 'all') {
+        // no branch filter
+      } else if (user.branch_scope === 'selected') {
+        const authIds = getUserAuthorizedBranchIds(user);
+        const placeholders = authIds.map(() => '?').join(',');
+        params.push(...authIds);
+        where.push(`c.branch_id IN (${placeholders})`);
+      } else {
+        params.push(user.branch_id);
+        where.push('c.branch_id = ?');
+      }
     }
     if (req.query.search) {
       params.push(likePattern(req.query.search));
@@ -56,8 +69,16 @@ async function listCustomers(req, user) {
   const where = [];
 
   if (user && user.role !== 'admin' && !req.query.search && !req.query.phone && !req.query.name) {
-    params.push(user.branch_id);
-    where.push(`c.branch_id = $${params.length}`);
+    if (user.branch_scope === 'all') {
+      // no branch filter
+    } else if (user.branch_scope === 'selected') {
+      const authIds = getUserAuthorizedBranchIds(user);
+      params.push(authIds);
+      where.push(`c.branch_id = ANY($${params.length})`);
+    } else {
+      params.push(user.branch_id);
+      where.push(`c.branch_id = $${params.length}`);
+    }
   }
   if (req.query.search) {
     params.push(likePattern(req.query.search));
@@ -119,7 +140,11 @@ async function createCustomer(data, user) {
   }
 
   const initials = getInitialsFromName(normalizedName);
-  const branchId = (user && user.role !== 'admin') ? user.branch_id : (data.branch_id || user?.branch_id || 1);
+  const targetBranch = (data.branch_id || user?.branch_id || 1);
+  if (user && user.role !== 'admin') {
+    validateBranchAccess(user, targetBranch);
+  }
+  const branchId = targetBranch;
   const customerStatus = status || 'عادي';
 
   if (config.IS_BRANCH_MODE) {
@@ -171,32 +196,49 @@ async function updateCustomer(id, data, user) {
   const customerStatus = status || 'عادي';
 
   if (config.IS_BRANCH_MODE) {
+    const existing = db.sqlite.prepare('SELECT branch_id FROM customers WHERE id = ?').get(id);
+    if (!existing) {
+      const err = new Error('Unauthorized or not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (user && user.role !== 'admin' && !hasBranchAccess(user, existing.branch_id)) {
+      const err = new Error('Unauthorized');
+      err.statusCode = 403;
+      throw err;
+    }
     const stmt = db.sqlite.prepare(`
       UPDATE customers SET name = ?, initials = ?, email = ?, phone = ?, national_id = ?, status = ?, pending_sync = 1
-      WHERE id = ? AND (branch_id = ? OR ? = 'admin')
+      WHERE id = ?
     `);
-    stmt.run(normalizedName, initials, email || null, phone || null, national_id || null, customerStatus, id, user?.branch_id || 1, user?.role);
+    stmt.run(normalizedName, initials, email || null, phone || null, national_id || null, customerStatus, id);
     return db.sqlite.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+  }
+
+  const existingRes = await db.query('SELECT branch_id FROM customers WHERE id = $1', [id]);
+  if (existingRes.rows.length === 0) {
+    const err = new Error('Unauthorized or not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (user && user.role !== 'admin' && !hasBranchAccess(user, existingRes.rows[0].branch_id)) {
+    const err = new Error('Unauthorized');
+    err.statusCode = 403;
+    throw err;
   }
 
   const { rows } = await db.query(
     `UPDATE customers SET name = $1, initials = $2, email = $3, phone = $4, national_id = $5, status = $6 
-     WHERE id = $7 AND (branch_id = $8 OR $9 = 'admin') RETURNING *`,
-    [normalizedName, initials, email, phone, national_id, customerStatus, id, user?.branch_id || 1, user?.role]
+     WHERE id = $7 RETURNING *`,
+    [normalizedName, initials, email, phone, national_id, customerStatus, id]
   );
-
-  if (rows.length === 0) {
-    const err = new Error('Unauthorized or not found');
-    err.statusCode = 403;
-    throw err;
-  }
   return rows[0];
 }
 
 async function deleteCustomer(id, user) {
   if (config.IS_BRANCH_MODE) {
     const check = db.sqlite.prepare('SELECT branch_id FROM customers WHERE id = ?').get(id);
-    if (check && check.branch_id !== user.branch_id && user.role !== 'admin') {
+    if (check && user && user.role !== 'admin' && !hasBranchAccess(user, check.branch_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;
@@ -216,7 +258,7 @@ async function deleteCustomer(id, user) {
   }
 
   const check = await db.query('SELECT branch_id FROM customers WHERE id = $1', [id]);
-  if (check.rows.length > 0 && check.rows[0].branch_id !== user.branch_id && user.role !== 'admin') {
+  if (check.rows.length > 0 && user && user.role !== 'admin' && !hasBranchAccess(user, check.rows[0].branch_id)) {
     const err = new Error('Unauthorized');
     err.statusCode = 403;
     throw err;

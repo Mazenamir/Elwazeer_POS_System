@@ -350,6 +350,7 @@ export function POS() {
   const [returnQuantities, setReturnQuantities] = useState({}); // { [itemId]: number }
   const [manualReturnAmount, setManualReturnAmount] = useState('');
   const [returnRefundMethod, setReturnRefundMethod] = useState('cash');
+  const [returnPassword, setReturnPassword] = useState('');
   const [processReturnSubmitting, setProcessReturnSubmitting] = useState(false);
 
   // Return Details Modal & Return Receipt State
@@ -1923,6 +1924,11 @@ export function POS() {
       return;
     }
 
+    if (!isAdmin && !returnPassword.trim()) {
+      toast.warning('كلمة سر المرتجعات مطلوبة لإتمام عملية الاسترجاع');
+      return;
+    }
+
     try {
       setProcessReturnSubmitting(true);
       const chosenBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : selectedReturnOrder.branch_id || branches[0]?.id || 1;
@@ -1936,10 +1942,17 @@ export function POS() {
         items: returnItems,
       };
 
-      const res = await api.post('/returns', payload);
+      if (returnPassword.trim()) {
+        payload.return_password = returnPassword.trim();
+      }
+
+      const res = await api.post('/returns', payload, {
+        headers: returnPassword.trim() ? { 'x-return-password': returnPassword.trim() } : {},
+      });
 
       toast.success('تم تسجيل وحفظ المرتجع بنجاح! 🔄');
       setShowProcessReturnModal(false);
+      setReturnPassword('');
 
       const chosenBranchObj = branches.find((b) => b.id.toString() === chosenBranchId.toString());
       setCompletedReturn({
@@ -3726,6 +3739,27 @@ export function POS() {
                   </p>
                 )}
               </div>
+
+              {/* Sensitive Operation Return Password (for non-admin users) */}
+              {!isAdmin && (
+                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200">
+                  <label className="block text-xs font-black text-amber-900 mb-1.5 flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-amber-600" />
+                    <span>كلمة سر المرتجعات والاسترداد النقدي (أو توكن موافقة الإدارة) *</span>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="أدخل كلمة سر المرتجعات لإتمام العملية..."
+                    value={returnPassword}
+                    onChange={(e) => setReturnPassword(e.target.value)}
+                    className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <p className="text-[11px] text-amber-700 mt-1 font-semibold">
+                    عملية استرجاع الفواتير وصرف النقدية محمية بإذن الإدارة
+                  </p>
+                </div>
+              )}
 
               {/* Actions */}
               <div className="flex items-center gap-3 pt-3 border-t border-slate-100">

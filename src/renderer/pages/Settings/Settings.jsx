@@ -31,8 +31,15 @@ import {
   MapPin,
   CheckSquare,
   Square,
+  Key,
+  ChevronDown,
+  ChevronRight,
+  Search,
+  Check,
+  RefreshCw,
 } from 'lucide-react';
 import {
+  HIERARCHICAL_CATALOG,
   PERMISSION_DEFINITIONS,
   PERMISSION_GROUPS,
   PERMISSION_PRESETS,
@@ -47,20 +54,50 @@ const PRESET_LOGOS = [
   { id: 'women', label: 'فرع حريمي (فساتين حريمي)', url: '/logos/women.png' },
 ];
 
+const SENSITIVE_OPERATIONS = [
+  {
+    type: 'profit',
+    title: 'عرض صافي الأرباح والتكلفة (Profit Analytics)',
+    description: 'حماية بيانات تكلفة البضاعة المباعة (COGS) وصافي الأرباح وهوامش الربح في شاشات التقارير ولوحة التحكم.',
+    icon: Shield,
+    badgeColor: 'indigo',
+  },
+  {
+    type: 'invoice_edit',
+    title: 'تعديل وحذف الفواتير (Invoice Editing)',
+    description: 'حماية تعديل الأصناف والأسعار والخصومات والكميات بعد إصدار واعتماد الفاتورة للعميل.',
+    icon: Edit,
+    badgeColor: 'blue',
+  },
+  {
+    type: 'return',
+    title: 'المرتجعات والاسترداد النقدي (Returns & Refunds)',
+    description: 'حماية استرجاع فواتير المبيعات وصرف النقدية المستردة من درج الكاشير للعميل.',
+    icon: Receipt,
+    badgeColor: 'rose',
+  },
+  {
+    type: 'inventory',
+    title: 'إدارة وتعديل المخزون (Inventory Management)',
+    description: 'حماية إضافة وتعديل وحذف أصناف المخزون وضبط أسعار البيع والشراء والكميات.',
+    icon: Database,
+    badgeColor: 'amber',
+  },
+  {
+    type: 'salary',
+    title: 'مسير الرواتب والموظفين (Salary & Payroll)',
+    description: 'حماية كشوف رواتب الموظفين والسلف وساعات العمل والخصومات الشهرية وحسابات القبض.',
+    icon: Users,
+    badgeColor: 'purple',
+  },
+];
+
 export function Settings() {
   const { user, isAdmin } = useAuth();
   const { branches, reloadBranches } = useBranch();
   const { toast } = useToast();
 
-  const isAhmedUser = Boolean(
-    user?.username &&
-    (user.username.trim().toLowerCase() === 'احمد' ||
-     user.username.trim().toLowerCase() === 'ahmed' ||
-     user.username.includes('احمد') ||
-     user.username.toLowerCase().includes('ahmed'))
-  );
-
-  const [activeTab, setActiveTab] = useState('store'); // 'store' | 'branches' | 'users' | 'backup'
+  const [activeTab, setActiveTab] = useState('store'); // 'store' | 'branches' | 'users' | 'sensitive' | 'profile' | 'backup'
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -78,9 +115,38 @@ export function Settings() {
     rental_footer: 'شكراً لزيارتكم',
     rental_fine_per_day: '50',
     currency: 'ج.م',
-    salary_password: '',
-    profit_password: '',
-    invoice_edit_password: '',
+  });
+
+  // Sensitive Passwords Management State
+  const [sensitiveStatus, setSensitiveStatus] = useState({});
+  const [loadingSensitive, setLoadingSensitive] = useState(false);
+  const [sensitiveForms, setSensitiveForms] = useState({
+    profit: { new_password: '', confirm_password: '', show: false, loading: false },
+    invoice_edit: { new_password: '', confirm_password: '', show: false, loading: false },
+    return: { new_password: '', confirm_password: '', show: false, loading: false },
+    inventory: { new_password: '', confirm_password: '', show: false, loading: false },
+    salary: { new_password: '', confirm_password: '', show: false, loading: false },
+  });
+
+  // Sync profileForm with user state
+  useEffect(() => {
+    if (user) {
+      setProfileForm((prev) => ({
+        ...prev,
+        full_name: user.full_name || user.name || '',
+        username: user.username || '',
+      }));
+    }
+  }, [user]);
+
+  // Profile Form State
+  const [profileForm, setProfileForm] = useState({
+    full_name: user?.full_name || '',
+    username: user?.username || '',
+    current_password: '',
+    new_password: '',
+    confirm_password: '',
+    loading: false,
   });
 
   // Users List & Modal
@@ -89,13 +155,30 @@ export function Settings() {
   const [showUserModal, setShowUserModal] = useState(false);
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [editingUserId, setEditingUserId] = useState(null);
+  const [permSearch, setPermSearch] = useState('');
+  const [collapsedModules, setCollapsedModules] = useState({
+    inventory: true,
+    suppliers: true,
+    alterations: true,
+    tailoring: true,
+    customers: true,
+    employees: true,
+    expenses: true,
+    reports: true,
+    barcodes: true,
+    settings: true,
+    system: true,
+  });
+
   const [userForm, setUserForm] = useState({
     full_name: '',
     username: '',
     password: '',
     role: 'branch_user',
+    branch_scope: 'single', // 'single' | 'selected' | 'all'
     branch_id: '',
-    permissions: ['index.html'],
+    branch_ids: [],
+    permissions: ['pos.sales.view', 'pos.sales.create'],
   });
 
   // Branch Modal
@@ -109,6 +192,7 @@ export function Settings() {
     location: '',
     logo_url: '',
     is_main_warehouse: false,
+    rentals_enabled: true,
     invoice_logo_height: 160,
     invoice_logo_spacing: 8,
   });
@@ -169,6 +253,20 @@ export function Settings() {
     }
   }, [isAdmin]);
 
+  // Load Sensitive Passwords Status
+  const loadSensitiveStatus = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      setLoadingSensitive(true);
+      const res = await client.get('/sensitive-passwords/status');
+      setSensitiveStatus(res.data || res || {});
+    } catch (err) {
+      console.error('Failed to load sensitive password status:', err);
+    } finally {
+      setLoadingSensitive(false);
+    }
+  }, [isAdmin]);
+
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
@@ -177,27 +275,32 @@ export function Settings() {
     if (activeTab === 'users' && isAdmin) {
       loadBranchUsers();
     }
-  }, [activeTab, isAdmin, loadBranchUsers]);
+    if (activeTab === 'sensitive' && isAdmin) {
+      loadSensitiveStatus();
+    }
+  }, [activeTab, isAdmin, loadBranchUsers, loadSensitiveStatus]);
 
   useEffect(() => {
-    if (!isAdmin && activeTab !== 'store') {
+    if (!isAdmin && activeTab !== 'store' && activeTab !== 'profile') {
       setActiveTab('store');
     }
   }, [isAdmin, activeTab]);
 
-  // Save Settings
+  // Save Settings (Store & Invoice)
   const handleSaveSettings = async (e) => {
     if (e) e.preventDefault();
     try {
       setSaving(true);
       const payload = { ...settings };
-      if (!isAhmedUser) {
-        delete payload.profit_password;
-      }
+      delete payload.profit_password;
+      delete payload.salary_password;
+      delete payload.invoice_edit_password;
+      delete payload.return_password;
+      delete payload.inventory_password;
       await client.post('/settings', payload);
       toast({
         title: 'تم الحفظ',
-        message: 'تم حفظ وتحديث إعدادات النظام بنجاح',
+        message: 'تم حفظ وتحديث إعدادات المتجر بنجاح',
         variant: 'success',
       });
     } catch (err) {
@@ -208,6 +311,82 @@ export function Settings() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Update Sensitive Operation Password
+  const handleUpdateSensitivePassword = async (type) => {
+    const form = sensitiveForms[type] || {};
+    if (!form.new_password) {
+      toast({ title: 'تنبيه', message: 'يرجى إدخال كلمة المرور الجديدة', variant: 'warning' });
+      return;
+    }
+    if (form.new_password !== form.confirm_password) {
+      toast({ title: 'تنبيه', message: 'كلمة المرور وتأكيدها غير متطابقين', variant: 'warning' });
+      return;
+    }
+    try {
+      setSensitiveForms((prev) => ({
+        ...prev,
+        [type]: { ...prev[type], loading: true },
+      }));
+      await client.post('/sensitive-passwords', {
+        type,
+        new_password: form.new_password,
+        confirm_password: form.confirm_password,
+      });
+      toast({ title: 'تم الحفظ', message: 'تم تحديث كلمة المرور للعملية بنجاح 🔒', variant: 'success' });
+      setSensitiveForms((prev) => ({
+        ...prev,
+        [type]: { new_password: '', confirm_password: '', show: false, loading: false },
+      }));
+      loadSensitiveStatus();
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر تحديث كلمة المرور', variant: 'danger' });
+      setSensitiveForms((prev) => ({
+        ...prev,
+        [type]: { ...prev[type], loading: false },
+      }));
+    }
+  };
+
+  // Update Personal Profile & Password
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    if (profileForm.new_password && profileForm.new_password !== profileForm.confirm_password) {
+      toast({ title: 'تنبيه', message: 'كلمة المرور الجديدة وتأكيدها غير متطابقين', variant: 'warning' });
+      return;
+    }
+    if (profileForm.new_password && !profileForm.current_password) {
+      toast({ title: 'تنبيه', message: 'كلمة المرور الحالية مطلوبة لتأكيد التغيير', variant: 'warning' });
+      return;
+    }
+
+    try {
+      setProfileForm((prev) => ({ ...prev, loading: true }));
+      const payload = {
+        full_name: profileForm.full_name.trim(),
+      };
+      if (isAdmin && profileForm.username) {
+        payload.username = profileForm.username.trim();
+      }
+      if (profileForm.new_password) {
+        payload.current_password = profileForm.current_password;
+        payload.new_password = profileForm.new_password;
+        payload.confirm_password = profileForm.confirm_password;
+      }
+      await client.put('/users/me', payload);
+      toast({ title: 'تم التحديث', message: 'تم تحديث بيانات الحساب الشخصي بنجاح', variant: 'success' });
+      setProfileForm((prev) => ({
+        ...prev,
+        current_password: '',
+        new_password: '',
+        confirm_password: '',
+        loading: false,
+      }));
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'فشل تحديث بيانات الحساب', variant: 'danger' });
+      setProfileForm((prev) => ({ ...prev, loading: false }));
     }
   };
 
@@ -222,6 +401,7 @@ export function Settings() {
       location: '',
       logo_url: '',
       is_main_warehouse: false,
+      rentals_enabled: true,
       invoice_logo_height: 160,
       invoice_logo_spacing: 8,
     });
@@ -239,6 +419,7 @@ export function Settings() {
       location: loc,
       logo_url: b.logo_url || '',
       is_main_warehouse: Boolean(b.is_main_warehouse),
+      rentals_enabled: b.rentals_enabled !== false && b.rentals_enabled !== 0,
       invoice_logo_height: b.invoice_logo_height || 160,
       invoice_logo_spacing: b.invoice_logo_spacing || 8,
     });
@@ -290,6 +471,7 @@ export function Settings() {
     try {
       const payload = {
         ...branchForm,
+        rentals_enabled: branchForm.rentals_enabled !== false,
         location: branchForm.location || branchForm.address || '',
         address: branchForm.location || branchForm.address || '',
         logo_url: branchForm.logo_url || null,
@@ -329,36 +511,156 @@ export function Settings() {
       username: '',
       password: '',
       role: 'branch_user',
+      branch_scope: 'single',
       branch_id: branches[0]?.id ? String(branches[0].id) : '1',
-      permissions: ['index.html'],
+      branch_ids: branches[0]?.id ? [Number(branches[0].id)] : [1],
+      permissions: ['pos.sales.view', 'pos.sales.create'],
     });
+    setPermSearch('');
     setShowUserModal(true);
   };
 
   const handleOpenEditUser = (u) => {
     setIsEditingUser(true);
     setEditingUserId(u.id);
+    const scope = u.branch_scope || 'single';
+    let bIds = [];
+    if (Array.isArray(u.branch_ids)) bIds = u.branch_ids.map(Number);
+    else if (u.branch_id) bIds = [Number(u.branch_id)];
+
     setUserForm({
       full_name: u.full_name || u.name || '',
       username: u.username || '',
       password: '',
       role: u.role || 'branch_user',
+      branch_scope: scope,
       branch_id: String(u.branch_id || branches[0]?.id || '1'),
+      branch_ids: bIds,
       permissions: normalizePermissions(u.permissions),
     });
+    setPermSearch('');
     setShowUserModal(true);
   };
 
-  const handleTogglePermission = (permId) => {
+  // Hierarchical Permission Tree Helpers
+  const getModuleActionIds = (mod) => {
+    return (mod.tabs || []).flatMap((t) => (t.actions || []).map((a) => a.id));
+  };
+
+  const getTabActionIds = (tab) => {
+    return (tab.actions || []).map((a) => a.id);
+  };
+
+  const getModuleSelectionState = (mod) => {
+    const actionIds = getModuleActionIds(mod);
+    if (!actionIds.length) return { all: false, partial: false, count: 0, total: 0 };
+    const perms = userForm.permissions || [];
+    const selectedCount = actionIds.filter((id) => perms.includes(id)).length;
+    return {
+      all: selectedCount === actionIds.length,
+      partial: selectedCount > 0 && selectedCount < actionIds.length,
+      count: selectedCount,
+      total: actionIds.length,
+    };
+  };
+
+  const getTabSelectionState = (tab) => {
+    const actionIds = getTabActionIds(tab);
+    if (!actionIds.length) return { all: false, partial: false, count: 0, total: 0 };
+    const perms = userForm.permissions || [];
+    const selectedCount = actionIds.filter((id) => perms.includes(id)).length;
+    return {
+      all: selectedCount === actionIds.length,
+      partial: selectedCount > 0 && selectedCount < actionIds.length,
+      count: selectedCount,
+      total: actionIds.length,
+    };
+  };
+
+  const handleToggleModule = (mod) => {
+    const actionIds = getModuleActionIds(mod);
+    const state = getModuleSelectionState(mod);
     setUserForm((prev) => {
-      const perms = Array.isArray(prev.permissions) ? prev.permissions : [];
-      if (perms.includes(permId)) {
-        return { ...prev, permissions: perms.filter((p) => p !== permId) };
+      const currentPerms = new Set(prev.permissions || []);
+      if (state.all) {
+        actionIds.forEach((id) => currentPerms.delete(id));
       } else {
-        return { ...prev, permissions: [...perms, permId] };
+        actionIds.forEach((id) => currentPerms.add(id));
       }
+      return { ...prev, permissions: Array.from(currentPerms) };
     });
   };
+
+  const handleToggleTab = (tab) => {
+    const actionIds = getTabActionIds(tab);
+    const state = getTabSelectionState(tab);
+    setUserForm((prev) => {
+      const currentPerms = new Set(prev.permissions || []);
+      if (state.all) {
+        actionIds.forEach((id) => currentPerms.delete(id));
+      } else {
+        actionIds.forEach((id) => currentPerms.add(id));
+      }
+      return { ...prev, permissions: Array.from(currentPerms) };
+    });
+  };
+
+  const handleToggleAction = (actionId) => {
+    setUserForm((prev) => {
+      const currentPerms = new Set(prev.permissions || []);
+      if (currentPerms.has(actionId)) {
+        currentPerms.delete(actionId);
+      } else {
+        currentPerms.add(actionId);
+      }
+      return { ...prev, permissions: Array.from(currentPerms) };
+    });
+  };
+
+  const handleSelectAllPermissions = () => {
+    const allIds = HIERARCHICAL_CATALOG.flatMap(getModuleActionIds);
+    setUserForm((prev) => ({
+      ...prev,
+      permissions: Array.from(new Set([...(prev.permissions || []), ...allIds])),
+    }));
+  };
+
+  const handleDeselectAllPermissions = () => {
+    setUserForm((prev) => ({
+      ...prev,
+      permissions: [],
+    }));
+  };
+
+  const toggleModuleCollapse = (moduleId) => {
+    setCollapsedModules((prev) => ({
+      ...prev,
+      [moduleId]: !prev[moduleId],
+    }));
+  };
+
+  const filteredCatalog = React.useMemo(() => {
+    if (!permSearch.trim()) return HIERARCHICAL_CATALOG;
+    const q = permSearch.trim().toLowerCase();
+    return HIERARCHICAL_CATALOG.map((mod) => {
+      const modMatch = mod.label?.toLowerCase().includes(q) || mod.description?.toLowerCase().includes(q) || mod.moduleId?.toLowerCase().includes(q);
+      const matchedTabs = (mod.tabs || []).map((tab) => {
+        const tabMatch = tab.label?.toLowerCase().includes(q) || tab.tabId?.toLowerCase().includes(q);
+        const matchedActions = (tab.actions || []).filter((a) =>
+          modMatch || tabMatch || a.label?.toLowerCase().includes(q) || a.id?.toLowerCase().includes(q)
+        );
+        if (matchedActions.length > 0 || tabMatch || modMatch) {
+          return { ...tab, actions: matchedActions.length > 0 ? matchedActions : tab.actions };
+        }
+        return null;
+      }).filter(Boolean);
+
+      if (matchedTabs.length > 0 || modMatch) {
+        return { ...mod, tabs: matchedTabs.length > 0 ? matchedTabs : mod.tabs };
+      }
+      return null;
+    }).filter(Boolean);
+  }, [permSearch]);
 
   const handleApplyPreset = (presetPerms) => {
     setUserForm((prev) => ({
@@ -381,6 +683,10 @@ export function Settings() {
       toast({ title: 'تنبيه', message: 'الفرع المخصص مطلوب للحساب', variant: 'warning' });
       return;
     }
+    if (userForm.branch_scope === 'selected' && (!userForm.branch_ids || userForm.branch_ids.length === 0)) {
+      toast({ title: 'تنبيه', message: 'يرجى اختيار فرع واحد على الأقل لنطاق الفروع المحددة', variant: 'warning' });
+      return;
+    }
     if (!userForm.permissions || userForm.permissions.length === 0) {
       toast({ title: 'تنبيه', message: 'يرجى تحديد صلاحية واحدة على الأقل للمستخدم', variant: 'warning' });
       return;
@@ -395,7 +701,11 @@ export function Settings() {
         full_name: userForm.full_name.trim(),
         username: userForm.username.trim(),
         role: userForm.role || 'branch_user',
+        branch_scope: userForm.branch_scope || 'single',
         branch_id: Number(userForm.branch_id),
+        branch_ids: userForm.branch_scope === 'selected'
+          ? (Array.isArray(userForm.branch_ids) ? userForm.branch_ids.map(Number) : [Number(userForm.branch_id)])
+          : (userForm.branch_scope === 'all' ? [] : [Number(userForm.branch_id)]),
         permissions: Array.isArray(userForm.permissions) ? userForm.permissions : [],
       };
       if (userForm.password) payload.password = userForm.password;
@@ -589,6 +899,32 @@ export function Settings() {
 
         {isAdmin && (
           <button
+            onClick={() => setActiveTab('sensitive')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'sensitive'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+            }`}
+          >
+            <Key className="w-4 h-4 text-amber-500" />
+            <span>كلمات سر العمليات الحساسة 🔒</span>
+          </button>
+        )}
+
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+            activeTab === 'profile'
+              ? 'bg-[#151515] text-white shadow-sm'
+              : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+          }`}
+        >
+          <UserIcon className="w-4 h-4" />
+          <span>حسابي الشخصي</span>
+        </button>
+
+        {isAdmin && (
+          <button
             onClick={() => setActiveTab('backup')}
             className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
               activeTab === 'backup'
@@ -714,61 +1050,34 @@ export function Settings() {
 
           <Card>
             <CardHeader
-              title="كلمات مرور الحماية والصلاحيات الحساسة"
-              subtitle="حماية كشوفات الرواتب وعمليات تعديل فواتير الكاشير وعرض صافي الأرباح"
+              title="كلمات سر العمليات الحساسة"
+              subtitle="إدارة كلمات المرور لحماية العمليات التشغيلية الهامة بالمنظومة"
             />
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1.5">
-                  الرقم السري لكشوف الرواتب والموظفين
-                </label>
-                <Input
-                  type="password"
-                  placeholder="كلمة المرور الحالية أو الجديدة"
-                  value={settings.salary_password}
-                  onChange={(e) => setSettings({ ...settings, salary_password: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1.5">
-                  كلمة مرور تعديل أو حذف الفواتير
-                </label>
-                <Input
-                  type="password"
-                  placeholder="كلمة المرور الحالية أو الجديدة"
-                  value={settings.invoice_edit_password}
-                  onChange={(e) =>
-                    setSettings({ ...settings, invoice_edit_password: e.target.value })
-                  }
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1.5 flex items-center justify-between">
-                  <span>كلمة سر عرض صافي الأرباح</span>
-                  {!isAhmedUser && (
-                    <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md font-black border border-amber-200">
-                      لحساب (احمد) فقط 🔒
-                    </span>
-                  )}
-                </label>
-                <Input
-                  type="password"
-                  placeholder={isAhmedUser ? "كلمة المرور الحالية أو الجديدة" : "محمية - متاح تعديلها لحساب أحمد فقط"}
-                  value={isAhmedUser ? (settings.profit_password || '') : '••••••••'}
-                  disabled={!isAhmedUser}
-                  onChange={(e) => {
-                    if (isAhmedUser) {
-                      setSettings({ ...settings, profit_password: e.target.value });
-                    }
-                  }}
-                />
-                <p className="text-[11px] text-slate-400 mt-1 font-medium">
-                  {isAhmedUser
-                    ? "كلمة المرور المستخدمة لإلغاء قفل وإظهار صافي الأرباح في التقارير"
-                    : "تعديل كلمة سر الأرباح متاح حصرياً للمستخدم (احمد)"}
-                </p>
+            <div className="p-6">
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-900 flex items-center justify-center shrink-0">
+                    <Key className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-amber-950">إدارة مركزية لكلمات سر العمليات الحساسة</h4>
+                    <p className="text-[11px] font-semibold text-amber-850 mt-0.5">
+                      تم نقل كلمات سر الأرباح وتعديل الفواتير وصرف المرتجعات وإدارة المخزون والرواتب إلى قسم أمني مخصص ومحمي بتشفير bcrypt
+                    </p>
+                  </div>
+                </div>
+                {isAdmin && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    icon={Key}
+                    onClick={() => setActiveTab('sensitive')}
+                    className="whitespace-nowrap shrink-0 !bg-[#151515]"
+                  >
+                    إدارة كلمات السر الحساسة 🔒
+                  </Button>
+                )}
               </div>
             </div>
           </Card>
@@ -858,11 +1167,22 @@ export function Settings() {
                       </div>
                     </div>
 
-                    {b.is_main_warehouse && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-700 border border-amber-200">
-                        مخزن رئيسي
+                    <div className="flex flex-col items-end gap-1">
+                      {b.is_main_warehouse && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-700 border border-amber-200">
+                          مخزن رئيسي
+                        </span>
+                      )}
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                          b.rentals_enabled !== false && b.rentals_enabled !== 0
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200'
+                        }`}
+                      >
+                        {b.rentals_enabled !== false && b.rentals_enabled !== 0 ? 'التأجير مفعل' : 'التأجير معطل'}
                       </span>
-                    )}
+                    </div>
                   </div>
 
                   <div className="space-y-1 text-xs font-bold text-slate-600 border-t border-slate-100 pt-3">
@@ -924,7 +1244,8 @@ export function Settings() {
                 <tr className="bg-[#151515] text-white text-xs font-bold">
                   <th className="py-3.5 px-4 rounded-r-xl">اسم الشخص / الموظف</th>
                   <th className="py-3.5 px-4">اسم المستخدم</th>
-                  <th className="py-3.5 px-4">الفرع المخصص</th>
+                  <th className="py-3.5 px-4">نطاق الفروع</th>
+                  <th className="py-3.5 px-4">الفرع الرئيسي</th>
                   <th className="py-3.5 px-4">الصلاحيات الممنوحة</th>
                   <th className="py-3.5 px-4 text-center rounded-l-xl">إجراءات</th>
                 </tr>
@@ -932,13 +1253,13 @@ export function Settings() {
               <tbody className="divide-y divide-[#E6DECD]/60 text-sm">
                 {loadingUsers ? (
                   <tr>
-                    <td colSpan={5} className="py-12 text-center text-slate-400 font-bold">
+                    <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">
                       جارِ تحميل المستخدمين...
                     </td>
                   </tr>
                 ) : branchUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-12 text-center text-slate-400 font-bold">
+                    <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">
                       لا يوجد مستخدمون مسجلون
                     </td>
                   </tr>
@@ -960,6 +1281,21 @@ export function Settings() {
                         </td>
                         <td className="py-3.5 px-4 font-mono font-bold text-slate-800 dir-ltr text-right">
                           @{u.username}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {u.branch_scope === 'all' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-blue-50 text-blue-700 border border-blue-200">
+                              <span>🌐 كافة الفروع</span>
+                            </span>
+                          ) : u.branch_scope === 'selected' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-purple-50 text-purple-700 border border-purple-200">
+                              <span>🏢 فروع محددة ({Array.isArray(u.branch_ids) ? u.branch_ids.length : 0})</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-slate-100 text-slate-700 border border-slate-200">
+                              <span>📍 فرع واحد</span>
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4">
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-[#FAF6ED] border border-[#E6DECD] text-[#24221F]">
@@ -1024,6 +1360,255 @@ export function Settings() {
               </tbody>
             </table>
           </div>
+        </Card>
+      )}
+
+      {/* Tab: Sensitive Passwords Management */}
+      {isAdmin && activeTab === 'sensitive' && (
+        <div className="space-y-6">
+          <Card>
+            <div className="p-6 border-b border-[#E6DECD] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-black">
+                    <Key className="w-4 h-4" />
+                  </div>
+                  <h3 className="font-black text-slate-900 text-base">إدارة كلمات سر العمليات الحساسة</h3>
+                </div>
+                <p className="text-xs font-bold text-slate-500 mt-1">
+                  حماية العمليات التشغيلية والمالية بكلمات مرور مستقلة مشفرة (bcrypt) مع حماية ضد التخمين (Rate Limiting)
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={RefreshCw}
+                onClick={loadSensitiveStatus}
+                loading={loadingSensitive}
+              >
+                تحديث الحالة
+              </Button>
+            </div>
+
+            <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {SENSITIVE_OPERATIONS.map((op) => {
+                const status = sensitiveStatus[op.type] || {};
+                const form = sensitiveForms[op.type] || { new_password: '', confirm_password: '', show: false, loading: false };
+                const OpIcon = op.icon;
+
+                return (
+                  <div
+                    key={op.type}
+                    className="p-5 rounded-2xl border border-[#E6DECD] bg-[#FFFDF9] flex flex-col justify-between space-y-4 hover:shadow-xs transition-shadow"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] flex items-center justify-center text-[#24221F] shrink-0">
+                            <OpIcon className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="font-black text-slate-900 text-sm">{op.title}</h4>
+                            <p className="text-[11px] font-bold text-slate-400 mt-0.5">{op.description}</p>
+                          </div>
+                        </div>
+
+                        {/* Status Badge */}
+                        <div className="shrink-0">
+                          {status.configured ? (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              مفعلة بكلمة سر 🔒
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-amber-50 text-amber-700 border border-amber-200">
+                              غير معينة ⚠️
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Lockout Warning Banner */}
+                      {status.locked && (
+                        <div className="p-3 mb-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-black flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>
+                            تم إيقاف هذه العملية مؤقتاً بسبب تكرار المحاولات الخاطئة! متبقي {status.remaining_seconds} ثانية.
+                          </span>
+                        </div>
+                      )}
+
+                      {status.failed_attempts > 0 && !status.locked && (
+                        <div className="text-[11px] font-bold text-amber-600 mb-2">
+                          ⚠️ تنبيه: عدد المحاولات الخاطئة الأخيرة: {status.failed_attempts} من 5 محاولات قبل الإغلاق المؤقت.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Change / Set Form */}
+                    <div className="space-y-3 pt-3 border-t border-[#E6DECD]">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                            كلمة المرور الجديدة
+                          </label>
+                          <Input
+                            type={form.show ? 'text' : 'password'}
+                            placeholder="كلمة مرور جديدة..."
+                            value={form.new_password}
+                            onChange={(e) =>
+                              setSensitiveForms((prev) => ({
+                                ...prev,
+                                [op.type]: { ...prev[op.type], new_password: e.target.value },
+                              }))
+                            }
+                            className="text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                            تأكيد كلمة المرور
+                          </label>
+                          <Input
+                            type={form.show ? 'text' : 'password'}
+                            placeholder="تأكيد كلمة المرور..."
+                            value={form.confirm_password}
+                            onChange={(e) =>
+                              setSensitiveForms((prev) => ({
+                                ...prev,
+                                [op.type]: { ...prev[op.type], confirm_password: e.target.value },
+                              }))
+                            }
+                            className="text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-slate-500">
+                          <input
+                            type="checkbox"
+                            className="rounded text-slate-900 focus:ring-slate-900"
+                            checked={form.show || false}
+                            onChange={(e) =>
+                              setSensitiveForms((prev) => ({
+                                ...prev,
+                                [op.type]: { ...prev[op.type], show: e.target.checked },
+                              }))
+                            }
+                          />
+                          <span>إظهار النص</span>
+                        </label>
+
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon={Save}
+                          loading={form.loading}
+                          onClick={() => handleUpdateSensitivePassword(op.type)}
+                          disabled={!form.new_password || !form.confirm_password}
+                          className="!bg-[#151515]"
+                        >
+                          {status.configured ? 'تغيير كلمة السر' : 'تعيين كلمة السر'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Tab: Personal Profile & Admin Password */}
+      {activeTab === 'profile' && (
+        <Card>
+          <CardHeader
+            title="بيانات حسابي الشخصي وتغيير كلمة المرور"
+            subtitle="تحديث الاسم وبيانات الحساب وتغيير كلمة المرور الخاصة بك"
+          />
+          <form onSubmit={handleUpdateProfile} className="p-6 max-w-xl space-y-4">
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5">اسم المستخدم {isAdmin ? '*' : ''}</label>
+              <Input
+                value={profileForm.username}
+                disabled={!isAdmin}
+                onChange={(e) => setProfileForm({ ...profileForm, username: e.target.value })}
+                className={!isAdmin ? "bg-slate-100 font-mono text-slate-500 cursor-not-allowed" : "font-mono font-bold"}
+              />
+              {isAdmin && (
+                <p className="text-[10px] text-slate-400 mt-1 font-semibold">
+                  بصفتك مدير النظام، يمكنك تعديل اسم المستخدم الخاص بحسابك الشخصي
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5">نوع الحساب / الدور</label>
+              <Input
+                value={user?.role === 'admin' ? 'مدير النظام (Administrator)' : 'مستخدم فرع (Branch User)'}
+                disabled
+                className="bg-slate-100 font-bold text-slate-500 cursor-not-allowed"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5">الاسم الشخصي / الموظف *</label>
+              <Input
+                required
+                value={profileForm.full_name}
+                onChange={(e) => setProfileForm({ ...profileForm, full_name: e.target.value })}
+                placeholder="اسمك الكامل"
+              />
+            </div>
+
+            <div className="pt-4 border-t border-[#E6DECD] space-y-3">
+              <h4 className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                <span>تغيير كلمة مرور الدخول (اختياري)</span>
+              </h4>
+              <p className="text-[11px] font-bold text-slate-500">
+                اترك حقول كلمة المرور فارغة إذا كنت تريد تعديل الاسم فقط دون تغيير كلمة المرور.
+              </p>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1.5">كلمة المرور الحالية</label>
+                <Input
+                  type="password"
+                  placeholder="كلمة المرور الحالية لتأكيد التغيير..."
+                  value={profileForm.current_password}
+                  onChange={(e) => setProfileForm({ ...profileForm, current_password: e.target.value })}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">كلمة المرور الجديدة</label>
+                  <Input
+                    type="password"
+                    placeholder="كلمة المرور الجديدة..."
+                    value={profileForm.new_password}
+                    onChange={(e) => setProfileForm({ ...profileForm, new_password: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">تأكيد كلمة المرور الجديدة</label>
+                  <Input
+                    type="password"
+                    placeholder="إعادة إدخال كلمة المرور..."
+                    value={profileForm.confirm_password}
+                    onChange={(e) => setProfileForm({ ...profileForm, confirm_password: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-4 flex justify-end">
+              <Button type="submit" variant="primary" icon={Save} loading={profileForm.loading} className="!bg-[#151515]">
+                حفظ التعديلات
+              </Button>
+            </div>
+          </form>
         </Card>
       )}
 
@@ -1262,6 +1847,25 @@ export function Settings() {
             <input
               type="checkbox"
               className="rounded text-slate-900 focus:ring-slate-900"
+              checked={branchForm.rentals_enabled !== false}
+              onChange={(e) =>
+                setBranchForm({ ...branchForm, rentals_enabled: e.target.checked })
+              }
+            />
+            <div className="flex flex-col">
+              <span className="text-xs font-black text-slate-800">
+                تفعيل قسم التأجير بالفرع
+              </span>
+              <span className="text-[11px] font-medium text-slate-500">
+                السماح بإنشاء عقود تأجير وإدارة فساتين/قطع التأجير بهذا الفرع
+              </span>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+            <input
+              type="checkbox"
+              className="rounded text-slate-900 focus:ring-slate-900"
               checked={branchForm.is_main_warehouse}
               onChange={(e) =>
                 setBranchForm({ ...branchForm, is_main_warehouse: e.target.checked })
@@ -1322,12 +1926,23 @@ export function Settings() {
             <div>
               <label className="block text-xs font-black text-slate-700 mb-1.5 flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-[#C4823F]" />
-                <span>الفرع المخصص للحساب *</span>
+                <span>الفرع الأساسي / الافتراضي للحساب *</span>
               </label>
               <select
                 className="w-full h-11 px-3.5 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:ring-2 focus:ring-slate-900"
                 value={userForm.branch_id}
-                onChange={(e) => setUserForm({ ...userForm, branch_id: e.target.value })}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setUserForm((prev) => {
+                    const updated = { ...prev, branch_id: val };
+                    if (prev.branch_scope === 'single') {
+                      updated.branch_ids = [Number(val)];
+                    } else if (prev.branch_scope === 'selected' && (!prev.branch_ids || !prev.branch_ids.includes(Number(val)))) {
+                      updated.branch_ids = [...(prev.branch_ids || []), Number(val)];
+                    }
+                    return updated;
+                  });
+                }}
               >
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
@@ -1350,95 +1965,337 @@ export function Settings() {
             </div>
           </div>
 
-          {/* Branch Isolation Guard Info Banner */}
-          <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-2.5 text-xs text-amber-900 font-semibold">
-            <Lock className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+          {/* Branch Scoping & Multi-Branch Access */}
+          <div className="pt-3 border-t border-[#E6DECD] space-y-3">
             <div>
-              <strong className="block text-amber-950 font-black mb-0.5">🔒 عزل تام للفرع (Strict Branch Isolation):</strong>
-              هذا الحساب سيتم تقييده تلقائياً بالفرع المختار فقط، ولن يتمكن من الدخول أو الاطلاع أو فتح أي فرع آخر بالنظام.
+              <label className="block text-xs font-black text-slate-800 mb-1.5 flex items-center gap-1.5">
+                <Building className="w-3.5 h-3.5 text-[#C4823F]" />
+                <span>نطاق فروع الحساب (Branch Access Scope) *</span>
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {[
+                  {
+                    id: 'single',
+                    label: 'فرع واحد محدد',
+                    icon: '📍',
+                    desc: 'تقييد الحساب بالفرع الافتراضي المحدد فقط دون إمكانية التبديل',
+                  },
+                  {
+                    id: 'selected',
+                    label: 'فروع مخصصة',
+                    icon: '🏢',
+                    desc: 'السماح بالتبديل بين قائمة فروع معينة يتم تحديدها أدناه',
+                  },
+                  {
+                    id: 'all',
+                    label: 'كافة الفروع',
+                    icon: '🌐',
+                    desc: 'الوصول الكامل لكافة فروع المنظومة الحالية وأي فروع جديدة',
+                  },
+                ].map((scope) => {
+                  const isSelected = userForm.branch_scope === scope.id;
+                  return (
+                    <div
+                      key={scope.id}
+                      onClick={() => {
+                        const newScope = scope.id;
+                        let newIds = userForm.branch_ids || [];
+                        if (newScope === 'single') {
+                          newIds = [Number(userForm.branch_id || branches[0]?.id || 1)];
+                        } else if (newScope === 'all') {
+                          newIds = branches.map((b) => b.id);
+                        } else if (newScope === 'selected' && (!newIds || !newIds.length)) {
+                          newIds = [Number(userForm.branch_id || branches[0]?.id || 1)];
+                        }
+                        setUserForm((prev) => ({
+                          ...prev,
+                          branch_scope: newScope,
+                          branch_ids: newIds,
+                        }));
+                      }}
+                      className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                        isSelected
+                          ? 'border-[#151515] bg-[#FAF6ED] ring-1 ring-[#151515]'
+                          : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-[#FAF6ED]/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-black text-xs text-slate-900">
+                        <span>{scope.icon}</span>
+                        <span>{scope.label}</span>
+                      </div>
+                      <p className="text-[10px] font-medium text-slate-500 mt-1">{scope.desc}</p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* Checklist of branches when scope === 'selected' */}
+            {userForm.branch_scope === 'selected' && (
+              <div className="p-3.5 rounded-xl border border-purple-200 bg-purple-50/40 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-purple-950">
+                    حدد الفروع المسموح لهذا المستخدم بالتبديل إليها:
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setUserForm((prev) => ({
+                          ...prev,
+                          branch_ids: branches.map((b) => b.id),
+                        }))
+                      }
+                      className="text-[10px] font-bold text-purple-700 hover:underline"
+                    >
+                      تحديد الكل
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setUserForm((prev) => ({
+                          ...prev,
+                          branch_ids: [Number(prev.branch_id)],
+                        }))
+                      }
+                      className="text-[10px] font-bold text-purple-700 hover:underline"
+                    >
+                      الفرع الأساسي فقط
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {branches.map((b) => {
+                    const isChecked = (userForm.branch_ids || []).includes(b.id);
+                    return (
+                      <label
+                        key={b.id}
+                        className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-bold cursor-pointer transition-colors ${
+                          isChecked
+                            ? 'bg-white border-purple-400 text-purple-950 shadow-xs'
+                            : 'bg-white/60 border-purple-100 text-slate-600 hover:bg-white'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="rounded text-purple-600 focus:ring-purple-500"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setUserForm((prev) => {
+                              const cur = new Set(prev.branch_ids || []);
+                              if (checked) cur.add(b.id);
+                              else {
+                                if (cur.size > 1) cur.delete(b.id);
+                              }
+                              return { ...prev, branch_ids: Array.from(cur) };
+                            });
+                          }}
+                        />
+                        <span className="truncate">{b.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Manual Granular Permissions Customizer */}
+          {/* Hierarchical Granular Permissions Catalog */}
           <div className="pt-3 border-t border-[#E6DECD]">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
               <div>
                 <h4 className="text-sm font-black text-[#24221F] flex items-center gap-1.5">
                   <Shield className="w-4 h-4 text-[#C4823F]" />
-                  <span>تخصيص الصلاحيات يدوياً (Manual Granular Permissions)</span>
+                  <span>شجرة الصلاحيات التفاعلية (Hierarchical Permission Tree)</span>
                 </h4>
                 <p className="text-[11px] font-semibold text-[#777266]">
-                  حدد الشاشات والأقسام المسموح لهذا المستخدم بالوصول إليها والعمل بها:
+                  حدد الشاشات والأقسام والإجراءات الدقيقة المسموح لهذا المستخدم بتنفيذها:
                 </p>
               </div>
-              <div className="text-xs font-black px-3 py-1.5 rounded-xl bg-slate-900 text-white self-start sm:self-auto shadow-sm">
-                تم تحديد {userForm.permissions?.length || 0} من {PERMISSION_DEFINITIONS.length} صلاحية
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className="text-xs font-black px-3 py-1.5 rounded-xl bg-slate-900 text-white shadow-xs">
+                  تم تحديد {userForm.permissions?.length || 0} صلاحية
+                </span>
               </div>
             </div>
 
-            {/* Presets Toolbar */}
-            <div className="flex flex-wrap items-center gap-1.5 mb-3.5 p-2.5 rounded-2xl bg-[#FAF6ED] border border-[#E6DECD]">
-              <span className="text-[11px] font-bold text-slate-500 ml-1">قوالب سريعة:</span>
-              {PERMISSION_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
+            {/* Presets and Global Actions Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 p-2.5 rounded-2xl bg-[#FAF6ED] border border-[#E6DECD]">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold text-slate-500 ml-1">قوالب جاهزة:</span>
+                {PERMISSION_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleApplyPreset(preset.permissions)}
+                    className="px-2.5 py-1 text-xs font-bold rounded-xl border border-[#E6DECD] bg-[#FFFDF9] hover:bg-slate-100 text-slate-700 transition-colors"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
                   type="button"
-                  onClick={() => handleApplyPreset(preset.permissions)}
-                  className={`px-2.5 py-1 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                    preset.id === 'all'
-                      ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
-                      : preset.id === 'clear'
-                      ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
-                      : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-slate-100 text-slate-700'
-                  }`}
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSelectAllPermissions}
+                  className="text-xs !py-1"
                 >
-                  {preset.label}
-                </button>
-              ))}
+                  تحديد الكل
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDeselectAllPermissions}
+                  className="text-xs !py-1 text-rose-600 hover:text-rose-700"
+                >
+                  إلغاء الكل
+                </Button>
+              </div>
             </div>
 
-            {/* Checkbox Cards by Group */}
-            <div className="space-y-4 max-h-[46vh] overflow-y-auto px-1 pr-2 custom-scrollbar">
-              {PERMISSION_GROUPS.map((group) => {
-                const groupPerms = PERMISSION_DEFINITIONS.filter((p) => p.group === group);
-                if (groupPerms.length === 0) return null;
+            {/* Permissions Search Bar */}
+            <div className="mb-3 relative">
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="بحث سريع في الصلاحيات بالاسم أو الكود (مثال: فواتير، تقارير، خصم)..."
+                value={permSearch}
+                onChange={(e) => setPermSearch(e.target.value)}
+                className="w-full h-10 pr-9 pl-4 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] text-xs font-bold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+              />
+            </div>
+
+            {/* Collapsible Module Tree */}
+            <div className="space-y-3 max-h-[46vh] overflow-y-auto px-1 pr-2 custom-scrollbar">
+              {filteredCatalog.map((mod) => {
+                const modState = getModuleSelectionState(mod);
+                const isCollapsed = Boolean(collapsedModules[mod.moduleId]);
+
                 return (
-                  <div key={group} className="space-y-1.5">
-                    <div className="text-[11px] font-black text-[#777266] uppercase tracking-wider flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#C4823F]"></span>
-                      <span>{group}</span>
+                  <div
+                    key={mod.moduleId}
+                    className="rounded-2xl border border-[#E6DECD] bg-[#FFFDF9] overflow-hidden transition-all"
+                  >
+                    {/* Module Header */}
+                    <div className="p-3 bg-[#FAF6ED]/70 flex items-center justify-between border-b border-[#E6DECD]/70">
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={modState.all}
+                          ref={(el) => {
+                            if (el) el.indeterminate = modState.partial;
+                          }}
+                          onChange={() => handleToggleModule(mod)}
+                          className="rounded text-[#151515] focus:ring-[#151515] cursor-pointer"
+                        />
+                        <div>
+                          <div className="text-xs font-black text-slate-900 flex items-center gap-2">
+                            <span>{mod.label}</span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white border border-[#E6DECD] text-slate-600">
+                              {modState.count} / {modState.total}
+                            </span>
+                            {mod.branchFeature === 'rentals' && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                                ميزة فرع (Rentals)
+                              </span>
+                            )}
+                          </div>
+                          {mod.description && (
+                            <p className="text-[10px] font-medium text-slate-400 mt-0.5">{mod.description}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleModuleCollapse(mod.moduleId)}
+                        className="p-1 rounded-lg hover:bg-[#E6DECD]/40 text-slate-600 transition-colors"
+                      >
+                        {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      </button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {groupPerms.map((perm) => {
-                        const isChecked = userForm.permissions?.includes(perm.id);
-                        return (
-                          <div
-                            key={perm.id}
-                            onClick={() => handleTogglePermission(perm.id)}
-                            className={`flex items-start gap-2.5 p-2.5 rounded-2xl border transition-all cursor-pointer select-none ${
-                              isChecked
-                                ? 'border-indigo-600 bg-indigo-50/70 shadow-sm ring-1 ring-indigo-500/20'
-                                : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-[#FAF6ED]/70'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => {}} // toggled by parent div
-                              className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <div className={`text-xs font-black ${isChecked ? 'text-indigo-950' : 'text-slate-900'}`}>
-                                {perm.label}
+
+                    {/* Module Content (Tabs & Actions) */}
+                    {!isCollapsed && (
+                      <div className="p-3.5 space-y-4">
+                        {(mod.tabs || []).map((tab) => {
+                          const tabState = getTabSelectionState(tab);
+                          return (
+                            <div key={tab.tabId} className="space-y-2 border-r-2 border-amber-400/40 pr-3 mr-1">
+                              {/* Tab Subheader */}
+                              <div className="flex items-center justify-between">
+                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={tabState.all}
+                                    ref={(el) => {
+                                      if (el) el.indeterminate = tabState.partial;
+                                    }}
+                                    onChange={() => handleToggleTab(tab)}
+                                    className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                  />
+                                  <span className="text-xs font-extrabold text-slate-800">{tab.label}</span>
+                                </label>
+                                <span className="text-[10px] font-bold text-slate-400">
+                                  {tabState.count} / {tabState.total}
+                                </span>
                               </div>
-                              <div className="text-[11px] font-medium text-slate-500 mt-0.5 leading-snug">
-                                {perm.description}
+
+                              {/* Actions Grid */}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                                {(tab.actions || []).map((act) => {
+                                  const isChecked = (userForm.permissions || []).includes(act.id);
+                                  return (
+                                    <div
+                                      key={act.id}
+                                      onClick={() => handleToggleAction(act.id)}
+                                      className={`flex items-start gap-2.5 p-2 rounded-xl border transition-all cursor-pointer select-none ${
+                                        isChecked
+                                          ? 'border-indigo-600 bg-indigo-50/60 shadow-xs ring-1 ring-indigo-500/20'
+                                          : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-[#FAF6ED]'
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => {}}
+                                        className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span
+                                            className={`text-[11px] font-black ${
+                                              isChecked ? 'text-indigo-950' : 'text-slate-900'
+                                            }`}
+                                          >
+                                            {act.label}
+                                          </span>
+                                          {act.sensitive && (
+                                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                              محمي بكلمة سر 🔒
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[10px] font-mono text-slate-400 mt-0.5 dir-ltr text-right">
+                                          {act.id}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}

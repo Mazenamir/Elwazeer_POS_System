@@ -257,6 +257,9 @@ async function runTests() {
   assert(succeeded.length === 1, 'Exactly one concurrent booking succeeded');
   assert(rejected.length === 1 && rejected[0].reason.statusCode === 400, 'Second concurrent booking was serialized and safely rejected');
 
+  // Cleanup Suite 3 & Suite 4 bookings so testRentalItem is clean for Suite 5
+  await db.query('DELETE FROM rentals WHERE branch_id = $1', [testBranchId]);
+
   // --------------------------------------------------------------------------
   // TEST SUITE 5: Upcoming Reservations Filter
   // --------------------------------------------------------------------------

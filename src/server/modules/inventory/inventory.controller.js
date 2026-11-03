@@ -248,6 +248,15 @@ async function listProductNames(req, res, next) {
   }
 }
 
+async function duplicateProduct(req, res, next) {
+  try {
+    const result = await inventoryService.duplicateProduct(req.params.id, req.body, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMetadata,
   getCategories,
@@ -259,6 +268,7 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
+  duplicateProduct,
   transferStock,
   listTransferRequests,
   approveTransfer,
