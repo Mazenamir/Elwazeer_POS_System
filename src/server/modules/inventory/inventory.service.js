@@ -532,15 +532,14 @@ async function listInventory(req, user) {
     const bId = activeBranchId;
 
     const targetBranchForGender = reqBranchId || (!canViewAllBranches ? activeBranchId : null);
-  if (targetBranchForGender) {
-    params.push(targetBranchForGender);
-    const pParam = '$' + params.length;
-    where.push(`(
-      (SELECT allowed_gender FROM branches WHERE id = ${pParam}) = 'both' 
-      OR i.gender = 'both' 
-      OR i.gender = (SELECT allowed_gender FROM branches WHERE id = ${pParam})
-    )`);
-  }
+    if (targetBranchForGender) {
+      params.push(targetBranchForGender, targetBranchForGender);
+      where.push(`(
+        (SELECT allowed_gender FROM branches WHERE id = ?) = 'both' 
+        OR i.gender = 'both' 
+        OR i.gender = (SELECT allowed_gender FROM branches WHERE id = ?)
+      )`);
+    }
 
   if (req.query.search) {
       params.push(likePattern(req.query.search));
@@ -594,6 +593,8 @@ async function listInventory(req, user) {
       }
     } else if (req.query.branch_only === 'true') {
       where.push(`${branchStockSql} > 0`);
+    } else if (reqBranchId && req.query.include_zero !== 'true' && req.query.all_with_zero !== 'true' && req.query.all !== 'true') {
+      where.push(`${branchStockSql} > 0`);
     }
 
     let sqliteOrder = 'ORDER BY i.id DESC';
@@ -626,7 +627,8 @@ async function listInventory(req, user) {
         branch_name: bs.branch_name,
         stock_level: Number(bs.stock_level || 0),
       }));
-      return { ...r, stock_level: stock, total_stock: Number(r.stock_level || 0), sizes, available_branches };
+      const totalStock = branchStockRows.reduce((acc, curr) => acc + Number(curr.stock_level || 0), 0);
+      return { ...r, stock_level: stock, total_stock: totalStock, sizes, available_branches };
     };
 
     if (pagination.enabled) {
@@ -813,8 +815,8 @@ async function listInventory(req, user) {
     }
   } else if (activeBranchId && !Number.isNaN(activeBranchId)) {
     // When a specific branch is selected and stock_status is 'all',
-    // show items that have stock in that branch by default, unless include_zero=true
-    if (req.query.include_zero !== 'true' && req.query.all_with_zero !== 'true') {
+    // show items that have stock in that branch by default, unless include_zero=true or all=true
+    if (req.query.include_zero !== 'true' && req.query.all_with_zero !== 'true' && req.query.all !== 'true') {
       where.push(`${stockLevelSql} > 0`);
     }
   }

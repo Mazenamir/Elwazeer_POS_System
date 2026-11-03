@@ -55,8 +55,8 @@ class AutoUpdateManager extends EventEmitter {
     this.edition = (options.edition || envMode).toLowerCase();
     this.appId = options.appId || (this.edition === 'branch' ? 'com.bebyoon.branch.system' : 'com.bebyoon.system');
     this.channel = options.channel || (this.edition === 'branch' ? 'branch' : 'latest');
-    let defaultVer = '1.1.0';
-    try { defaultVer = require('../../package.json').version || '1.1.0'; } catch (_) {}
+    let defaultVer = '1.1.1';
+    try { defaultVer = require('../../package.json').version || '1.1.1'; } catch (_) {}
     this.currentVersion = options.currentVersion || (this.app?.getVersion ? this.app.getVersion() : defaultVer);
     this.publicKeyPem = options.publicKeyPem || DEFAULT_UPDATE_PUBLIC_KEY_PEM;
 
@@ -76,6 +76,7 @@ class AutoUpdateManager extends EventEmitter {
     // Bounded backoff settings
     this.baseBackoffMs = 5 * 60 * 1000;
     this.maxBackoffMs = 120 * 60 * 1000; // 120 minutes max backoff (7,200,000 ms)
+    this.autoDownload = options.autoDownload !== undefined ? Boolean(options.autoDownload) : false;
 
     // State Tracking via Validated State Machine
     this.stateMachine = new UpdateStateMachine({
@@ -121,8 +122,8 @@ class AutoUpdateManager extends EventEmitter {
     if (this.listenersAttached || !this.updater) return;
     this.listenersAttached = true;
 
-    // Auto-download silently in background as soon as update is detected
-    this.updater.autoDownload = true;
+    // Decouple check from binary download per Requirement R5 & Section 10
+    this.updater.autoDownload = false;
     this.updater.autoInstallOnAppQuit = false;
 
     this._onChecking = () => {
@@ -137,29 +138,36 @@ class AutoUpdateManager extends EventEmitter {
 
     this._onAvailable = (info) => {
       this.isChecking = false;
-      // autoDownload=true means electron-updater starts downloading immediately after this event
-      this.isDownloading = true;
+      this.isDownloading = false;
       this.lastCheckStatus = 'available';
       this.availableUpdateInfo = info;
 
       const ver = info && info.version ? info.version : 'unknown';
-      this.log(`[UPDATER] Update available: ${ver} for edition ${this.edition}. Auto-download starting...`);
+      this.log(`[UPDATER] Update available: ${ver} for edition ${this.edition}.`);
 
       // Verify edition contract if metadata contains edition/appId
       if (info && info.edition && info.edition.toLowerCase() !== this.edition.toLowerCase()) {
         const mismatchMsg = `Cross-edition update rejected: downloaded info is for '${info.edition}', but running edition is '${this.edition}'.`;
         this.log(`[UPDATER] REJECTED: ${mismatchMsg}`);
-        this.isDownloading = false;
         this.stateMachine.transition('failed', { error: mismatchMsg });
         this.emit('status', 'updater:error', { error: mismatchMsg });
         return;
       }
 
-      if (this.stateMachine.canTransitionTo('downloading')) {
-        this.stateMachine.transition('downloading', { version: ver, info });
+      if (this.stateMachine.canTransitionTo('update-available')) {
+        this.stateMachine.transition('update-available', { version: ver, info });
       }
-      // Emit progress event at 0% so the banner immediately shows the progress bar
-      this.emit('status', 'updater:progress', { percent: 0, version: ver });
+      this.emit('status', 'updater:available', info);
+
+      if (this.autoDownload) {
+        setImmediate(() => {
+          if (!this.isStopped && !this.isDownloading && this.stateMachine.getState() === 'update-available') {
+            this.downloadUpdate().catch((err) => {
+              this.log(`[UPDATER] Auto-download failed: ${err.message}`);
+            });
+          }
+        });
+      }
     };
 
     this._onNotAvailable = (info) => {

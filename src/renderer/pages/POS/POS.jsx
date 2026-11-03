@@ -451,9 +451,10 @@ export function POS() {
       }
       // Always fetch full catalog for cashier to ensure instant offline-grade search and complete categories
       query.append('all', 'true');
+      query.append('include_zero', 'true');
       const data = await api.get(`/inventory?${query.toString()}`);
       const items = Array.isArray(data) ? data : (data?.items || []);
-      if (Array.isArray(items) && items.length > 0) {
+      if (Array.isArray(items)) {
         setInventory(items);
         try {
           sessionStorage.setItem(`pos_catalog_${activeBranchId || 'all'}`, JSON.stringify(items));
@@ -474,9 +475,11 @@ export function POS() {
         if (Array.isArray(parsed) && parsed.length > 0) {
           setInventory(parsed);
           setLoadingInventory(false);
+          return;
         }
       }
     } catch {}
+    setInventory([]);
   }, [activeBranchId]);
 
   useEffect(() => {
@@ -628,6 +631,18 @@ export function POS() {
       const itemSizes = Array.isArray(item.sizes) && item.sizes.length > 0 ? item.sizes : [];
       const baseSizeName = itemSizes[0]?.size_name || item.size_cut || item.size || null;
 
+      const itemBranchStock = (() => {
+        if (!activeBranchId || activeBranchId === 'all') {
+          return Number(item.total_stock ?? item.stock_level ?? 0);
+        }
+        if (Array.isArray(item.available_branches)) {
+          const match = item.available_branches.find((b) => b.branch_id.toString() === activeBranchId.toString());
+          if (match) return Number(match.stock_level || 0);
+          return 0;
+        }
+        return Number(item.stock_level ?? 0);
+      })();
+
       if (!map.has(groupKey)) {
         map.set(groupKey, {
           ...item,
@@ -637,7 +652,7 @@ export function POS() {
             ? itemSizes.map((s) => ({
                 id: s.id || item.id,
                 size_name: s.size_name,
-                stock_level: Number(s.stock_level ?? 0),
+                stock_level: (!activeBranchId || activeBranchId === 'all') ? Number(s.stock_level ?? 0) : (s.branch_id && s.branch_id.toString() !== activeBranchId.toString() ? 0 : Number(s.stock_level ?? 0)),
                 barcode: s.barcode || item.barcode,
                 color_name: s.color_name || item.color || '',
               }))
@@ -649,7 +664,7 @@ export function POS() {
                 color_name: item.color || '',
               }] : []),
           total_stock: Number(item.total_stock ?? item.stock_level ?? 0),
-          stock_level: Number(item.stock_level ?? 0),
+          stock_level: itemBranchStock,
           available_branches: Array.isArray(item.available_branches)
             ? item.available_branches.map((b) => ({ ...b, stock_level: Number(b.stock_level || 0) }))
             : [],
@@ -658,7 +673,7 @@ export function POS() {
         const grouped = map.get(groupKey);
         grouped.originalItems.push(item);
         grouped.total_stock += Number(item.total_stock ?? item.stock_level ?? 0);
-        grouped.stock_level += Number(item.stock_level ?? 0);
+        grouped.stock_level += itemBranchStock;
 
         // Merge available branches cleanly without mutating source inventory objects
         if (Array.isArray(item.available_branches)) {
@@ -680,12 +695,12 @@ export function POS() {
             grouped.sizes.push({
               id: item.id,
               size_name: sizeName,
-              stock_level: Number(item.stock_level ?? 0),
+              stock_level: itemBranchStock,
               barcode: item.barcode,
               color_name: item.color || '',
             });
           } else {
-            existingSize.stock_level += Number(item.stock_level ?? 0);
+            existingSize.stock_level += itemBranchStock;
           }
         }
       }
@@ -2356,7 +2371,14 @@ export function POS() {
 
                     const currentBranchStock = isAll
                       ? Number(product.total_stock ?? product.stock_level ?? 0)
-                      : Number(product.stock_level ?? 0);
+                      : (() => {
+                          if (Array.isArray(product.available_branches)) {
+                            const match = product.available_branches.find((b) => b.branch_id.toString() === activeBranchId?.toString());
+                            if (match) return Number(match.stock_level || 0);
+                            return 0;
+                          }
+                          return Number(product.stock_level ?? 0);
+                        })();
 
                     const isOutOfStock = currentBranchStock <= 0;
                     const isLow = !isOutOfStock && currentBranchStock <= (product.min_stock_level ?? 5);
