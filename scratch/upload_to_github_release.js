@@ -26,23 +26,24 @@ const VERSION = process.env.RELEASE_VERSION || pkg.version || '1.1.0';
 const TAG = `v${VERSION}`;
 const RELEASE_NAME = `Bebyoon System v${VERSION}`;
 
-const RELEASE_BODY = `## 🚀 التحديثات في الإصدار v${VERSION} (Hotfix Release)
-
-### 🛠️ إصلاح خطأ شاشة التقارير (ReferenceError Fix)
-- **معالجة خطأ `Cannot access 'ft' before initialization`:** إصلاح ترتيب تعريف متغير `isBranchScoped` داخل صفحة التقارير، وضمان تهيئته قبل استخدامه في الـ Hooks والـ State الابتدائية.
-- **استقرار فوري لواجهة التقارير:** فتح شاشة التقارير بسلاسة دون ظهور شاشة الخطأ الداكنة (Error Boundary).
-
-### 📊 الميزات المستقرة من v1.1.6:
-- حل مشكلة تقارير الفروع والأوفلاين التلقائي وتجاوز خطأ `Branch user must have a branch_id`.
-- حل مشكلة تعيين وتشفير كلمات سر العمليات الحساسة (bcrypt) من شاشة الإعدادات.
-
----
-
-### 📦 ملفات التثبيت المرفقة (Installation Packages):
-1. **\`Bebyoon-System-Setup-${VERSION}.exe\`**: النسخة الكاملة للسيرفر المركزي (Master Server).
-2. **\`Bebyoon-Branch-Setup-${VERSION}.exe\`**: النسخة المخصصة لأجهزة الفروع ونقاط البيع المحلية (Branch Offline-First Setup).
-3. **ملفات التحديث التلقائي (\`latest.yml\`, \`branch.yml\`, \`.blockmap\`)**.
-`;
+const RELEASE_BODY = [
+  '## 🚀 التحديثات في الإصدار v' + VERSION + ' (Hotfix Release)',
+  '',
+  '### 🛠️ إصلاح خطأ شاشة التقارير (ReferenceError Fix)',
+  "- **معالجة خطأ `Cannot access 'ft' before initialization`:** إصلاح ترتيب تعريف متغير `isBranchScoped` داخل صفحة التقارير، وضمان تهيئته قبل استخدامه في الـ Hooks والـ State الابتدائية.",
+  '- **استقرار فوري لواجهة التقارير:** فتح شاشة التقارير بسلاسة دون ظهور شاشة الخطأ الداكنة (Error Boundary).',
+  '',
+  '### 📊 الميزات المستقرة من v1.1.6:',
+  '- حل مشكلة تقارير الفروع والأوفلاين التلقائي وتجاوز خطأ `Branch user must have a branch_id`.',
+  '- حل مشكلة تعيين وتشفير كلمات سر العمليات الحساسة (bcrypt) من شاشة الإعدادات.',
+  '',
+  '---',
+  '',
+  '### 📦 ملفات التثبيت المرفقة (Installation Packages):',
+  '1. **`Bebyoon-System-Setup-' + VERSION + '.exe`**: النسخة الكاملة للسيرفر المركزي (Master Server).',
+  '2. **`Bebyoon-Branch-Setup-' + VERSION + '.exe`**: النسخة المخصصة لأجهزة الفروع ونقاط البيع المحلية (Branch Offline-First Setup).',
+  '3. **ملفات التحديث التلقائي (`latest.yml`, `branch.yml`, `.blockmap`)**.',
+].join('\n');
 
 function apiRequest(options, data = null) {
   return new Promise((resolve, reject) => {
