@@ -26,15 +26,15 @@ const VERSION = process.env.RELEASE_VERSION || pkg.version || '1.1.0';
 const TAG = `v${VERSION}`;
 const RELEASE_NAME = `Bebyoon System v${VERSION}`;
 
-const RELEASE_BODY = `## 🚀 التحديثات في الإصدار v${VERSION} (Release Highlights)
+const RELEASE_BODY = `## 🚀 التحديثات في الإصدار v${VERSION} (Hotfix Release)
 
-### 📊 إصلاح تقارير الفروع والأوفلاين (Branch Offline Reports & Settlement Fixes)
-- **معالجة خطأ Branch user must have a branch_id:** تمكين جهاز الفرع من التعرف على هويته المحلية وبيانات الفرع تلقائياً عند طلب التقارير والداشبورد في وضع الأوفلاين (SQLite).
-- **التهيئة التلقائية للفروع:** ربط واجهة التقارير تلقائياً بفرع المستخدم بدلاً من طلب branch_id=all ومنع أخطاء الحظر (403 Forbidden).
-- **جاهزية المجمع الشهري وشيتات الإكسيل:** تشغيل شيتات MASTER SHEET والعهدة (OHDA) ومسير الرواتب (SALARY) وتقييم البائعين (KPI) بنسبة توافق 100%.
+### 🛠️ إصلاح خطأ شاشة التقارير (ReferenceError Fix)
+- **معالجة خطأ `Cannot access 'ft' before initialization`:** إصلاح ترتيب تعريف متغير `isBranchScoped` داخل صفحة التقارير، وضمان تهيئته قبل استخدامه في الـ Hooks والـ State الابتدائية.
+- **استقرار فوري لواجهة التقارير:** فتح شاشة التقارير بسلاسة دون ظهور شاشة الخطأ الداكنة (Error Boundary).
 
-### 🔒 إصلاح تعيين كلمات المرور للعمليات الحساسة (Sensitive Passwords Fix)
-- **معالجة خطأ كلمة المرور لا يمكن أن تكون فارغة:** توافق تام بين واجهة الإعدادات وسيرفر التحقق والتشفير (bcrypt) لكافة العمليات الحساسة (المرتجعات، تعديل الفواتير، عرض الأرباح، إدارة المخزون، والرواتب).
+### 📊 الميزات المستقرة من v1.1.6:
+- حل مشكلة تقارير الفروع والأوفلاين التلقائي وتجاوز خطأ `Branch user must have a branch_id`.
+- حل مشكلة تعيين وتشفير كلمات سر العمليات الحساسة (bcrypt) من شاشة الإعدادات.
 
 ---
 

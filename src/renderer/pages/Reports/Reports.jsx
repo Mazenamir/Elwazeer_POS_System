@@ -101,9 +101,12 @@ export function Reports() {
   const { branches, isMultiBranch, activeBranchId } = useBranch();
   const { toast } = useToast();
 
+  const isBranchScoped = user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor';
+
+
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'monthly' | 'sales' | 'rentals' | 'expenses' | 'inventory' | 'top_products'
   const [selectedBranch, setSelectedBranch] = useState(() => {
-    if (user?.branch_id && (user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor')) {
+    if (isBranchScoped && user?.branch_id) {
       return user.branch_id.toString();
     }
     return activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all';
@@ -278,7 +281,6 @@ export function Reports() {
   const [selectedSupplierStatement, setSelectedSupplierStatement] = useState(null);
   const [loadingStatementModal, setLoadingStatementModal] = useState(false);
 
-  const isBranchScoped = user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor';
 
   // Formatters
   const formatCurrency = (val) => {
