@@ -1,7 +1,14 @@
+const config = require('../../config/env');
 const { hasInventoryAdminAccess } = require('../../../shared/constants/permissions');
 const { getCairoDateTimeParts, addDays, getMonthRange } = require('../../../shared/utils/date');
 
 function getReportBranchId(user, query = {}) {
+  // In branch mode, the application is strictly dedicated to this branch's local database.
+  // Never throw 403 or "Branch user must have a branch_id" in branch mode.
+  if (config.IS_BRANCH_MODE) {
+    return String(user?.branch_id || config.BRANCH_ID || 1);
+  }
+
   if (user && user.role !== 'admin') {
     if (user.branch_scope === 'all') {
       if (query.branch_id && query.branch_id !== 'all') {
@@ -25,26 +32,30 @@ function getReportBranchId(user, query = {}) {
       return String(user.branch_id || authBranchIds[0] || 1);
     }
 
-    if (query.branch_id === 'all') {
-      const err = new Error('Forbidden: Cannot access other branch reports');
-      err.statusCode = 403;
-      err.status = 403;
-      throw err;
-    }
-    if (!user.branch_id) {
+    // Default 'single' branch scope
+    const assignedBranchId = user.branch_id ? String(user.branch_id) : null;
+    if (!assignedBranchId) {
       const err = new Error('Branch user must have a branch_id');
       err.statusCode = 403;
       err.status = 403;
       throw err;
     }
-    if (query.branch_id && String(query.branch_id) !== String(user.branch_id)) {
+
+    // If a single branch user queries 'all' or omits branch_id, gracefully scope to their assigned branch
+    if (!query.branch_id || query.branch_id === 'all') {
+      return assignedBranchId;
+    }
+
+    if (String(query.branch_id) !== assignedBranchId) {
       const err = new Error('Forbidden: Cannot access other branch reports');
       err.statusCode = 403;
       err.status = 403;
       throw err;
     }
-    return String(user.branch_id);
+    return assignedBranchId;
   }
+
+  // Admin user
   if (query.branch_id && query.branch_id !== 'all') {
     return String(query.branch_id);
   }

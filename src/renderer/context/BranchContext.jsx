@@ -28,7 +28,7 @@ export function BranchProvider({ children }) {
 
   const [activeBranchId, setActiveBranchId] = useState(() => {
     if (user && user.role !== 'admin') {
-      if (user.branch_scope === 'single' && user.branch_id) {
+      if (user.branch_scope !== 'all' && user.branch_id) {
         return user.branch_id.toString();
       }
       if (user.branch_scope === 'selected') {
@@ -48,7 +48,7 @@ export function BranchProvider({ children }) {
   useEffect(() => {
     if (!user) return;
     if (user.role !== 'admin') {
-      if (user.branch_scope === 'single' && user.branch_id) {
+      if (user.branch_scope !== 'all' && user.branch_id) {
         const bId = user.branch_id.toString();
         setActiveBranchId(bId);
         localStorage.setItem('bebyoon_active_branch_id', bId);
@@ -74,7 +74,7 @@ export function BranchProvider({ children }) {
         setBranches(data);
 
         if (user && user.role !== 'admin') {
-          if (user.branch_scope === 'single' && user.branch_id) {
+          if (user.branch_scope !== 'all' && user.branch_id) {
             setActiveBranchId(user.branch_id.toString());
             localStorage.setItem('bebyoon_active_branch_id', user.branch_id.toString());
           } else if (user.branch_scope === 'selected') {

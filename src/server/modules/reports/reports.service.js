@@ -34,18 +34,8 @@ async function getDashboard(query = {}, user = null) {
     throw err;
   }
 
-  let branchId = null;
+  const branchId = getReportBranchId(user, query);
   const params = [];
-  if (user && user.role !== 'admin') {
-    if (!user.branch_id) {
-      const err = new Error('Branch user must have a branch_id');
-      err.statusCode = 403;
-      throw err;
-    }
-    branchId = String(user.branch_id);
-  } else if (query.branch_id && query.branch_id !== 'all') {
-    branchId = String(query.branch_id);
-  }
 
   let branchFilter = '';
   if (branchId) {
@@ -427,11 +417,6 @@ async function getProfitReport(query = {}, user = null) {
   const month = range.month || query.month || (await getDatabaseCairoNow(db)).month;
 
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   let branchQuery = 'SELECT id, name FROM branches';
   const params = [];
@@ -1096,11 +1081,6 @@ async function getProfitReport(query = {}, user = null) {
 
 async function getMonthlyHistory(query = {}, user = null) {
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   let fMonth = query.from_month && /^\d{4}-\d{2}$/.test(query.from_month) ? query.from_month : null;
   let tMonth = query.to_month && /^\d{4}-\d{2}$/.test(query.to_month) ? query.to_month : null;
@@ -1310,11 +1290,6 @@ async function getDailyHistory(query = {}, user = null) {
   const currentDayExpr = `'${currentDay}'::date`;
 
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   let branchFilter = '';
   let orderBranchFilter = '';
@@ -1488,11 +1463,6 @@ async function getTopProductsReport(query = {}, user = null) {
   const limit = Math.max(1, Math.min(Number.parseInt(query.limit, 10) || 20, 100));
 
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   let branchFilterSales = '';
   let branchFilterRentals = '';
@@ -1622,11 +1592,6 @@ async function getDailyReport(query = {}, user = null) {
   if (!date) date = (await getDatabaseCairoNow(db)).date;
 
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const range = getDayRange(date);
   const params = [range.start, range.end];
@@ -2325,11 +2290,6 @@ async function getSummaryReport(query = {}, user = null) {
 async function getSalesReport(query = {}, user = null) {
   const range = parseReportDateRange(query);
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const limit = Number(query.limit) > 0 ? Number(query.limit) : 50000;
   const params = [range.start, range.end];
@@ -2483,11 +2443,6 @@ async function getSalesReport(query = {}, user = null) {
 async function getRentalsReport(query = {}, user = null) {
   const range = parseReportDateRange(query);
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const limit = Number(query.limit) > 0 ? Number(query.limit) : 50000;
   const params = [range.start, range.end];
@@ -2567,11 +2522,6 @@ async function getRentalsReport(query = {}, user = null) {
 async function getExpensesReport(query = {}, user = null) {
   const range = parseReportDateRange(query);
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const limit = Number(query.limit) > 0 ? Number(query.limit) : 50000;
   const params = [range.start, range.end];
@@ -2632,11 +2582,6 @@ async function getExpensesReport(query = {}, user = null) {
 
 async function getInventoryReport(query = {}, user = null) {
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const params = [];
   let branchJoin = '';
@@ -2733,11 +2678,6 @@ async function getExtendedDailyReport(query = {}, user = null) {
     date = (await getDatabaseCairoNow(db)).date;
   }
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const range = getDayRange(date);
   const branchFilterOrders = reportBranchId ? 'AND o.branch_id = $3' : '';
@@ -3276,11 +3216,6 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
     month = (await getDatabaseCairoNow(db)).month;
   }
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const [yearStr, monthStr] = month.split('-');
   const year = parseInt(yearStr, 10);
@@ -3452,11 +3387,6 @@ async function getMonthlySalarySheet(query = {}, user = null) {
     month = (await getDatabaseCairoNow(db)).month;
   }
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const [yearStr, monthStr] = month.split('-');
   const year = parseInt(yearStr, 10);
@@ -3648,11 +3578,6 @@ async function getSalesKpiReport(query = {}, user = null) {
     month = (await getDatabaseCairoNow(db)).month;
   }
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const [yearStr, monthStr] = month.split('-');
   const year = parseInt(yearStr, 10);
@@ -3732,11 +3657,6 @@ async function getMonthlyMasterReport(query = {}, user = null) {
     month = (await getDatabaseCairoNow(db)).month;
   }
   const reportBranchId = getReportBranchId(user, query);
-  if (user && user.role !== 'admin' && !reportBranchId) {
-    const err = new Error('Branch user must have a branch_id');
-    err.statusCode = 403;
-    throw err;
-  }
 
   const branding = await getBranchBranding(db, reportBranchId);
 

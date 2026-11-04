@@ -102,13 +102,20 @@ export function Reports() {
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'monthly' | 'sales' | 'rentals' | 'expenses' | 'inventory' | 'top_products'
-  const [selectedBranch, setSelectedBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all'));
+  const [selectedBranch, setSelectedBranch] = useState(() => {
+    if (user?.branch_id && (user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor')) {
+      return user.branch_id.toString();
+    }
+    return activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all';
+  });
 
   useEffect(() => {
-    if (activeBranchId) {
+    if (isBranchScoped && user?.branch_id) {
+      setSelectedBranch(user.branch_id.toString());
+    } else if (activeBranchId) {
       setSelectedBranch(activeBranchId);
     }
-  }, [activeBranchId]);
+  }, [activeBranchId, isBranchScoped, user?.branch_id]);
   const [profitVisible, setProfitVisible] = useState(false);
   const [showProfitAuthModal, setShowProfitAuthModal] = useState(false);
   const [profitAuthInput, setProfitAuthInput] = useState('');

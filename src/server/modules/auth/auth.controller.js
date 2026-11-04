@@ -362,9 +362,19 @@ async function getSensitivePasswordStatus(req, res, next) {
 
 async function updateSensitivePassword(req, res, next) {
   try {
-    const { type, password, confirm_password } = req.body;
+    const { type, password, new_password, newPassword, confirm_password, confirmPassword } = req.body;
     if (!type) return res.status(400).json({ error: 'نوع العملية الحساسة مطلوب' });
-    const result = await sensitiveService.updateSensitivePassword(type, { password, confirm_password }, req.user);
+    const effectivePassword = password || new_password || newPassword;
+    const effectiveConfirm = confirm_password || confirmPassword || effectivePassword;
+    const result = await sensitiveService.updateSensitivePassword(
+      type,
+      {
+        password: effectivePassword,
+        new_password: effectivePassword,
+        confirm_password: effectiveConfirm,
+      },
+      req.user
+    );
     res.json(result);
   } catch (err) {
     next(err);

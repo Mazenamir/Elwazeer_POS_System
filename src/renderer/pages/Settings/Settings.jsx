@@ -336,6 +336,7 @@ export function Settings() {
       }));
       await client.post('/sensitive-passwords', {
         type,
+        password: form.new_password,
         new_password: form.new_password,
         confirm_password: form.confirm_password,
       });
