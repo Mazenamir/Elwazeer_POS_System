@@ -15,6 +15,12 @@ function requireSensitiveOperation(passwordType, operationName) {
     const resourceId = req.params?.id || req.body?.id || null;
     const branchId = req.body?.branch_id || req.query?.branch_id || req.user?.branch_id;
 
+    // If this operation is not configured with a password, allow through directly without password requirement
+    const storedHash = await sensitiveService.getStoredPasswordHash(passwordType);
+    if (!storedHash) {
+      return next();
+    }
+
     // Check approval token first (header or body)
     const token = req.headers['x-approval-token'] || req.body?.approval_token;
     if (token) {

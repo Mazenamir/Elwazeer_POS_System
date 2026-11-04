@@ -34,6 +34,7 @@ router.put('/users/me', controller.updateOwnAccount);
 // Admin-managed protected operation passwords
 router.get('/sensitive-passwords/status', requireAdmin, controller.getSensitivePasswordStatus);
 router.post('/sensitive-passwords', requireAdmin, controller.updateSensitivePassword);
+router.delete('/sensitive-passwords/:type', requireAdmin, controller.deleteSensitivePassword);
 
 // Admin-managed branch users
 router.post('/users/branch', requireAdmin, controller.createBranchUser);

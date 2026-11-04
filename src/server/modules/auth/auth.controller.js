@@ -353,7 +353,7 @@ async function verifyInventoryPassword(req, res, next) {
 
 async function getSensitivePasswordStatus(req, res, next) {
   try {
-    const status = await sensitiveService.getSensitivePasswordStatus();
+    const status = await sensitiveService.getSensitivePasswordStatus({ req, user: req.user });
     res.json(status);
   } catch (err) {
     next(err);
@@ -375,6 +375,17 @@ async function updateSensitivePassword(req, res, next) {
       },
       req.user
     );
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function deleteSensitivePassword(req, res, next) {
+  try {
+    const type = req.params?.type || req.body?.type;
+    if (!type) return res.status(400).json({ error: 'نوع العملية الحساسة مطلوب' });
+    const result = await sensitiveService.removeSensitivePassword(type, req.user);
     res.json(result);
   } catch (err) {
     next(err);
@@ -483,6 +494,7 @@ module.exports = {
   verifyInventoryPassword,
   getSensitivePasswordStatus,
   updateSensitivePassword,
+  deleteSensitivePassword,
   updateOwnAccount,
   createBranchUser,
   listBranchUsers,

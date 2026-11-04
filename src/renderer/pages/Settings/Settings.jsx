@@ -355,6 +355,40 @@ export function Settings() {
     }
   };
 
+  // Remove Sensitive Operation Password (Unprotect)
+  const handleRemoveSensitivePassword = async (type) => {
+    if (!window.confirm('هل أنت متأكد من رغبتك في إلغاء كلمة المرور لهذه العملية وجعلها متاحة بدون حماية؟')) {
+      return;
+    }
+    try {
+      setSensitiveForms((prev) => ({
+        ...prev,
+        [type]: { ...prev[type], loading: true },
+      }));
+      await client.delete(`/sensitive-passwords/${type}`);
+      toast({
+        title: 'تم الإلغاء',
+        message: 'تم إلغاء كلمة المرور للعملية وجعلها غير محمية 🔓',
+        variant: 'info',
+      });
+      setSensitiveForms((prev) => ({
+        ...prev,
+        [type]: { new_password: '', confirm_password: '', show: false, loading: false },
+      }));
+      loadSensitiveStatus();
+    } catch (err) {
+      toast({
+        title: 'خطأ',
+        message: err.message || 'تعذر إلغاء كلمة المرور',
+        variant: 'danger',
+      });
+      setSensitiveForms((prev) => ({
+        ...prev,
+        [type]: { ...prev[type], loading: false },
+      }));
+    }
+  };
+
   // Update Personal Profile & Password
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
@@ -1438,7 +1472,13 @@ export function Settings() {
 
             <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
               {SENSITIVE_OPERATIONS.map((op) => {
-                const status = sensitiveStatus[op.type] || {};
+                const rawStatus = sensitiveStatus[op.type];
+                const isConfigured = typeof rawStatus === 'object' && rawStatus !== null
+                  ? Boolean(rawStatus.configured)
+                  : Boolean(rawStatus);
+                const isLocked = Boolean(rawStatus?.locked);
+                const failedAttempts = Number(rawStatus?.failed_attempts || 0);
+                const remainingSeconds = Number(rawStatus?.remaining_seconds || 0);
                 const form = sensitiveForms[op.type] || { new_password: '', confirm_password: '', show: false, loading: false };
                 const OpIcon = op.icon;
 
@@ -1461,7 +1501,7 @@ export function Settings() {
 
                         {/* Status Badge */}
                         <div className="shrink-0">
-                          {status.configured ? (
+                          {isConfigured ? (
                             <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
                               مفعلة بكلمة سر 🔒
                             </span>
@@ -1474,18 +1514,18 @@ export function Settings() {
                       </div>
 
                       {/* Lockout Warning Banner */}
-                      {status.locked && (
+                      {isLocked && (
                         <div className="p-3 mb-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-black flex items-center gap-2">
                           <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
                           <span>
-                            تم إيقاف هذه العملية مؤقتاً بسبب تكرار المحاولات الخاطئة! متبقي {status.remaining_seconds} ثانية.
+                            تم إيقاف هذه العملية مؤقتاً بسبب تكرار المحاولات الخاطئة! متبقي {remainingSeconds} ثانية.
                           </span>
                         </div>
                       )}
 
-                      {status.failed_attempts > 0 && !status.locked && (
+                      {failedAttempts > 0 && !isLocked && (
                         <div className="text-[11px] font-bold text-amber-600 mb-2">
-                          ⚠️ تنبيه: عدد المحاولات الخاطئة الأخيرة: {status.failed_attempts} من 5 محاولات قبل الإغلاق المؤقت.
+                          ⚠️ تنبيه: عدد المحاولات الخاطئة الأخيرة: {failedAttempts} من 5 محاولات قبل الإغلاق المؤقت.
                         </div>
                       )}
                     </div>
@@ -1545,17 +1585,33 @@ export function Settings() {
                           <span>إظهار النص</span>
                         </label>
 
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          icon={Save}
-                          loading={form.loading}
-                          onClick={() => handleUpdateSensitivePassword(op.type)}
-                          disabled={!form.new_password || !form.confirm_password}
-                          className="!bg-[#151515]"
-                        >
-                          {status.configured ? 'تغيير كلمة السر' : 'تعيين كلمة السر'}
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          {isConfigured && (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              icon={Trash2}
+                              loading={form.loading}
+                              onClick={() => handleRemoveSensitivePassword(op.type)}
+                              className="!bg-rose-50 !text-rose-700 !border-rose-200 hover:!bg-rose-100"
+                              title="إلغاء كلمة المرور وجعل العملية بدون كلمة سر"
+                            >
+                              إلغاء الحماية
+                            </Button>
+                          )}
+
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            icon={Save}
+                            loading={form.loading}
+                            onClick={() => handleUpdateSensitivePassword(op.type)}
+                            disabled={!form.new_password || !form.confirm_password}
+                            className="!bg-[#151515]"
+                          >
+                            {isConfigured ? 'تغيير كلمة السر' : 'تعيين كلمة السر'}
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>

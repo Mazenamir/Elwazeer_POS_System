@@ -52,6 +52,34 @@ function getAttemptKeys(type, ip, userId) {
   return keys;
 }
 
+function getLockoutStatus(type, ip, userId) {
+  const keys = getAttemptKeys(type, ip, userId);
+  let maxCount = 0;
+  let lockedUntil = null;
+  const now = Date.now();
+
+  for (const key of keys) {
+    const record = sensitiveAttempts.get(key);
+    if (record) {
+      if (record.count > maxCount) maxCount = record.count;
+      if (record.lockedUntil && record.lockedUntil > now) {
+        if (!lockedUntil || record.lockedUntil > lockedUntil) {
+          lockedUntil = record.lockedUntil;
+        }
+      }
+    }
+  }
+
+  const locked = Boolean(lockedUntil && lockedUntil > now);
+  const remaining_seconds = locked ? Math.max(0, Math.ceil((lockedUntil - now) / 1000)) : 0;
+
+  return {
+    locked,
+    remaining_seconds,
+    failed_attempts: maxCount,
+  };
+}
+
 function checkLockout(type, ip, userId) {
   const keys = getAttemptKeys(type, ip, userId);
   for (const key of keys) {
@@ -383,8 +411,8 @@ async function updateSensitivePassword(type, passwordsInput, adminUser = null) {
   }
 
   await auditService.log({
-    userId: adminUser.id,
-    username: adminUser.username,
+    userId: adminUser?.id || null,
+    username: adminUser?.username || 'admin',
     action: `sensitive_password_updated_${type}`,
     resourceType: type,
     outcome: 'success',
@@ -395,29 +423,28 @@ async function updateSensitivePassword(type, passwordsInput, adminUser = null) {
 }
 
 /**
- * Returns whether each sensitive password has been configured
+ * Returns whether each sensitive password has been configured and its lockout status
  */
-async function getSensitivePasswordStatus() {
-  const status = {
-    profit: false,
-    invoice_edit: false,
-    return: false,
-    inventory: false,
-    salary: false,
-  };
+async function getSensitivePasswordStatus(context = {}) {
+  const operations = ['profit', 'invoice_edit', 'return', 'inventory', 'salary'];
+  const configuredMap = {};
+  for (const op of operations) {
+    configuredMap[op] = false;
+  }
 
-  const keys = Object.keys(status).flatMap((t) => [
+  const keys = operations.flatMap((t) => [
     `${PASSWORD_KEY_MAP[t]}_hash`,
     PASSWORD_KEY_MAP[t],
   ]);
 
   if (config.IS_BRANCH_MODE) {
-    if (!db.sqlite) return status;
-    const rows = db.sqlite.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
-    for (const r of rows) {
-      if (r.value && r.value.trim() !== '') {
-        for (const t of Object.keys(status)) {
-          if (r.key.startsWith(PASSWORD_KEY_MAP[t])) status[t] = true;
+    if (db.sqlite) {
+      const rows = db.sqlite.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
+      for (const r of rows) {
+        if (r.value && r.value.trim() !== '') {
+          for (const t of operations) {
+            if (r.key.startsWith(PASSWORD_KEY_MAP[t])) configuredMap[t] = true;
+          }
         }
       }
     }
@@ -428,14 +455,65 @@ async function getSensitivePasswordStatus() {
     );
     for (const r of rows) {
       if (r.value && r.value.trim() !== '') {
-        for (const t of Object.keys(status)) {
-          if (r.key.startsWith(PASSWORD_KEY_MAP[t])) status[t] = true;
+        for (const t of operations) {
+          if (r.key.startsWith(PASSWORD_KEY_MAP[t])) configuredMap[t] = true;
         }
       }
     }
   }
 
+  const status = {};
+  const ip = context.req?.ip || context.req?.socket?.remoteAddress || null;
+  const userId = context.user?.id || null;
+
+  for (const op of operations) {
+    const lockout = getLockoutStatus(op, ip, userId);
+    status[op] = {
+      configured: configuredMap[op],
+      locked: lockout.locked,
+      remaining_seconds: lockout.remaining_seconds,
+      failed_attempts: lockout.failed_attempts,
+    };
+  }
+
   return status;
+}
+
+async function removeSensitivePassword(type, adminUser = null) {
+  if (adminUser && adminUser.role !== 'admin') {
+    const err = new Error('تعديل كلمات المرور متاح للمدير فقط');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const baseKey = PASSWORD_KEY_MAP[type] || `${type}_password`;
+  const hashKey = `${baseKey}_hash`;
+
+  if (config.IS_BRANCH_MODE) {
+    if (db.sqlite) {
+      db.sqlite.prepare('DELETE FROM settings WHERE key IN (?, ?)').run(hashKey, baseKey);
+    }
+  } else {
+    await db.query('DELETE FROM settings WHERE key IN ($1, $2)', [hashKey, baseKey]);
+  }
+
+  // Clear any lockout records for this type
+  for (const key of sensitiveAttempts.keys()) {
+    if (key.startsWith(`${type}:`)) {
+      sensitiveAttempts.delete(key);
+    }
+  }
+
+  await auditService.log({
+    userId: adminUser?.id || null,
+    username: adminUser?.username || 'admin',
+    action: `sensitive_password_removed_${type}`,
+    resourceType: type,
+    outcome: 'success',
+    details: { type },
+  });
+
+  return { success: true, message: 'تم إزالة كلمة المرور وإلغاء حماية العملية بنجاح' };
 }
 
 async function setSensitivePassword(type, newPassword, adminUser = null) {
@@ -485,6 +563,7 @@ module.exports = {
   generateApprovalToken,
   consumeApprovalToken,
   updateSensitivePassword,
+  removeSensitivePassword,
   setSensitivePassword,
   getSensitivePasswordStatus,
   getStoredPasswordHash,
