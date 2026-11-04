@@ -307,14 +307,26 @@ async function getMetadata(branchId = null) {
     const colors = db.sqlite.prepare('SELECT name FROM colors ORDER BY name COLLATE NOCASE ASC').all();
     const sizes = db.sqlite.prepare('SELECT name FROM sizes ORDER BY name COLLATE NOCASE ASC').all();
 
-    const countsRows = db.sqlite.prepare(`
-      SELECT COALESCE(NULLIF(TRIM(category), ''), 'أخرى') as cat, count(*) as count
-      FROM inventory
-      WHERE is_deleted = 0
-      GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'أخرى')
-      HAVING count(*) > 0
-      ORDER BY count DESC
-    `).all();
+    const targetBranchId = bId || (config.IS_BRANCH_MODE && config.BRANCH_ID ? parseInt(config.BRANCH_ID, 10) : null);
+
+    const countsRows = targetBranchId
+      ? db.sqlite.prepare(`
+          SELECT COALESCE(NULLIF(TRIM(i.category), ''), 'أخرى') as cat, count(DISTINCT i.id) as count
+          FROM inventory i
+          JOIN inventory_branches ib ON ib.inventory_id = i.id AND ib.branch_id = ? AND ib.stock_level > 0
+          WHERE i.is_deleted = 0
+          GROUP BY COALESCE(NULLIF(TRIM(i.category), ''), 'أخرى')
+          HAVING count(DISTINCT i.id) > 0
+          ORDER BY count DESC
+        `).all(targetBranchId)
+      : db.sqlite.prepare(`
+          SELECT COALESCE(NULLIF(TRIM(category), ''), 'أخرى') as cat, count(*) as count
+          FROM inventory
+          WHERE is_deleted = 0
+          GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'أخرى')
+          HAVING count(*) > 0
+          ORDER BY count DESC
+        `).all();
 
     const categoryCounts = {};
     let totalAll = 0;
@@ -342,8 +354,9 @@ async function getMetadata(branchId = null) {
       categoryCounts,
       colors: colors.map((r) => r.name),
       sizes: sizes.map((r) => r.name),
+      branch_id: targetBranchId || 'all',
     };
-    if (!bId) setInventoryMetadataCache(metadata);
+    if (!bId && !targetBranchId) setInventoryMetadataCache(metadata);
     return metadata;
   }
 

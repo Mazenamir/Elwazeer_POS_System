@@ -2,7 +2,7 @@ const inventoryService = require('./inventory.service');
 
 async function getMetadata(req, res, next) {
   try {
-    const branchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
+    const branchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : (req.user?.branch_id && req.user?.branch_id !== 'all' ? parseInt(req.user.branch_id, 10) : null);
     const metadata = await inventoryService.getMetadata(branchId);
     res.json(metadata);
   } catch (err) {
@@ -12,7 +12,7 @@ async function getMetadata(req, res, next) {
 
 async function getCategories(req, res, next) {
   try {
-    const branchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
+    const branchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : (req.user?.branch_id && req.user?.branch_id !== 'all' ? parseInt(req.user.branch_id, 10) : null);
     const metadata = await inventoryService.getMetadata(branchId);
     res.json({
       categories: metadata.categories || [],

@@ -262,7 +262,9 @@ total: 0,
   }, []);
 
   useEffect(() => {
-    const branchToUse = isAdmin ? inventoryBranchFilter : activeBranchId;
+    const branchToUse = (inventoryBranchFilter && inventoryBranchFilter !== 'all')
+      ? inventoryBranchFilter
+      : (activeBranchId && activeBranchId !== 'all' ? activeBranchId : null);
     fetchMetadata(branchToUse);
   }, [fetchMetadata, isAdmin, inventoryBranchFilter, activeBranchId]);
 

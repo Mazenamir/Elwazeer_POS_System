@@ -325,8 +325,8 @@ async function resetSystem({ password, full_wipe }, user) {
     if (fullWipe) {
       await tx.query('DELETE FROM settings');
       await tx.query('DELETE FROM users WHERE id != $1', [user.id]);
-      await tx.query('UPDATE users SET branch_id = NULL, employee_id = NULL WHERE id = $1', [user.id]);
-      await tx.query('DELETE FROM branches');
+      await tx.query('UPDATE users SET employee_id = NULL WHERE id = $1', [user.id]);
+      // Preserving branches across reset
 
       for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
         await tx.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [key, value]);
@@ -334,7 +334,7 @@ async function resetSystem({ password, full_wipe }, user) {
 
       await tx.query(`
         SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE((SELECT MAX(id) FROM users), 1), true);
-        SELECT setval(pg_get_serial_sequence('branches', 'id'), 1, false);
+        SELECT setval(pg_get_serial_sequence('branches', 'id'), COALESCE((SELECT MAX(id) FROM branches), 1), true);
       `);
     } else {
       await tx.query('UPDATE users SET employee_id = NULL');

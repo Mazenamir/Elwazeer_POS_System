@@ -1703,7 +1703,7 @@ export function Settings() {
                   منطقة الخطر: تصفير ومسح كافة بيانات النظام
                 </h4>
                 <p className="text-xs text-slate-500 font-bold mt-1">
-                  حذف كافة المبيعات، المخزون، الموردين، والمصروفات نهائياً وإعادة ضبط المصنع
+                  حذف كافة المبيعات، المخزون، الموردين، والمصروفات نهائياً مع الحفاظ التام على الفروع وحساب المدير
                 </p>
               </div>
               <Button variant="danger" icon={Trash2} onClick={() => setShowWipeModal(true)}>
@@ -2324,7 +2324,7 @@ export function Settings() {
         <form onSubmit={handleWipeSystem} className="space-y-4">
           <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-bold leading-relaxed">
             <p className="font-black mb-1">⚠️ تحذير شديد الخطورة:</p>
-            هذه العملية لا يمكن الرجوع عنها. سيتم حذف جميع الفواتير والمخزون والعملاء وعقود التأجير وإعادة النظام إلى حالته الأولى تماماً.
+            هذه العملية لا يمكن الرجوع عنها. سيتم حذف جميع الفواتير والمخزون والعملاء وعقود التأجير وإعادة تصفير الحركات، مع الحفاظ الكامل على الفروع وحساب المدير الحالي.
           </div>
 
           <div>

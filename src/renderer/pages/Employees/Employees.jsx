@@ -141,6 +141,8 @@ export function Employees() {
   const [showPayslipModal, setShowPayslipModal] = useState(false);
   const [payslipEmp, setPayslipEmp] = useState(null);
   const [payslipData, setPayslipData] = useState(null);
+  const [editablePayslipData, setEditablePayslipData] = useState(null);
+  const [isEditingPayslip, setIsEditingPayslip] = useState(false);
   const [loadingPayslip, setLoadingPayslip] = useState(false);
 
   // Sales Report Modal
@@ -569,7 +571,10 @@ export function Employees() {
     try {
       const headers = pwd ? { 'x-salary-password': pwd } : {};
       const res = await client.get(`/employees/${emp.id}/payslip`, { headers });
-      setPayslipData(res?.data || res);
+      const raw = res?.data || res;
+      setPayslipData(raw);
+      setEditablePayslipData(raw);
+      setIsEditingPayslip(false);
     } catch (err) {
       toast({ title: 'خطأ', message: err.message || 'كلمة سر الرواتب غير صحيحة أو غير مصرح', variant: 'danger' });
       setPayslipData(null);
@@ -577,6 +582,21 @@ export function Employees() {
     } finally {
       setLoadingPayslip(false);
     }
+  };
+
+  const handlePayslipFieldChange = (field, val) => {
+    const num = val === '' ? 0 : parseFloat(val) || 0;
+    setEditablePayslipData((prev) => {
+      const updated = { ...prev, [field]: num };
+      const basic = Number(updated.basic_salary) || 0;
+      const bonuses = Number(updated.bonuses) || 0;
+      const commissions = Number(updated.commissions) || 0;
+      const advances = Number(updated.advances) || 0;
+      const deductions = Number(updated.deductions) || 0;
+      const alreadyPaid = Number(updated.already_paid) || 0;
+      updated.net_salary = Math.max(0, basic + bonuses + commissions - advances - deductions - alreadyPaid);
+      return updated;
+    });
   };
 
   // Open Payslip
@@ -1620,17 +1640,120 @@ export function Employees() {
       {/* Payslip Modal */}
       <Modal
         isOpen={showPayslipModal}
-        onClose={() => setShowPayslipModal(false)}
+        onClose={() => {
+          setShowPayslipModal(false);
+          setIsEditingPayslip(false);
+        }}
         title={`قسيمة الراتب (Payslip): ${payslipEmp?.name || ''}`}
         maxWidth="max-w-xl"
       >
         {loadingPayslip ? (
           <div className="py-12 text-center text-slate-400 font-bold">جارِ تجهيز كشف الراتب...</div>
-        ) : !payslipData ? (
+        ) : !editablePayslipData ? (
           <div className="py-12 text-center text-slate-400 font-bold">لا تتوفر بيانات راتب لهذا الشهر</div>
         ) : (
           <div className="space-y-4">
-            <div className="p-6 rounded-2xl bg-white border-2 border-slate-200 space-y-4" id="payslip-print-area">
+            {isEditingPayslip ? (
+              <div className="p-4 rounded-2xl bg-amber-50/70 border-2 border-amber-200 space-y-3">
+                <div className="flex items-center justify-between border-b border-amber-200/60 pb-2">
+                  <div className="flex items-center gap-2 text-amber-900 font-black text-xs">
+                    <Edit className="w-4 h-4 text-amber-600" />
+                    <span>تعديل بنود قسيمة الراتب قبل الطباعة</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditablePayslipData({ ...payslipData })}
+                    className="text-[11px] font-black text-amber-700 hover:text-amber-900 underline cursor-pointer"
+                  >
+                    استعادة الحساب الأصلي
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-bold">
+                  <div>
+                    <label className="block text-slate-700 mb-1">الراتب الأساسي (ج.م):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editablePayslipData.basic_salary ?? 0}
+                      onChange={(e) => handlePayslipFieldChange('basic_salary', e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-emerald-700 mb-1">المكافآت والبدلات (+) (ج.م):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editablePayslipData.bonuses ?? 0}
+                      onChange={(e) => handlePayslipFieldChange('bonuses', e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl border border-emerald-300 bg-white font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 text-left"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-blue-700 mb-1">عمولات المبيعات (+) (ج.م):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editablePayslipData.commissions ?? 0}
+                      onChange={(e) => handlePayslipFieldChange('commissions', e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl border border-blue-300 bg-white font-bold text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-400 text-left"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-amber-700 mb-1">السلف المسحوبة (-) (ج.م):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editablePayslipData.advances ?? 0}
+                      onChange={(e) => handlePayslipFieldChange('advances', e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl border border-amber-300 bg-white font-bold text-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-rose-700 mb-1">الخصومات والجزاءات (-) (ج.م):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editablePayslipData.deductions ?? 0}
+                      onChange={(e) => handlePayslipFieldChange('deductions', e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl border border-rose-300 bg-white font-bold text-rose-800 focus:outline-none focus:ring-2 focus:ring-rose-400 text-left"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-700 mb-1">المدفوع مسبقاً (-) (ج.م):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editablePayslipData.already_paid ?? 0}
+                      onChange={(e) => handlePayslipFieldChange('already_paid', e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 text-left"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-200 flex justify-between items-center text-xs font-black text-emerald-900">
+                  <span>صافي المستحق للصرف المحسوب:</span>
+                  <span className="text-sm font-black text-emerald-700">
+                    {formatCurrency(editablePayslipData.net_salary)}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Printable Area - Always reflects editablePayslipData */}
+            <div className={`p-6 rounded-2xl bg-white border-2 border-slate-200 space-y-4 ${isEditingPayslip ? 'opacity-40 pointer-events-none' : ''}`} id="payslip-print-area">
               <div className="text-center border-b border-slate-100 pb-3">
                 <h3 className="text-lg font-black text-slate-900">مركز الببيون - كشف راتب شهري</h3>
                 <p className="text-xs font-bold text-slate-500 mt-1">
@@ -1644,42 +1767,78 @@ export function Employees() {
               <div className="space-y-2 text-xs font-bold">
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100">
                   <span className="text-slate-500">الراتب الأساسي:</span>
-                  <span className="text-slate-900">{formatCurrency(payslipData.basic_salary)}</span>
+                  <span className="text-slate-900">{formatCurrency(editablePayslipData.basic_salary)}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-emerald-600">
                   <span>المكافآت والبدلات (+):</span>
-                  <span>{formatCurrency(payslipData.bonuses)}</span>
+                  <span>{formatCurrency(editablePayslipData.bonuses)}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-blue-600">
                   <span>عمولات المبيعات (+):</span>
-                  <span>{formatCurrency(payslipData.commissions)}</span>
+                  <span>{formatCurrency(editablePayslipData.commissions)}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-amber-600">
                   <span>السلف المسحوبة (-):</span>
-                  <span>{formatCurrency(payslipData.advances)}</span>
+                  <span>{formatCurrency(editablePayslipData.advances)}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-rose-600">
                   <span>الخصومات والجزاءات (-):</span>
-                  <span>{formatCurrency(payslipData.deductions)}</span>
+                  <span>{formatCurrency(editablePayslipData.deductions)}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-slate-600">
                   <span>المدفوع مسبقاً (-):</span>
-                  <span>{formatCurrency(payslipData.already_paid)}</span>
+                  <span>{formatCurrency(editablePayslipData.already_paid)}</span>
                 </div>
                 <div className="flex justify-between pt-3 text-sm font-black text-slate-900 border-t-2 border-slate-900">
                   <span>صافي المستحق للصرف:</span>
-                  <span>{formatCurrency(payslipData.net_salary)}</span>
+                  <span>{formatCurrency(editablePayslipData.net_salary)}</span>
                 </div>
               </div>
             </div>
 
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowPayslipModal(false)}>
-                إغلاق
-              </Button>
-              <Button variant="primary" icon={Printer} onClick={() => printElement('payslip-print-area', `كشف راتب - ${payslipEmp?.name || ''}`)}>
-                طباعة القسيمة
-              </Button>
+            <div className="flex justify-between items-center gap-2 pt-2">
+              <div>
+                {!isEditingPayslip ? (
+                  <Button
+                    variant="outline"
+                    icon={Edit}
+                    onClick={() => setIsEditingPayslip(true)}
+                    className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                  >
+                    تعديل القسيمة قبل الطباعة
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    icon={CheckCircle}
+                    onClick={() => setIsEditingPayslip(false)}
+                    className="text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                  >
+                    اعتماد ومعاينة الطباعة
+                  </Button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => {
+                  setShowPayslipModal(false);
+                  setIsEditingPayslip(false);
+                }}>
+                  إغلاق
+                </Button>
+                <Button
+                  variant="primary"
+                  icon={Printer}
+                  onClick={() => {
+                    setIsEditingPayslip(false);
+                    setTimeout(() => {
+                      printElement('payslip-print-area', `كشف راتب - ${payslipEmp?.name || ''}`);
+                    }, 50);
+                  }}
+                >
+                  طباعة القسيمة
+                </Button>
+              </div>
             </div>
           </div>
         )}
