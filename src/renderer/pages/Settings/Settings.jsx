@@ -37,6 +37,7 @@ import {
   Search,
   Check,
   RefreshCw,
+  Copy,
 } from 'lucide-react';
 import {
   HIERARCHICAL_CATALOG,
@@ -185,6 +186,9 @@ export function Settings() {
   const [showBranchModal, setShowBranchModal] = useState(false);
   const [isEditingBranch, setIsEditingBranch] = useState(false);
   const [editingBranchId, setEditingBranchId] = useState(null);
+  const [copiedBranchId, setCopiedBranchId] = useState(null);
+  const [showNewBranchSuccessModal, setShowNewBranchSuccessModal] = useState(false);
+  const [newlyCreatedBranch, setNewlyCreatedBranch] = useState(null);
   const [branchForm, setBranchForm] = useState({
     name: '',
     phone: '',
@@ -390,6 +394,26 @@ export function Settings() {
     }
   };
 
+  const handleCopyBranchCode = (id) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(String(id));
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = String(id);
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedBranchId(id);
+      toast({ title: 'تم النسخ', message: `تم نسخ كود الفرع (#${id}) إلى الحافظة`, variant: 'success' });
+      setTimeout(() => {
+        setCopiedBranchId(null);
+      }, 2000);
+    } catch (_) {}
+  };
+
   // Branch CRUD
   const handleOpenAddBranch = () => {
     setIsEditingBranch(false);
@@ -481,10 +505,14 @@ export function Settings() {
         await client.put(`/branches/${editingBranchId}`, payload);
         toast({ title: 'تم التحديث', message: 'تم تحديث الفرع بنجاح', variant: 'success' });
       } else {
-        await client.post('/branches', payload);
+        const newBranchRes = await client.post('/branches', payload);
         toast({ title: 'تمت الإضافة', message: 'تم إضافة الفرع الجديد بنجاح', variant: 'success' });
+        setShowBranchModal(false);
+        if (newBranchRes && newBranchRes.id) {
+          setNewlyCreatedBranch(newBranchRes);
+          setShowNewBranchSuccessModal(true);
+        }
       }
-      setShowBranchModal(false);
       reloadBranches();
     } catch (err) {
       toast({ title: 'خطأ', message: err.message || 'تعذر حفظ بيانات الفرع', variant: 'danger' });
@@ -1163,7 +1191,24 @@ export function Settings() {
                       </div>
                       <div>
                         <h3 className="font-black text-slate-900 text-base">{b.name}</h3>
-                        <p className="text-xs font-bold text-slate-400">كود الفرع: #{b.id}</p>
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-black bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs">
+                            <span className="text-[11px] text-amber-700 font-bold">كود الفرع:</span>
+                            <span className="font-mono text-xs font-black">#{b.id}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyBranchCode(b.id)}
+                            title="نسخ كود الفرع"
+                            className="p-1 rounded-lg text-slate-400 hover:text-amber-800 hover:bg-amber-100/70 active:scale-95 transition-all cursor-pointer"
+                          >
+                            {copiedBranchId === b.id ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -1722,6 +1767,38 @@ export function Settings() {
         size="md"
       >
         <form onSubmit={handleSaveBranch} className="space-y-4">
+          {isEditingBranch ? (
+            <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200/80 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-amber-900">كود الفرع الحالي:</span>
+                <span className="px-2 py-0.5 rounded-md bg-amber-200/70 font-mono font-black text-amber-950 text-xs">
+                  #{editingBranchId}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleCopyBranchCode(editingBranchId)}
+                className="inline-flex items-center gap-1 text-[11px] font-black text-amber-800 hover:text-amber-950 hover:underline cursor-pointer"
+              >
+                {copiedBranchId === editingBranchId ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    <span>تم النسخ</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>نسخ الكود</span>
+                  </>
+                )}
+              </button>
+            </div>
+          ) : (
+            <div className="p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-blue-900 text-xs font-bold flex items-center gap-2">
+              <span className="text-sm">ℹ️</span>
+              <span>سيتم تعيين كود فريد تلقائياً لهذا الفرع فور الحفظ، وسيظهر لك بوضوح لربط نقطة البيع.</span>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-black text-slate-700 mb-1.5">اسم الفرع *</label>
             <Input
