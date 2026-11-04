@@ -1,6 +1,6 @@
 {
   "name": "bebyoon-system",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Bebyoon / El-Wazeer POS & Management System",
   "main": "src/main/index.js",
   "scripts": {

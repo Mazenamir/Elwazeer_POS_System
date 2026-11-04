@@ -30,7 +30,7 @@ export function UpdateStatusBanner() {
         break;
 
       case 'updater:available':
-        // autoDownload=true: download starts immediately, show progress bar at 0%
+        // Explicitly initiate download and track state
         setUpdaterState('downloading');
         setTargetVersion(data?.version || null);
         setProgress(0);
@@ -39,6 +39,11 @@ export function UpdateStatusBanner() {
           en: `New update available (${data?.version || ''}). Downloading in background...`,
         });
         setVisible(true);
+        if (window.electronAPI?.updater?.downloadUpdate) {
+          window.electronAPI.updater.downloadUpdate().catch((err) => {
+            console.error('Failed to trigger update download:', err);
+          });
+        }
         break;
 
       case 'updater:not-available':

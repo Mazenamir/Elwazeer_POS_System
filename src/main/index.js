@@ -22,6 +22,7 @@ if (!gotTheLock) {
 
 let mainWindow = null;
 let serverSupervisor = null;
+let updaterManager = null;
 let tray = null;
 let isQuiting = false;
 let logPath = null;
@@ -388,11 +389,12 @@ app.on('ready', async () => {
   }
   const appDataFolderName = isBranchApp ? 'Bebyoon Branch System' : 'Bebyoon System';
 
-  const updaterManager = setupAutoUpdater({
+  updaterManager = setupAutoUpdater({
     log,
     edition: isBranchApp ? 'branch' : 'master',
     appId: isBranchApp ? 'com.bebyoon.branch.system' : 'com.bebyoon.system',
     channel: isBranchApp ? 'branch' : 'latest',
+    autoDownload: true,
   });
 
   updaterManager.on('status', (channel, data) => {
