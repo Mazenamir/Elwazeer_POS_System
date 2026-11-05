@@ -2,8 +2,8 @@
 
 ## Verification Summary
 - **Edition**: Branch Standalone Edition (`APP_MODE=branch`, SQLite WAL mode)
-- **Current Version**: 1.1.8
-- **Packaging Status**: Standalone Windows NSIS Installer Generated & Verified (`dist-branch/Bebyoon Branch Setup 1.1.8.exe`, 172.9 MB)
+- **Current Version**: 1.1.9
+- **Packaging Status**: Standalone Windows NSIS Installer Generated & Verified (`dist-branch/Bebyoon Branch Setup 1.1.9.exe`, 172.9 MB)
 - **Automated Regression Status**: 100% Passed (8/8 Suites, 293/293 Automated Checks, 0 Failures)
 - **Verification Gate Verdict**: **RELEASE READY (ALL GATES PASSED)**
 
@@ -82,13 +82,13 @@ The branch automated test suite is organized into 4 verification tiers spanning 
 ## 4. Standalone Windows Distributable Verification (`dist-branch/`)
 
 ### Generated Packaging Artifacts
-- **Installer Binary**: `dist-branch/Bebyoon Branch Setup 1.1.8.exe`
+- **Installer Binary**: `dist-branch/Bebyoon Branch Setup 1.1.9.exe`
   - **File Size**: 172,925,618 bytes (~164.9 MB)
   - **SHA-512**: `MwQHBIu4ZznxG5NJiU8NdmTe+dLdGK+p9P+8H2/g8Wa03TfDeQFZVUn8ZpD5g30ftwNdpiSv6kr4uaLabNoLfQ==`
   - **Target Arch**: Windows x64 (NSIS per-machine installer)
   - **Product Name**: `Bebyoon Branch System`
   - **Application ID**: `com.bebyoon.branch.system`
-- **Blockmap Metadata**: `dist-branch/Bebyoon Branch Setup 1.1.8.exe.blockmap` (181,947 bytes)
+- **Blockmap Metadata**: `dist-branch/Bebyoon Branch Setup 1.1.9.exe.blockmap` (181,947 bytes)
 - **Auto-Update Metadata**: `dist-branch/branch.yml` (release date: `2026-11-05T10:40:06.923Z`)
 - **Unpacked Application Directory**: `dist-branch/win-unpacked/`
   - Main Executable: `dist-branch/win-unpacked/Bebyoon Branch System.exe`
@@ -126,6 +126,6 @@ npm run predist:branch
 # Expected output: Vite compiles production assets into dist/renderer in < 5 seconds.
 
 # 4. Check installer artifact presence:
-Get-Item "dist-branch\Bebyoon Branch Setup 1.1.8.exe"
+Get-Item "dist-branch\Bebyoon Branch Setup 1.1.9.exe"
 # Expected output: File size ~172.9 MB, valid executable.
 ```
