@@ -6,6 +6,7 @@ const {
   ALL_PERMISSIONS,
   ALL_GRANULAR_PERMISSIONS,
   normalizePermissions,
+  expandPermissionsWithLegacy,
   defaultPermissionsForRole,
 } = require('../../../shared/constants/permissions');
 const { DEFAULT_SETTINGS } = require('../../../shared/constants/system');
@@ -586,9 +587,9 @@ async function createBranchUser({
 
   let finalPermissions;
   if (Array.isArray(permissions)) {
-    finalPermissions = normalizePermissions(permissions);
+    finalPermissions = expandPermissionsWithLegacy(permissions);
   } else if (permissions !== undefined && permissions !== null) {
-    finalPermissions = normalizePermissions(permissions);
+    finalPermissions = expandPermissionsWithLegacy(permissions);
   } else {
     finalPermissions = defaultPermissionsForRole(assignedRole);
   }
@@ -799,9 +800,9 @@ async function updateBranchUser(id, {
 
   let finalPermissions;
   if (Array.isArray(permissions)) {
-    finalPermissions = normalizePermissions(permissions);
+    finalPermissions = expandPermissionsWithLegacy(permissions);
   } else if (permissions !== undefined && permissions !== null) {
-    finalPermissions = normalizePermissions(permissions);
+    finalPermissions = expandPermissionsWithLegacy(permissions);
   }
   if (finalPermissions) {
     finalPermissions = [...new Set(finalPermissions)];
@@ -836,7 +837,7 @@ async function updateBranchUser(id, {
 
     const targetRole = assignedRole || existing.role || 'branch_user';
     const targetBranchId = assignedBranchId !== undefined ? assignedBranchId : existing.branch_id;
-    const targetEmployeeId = assignedEmployeeId !== undefined ? assignedEmployeeId : existing.employee_id;
+    const targetEmployeeId = assignedEmployeeId !== undefined ? assignedEmployeeId : (existing.employee_id ?? null);
     const targetScope = branch_scope !== undefined ? branch_scope : (existing.branch_scope || 'single');
 
     if (targetRole !== 'admin' && (!targetBranchId || Number(targetBranchId) <= 0)) {

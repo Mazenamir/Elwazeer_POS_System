@@ -9,18 +9,18 @@ router.get('/suppliers/options', requirePermission('Suppliers.html', 'inventory_
 
 // Suppliers CRUD
 router.get('/suppliers', requirePermission('Suppliers.html', 'inventory_admin'), controller.listSuppliers);
-router.post('/suppliers', requireInventoryAdmin, controller.createSupplier);
-router.put('/suppliers/:id', requireInventoryAdmin, controller.updateSupplier);
-router.delete('/suppliers/:id', requireInventoryAdmin, controller.deleteSupplier);
+router.post('/suppliers', requirePermission('inventory_admin', 'suppliers.create'), controller.createSupplier);
+router.put('/suppliers/:id', requirePermission('inventory_admin', 'suppliers.edit'), controller.updateSupplier);
+router.delete('/suppliers/:id', requirePermission('inventory_admin', 'suppliers.delete'), controller.deleteSupplier);
 
 // Supply Records & Restock
 router.get('/supply-records', requirePermission('Suppliers.html', 'inventory_admin'), controller.listSupplyRecords);
-router.post('/supply-records', requireInventoryAdmin, controller.createSupplyRecord);
-router.post('/inventory/bulk-restock', requireInventoryAdmin, controller.bulkRestock);
+router.post('/supply-records', requirePermission('inventory_admin', 'suppliers.purchases.create', 'suppliers.create'), controller.createSupplyRecord);
+router.post('/inventory/bulk-restock', requirePermission('inventory_admin', 'suppliers.purchases.create', 'suppliers.create'), controller.bulkRestock);
 
 // Transactions, Returns & Statements
 router.post('/suppliers/transactions', requirePermission('Suppliers.html', 'inventory_admin', 'Expenses.html'), controller.createTransaction);
-router.post('/suppliers/returns', requireInventoryAdmin, controller.processReturn);
+router.post('/suppliers/returns', requirePermission('inventory_admin', 'suppliers.purchases.create', 'suppliers.edit'), controller.processReturn);
 router.get('/suppliers/:id/statement', requirePermission('Suppliers.html', 'inventory_admin', 'Reports.html'), controller.getStatement);
 router.get('/suppliers/ledger', requirePermission('Suppliers.html', 'inventory_admin', 'Reports.html'), controller.getSuppliersLedger);
 

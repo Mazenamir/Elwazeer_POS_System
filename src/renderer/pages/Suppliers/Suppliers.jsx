@@ -136,7 +136,7 @@ const getPaginationItems = (current, total) => {
 };
 
 export function Suppliers() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches, selectBranch } = useBranch();
   const toast = useToast();
   const [searchParams] = useSearchParams();
@@ -151,6 +151,26 @@ export function Suppliers() {
   const initialSearch = searchParams.get('search') || '';
 
   const [activeTab, setActiveTab] = useState(initialTab); // 'inventory' | 'suppliers' | 'branch_matrix' | 'transfer_logs'
+
+  // Granular Tab Gating
+  const hasSuppliersSpecific = Boolean(hasPermission('suppliers.access') || hasPermission('suppliers.list.view') || hasPermission('suppliers.create') || hasPermission('suppliers.purchases.create'));
+  const hasInventorySpecific = Boolean(hasPermission('inventory.access') || hasPermission('inventory.products.view') || hasPermission('inventory.products.create'));
+  const canAccessInventory = Boolean(isAdmin || hasInventorySpecific || (!hasSuppliersSpecific && (hasPermission('inventory_admin') || hasPermission('Suppliers.html'))));
+  const canAccessSuppliers = Boolean(isAdmin || hasSuppliersSpecific || (!hasInventorySpecific && (hasPermission('inventory_admin') || hasPermission('Suppliers.html'))));
+  const canAccessMatrix = Boolean(isAdmin || canAccessInventory || hasPermission('inventory_admin'));
+  const canAccessTransfers = Boolean(isAdmin || canAccessInventory || hasPermission('inventory.transfers.request') || hasPermission('inventory.transfers.approve') || hasPermission('inventory.transfers.receive'));
+
+  useEffect(() => {
+    if (activeTab === 'inventory' && !canAccessInventory) {
+      if (canAccessSuppliers) setActiveTab('suppliers');
+      else if (canAccessMatrix) setActiveTab('branch_matrix');
+      else if (canAccessTransfers) setActiveTab('transfer_logs');
+    } else if (activeTab === 'suppliers' && !canAccessSuppliers) {
+      if (canAccessInventory) setActiveTab('inventory');
+      else if (canAccessMatrix) setActiveTab('branch_matrix');
+      else if (canAccessTransfers) setActiveTab('transfer_logs');
+    }
+  }, [activeTab, canAccessInventory, canAccessSuppliers, canAccessMatrix, canAccessTransfers]);
 
   // INVENTORY STATE
   const [products, setProducts] = useState([]);
@@ -1934,65 +1954,73 @@ total: 0,
       <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 bg-[#FFFDF9] p-2.5 sm:p-3 rounded-2xl sm:rounded-3xl border border-[#E6DECD] shadow-[0_2px_10px_rgba(36,34,31,0.03)] no-print">
         {/* Navigation Tabs Segmented Bar */}
         <div className="flex items-center gap-1 p-1 bg-[#FAF6ED] rounded-2xl border border-[#E6DECD] overflow-x-auto scrollbar-none shrink-0 max-w-full">
-          <button
-            type="button"
-            onClick={() => setActiveTab('inventory')}
-            className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-              activeTab === 'inventory'
-                ? 'bg-[#151515] text-white shadow-xs'
-                : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
-            }`}
-          >
-            <Package className="w-4 h-4 shrink-0" />
-            <span>إدارة المخزون</span>
-            <span className="hidden 2xl:inline"> والمنتجات</span>
-          </button>
+          {canAccessInventory && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('inventory')}
+              className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                activeTab === 'inventory'
+                  ? 'bg-[#151515] text-white shadow-xs'
+                  : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
+              }`}
+            >
+              <Package className="w-4 h-4 shrink-0" />
+              <span>إدارة المخزون</span>
+              <span className="hidden 2xl:inline"> والمنتجات</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('suppliers')}
-            className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-              activeTab === 'suppliers'
-                ? 'bg-[#151515] text-white shadow-xs'
-                : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
-            }`}
-          >
-            <Building2 className="w-4 h-4 shrink-0" />
-            <span>سجل الموردين</span>
-            <span className="hidden 2xl:inline"> والشركات</span>
-          </button>
+          {canAccessSuppliers && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('suppliers')}
+              className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                activeTab === 'suppliers'
+                  ? 'bg-[#151515] text-white shadow-xs'
+                  : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
+              }`}
+            >
+              <Building2 className="w-4 h-4 shrink-0" />
+              <span>سجل الموردين</span>
+              <span className="hidden 2xl:inline"> والشركات</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('branch_matrix')}
-            className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-              activeTab === 'branch_matrix'
-                ? 'bg-[#151515] text-white shadow-xs'
-                : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
-            }`}
-          >
-            <Layers className="w-4 h-4 shrink-0" />
-            <span>أرصدة الفروع</span>
-            <span className="hidden 2xl:inline"> والمخزن</span>
-          </button>
+          {canAccessMatrix && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('branch_matrix')}
+              className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                activeTab === 'branch_matrix'
+                  ? 'bg-[#151515] text-white shadow-xs'
+                  : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
+              }`}
+            >
+              <Layers className="w-4 h-4 shrink-0" />
+              <span>أرصدة الفروع</span>
+              <span className="hidden 2xl:inline"> والمخزن</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('transfer_logs')}
-            className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-              activeTab === 'transfer_logs'
-                ? 'bg-[#151515] text-white shadow-xs'
-                : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
-            }`}
-          >
-            <ArrowRightLeft className="w-4 h-4 shrink-0" />
-            <span>سجل التحويلات</span>
-            {(incomingRequests.length > 0 || incomingShipments.length > 0) && (
-              <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-black leading-none text-white bg-amber-600 rounded-full animate-pulse">
-                {incomingRequests.length + incomingShipments.length}
-              </span>
-            )}
-          </button>
+          {canAccessTransfers && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('transfer_logs')}
+              className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                activeTab === 'transfer_logs'
+                  ? 'bg-[#151515] text-white shadow-xs'
+                  : 'text-[#777266] hover:bg-white/80 hover:text-[#24221F]'
+              }`}
+            >
+              <ArrowRightLeft className="w-4 h-4 shrink-0" />
+              <span>سجل التحويلات</span>
+              {(incomingRequests.length > 0 || incomingShipments.length > 0) && (
+                <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-black leading-none text-white bg-amber-600 rounded-full animate-pulse">
+                  {incomingRequests.length + incomingShipments.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Action Buttons */}

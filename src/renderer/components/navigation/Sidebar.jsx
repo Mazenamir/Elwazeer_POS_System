@@ -48,7 +48,7 @@ const ALL_NAV_ITEMS = [
 ];
 
 export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePin }) {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, hasPermission } = useAuth();
   const { activeBranch, branches, rentalsEnabled } = useBranch();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef(null);
@@ -105,8 +105,8 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
     }
     if (user.role === 'admin') return items;
     if (!Array.isArray(userPerms)) return [];
-    return items.filter((item) => userPerms.includes(item.perm));
-  }, [user, userPerms, isAdmin, rentalsEnabled]);
+    return items.filter((item) => hasPermission(item.perm));
+  }, [user, userPerms, isAdmin, rentalsEnabled, hasPermission]);
 
   return (
     <>

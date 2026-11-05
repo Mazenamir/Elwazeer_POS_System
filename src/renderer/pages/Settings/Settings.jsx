@@ -45,6 +45,7 @@ import {
   PERMISSION_GROUPS,
   PERMISSION_PRESETS,
   normalizePermissions,
+  expandPermissionsWithLegacy,
 } from '../../constants/permissions';
 
 const PRESET_LOGOS = [
@@ -791,7 +792,7 @@ export function Settings() {
         branch_ids: userForm.branch_scope === 'selected'
           ? (Array.isArray(userForm.branch_ids) ? userForm.branch_ids.map(Number) : [Number(userForm.branch_id)])
           : (userForm.branch_scope === 'all' ? [] : [Number(userForm.branch_id)]),
-        permissions: Array.isArray(userForm.permissions) ? userForm.permissions : [],
+        permissions: Array.isArray(userForm.permissions) ? expandPermissionsWithLegacy(userForm.permissions) : [],
       };
       if (userForm.password) payload.password = userForm.password;
 

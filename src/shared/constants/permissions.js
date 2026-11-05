@@ -449,7 +449,11 @@ HIERARCHICAL_CATALOG.forEach((mod) => {
   }
   GRANULAR_TO_LEGACY_MAP[mod.modulePerm] = mod.legacyPerm;
   ALL_GRANULAR_PERMISSIONS.push(mod.modulePerm);
-  LEGACY_TO_GRANULAR_MAP[mod.legacyPerm] = modPerms;
+  if (!LEGACY_TO_GRANULAR_MAP[mod.legacyPerm]) {
+    LEGACY_TO_GRANULAR_MAP[mod.legacyPerm] = [];
+  }
+  LEGACY_TO_GRANULAR_MAP[mod.legacyPerm].push(...modPerms);
+  LEGACY_TO_GRANULAR_MAP[mod.legacyPerm] = Array.from(new Set(LEGACY_TO_GRANULAR_MAP[mod.legacyPerm]));
 });
 
 // Explicit additions
@@ -459,14 +463,48 @@ GRANULAR_TO_LEGACY_MAP['inventory_admin'] = 'inventory_admin';
 GRANULAR_TO_LEGACY_MAP['inventory_view_all_branches'] = 'inventory_view_all_branches';
 
 /**
- * Rich Permission Definitions for Flat UI fallback
+ * Rich Permission Definitions for Flat UI and Granular Labels
  */
-const PERMISSION_DEFINITIONS = HIERARCHICAL_CATALOG.map((mod) => ({
-  id: mod.legacyPerm,
-  label: mod.label,
-  description: mod.description,
-  group: mod.group,
-})).concat([
+const PERMISSION_DEFINITIONS = [];
+
+// 1. Add module-level and action-level definitions
+HIERARCHICAL_CATALOG.forEach((mod) => {
+  if (!PERMISSION_DEFINITIONS.some((d) => d.id === mod.legacyPerm)) {
+    PERMISSION_DEFINITIONS.push({
+      id: mod.legacyPerm,
+      label: mod.label,
+      description: mod.description,
+      group: mod.group,
+    });
+  }
+  if (!PERMISSION_DEFINITIONS.some((d) => d.id === mod.modulePerm)) {
+    PERMISSION_DEFINITIONS.push({
+      id: mod.modulePerm,
+      label: `دخول ${mod.label}`,
+      description: mod.description,
+      group: mod.group,
+    });
+  }
+  if (Array.isArray(mod.tabs)) {
+    mod.tabs.forEach((tab) => {
+      if (Array.isArray(tab.actions)) {
+        tab.actions.forEach((act) => {
+          if (!PERMISSION_DEFINITIONS.some((d) => d.id === act.id)) {
+            PERMISSION_DEFINITIONS.push({
+              id: act.id,
+              label: act.label,
+              description: `${mod.label} - ${tab.label}`,
+              group: mod.group,
+            });
+          }
+        });
+      }
+    });
+  }
+});
+
+// 2. Explicit additions
+PERMISSION_DEFINITIONS.push(
   {
     id: INVENTORY_ADMIN_PERMISSION,
     label: 'إدارة متقدمة للمخزون',
@@ -478,8 +516,8 @@ const PERMISSION_DEFINITIONS = HIERARCHICAL_CATALOG.map((mod) => ({
     label: 'رؤية مخزون كافة الفروع',
     description: 'الاطلاع على أرصدة ومخزون الفروع الأخرى في شاشات الجرد',
     group: 'صلاحيات متقدمة',
-  },
-]);
+  }
+);
 
 const PERMISSION_GROUPS = [
   'المبيعات والتشغيل',
@@ -673,6 +711,28 @@ function hasPermission(user, permission) {
   return false;
 }
 
+function expandPermissionsWithLegacy(permissions) {
+  const list = normalizePermissions(permissions);
+  if (!list.length) return [];
+  const expanded = new Set(list);
+
+  if (expanded.has('*')) return Array.from(expanded);
+
+  for (const perm of list) {
+    const legacyPage = GRANULAR_TO_LEGACY_MAP[perm];
+    if (legacyPage) {
+      expanded.add(legacyPage);
+    }
+    const dotIdx = perm.indexOf('.');
+    if (dotIdx > 0) {
+      const modulePrefix = perm.slice(0, dotIdx);
+      expanded.add(`${modulePrefix}.access`);
+    }
+  }
+
+  return Array.from(expanded);
+}
+
 function hasInventoryAdminAccess(user) {
   if (!user) return false;
   if (user.role === 'admin') return true;
@@ -682,6 +742,7 @@ function hasInventoryAdminAccess(user) {
     permissions.includes('admin') ||
     permissions.includes('manage_inventory') ||
     hasPermission(user, 'inventory.products.edit') ||
+    hasPermission(user, 'inventory.products.create') ||
     hasPermission(user, 'inventory.transfers.approve')
   );
 }
@@ -708,6 +769,7 @@ module.exports = {
   PERMISSION_GROUPS,
   PERMISSION_PRESETS,
   normalizePermissions,
+  expandPermissionsWithLegacy,
   defaultPermissionsForRole,
   getUserPermissions,
   hasPermission,

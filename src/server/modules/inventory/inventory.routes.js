@@ -16,15 +16,15 @@ router.get('/products/names', controller.listProductNames);
 
 // Colors APIs
 router.get('/colors', controller.listColors);
-router.post('/colors', requireInventoryAdmin, controller.createColor);
+router.post('/colors', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), controller.createColor);
 router.get('/inventory/colors', controller.listColors);
-router.post('/inventory/colors', requireInventoryAdmin, controller.createColor);
+router.post('/inventory/colors', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), controller.createColor);
 
 // Sizes APIs
 router.get('/sizes', controller.listSizes);
-router.post('/sizes', requireInventoryAdmin, controller.createSize);
+router.post('/sizes', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), controller.createSize);
 router.get('/inventory/sizes', controller.listSizes);
-router.post('/inventory/sizes', requireInventoryAdmin, controller.createSize);
+router.post('/inventory/sizes', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), controller.createSize);
 
 // Stock Transfers
 router.post('/inventory/transfer', controller.transferStock);
@@ -48,7 +48,7 @@ router.get('/inventory/search', controller.searchInventory);
 router.get('/inventory', controller.listInventory);
 router.get('/products', controller.listInventory);
 router.get('/inventory/:id', controller.getInventoryById);
-router.post('/inventory', requireInventoryAdmin, productUploadMiddleware, controller.createProduct);
+router.post('/inventory', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), productUploadMiddleware, controller.createProduct);
 router.put('/inventory/:id', requireInventoryAdmin, requireInventoryPassword, productUploadMiddleware, controller.updateProduct);
 router.delete('/inventory/:id', requireInventoryAdmin, requireInventoryPassword, controller.deleteProduct);
 router.post('/inventory/:id/duplicate', requireInventoryAdmin, requireInventoryPassword, controller.duplicateProduct);

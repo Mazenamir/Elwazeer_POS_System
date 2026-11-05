@@ -480,8 +480,7 @@ async function getSensitivePasswordStatus(context = {}) {
   const operations = ['profit', 'invoice_edit', 'return', 'inventory', 'salary'];
   const configuredMap = {};
   for (const op of operations) {
-    const base = PASSWORD_KEY_MAP[op];
-    configuredMap[op] = Boolean(DEFAULT_SETTINGS?.[base]);
+    configuredMap[op] = false;
   }
 
   const keys = operations.flatMap((t) => [

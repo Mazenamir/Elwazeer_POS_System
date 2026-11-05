@@ -19,6 +19,7 @@ export const {
   PERMISSION_GROUPS,
   PERMISSION_PRESETS,
   normalizePermissions,
+  expandPermissionsWithLegacy,
   defaultPermissionsForRole,
   getUserPermissions,
   hasPermission,
