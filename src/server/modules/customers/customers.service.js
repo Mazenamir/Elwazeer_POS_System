@@ -4,7 +4,7 @@ const { parsePagination, appendPagination, paginatedPayload } = require('../../.
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
 const { queueSyncOperation } = require('../../database/sync.helpers');
-const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
+const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
 
 
 async function listCustomers(req, user) {
@@ -140,7 +140,7 @@ async function createCustomer(data, user) {
   }
 
   const initials = getInitialsFromName(normalizedName);
-  const targetBranch = (data.branch_id || user?.branch_id || 1);
+  const targetBranch = resolveEffectiveBranchId(user, data.branch_id);
   if (user && user.role !== 'admin') {
     validateBranchAccess(user, targetBranch);
   }

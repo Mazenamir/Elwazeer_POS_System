@@ -10,7 +10,7 @@ const { normalizeBarcodeInput, getAvailableBarcode, assertBarcodeAvailable, gene
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { getRentalAvailability, getRentalGroupRows, getOrCreateSalesInventoryForRental } = require('./rentals.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
-const { hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
+const { hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
 
 function isValidIsoDate(str) {
   if (typeof str !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
@@ -226,8 +226,8 @@ async function createRentalInventory(body, user) {
 }
 
 async function checkAvailability(id, branchId, pickupDate, returnDate, user) {
-  let b_id = (branchId && branchId !== 'all' && Number.isFinite(Number(branchId))) ? Number(branchId) : (user?.branch_id || 1);
-  if (isBranchScopedUser(user)) {
+  let b_id = resolveEffectiveBranchId(user, branchId);
+  if (isBranchScopedUser(user) && user.branch_id) {
     b_id = user.branch_id;
   }
 
@@ -363,8 +363,8 @@ async function transferFromSales(body, user) {
     color,
   } = body || {};
 
-  from_branch = Number(from_branch || branch_id || user?.branch_id || 1);
-  to_branch = Number(to_branch || branch_id || from_branch || user?.branch_id || 1);
+  from_branch = Number(from_branch || resolveEffectiveBranchId(user, branch_id));
+  to_branch = Number(to_branch || from_branch || resolveEffectiveBranchId(user, branch_id));
   quantity = Number(quantity) > 0 ? Number(quantity) : 1;
   const effectiveRentalPrice = Number(price ?? rental_price ?? 0) || 0;
 
@@ -692,6 +692,8 @@ async function listRentals(query = {}, user = null, req = null) {
              CASE
                 WHEN r.status = 'active' AND ${CAIRO_DATE_SQL} > r.return_date
                 THEN (${CAIRO_DATE_SQL} - r.return_date)
+                WHEN r.status = 'returned' AND r.actual_return_date > r.return_date
+                THEN (r.actual_return_date - r.return_date)
                ELSE 0
              END as delay_days,
              CASE
@@ -1009,10 +1011,10 @@ async function createRental(body, user, req) {
   const rentalOfflineUuid = newUuid(offline_uuid);
   const rentalGroupUuid = newUuid(rental_group_uuid);
 
-  if (user && user.role === 'branch_user') {
-    branch_id = user.branch_id;
-  }
-  const b_id = parseInt(branch_id, 10) || 1;
+
+
+
+  const b_id = resolveEffectiveBranchId(user, branch_id);
 
   if (!config.IS_BRANCH_MODE && !(await db.isPrimaryDbAvailable())) {
     const err = new Error('قاعدة البيانات غير متاحة حالياً. يرجى المحاولة بعد قليل.');
@@ -1353,6 +1355,8 @@ async function returnRental(id, bodyOrFine, user, req) {
   let remainingAfterReturn = 0;
   let finalPaymentMethod = 'cash';
   let newPaidAmount = 0;
+  let depositRefund = 0;
+  let depositRefundMethod = 'cash';
 
   await db.transaction(async (tx) => {
     const rentals = await getRentalGroupRows(tx, id, { forUpdate: true });
@@ -1375,7 +1379,7 @@ async function returnRental(id, bodyOrFine, user, req) {
       calculatedFine = Math.max(0, roundCurrency(Number(options.fine)));
     } else {
       const cairoNow = await getDatabaseCairoNow(tx);
-      const delayDays = daysBetween(rentals[0].return_date, cairoNow.date);
+      const delayDays = daysBetween(rentals[0].return_date, options.actual_return_date || cairoNow.date);
       const perDay = Number(rentals[0].daily_fine || options.fine_per_day || DEFAULT_RENTAL_FINE_PER_DAY);
       calculatedFine = Math.max(0, roundCurrency(delayDays * perDay));
     }
@@ -1471,6 +1475,7 @@ async function returnRental(id, bodyOrFine, user, req) {
         }
         const deducted = Math.min(availableDeposit, currentRemaining);
         remainingAfterReturn = Math.max(0, roundCurrency(currentRemaining - deducted));
+        depositRefund = Math.max(0, roundCurrency(availableDeposit - deducted));
         noteAppend = `[تم خصم ${deducted} ج.م من التأمين لسداد المتبقي عند الإرجاع]`;
       } else if (action === 'debt') {
         remainingAfterReturn = currentRemaining;
@@ -1478,6 +1483,43 @@ async function returnRental(id, bodyOrFine, user, req) {
       }
     } else {
       remainingAfterReturn = 0;
+      if (options.settlement_action === 'deduct_deposit' || options.deduct_fine_from_deposit || options.refund_deposit) {
+        depositRefund = Math.max(0, roundCurrency(depositAmount - calculatedFine));
+      }
+    }
+
+    depositRefundMethod = normalizePaymentMethod(options.deposit_refund_method || options.refund_method || 'cash');
+
+    if (options.settlement_action === 'deduct_deposit' || options.deduct_fine_from_deposit || options.refund_deposit) {
+      if (calculatedFine > 0) {
+        noteAppend = noteAppend ? `${noteAppend} [تم خصم غرامة ${calculatedFine} ج.م من التأمين]` : `[تم خصم غرامة ${calculatedFine} ج.م من التأمين]`;
+      }
+      if (depositRefund > 0 && options.refund_deposit !== false) {
+        noteAppend = noteAppend ? `${noteAppend} [تم استرداد متبقي التأمين ${depositRefund} ج.م (${depositRefundMethod})]` : `[تم استرداد متبقي التأمين ${depositRefund} ج.م (${depositRefundMethod})]`;
+        if (depositRefundMethod === 'cash') {
+          const expUuid = newUuid();
+          const expRes = await tx.query(
+            `INSERT INTO expenses
+              (branch_id, category, amount, expense_date, notes, payment_method, created_by, offline_uuid)
+             VALUES ($1, 'مرتجع تأمين', $2, ${CAIRO_DATE_SQL}, $3, 'cash', $4, $5)
+             RETURNING id`,
+            [branchId, depositRefund, `استرداد متبقي تأمين عقد إيجار #${rentals[0].id}`, user?.id || 1, expUuid]
+          );
+          await queueSyncOperation(tx, req, 'expense', 'create', expRes.rows[0].id, branchId, {
+            id: expRes.rows[0].id,
+            branch_id: branchId,
+            category: 'مرتجع تأمين',
+            amount: depositRefund,
+            payment_method: 'cash',
+            notes: `استرداد متبقي تأمين عقد إيجار #${rentals[0].id}`,
+            offline_uuid: expUuid,
+          });
+        }
+      }
+    } else if (calculatedFine > 0) {
+      const fineMethod = normalizePaymentMethod(options.fine_payment_method || options.payment_method || 'cash');
+      const fineMethodLabel = fineMethod === 'card' ? 'فيزا' : (fineMethod === 'bank_transfer' ? 'انستاباي' : 'نقدي');
+      noteAppend = noteAppend ? `${noteAppend} [تم تحصيل غرامة ${calculatedFine} ج.م (${fineMethodLabel})]` : `[تم تحصيل غرامة ${calculatedFine} ج.م (${fineMethodLabel})]`;
     }
 
     if (options.notes && typeof options.notes === 'string' && options.notes.trim()) {
@@ -1552,7 +1594,7 @@ async function returnRental(id, bodyOrFine, user, req) {
     }
   });
 
-  return { success: true, fine_amount: calculatedFine, remaining: remainingAfterReturn, paid_amount: newPaidAmount, payment_method: finalPaymentMethod };
+  return { success: true, fine: calculatedFine, fine_amount: calculatedFine, remaining: remainingAfterReturn, paid_amount: newPaidAmount, payment_method: finalPaymentMethod, deposit_refund: depositRefund, deposit_refund_method: depositRefundMethod };
 }
 
 async function settleRentalPayment(id, body, user, req) {
@@ -1929,7 +1971,7 @@ async function handleScanAction(body = {}, user = null) {
   const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
   let targetBranchId = isCashierOrBranch && user.branch_id
     ? user.branch_id
-    : (body.branch_id && body.branch_id !== 'all' ? Number(body.branch_id) : (user?.branch_id || null));
+    : (body.branch_id && body.branch_id !== 'all' ? Number(body.branch_id) : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : (user?.branch_id || null)));
 
   const cleanId = rawCode.replace(/^RNT-/i, '').replace(/^#/i, '').trim();
   const isNumericId = /^\d+$/.test(cleanId);
@@ -2098,7 +2140,7 @@ async function setRentalPrepared(id, body = {}, user = null) {
     preparedBy = user.employee_id;
   }
   if (!preparedBy && user?.id) {
-    const empMatch = await db.query('SELECT id FROM employees WHERE branch_id = $1 ORDER BY id LIMIT 1', [user.branch_id || 1]);
+    const empMatch = await db.query('SELECT id FROM employees WHERE branch_id = $1 ORDER BY id LIMIT 1', [resolveEffectiveBranchId(user)]);
     if (empMatch.rows.length > 0) preparedBy = empMatch.rows[0].id;
   }
 
@@ -2147,7 +2189,7 @@ async function getRentalPreparationList(query = {}, user = null) {
   const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
   let branchId = isCashierOrBranch && user.branch_id
     ? user.branch_id
-    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (user?.branch_id || null));
+    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : (user?.branch_id || null)));
 
   let branchFilter = '';
   const params = [];
@@ -2219,7 +2261,7 @@ async function getRentalHistoryLedger(query = {}, user = null) {
   const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
   let branchId = isCashierOrBranch && user.branch_id
     ? user.branch_id
-    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (user?.branch_id || null));
+    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : (user?.branch_id || null)));
 
   const cairoNow = await getDatabaseCairoNow(db);
   const startDate = query.start_date || query.from_date || cairoNow.date;

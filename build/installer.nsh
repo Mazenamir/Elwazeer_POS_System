@@ -67,10 +67,16 @@ init_app_dirs:
   StrCmp $R0 "" 0 +2
   StrCpy $R0 "C:\ProgramData"
   MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "هل ترغب في حذف جميع بيانات المبيعات وقاعدة البيانات والملفات نهائياً من الجهاز؟$\n$\nDo you want to permanently delete all database records, sales data, and uploaded product images from ProgramData?$\n$\n(اختر 'لا' للحفاظ على بياناتك لاستعادتها عند إعادة التثبيت / Choose 'No' to preserve your database for future installations.)" IDNO keep_data
-  RMDir /r "$R0\Bebyoon System"
-  DetailPrint "Removed all database and application data from ProgramData."
+  ; Target specific product data directory ("Bebyoon Branch System" vs "Bebyoon System")
+  ; using ${PRODUCT_NAME} defined by electron-builder, preventing accidental cross-deletion
+  StrCpy $R1 "$R0\${PRODUCT_NAME}"
+  StrCmp "${PRODUCT_NAME}" "" 0 +2
+  StrCpy $R1 "$R0\Bebyoon System"
+
+  RMDir /r "$R1"
+  DetailPrint "Removed all database and application data from ProgramData ($R1)."
   Goto done_uninstall
 keep_data:
-  DetailPrint "Preserved user database and sales data in: $R0\Bebyoon System"
+  DetailPrint "Preserved user database and sales data in: $R1"
 done_uninstall:
 !macroend

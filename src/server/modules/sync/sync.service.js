@@ -10,6 +10,8 @@ const offlineStore = require('./offline.store');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
 
+const MAX_SYNC_ATTEMPTS = 5;
+
 // Safe SSL configuration: process.env.NODE_TLS_REJECT_UNAUTHORIZED is not disabled globally
 
 function timeoutError(timeoutMs) {
@@ -80,15 +82,28 @@ async function getOrCreateSalesInventoryForRental(tx, rentalInventoryId, sellPri
   return inventoryId;
 }
 
-async function pruneSyncedQueue() {
-  if (config.SYNC_QUEUE_RETENTION_DAYS <= 0) return;
-  await db.query(
-    `DELETE FROM sync_queue
-     WHERE status = 'synced'
-       AND synced_at IS NOT NULL
-       AND synced_at < CURRENT_TIMESTAMP - ($1::int * INTERVAL '1 day')`,
-    [config.SYNC_QUEUE_RETENTION_DAYS]
-  );
+async function pruneSyncedQueue(customDays = null) {
+  const retentionDays = customDays !== null ? customDays : config.SYNC_QUEUE_RETENTION_DAYS;
+  if (retentionDays <= 0) return;
+  const days = Math.max(0, Number(retentionDays) || 0);
+  const isBranch = Boolean(config.IS_BRANCH_MODE || db._isBranchMode || process.env.APP_MODE === 'branch');
+  if (isBranch) {
+    await db.query(
+      `DELETE FROM sync_queue
+       WHERE status = 'synced'
+         AND synced_at IS NOT NULL
+         AND synced_at < datetime('now', '-' || $1 || ' days')`,
+      [days]
+    );
+  } else {
+    await db.query(
+      `DELETE FROM sync_queue
+       WHERE status = 'synced'
+         AND synced_at IS NOT NULL
+         AND synced_at < CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')`,
+      [days]
+    );
+  }
 }
 
 async function applyOperation(operation) {
@@ -99,7 +114,7 @@ async function applyOperation(operation) {
   } else if (rawPayload && typeof rawPayload === 'object') {
     payload = rawPayload;
   }
-  await db.transaction(async (tx) => {
+  return await db.transaction(async (tx) => {
     if (operation.entity_type === 'customer') {
       await tx.query(
         `INSERT INTO customers (name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid)
@@ -358,6 +373,15 @@ async function applyOperation(operation) {
     }
 
     if (operation.entity_type === 'tailoring_order') {
+      if (operation.action === 'delete') {
+        if (payload.offline_uuid) {
+          await tx.query('DELETE FROM tailoring_orders WHERE offline_uuid = $1', [payload.offline_uuid]);
+        } else if (payload.id) {
+          await tx.query('DELETE FROM tailoring_orders WHERE id = $1', [payload.id]);
+        }
+        return { success: true, deleted: true };
+      }
+
       const branchId = payload.branch_id || operation.branch_id || 1;
       const paidAmount = Number(payload.paid_amount || 0);
       const remainingAmount = Number(payload.remaining_amount || 0);
@@ -370,7 +394,31 @@ async function applyOperation(operation) {
         throw new Error('Invalid tailoring payment amounts');
       }
       const existing = await tx.query('SELECT id FROM tailoring_orders WHERE offline_uuid = $1', [payload.offline_uuid]);
-      if (existing.rows.length) return;
+      if (existing.rows.length) {
+        if (operation.action === 'update') {
+          const normMethod = normalizePaymentMethod(payload.payment_method || 'cash');
+          await tx.query(
+            `UPDATE tailoring_orders
+             SET paid_amount = $1, remaining_amount = $2, payment_method = $3
+             WHERE id = $4`,
+            [Number(payload.paid_amount || 0), Number(payload.remaining_amount || 0), normMethod, existing.rows[0].id]
+          );
+          if (payload.payment_to_apply > 0) {
+            const existingPayment = await tx.query(
+              'SELECT id FROM tailoring_payments WHERE tailoring_order_id = $1 AND amount = $2 AND is_remainder = $3 LIMIT 1',
+              [existing.rows[0].id, payload.payment_to_apply, Number(payload.remaining_amount || 0) === 0]
+            );
+            if (!existingPayment.rows.length) {
+              await tx.query(
+                `INSERT INTO tailoring_payments (tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method)
+                 VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5)`,
+                [existing.rows[0].id, payload.payment_to_apply, branchId, Number(payload.remaining_amount || 0) === 0, normMethod]
+              );
+            }
+          }
+        }
+        return { success: true, order_id: existing.rows[0].id, deduplicated: true };
+      }
       await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`tailoring-invoice:${branchId}`]);
       let invoiceNumber = String(payload.invoice_number || '').trim();
       const invoiceConflict = /^\d+$/.test(invoiceNumber)
@@ -382,7 +430,7 @@ async function applyOperation(operation) {
       if (invoiceConflict.rows.length) {
         const nextRes = await tx.query(
           `SELECT COALESCE(
-             MAX(invoice_number::bigint) FILTER (WHERE invoice_number ~ '^[0-9]+$'),
+             MAX(CAST(invoice_number AS INTEGER)) FILTER (WHERE invoice_number ~ '^[0-9]+$'),
              -1
            ) + 1 AS next_number
            FROM tailoring_orders
@@ -459,8 +507,9 @@ async function applyOperation(operation) {
               exists.rows[0].id
             ]
           );
+          return { success: true, order_id: exists.rows[0].id, updated: true };
         }
-        return;
+        return { success: true, order_id: exists.rows[0].id, deduplicated: true };
       }
       const branchId = orderData.branch_id || operation.branch_id || 1;
       const customer = payload.customer || {};
@@ -505,7 +554,9 @@ async function applyOperation(operation) {
           branch_invoice_number, offline_uuid,
           cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits
         )
-         VALUES ($1, $2, COALESCE($12::timestamp, timezone('utc', now())), $3, $4, $5, $6, $7, $8, $9, $10, $11, $13, $14, $15, $16, $17) RETURNING id`,
+         VALUES ($1, $2, COALESCE($12::timestamp, timezone('utc', now())), $3, $4, $5, $6, $7, $8, $9, $10, $11, $13, $14, $15, $16, $17)
+         ON CONFLICT (offline_uuid) DO NOTHING
+         RETURNING id`,
         [
           customerId, orderData.total_amount || 0, branchId, normOrderMethod,
           sellerId, orderData.paid_amount || 0, orderData.change_amount || 0, orderData.invoice_discount || 0,
@@ -518,6 +569,10 @@ async function applyOperation(operation) {
           splitsToSave
         ]
       );
+      if (!insertOrderRes.rows.length) {
+        const fallback = await tx.query('SELECT id FROM orders WHERE offline_uuid = $1', [orderOfflineUuid]);
+        return { success: true, order_id: fallback.rows[0]?.id, deduplicated: true };
+      }
       const orderId = insertOrderRes.rows[0].id;
 
       // Pre-sort items ascending by inventory_id to prevent deadlocks during replay
@@ -609,9 +664,14 @@ async function applyOperation(operation) {
         const empCheck = await tx.query('SELECT id FROM employees WHERE id = $1', [sellerId]);
         if (!empCheck.rows.length) sellerId = null;
       }
+      let orderCustomer = null;
       if (resolvedOrderId) {
-        const orderCheck = await tx.query('SELECT id FROM orders WHERE id = $1', [resolvedOrderId]);
-        if (!orderCheck.rows.length) resolvedOrderId = null;
+        const orderCheck = await tx.query('SELECT id, customer_id FROM orders WHERE id = $1', [resolvedOrderId]);
+        if (!orderCheck.rows.length) {
+          resolvedOrderId = null;
+        } else {
+          orderCustomer = orderCheck.rows[0];
+        }
       }
 
       const returnRes = await tx.query(
@@ -630,7 +690,26 @@ async function applyOperation(operation) {
           color: item.color || null,
         });
       }
-      await tx.query("UPDATE orders SET status = 'returned' WHERE id = $1", [resolvedOrderId]);
+
+      const finalReturnAmount = Number(payload.total_return_amount || 0);
+      const normRefundMethod = normalizePaymentMethod(payload.refund_method || 'cash');
+      if (orderCustomer && orderCustomer.customer_id && finalReturnAmount > 0) {
+        if (normRefundMethod === 'customer_credit' || normRefundMethod === 'wallet_credit') {
+          await tx.query(
+            'UPDATE customers SET total_spent = GREATEST(0, total_spent - $1), wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2',
+            [finalReturnAmount, orderCustomer.customer_id]
+          );
+        } else {
+          await tx.query(
+            'UPDATE customers SET total_spent = GREATEST(0, total_spent - $1) WHERE id = $2',
+            [finalReturnAmount, orderCustomer.customer_id]
+          );
+        }
+      }
+
+      if (resolvedOrderId) {
+        await tx.query("UPDATE orders SET status = 'returned' WHERE id = $1", [resolvedOrderId]);
+      }
       return;
     }
 
@@ -736,9 +815,16 @@ async function applyOperation(operation) {
       const rentalRes = payload.rental_offline_uuid
         ? await tx.query('SELECT * FROM rentals WHERE offline_uuid = $1', [payload.rental_offline_uuid])
         : await tx.query('SELECT * FROM rentals WHERE id = $1', [payload.rental_id]);
-      if (!rentalRes.rows.length) return;
+      if (!rentalRes.rows.length) return { success: false, not_found: true };
       const rental = rentalRes.rows[0];
-      if (operation.action === 'pickup') {
+
+      const isPickup = operation.action === 'pickup' || (operation.action === 'update' && payload.status === 'active');
+      const isCancel = operation.action === 'cancel' || (operation.action === 'update' && payload.status === 'cancelled');
+      const isReturn = operation.action === 'return' || (operation.action === 'update' && payload.status === 'returned');
+      const isSell = operation.action === 'sell' || (operation.action === 'update' && payload.status === 'sold');
+
+      if (isPickup) {
+        if (rental.status === 'active') return { success: true, already_active: true };
         await tx.query("UPDATE rentals SET status = 'active' WHERE id = $1", [rental.id]);
         if (rental.rental_inventory_id) {
           const rentalStockRes = await tx.query(
@@ -762,15 +848,17 @@ async function applyOperation(operation) {
             [rental.rental_inventory_id, rental.branch_id]
           );
         }
-        return;
+        return { success: true, status: 'active' };
       }
-      if (operation.action === 'cancel') {
+      if (isCancel) {
+        if (rental.status === 'cancelled') return { success: true, already_cancelled: true };
         if (rental.status === 'booked') {
           await tx.query("UPDATE rentals SET status = 'cancelled' WHERE id = $1", [rental.id]);
         }
-        return;
+        return { success: true, status: 'cancelled' };
       }
-      if (operation.action === 'return') {
+      if (isReturn) {
+        if (rental.status === 'returned') return { success: true, already_returned: true };
         await tx.query("UPDATE rentals SET status = 'returned', actual_return_date = CURRENT_DATE, fine_amount = $1 WHERE id = $2", [payload.fine_amount || 0, rental.id]);
         if (rental.rental_inventory_id) {
           await tx.query(
@@ -781,9 +869,10 @@ async function applyOperation(operation) {
             [rental.rental_inventory_id, rental.branch_id]
           );
         }
-        return;
+        return { success: true, status: 'returned' };
       }
-      if (operation.action === 'sell') {
+      if (isSell) {
+        if (rental.status === 'sold') return { success: true, already_sold: true };
         const sellPrice = Number(payload.sell_price || rental.total_price || 0);
         if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new Error('Invalid sell price');
         const salesInventoryId = await getOrCreateSalesInventoryForRental(tx, rental.rental_inventory_id, sellPrice);
@@ -821,8 +910,14 @@ async function applyOperation(operation) {
           await tx.query("UPDATE rentals SET sale_order_id = $1 WHERE id = $2", [orderRes.rows[0].id, rental.id]);
         }
         await tx.query("UPDATE rentals SET status = 'sold', actual_return_date = CURRENT_DATE, total_price = $1 WHERE id = $2", [sellPrice, rental.id]);
+        return { success: true, status: 'sold' };
       }
-      return;
+      if (operation.action === 'update' && payload.status === 'booked') {
+        if (rental.status === 'booked') return { success: true, already_booked: true };
+        await tx.query("UPDATE rentals SET status = 'booked' WHERE id = $1", [rental.id]);
+        return { success: true, status: 'booked' };
+      }
+      return { success: true };
     }
 
     if (operation.entity_type === 'product' || operation.entity_type === 'inventory') {
@@ -967,6 +1062,124 @@ async function applyOperation(operation) {
       }
       return;
     }
+
+    if (operation.entity_type === 'settings') {
+      const key = payload.key;
+      const value = payload.value;
+      if (key) {
+        await tx.query(
+          `INSERT INTO settings (key, value)
+           VALUES ($1, $2)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+          [key, value]
+        );
+      }
+      return { success: true };
+    }
+
+    if (operation.entity_type === 'supplier_transaction') {
+      const opUuid = payload.operation_uuid || operation.operation_uuid;
+      if (opUuid) {
+        const marker = `[SYNC-${opUuid}]`;
+        const existingTx = await tx.query(
+          "SELECT id FROM supplier_transactions WHERE notes LIKE $1 LIMIT 1",
+          [`%${marker}%`]
+        );
+        if (existingTx.rows.length) {
+          return { success: true, id: existingTx.rows[0].id, deduplicated: true };
+        }
+      }
+
+      const supplierId = payload.supplier_id;
+      const transType = payload.transaction_type || payload.type || 'payment';
+      const amount = Number(payload.amount || 0);
+      const branchId = payload.branch_id || operation.branch_id || null;
+      const paymentMethod = payload.payment_method || 'cash';
+      const paidFromDrawer = payload.paid_from_drawer !== undefined ? Boolean(payload.paid_from_drawer) : true;
+      let notes = payload.notes || null;
+      if (opUuid) {
+        notes = `${notes ? notes + ' ' : ''}[SYNC-${opUuid}]`;
+      }
+
+      const insertRes = await tx.query(
+        `INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, branch_id, payment_method, paid_from_drawer)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [supplierId, transType, amount, notes, branchId, paymentMethod, paidFromDrawer ? 1 : 0]
+      );
+      const createdTxId = insertRes.rows[0]?.id || insertRes.lastInsertRowid;
+
+      if (transType === 'purchase') {
+        await tx.query(
+          `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = CURRENT_DATE WHERE id = $2`,
+          [amount, supplierId]
+        );
+      } else if (transType === 'payment') {
+        await tx.query(
+          'UPDATE suppliers SET total_paid = total_paid + $1, balance = balance + $1 WHERE id = $2',
+          [amount, supplierId]
+        );
+      } else if (transType === 'return') {
+        await tx.query(
+          'UPDATE suppliers SET total_purchases = total_purchases - $1, balance = balance + $1 WHERE id = $2',
+          [amount, supplierId]
+        );
+      }
+      return { success: true, id: createdTxId };
+    }
+
+    if (operation.entity_type === 'supplier') {
+      if (operation.action === 'delete') {
+        await tx.query("UPDATE suppliers SET is_active = FALSE, status = 'inactive' WHERE id = $1", [payload.id]);
+        return { success: true };
+      }
+      const supId = payload.id;
+      const existing = supId ? await tx.query('SELECT id FROM suppliers WHERE id = $1', [supId]) : { rows: [] };
+      if (existing.rows.length) {
+        await tx.query(
+          `UPDATE suppliers SET
+            name = COALESCE($1, name),
+            code = COALESCE($2, code),
+            contact_person = COALESCE($3, contact_person),
+            phone = COALESCE($4, phone),
+            notes = COALESCE($5, notes),
+            status = COALESCE($6, status)
+           WHERE id = $7`,
+          [payload.name || null, payload.code || null, payload.contact_person || null, payload.phone || null, payload.notes || null, payload.status || null, supId]
+        );
+      } else {
+        await tx.query(
+          `INSERT INTO suppliers (id, name, initials, code, contact_person, phone, notes, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'active'))
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone`,
+          [supId || null, payload.name, payload.initials || getInitialsFromName(payload.name), payload.code || null, payload.contact_person || null, payload.phone || null, payload.notes || null, payload.status || 'active']
+        );
+      }
+      return { success: true };
+    }
+
+    if (operation.entity_type === 'alteration') {
+      if (operation.action === 'delete') {
+        await tx.query('DELETE FROM alterations WHERE id = $1', [payload.id]);
+        return { success: true };
+      }
+      if (operation.action === 'update') {
+        await tx.query(
+          'UPDATE alterations SET status = COALESCE($1, status), description = COALESCE($2, description), due_date = COALESCE($3, due_date) WHERE id = $4',
+          [payload.status, payload.description, payload.due_date, payload.id]
+        );
+        return { success: true };
+      }
+      const exists = payload.id ? await tx.query('SELECT id FROM alterations WHERE id = $1', [payload.id]) : { rows: [] };
+      if (!exists.rows.length) {
+        await tx.query(
+          'INSERT INTO alterations (id, order_id, customer_id, branch_id, description, status, due_date, inventory_id) VALUES ($1, $2, $3, $4, $5, COALESCE($6, \'pending\'), $7, $8)',
+          [payload.id || null, payload.order_id, payload.customer_id, payload.branch_id, payload.description, payload.status, payload.due_date, payload.inventory_id]
+        );
+      }
+      return { success: true };
+    }
+    return { success: true };
   });
 }
 
@@ -1039,16 +1252,22 @@ async function runSync(requestedLimit = 50) {
     throw err;
   }
 
-  const limit = Math.min(Math.max(Number(requestedLimit) || 50, 1), 200);
-  const result = { synced: 0, failed: 0 };
+  const isStandaloneRun = !isSyncCycleActive;
+  if (isStandaloneRun) {
+    isSyncCycleActive = true;
+  }
 
-  const { rows } = await db.query(
-    `SELECT * FROM sync_queue
-     WHERE status IN ('pending', 'failed')
-     ORDER BY created_at ASC
-     LIMIT $1`,
-    [limit]
-  );
+  try {
+    const limit = Math.min(Math.max(Number(requestedLimit) || 50, 1), 200);
+    const result = { synced: 0, failed: 0 };
+
+    const { rows } = await db.query(
+      `SELECT * FROM sync_queue
+       WHERE status = 'pending' OR (status = 'failed' AND attempts < 5)
+       ORDER BY created_at ASC
+       LIMIT $1`,
+      [limit]
+    );
 
   const localRows = (config.IS_BRANCH_MODE && !config.IS_SYNC_TARGET)
     ? offlineStore.pending(Math.max(0, limit - rows.length))
@@ -1097,10 +1316,19 @@ async function runSync(requestedLimit = 50) {
         result.failed += 1;
         break; // stop on network drop to preserve remaining operations
       }
-      await db.query(
-        "UPDATE sync_queue SET status = 'failed', attempts = attempts + 1, last_error = $2 WHERE id = $1",
-        [op.id, err.message]
-      );
+      const nextAttempts = (op.attempts || 0) + 1;
+      if (nextAttempts >= MAX_SYNC_ATTEMPTS) {
+        await db.query(
+          "UPDATE sync_queue SET status = 'dead_letter', attempts = $2, last_error = $3 WHERE id = $1",
+          [op.id, nextAttempts, err.message]
+        );
+        console.warn(`[Sync Dead-Letter] Operation ${op.id} (${op.entity_type} ${op.action}) reached max attempts (${nextAttempts}). Marked as dead_letter to prevent head-of-line blocking. Error: ${err.message}`);
+      } else {
+        await db.query(
+          "UPDATE sync_queue SET status = 'failed', attempts = $2, last_error = $3 WHERE id = $1",
+          [op.id, nextAttempts, err.message]
+        );
+      }
       result.failed += 1;
     }
   }
@@ -1149,15 +1377,49 @@ async function runSync(requestedLimit = 50) {
     }
   }
 
-  await pruneSyncedQueue();
-  if (config.IS_BRANCH_MODE && !config.IS_SYNC_TARGET && offlineStore?.pruneSynced) {
-    offlineStore.pruneSynced(config.SYNC_QUEUE_RETENTION_DAYS);
-  }
+    await pruneSyncedQueue();
+    if (config.IS_BRANCH_MODE && !config.IS_SYNC_TARGET && offlineStore?.pruneSynced) {
+      offlineStore.pruneSynced(config.SYNC_QUEUE_RETENTION_DAYS);
+    }
 
-  return result;
+    return result;
+  } finally {
+    if (isStandaloneRun) {
+      isSyncCycleActive = false;
+    }
+  }
 }
 
 async function exportCatalogForBranch(branchId = null) {
+  const targetBranch = (branchId && branchId !== 'all') ? Number(branchId) : null;
+
+  const usersPromise = targetBranch
+    ? db.query(
+        `SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids 
+         FROM users 
+         WHERE role = 'admin' OR branch_scope = 'all' OR branch_id = $1 OR branch_id IS NULL`,
+        [targetBranch]
+      )
+    : db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users');
+
+  const employeesPromise = targetBranch
+    ? db.query(
+        "SELECT id, name, position, branch_id, basic_salary, phone, status, shift_start, shift_end FROM employees WHERE status = 'active' AND branch_id = $1",
+        [targetBranch]
+      )
+    : db.query("SELECT id, name, position, branch_id, basic_salary, phone, status, shift_start, shift_end FROM employees WHERE status = 'active'");
+
+  const customersPromise = targetBranch
+    ? db.query(
+        'SELECT id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid FROM customers WHERE branch_id = $1 OR branch_id IS NULL',
+        [targetBranch]
+      )
+    : db.query('SELECT id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid FROM customers');
+
+  const suppliersPromise = targetBranch
+    ? db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, 0 AS balance, status, created_at, code FROM suppliers')
+    : db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code FROM suppliers');
+
   const [
     usersRes,
     branchesRes,
@@ -1173,7 +1435,7 @@ async function exportCatalogForBranch(branchId = null) {
     employeesRes,
     suppliersRes,
   ] = await Promise.all([
-    db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users'),
+    usersPromise,
     db.query('SELECT id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender, rentals_enabled FROM branches'),
     db.query('SELECT id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted, color_id, size_id, wholesale_price, semi_wholesale_price, gender FROM inventory WHERE is_deleted = FALSE'),
     db.query('SELECT inventory_id, branch_id, stock_level FROM inventory_branches'),
@@ -1183,9 +1445,9 @@ async function exportCatalogForBranch(branchId = null) {
     db.query('SELECT id, name FROM sizes'),
     db.query('SELECT inventory_id, size_id, size_name, color_name, barcode, stock_level, branch_id FROM inventory_sizes'),
     db.query('SELECT key, value FROM settings'),
-    db.query('SELECT id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid FROM customers'),
-    db.query("SELECT id, name, position, branch_id, basic_salary, phone, status, shift_start, shift_end FROM employees WHERE status = 'active'"),
-    db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code FROM suppliers'),
+    customersPromise,
+    employeesPromise,
+    suppliersPromise,
   ]);
 
   return {
@@ -1207,12 +1469,13 @@ async function exportCatalogForBranch(branchId = null) {
 }
 
 async function importCatalogIntoBranch(catalog, targetSqlite = null) {
-  const sqlite = targetSqlite || db.sqlite;
-  if (!sqlite) {
+  const baseSqlite = targetSqlite || db.sqlite;
+  if (!baseSqlite) {
     return { ok: false, message: 'SQLite database instance not available' };
   }
-  sqlite.exec('BEGIN TRANSACTION;');
-  try {
+
+  const executeImport = (activeSqlite) => {
+    const sqlite = activeSqlite;
     // 1. Users
     if (Array.isArray(catalog.users)) {
       const uStmt = sqlite.prepare(`
@@ -1220,7 +1483,10 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           username = excluded.username,
-          password_hash = excluded.password_hash,
+          password_hash = CASE
+            WHEN excluded.password_hash IS NOT NULL AND excluded.password_hash != '' THEN excluded.password_hash
+            ELSE users.password_hash
+          END,
           role = excluded.role,
           branch_id = excluded.branch_id,
           permissions = excluded.permissions,
@@ -1236,19 +1502,23 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         } catch {
           perms = [];
         }
-        if (u.role !== 'admin') {
-          const reqPerms = ['Dashboard.html', 'index.html', 'Barcodes.html', 'Customers.html', 'Suppliers.html', 'Alterations.html', 'Tailoring.html', 'Expenses.html', 'Reports.html', 'Employees.html', 'WornProducts.html', 'Rentals.html', 'RentalInventory.html', 'inventory_admin'];
-          for (const p of reqPerms) {
-            if (!perms.includes(p)) perms.push(p);
-          }
-        }
+
         let bScope = u.branch_scope || 'single';
         let bIds = typeof u.branch_ids === 'object' ? JSON.stringify(u.branch_ids) : (u.branch_ids || '[]');
         if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
           bScope = 'selected';
           bIds = '[9, 10]';
         }
-        uStmt.run(u.id, u.username, u.password_hash, u.role, u.branch_id, JSON.stringify(perms), u.employee_id || null, u.full_name || null, bScope, bIds);
+
+        let pwdHash = (u.password_hash !== null && u.password_hash !== undefined && u.password_hash !== '')
+          ? u.password_hash
+          : null;
+        if (!pwdHash) {
+          const existingUser = sqlite.prepare('SELECT password_hash FROM users WHERE id = ?').get(u.id);
+          pwdHash = existingUser?.password_hash || '$2b$10$temporarySanitizedUserPasswordHashFallback00000000000000000';
+        }
+
+        uStmt.run(u.id, u.username, pwdHash, u.role, u.branch_id, JSON.stringify(perms), u.employee_id || null, u.full_name || null, bScope, bIds);
       }
     }
 
@@ -1293,9 +1563,15 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       const sStmt = sqlite.prepare(`
         INSERT INTO settings (key, value)
         VALUES (?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        ON CONFLICT(key) DO UPDATE SET value = CASE
+          WHEN excluded.key LIKE '%_password_hash' AND (excluded.value IS NULL OR excluded.value = '') THEN settings.value
+          ELSE excluded.value
+        END
       `);
       for (const s of catalog.settings) {
+        if (s.key && s.key.endsWith('_password_hash') && (s.value === null || s.value === undefined || s.value === '')) {
+          continue;
+        }
         sStmt.run(s.key, s.value);
       }
     }
@@ -1533,7 +1809,6 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       }
     }
 
-    sqlite.exec('COMMIT;');
     return {
       ok: true,
       imported_at: new Date().toISOString(),
@@ -1544,8 +1819,22 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         branches: catalog.branches?.length || 0,
       }
     };
+  };
+
+  if ((!targetSqlite || targetSqlite === db.sqlite) && typeof db.transaction === 'function') {
+    return await db.transaction(async (tx) => {
+      const activeSqlite = tx.sqlite || baseSqlite;
+      return executeImport(activeSqlite);
+    });
+  }
+
+  baseSqlite.exec('BEGIN IMMEDIATE;');
+  try {
+    const res = executeImport(baseSqlite);
+    baseSqlite.exec('COMMIT;');
+    return res;
   } catch (err) {
-    try { sqlite.exec('ROLLBACK;'); } catch {}
+    try { baseSqlite.exec('ROLLBACK;'); } catch {}
     console.error('Failed to import catalog into branch SQLite:', err);
     throw err;
   }
@@ -1846,7 +2135,7 @@ async function getSyncDiagnostics() {
     conn = { ok: true, reason: 'master', message: 'النظام يعمل كخادم مركزي رئيسي' };
   }
 
-  let queueCounts = { pending: 0, failed: 0, synced: 0 };
+  let queueCounts = { pending: 0, failed: 0, synced: 0, dead_letter: 0 };
   try {
     const res = await db.query(`
       SELECT status, COUNT(*) AS count
@@ -1865,16 +2154,18 @@ async function getSyncDiagnostics() {
   let lastErrorRecord = null;
   try {
     const errRes = await db.query(`
-      SELECT entity_type, action, last_error, updated_at
+      SELECT entity_type, action, last_error, created_at
       FROM sync_queue
-      WHERE last_error IS NOT NULL AND status IN ('pending', 'failed')
-      ORDER BY updated_at DESC
+      WHERE last_error IS NOT NULL AND status IN ('pending', 'failed', 'dead_letter')
+      ORDER BY id DESC
       LIMIT 1
     `);
     if (errRes.rows.length) {
       lastErrorRecord = errRes.rows[0];
     }
-  } catch {}
+  } catch (err) {
+    console.warn('[Sync Diagnostics] Error fetching last error record:', err.message);
+  }
 
   return {
     is_branch_mode: Boolean(config.IS_BRANCH_MODE),
@@ -1887,6 +2178,7 @@ async function getSyncDiagnostics() {
     queue: {
       pending: Number(queueCounts.pending || 0) + Number(local.pending || 0),
       failed: Number(queueCounts.failed || 0) + Number(local.failed || 0),
+      dead_letter: Number(queueCounts.dead_letter || 0),
       synced: Number(queueCounts.synced || 0),
       last_error: lastErrorRecord?.last_error || null,
       last_error_entity: lastErrorRecord ? `${lastErrorRecord.entity_type} (${lastErrorRecord.action})` : null,
@@ -2001,6 +2293,41 @@ async function configureSyncServer({ serverUrl, branchId, syncApiKey } = {}) {
   };
 }
 
+async function getDeadLetterQueue({ limit = 50, offset = 0 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const { rows } = await db.query(
+    `SELECT id, operation_uuid, entity_type, action, entity_id, branch_id, payload, attempts, last_error, created_at, synced_at
+     FROM sync_queue
+     WHERE status = 'dead_letter'
+     ORDER BY id DESC
+     LIMIT $1 OFFSET $2`,
+    [safeLimit, safeOffset]
+  );
+  const countRes = await db.query("SELECT COUNT(*) AS total FROM sync_queue WHERE status = 'dead_letter'");
+  return {
+    items: rows,
+    total: Number(countRes.rows[0]?.total || 0),
+    limit: safeLimit,
+    offset: safeOffset,
+  };
+}
+
+async function requeueDeadLetter(operationIdOrAll = 'all') {
+  if (operationIdOrAll === 'all' || !operationIdOrAll) {
+    const res = await db.query(
+      "UPDATE sync_queue SET status = 'pending', attempts = 0, last_error = NULL WHERE status = 'dead_letter'"
+    );
+    return { requeued: res.rowCount || 0 };
+  } else {
+    const res = await db.query(
+      "UPDATE sync_queue SET status = 'pending', attempts = 0, last_error = NULL WHERE id = $1 AND status = 'dead_letter'",
+      [operationIdOrAll]
+    );
+    return { requeued: res.rowCount || 0 };
+  }
+}
+
 module.exports = {
   applyOperation,
   getSyncStatus,
@@ -2014,5 +2341,9 @@ module.exports = {
   startBackgroundSyncWorker,
   getSyncDiagnostics,
   configureSyncServer,
+  getDeadLetterQueue,
+  requeueDeadLetter,
+  isSyncActive: () => isSyncCycleActive,
+  MAX_SYNC_ATTEMPTS,
 };
 

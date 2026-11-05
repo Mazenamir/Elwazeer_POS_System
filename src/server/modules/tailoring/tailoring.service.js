@@ -1,11 +1,11 @@
 const db = require('../../database/connection');
-const { hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
+const { hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
 const { CAIRO_DATE_SQL, CAIRO_NOW_SQL } = require('../../../shared/constants/system');
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { resolveOrderId } = require('../sales/sales.helpers');
 const { roundCurrency } = require('../../../shared/utils/numbers');
-const { logActivity } = require('../../database/sync.helpers');
+const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 
 // ==========================================
@@ -121,7 +121,7 @@ async function createAlteration(body, user) {
     }
   }
 
-  const b_id = (branch_id && branch_id !== 'all' && Number.isFinite(Number(branch_id))) ? Number(branch_id) : 1;
+  const b_id = resolveEffectiveBranchId(user, branch_id);
   let finalInventoryId = inventory_id || null;
 
   if (!finalInventoryId && order_id) {
@@ -136,7 +136,9 @@ async function createAlteration(body, user) {
     'INSERT INTO alterations (order_id, customer_id, branch_id, description, due_date, inventory_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
     [order_id, customer_id, b_id, description, due_date, finalInventoryId]
   );
-  return rows[0];
+  const createdAlt = rows[0];
+  await queueSyncOperation(db, null, 'alteration', 'create', createdAlt.id, b_id, createdAlt);
+  return createdAlt;
 }
 
 async function updateAlteration(id, body) {
@@ -151,7 +153,9 @@ async function updateAlteration(id, body) {
     err.statusCode = 404;
     throw err;
   }
-  return rows[0];
+  const updatedAlt = rows[0];
+  await queueSyncOperation(db, null, 'alteration', 'update', updatedAlt.id, updatedAlt.branch_id, updatedAlt);
+  return updatedAlt;
 }
 
 async function deleteAlteration(id, user) {
@@ -186,6 +190,7 @@ async function deleteAlteration(id, user) {
     );
   }
 
+  await queueSyncOperation(db, null, 'alteration', 'delete', rows[0].id, null, { id: rows[0].id, order_id: rows[0].order_id });
   return { message: 'تم حذف طلب التعديل بنجاح' };
 }
 
@@ -281,7 +286,7 @@ async function listTailoringOrders(query = {}, user = null, req = null) {
   return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
 }
 
-async function createTailoringOrder(body, user) {
+async function createTailoringOrder(body, user, req = null) {
   const customerName = String(body?.customer_name || '').trim();
   const customerPhone = String(body?.customer_phone || '').trim();
   const productDescription = String(body?.product_description || '').trim();
@@ -317,7 +322,7 @@ async function createTailoringOrder(body, user) {
 
   const offlineUuid = newUuid(body?.offline_uuid);
   const rawBranchId = (user && user.role !== 'admin') ? user.branch_id : body?.branch_id;
-  const branchId = (rawBranchId && rawBranchId !== 'all' && Number.isFinite(Number(rawBranchId))) ? Number(rawBranchId) : (user?.branch_id || 1);
+  const branchId = resolveEffectiveBranchId(user, rawBranchId);
 
   if (!sellerId) {
     const err = new Error('الرجاء اختيار الموظف البائع');
@@ -342,7 +347,7 @@ async function createTailoringOrder(body, user) {
     await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`tailoring-invoice:${branchId}`]);
     const nextRes = await tx.query(
       `SELECT COALESCE(
-         MAX(invoice_number::bigint) FILTER (WHERE invoice_number ~ '^[0-9]+$'),
+         MAX(CAST(invoice_number AS INTEGER)),
          0
        ) + 1 AS next_number
        FROM tailoring_orders
@@ -442,6 +447,24 @@ async function createTailoringOrder(body, user) {
       order.payments = [];
     }
 
+    await queueSyncOperation(tx, req, 'tailoring_order', 'create', order.id, branchId, {
+      id: order.id,
+      offline_uuid: order.offline_uuid,
+      invoice_number: order.invoice_number,
+      customer_name: order.customer_name,
+      customer_phone: order.customer_phone,
+      product_description: order.product_description,
+      measurements: order.measurements,
+      total_amount: order.total_amount,
+      paid_amount: order.paid_amount,
+      remaining_amount: order.remaining_amount,
+      payment_method: order.payment_method,
+      seller_id: order.seller_id,
+      branch_id: branchId,
+      created_by: order.created_by,
+      created_at: order.created_at,
+    });
+
     return order;
   });
 
@@ -479,6 +502,11 @@ async function deleteTailoringOrder(id, user) {
   }
 
   await db.query('DELETE FROM tailoring_orders WHERE id = $1', [orderId]);
+  await queueSyncOperation(db, null, 'tailoring_order', 'delete', orderId, order.branch_id, {
+    id: orderId,
+    offline_uuid: order.offline_uuid,
+    branch_id: order.branch_id,
+  });
 
   if (user) {
     await logActivity(
@@ -494,7 +522,7 @@ async function deleteTailoringOrder(id, user) {
   return { message: 'تم حذف الفاتورة بنجاح' };
 }
 
-async function payRemainingTailoringOrder(id, user, body = {}) {
+async function payRemainingTailoringOrder(id, user, body = {}, req = null) {
   let orderId = null;
 
   if (String(id).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
@@ -607,6 +635,17 @@ async function payRemainingTailoringOrder(id, user, body = {}) {
       [newPaidAmount, newRemainingAmount, finalOrderPaymentMethod, orderId]
     );
 
+    await queueSyncOperation(tx, req, 'tailoring_order', 'update', orderId, order.branch_id, {
+      id: orderId,
+      offline_uuid: order.offline_uuid,
+      paid_amount: newPaidAmount,
+      remaining_amount: newRemainingAmount,
+      payment_method: finalOrderPaymentMethod,
+      payment_to_apply: paymentToApply,
+      branch_id: order.branch_id,
+    }
+    );
+
     if (user) {
       await logActivity(
         user.id,
@@ -618,7 +657,7 @@ async function payRemainingTailoringOrder(id, user, body = {}) {
       );
     }
 
-    return { message: 'تم الدفع بنجاح', newPaidAmount, remainingAmount: newRemainingAmount, paymentMethod: finalOrderPaymentMethod };
+    return { success: true, message: 'تم الدفع بنجاح', newPaidAmount, new_paid_amount: newPaidAmount, remainingAmount: newRemainingAmount, new_remaining_amount: newRemainingAmount, paymentMethod: finalOrderPaymentMethod };
   });
 }
 

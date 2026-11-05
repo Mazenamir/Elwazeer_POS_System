@@ -321,11 +321,17 @@ export function Settings() {
   // Update Sensitive Operation Password
   const handleUpdateSensitivePassword = async (type) => {
     const form = sensitiveForms[type] || {};
-    if (!form.new_password) {
+    const cleanPass = String(form.new_password || '').trim();
+    const cleanConfirm = String(form.confirm_password || '').trim();
+    if (!cleanPass) {
       toast({ title: 'تنبيه', message: 'يرجى إدخال كلمة المرور الجديدة', variant: 'warning' });
       return;
     }
-    if (form.new_password !== form.confirm_password) {
+    if (cleanPass.length < 3) {
+      toast({ title: 'تنبيه', message: 'يجب ألا تقل كلمة المرور عن 3 أحرف', variant: 'warning' });
+      return;
+    }
+    if (cleanPass !== cleanConfirm) {
       toast({ title: 'تنبيه', message: 'كلمة المرور وتأكيدها غير متطابقين', variant: 'warning' });
       return;
     }
@@ -336,14 +342,22 @@ export function Settings() {
       }));
       await client.post('/sensitive-passwords', {
         type,
-        password: form.new_password,
-        new_password: form.new_password,
-        confirm_password: form.confirm_password,
+        password: cleanPass,
+        new_password: cleanPass,
+        confirm_password: cleanConfirm,
       });
       toast({ title: 'تم الحفظ', message: 'تم تحديث كلمة المرور للعملية بنجاح 🔒', variant: 'success' });
       setSensitiveForms((prev) => ({
         ...prev,
         [type]: { new_password: '', confirm_password: '', show: false, loading: false },
+      }));
+      // Instant optimistic UI update
+      setSensitiveStatus((prev) => ({
+        ...prev,
+        [type]: {
+          ...(typeof prev[type] === 'object' ? prev[type] : {}),
+          configured: true,
+        },
       }));
       loadSensitiveStatus();
     } catch (err) {
@@ -374,6 +388,14 @@ export function Settings() {
       setSensitiveForms((prev) => ({
         ...prev,
         [type]: { new_password: '', confirm_password: '', show: false, loading: false },
+      }));
+      // Instant optimistic UI update
+      setSensitiveStatus((prev) => ({
+        ...prev,
+        [type]: {
+          ...(typeof prev[type] === 'object' ? prev[type] : {}),
+          configured: false,
+        },
       }));
       loadSensitiveStatus();
     } catch (err) {

@@ -483,6 +483,7 @@ async function getProfitReport(query = {}, user = null) {
     cashRes,
     inventoryValueRes,
     advancesRes,
+    supplierPaymentsRes,
   ] = await Promise.all([
     db.query(
       `SELECT branch_id, COALESCE(SUM(total_amount), 0) as total
@@ -499,7 +500,9 @@ async function getProfitReport(query = {}, user = null) {
       reportParams
     ),
     db.query(
-      `SELECT branch_id, COALESCE(SUM(total_return_amount), 0) as total
+      `SELECT branch_id,
+              COALESCE(SUM(total_return_amount), 0) as total,
+              COALESCE(SUM(CASE WHEN COALESCE(refund_method, 'cash') = 'cash' THEN total_return_amount ELSE 0 END), 0) as cash_total
        FROM returns
        WHERE branch_id = ANY($1::int[]) AND return_date >= $2::date AND return_date < $3::date
        GROUP BY branch_id`,
@@ -592,16 +595,19 @@ async function getProfitReport(query = {}, user = null) {
              OR ${normalizedPaymentMethodSql('payment_method')} = 'cash'
            )
          UNION ALL
-         SELECT branch_id, fine_amount as total
+         SELECT branch_id,
+                CASE
+                  WHEN notes LIKE '%خصم%من التأمين%' THEN 0
+                  WHEN notes LIKE '%(فيزا)%' OR notes LIKE '%(card)%' OR notes LIKE '%(visa)%' THEN 0
+                  WHEN notes LIKE '%(انستاباي)%' OR notes LIKE '%(instapay)%' OR notes LIKE '%(bank)%' THEN 0
+                  WHEN notes LIKE '%(محفظة)%' OR notes LIKE '%(wallet)%' THEN 0
+                  ELSE fine_amount
+                END as total
          FROM rentals
          WHERE branch_id = ANY($1::int[])
            AND actual_return_date >= $2::date
            AND actual_return_date < $3::date
            AND status = 'returned'
-           AND (
-             ${normalizedPaymentMethodSql('payment_method')} = 'cash'
-             OR ${normalizedPaymentMethodSql('payment_method')} = 'split'
-           )
            AND COALESCE(fine_amount, 0) > 0
          UNION ALL
          SELECT p.branch_id, p.amount as total
@@ -634,11 +640,24 @@ async function getProfitReport(query = {}, user = null) {
        GROUP BY e.branch_id`,
       reportParams
     ),
+    db.query(
+      `SELECT branch_id, COALESCE(SUM(amount), 0) as total
+       FROM supplier_transactions
+       WHERE branch_id = ANY($1::int[])
+         AND transaction_type = 'payment'
+         AND COALESCE(paid_from_drawer, TRUE) IS TRUE
+         AND COALESCE(payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
+         AND transaction_date >= $2::date
+         AND transaction_date < $3::date
+       GROUP BY branch_id`,
+      reportParams
+    ),
   ]);
 
   const salesByBranch = rowsByBranch(salesRes.rows, row => Number(row.total));
   const finesByBranch = rowsByBranch(finesRes.rows, row => Number(row.total));
   const returnsByBranch = rowsByBranch(returnsRes.rows, row => Number(row.total));
+  const cashReturnsByBranch = rowsByBranch(returnsRes.rows, row => Number(row.cash_total || 0));
   const cogsByBranch = rowsByBranch(cogsRes.rows, row => Number(row.total));
   const returnCogsByBranch = rowsByBranch(returnCogsRes.rows, row => Number(row.total));
   const expensesByBranch = rowsByBranch(expensesRes.rows, row => Number(row.total));
@@ -649,6 +668,7 @@ async function getProfitReport(query = {}, user = null) {
   const cashByBranch = rowsByBranch(cashRes.rows, row => Number(row.total));
   const inventoryValueByBranch = rowsByBranch(inventoryValueRes.rows, row => Number(row.total));
   const advancesByBranch = rowsByBranch(advancesRes.rows, row => Number(row.total));
+  const supplierPaymentsByBranch = rowsByBranch(supplierPaymentsRes.rows, row => Number(row.total));
 
   const report = branches.map(branch => {
     const branchId = Number(branch.id);
@@ -661,7 +681,9 @@ async function getProfitReport(query = {}, user = null) {
     const total_rentals = (rentalsByBranch.get(branchId) || 0) + (finesByBranch.get(branchId) || 0);
     const total_tailoring = tailoringByBranch.get(branchId) || 0;
     const total_revenue = total_sales + total_rentals + total_tailoring;
-    const cash_drawer = (cashByBranch.get(branchId) || 0) - total_returns - cash_expenses;
+    const cash_returns = cashReturnsByBranch.get(branchId) || 0;
+    const supplier_payments = supplierPaymentsByBranch.get(branchId) || 0;
+    const cash_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - supplier_payments;
     const advances = advancesByBranch.get(branchId) || 0;
     const physical_cash_in_drawer = Math.max(0, cash_drawer - advances);
     const gross_profit = total_revenue - cogs;
@@ -691,6 +713,8 @@ async function getProfitReport(query = {}, user = null) {
       salaries: total_salaries_paid,
       advances,
       total_advances: advances,
+      supplier_payments,
+      total_supplier_payments: supplier_payments,
       total_expenses_and_advances: expenses + advances,
       net_profit,
       profit: net_profit,
@@ -711,9 +735,11 @@ async function getProfitReport(query = {}, user = null) {
     acc.cash_drawer += (curr.gross_cash_drawer !== undefined ? curr.gross_cash_drawer : curr.cash_drawer);
     acc.physical_cash_in_drawer += (curr.physical_cash_in_drawer !== undefined ? curr.physical_cash_in_drawer : curr.cash_drawer);
     acc.total_advances += (curr.advances || 0);
+    acc.supplier_payments += (curr.supplier_payments || 0);
+    acc.total_supplier_payments += (curr.total_supplier_payments || curr.supplier_payments || 0);
     acc.total_inventory_value += curr.total_inventory_value;
     return acc;
-  }, { total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0, cash_drawer: 0, physical_cash_in_drawer: 0, total_advances: 0, cogs: 0, expenses: 0, total_salaries_paid: 0, net_profit: 0, total_inventory_value: 0 });
+  }, { total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0, cash_drawer: 0, physical_cash_in_drawer: 0, total_advances: 0, supplier_payments: 0, total_supplier_payments: 0, cogs: 0, expenses: 0, total_salaries_paid: 0, net_profit: 0, total_inventory_value: 0 });
 
   const gross_profit = summary.total_revenue - summary.cogs;
   const net_profit = summary.net_profit;
@@ -731,6 +757,7 @@ async function getProfitReport(query = {}, user = null) {
   summary.physical_cash_in_drawer = Math.max(0, summary.gross_cash_drawer - summary.total_advances);
   summary.cash_in_drawer = summary.physical_cash_in_drawer;
   summary.cash_drawer = summary.physical_cash_in_drawer;
+  summary.supplier_payments = summary.total_supplier_payments;
   summary.total_expenses_and_advances = summary.expenses + summary.total_advances;
   summary.total_sales_and_revenue = summary.total_revenue;
   summary.net_cash = summary.physical_cash_in_drawer;
@@ -802,19 +829,33 @@ async function getProfitReport(query = {}, user = null) {
            AND ${normalizedPaymentMethodSql('payment_method')} = 'split' AND COALESCE(wallet_amount, 0) > 0
          UNION ALL
          SELECT CASE
-                  WHEN ${normalizedPaymentMethodSql('payment_method')} = 'split' THEN 'cash'
-                  ELSE ${normalizedPaymentMethodSql('payment_method')}
+                  WHEN COALESCE(notes, '') LIKE '%(فيزا)%' OR COALESCE(notes, '') LIKE '%(card)%' OR COALESCE(notes, '') LIKE '%(visa)%' THEN 'visa'
+                  WHEN COALESCE(notes, '') LIKE '%(انستاباي)%' OR COALESCE(notes, '') LIKE '%(instapay)%' OR COALESCE(notes, '') LIKE '%(bank)%' THEN 'bank_transfer'
+                  WHEN COALESCE(notes, '') LIKE '%(محفظة)%' OR COALESCE(notes, '') LIKE '%(wallet)%' THEN 'wallet'
+                  ELSE 'cash'
                 END as payment_method,
                 fine_amount as total
          FROM rentals
          WHERE status = 'returned' AND actual_return_date >= $1::date AND actual_return_date < $2::date${paymentBranchFilter}
            AND COALESCE(fine_amount, 0) > 0
+           AND NOT (COALESCE(notes, '') LIKE '%خصم%من التأمين%')
          UNION ALL
          SELECT ${normalizedPaymentMethodSql('COALESCE(p.payment_method, t.payment_method)')} as payment_method, p.amount as total
          FROM tailoring_payments p
          JOIN tailoring_orders t ON p.tailoring_order_id = t.id
          WHERE p.payment_date >= $1::date AND p.payment_date < $2::date${paymentBranchFilter.replace('branch_id', 'p.branch_id')}
            AND COALESCE(p.amount, 0) > 0
+         UNION ALL
+         SELECT CASE 
+                  WHEN COALESCE(refund_method, 'cash') IN ('card', 'visa') THEN 'visa'
+                  WHEN COALESCE(refund_method, 'cash') IN ('bank_transfer', 'instapay') THEN 'bank_transfer'
+                  WHEN COALESCE(refund_method, 'cash') IN ('wallet', 'vodafone') THEN 'wallet'
+                  ELSE 'cash'
+                END as payment_method,
+                -total_return_amount as total
+         FROM returns
+         WHERE return_date >= $1::date AND return_date < $2::date${paymentBranchFilter}
+           AND COALESCE(refund_method, 'cash') <> 'customer_credit'
        ) payments
        GROUP BY payment_method`,
       paymentParams
@@ -1626,6 +1667,7 @@ async function getDailyReport(query = {}, user = null) {
       cashRes,
       inventoryValueRes,
       advancesRes,
+      supplierPaymentsRes,
     ] = await Promise.all([
       db.query(
         `SELECT branch_id, COALESCE(SUM(total_amount), 0) as total, COUNT(id)::int as count
@@ -1642,7 +1684,10 @@ async function getDailyReport(query = {}, user = null) {
         reportParams
       ),
       db.query(
-        `SELECT branch_id, COALESCE(SUM(total_return_amount), 0) as total, COUNT(id)::int as count
+        `SELECT branch_id,
+                COALESCE(SUM(total_return_amount), 0) as total,
+                COUNT(id)::int as count,
+                COALESCE(SUM(CASE WHEN COALESCE(refund_method, 'cash') = 'cash' THEN total_return_amount ELSE 0 END), 0) as cash_total
          FROM returns
          WHERE branch_id = ANY($1::int[]) AND return_date >= $2::date AND return_date < $3::date
          GROUP BY branch_id`,
@@ -1735,16 +1780,19 @@ async function getDailyReport(query = {}, user = null) {
                OR ${normalizedPaymentMethodSql('payment_method')} = 'cash'
              )
            UNION ALL
-           SELECT branch_id, fine_amount as total
+           SELECT branch_id,
+                  CASE
+                    WHEN notes LIKE '%خصم%من التأمين%' THEN 0
+                    WHEN notes LIKE '%(فيزا)%' OR notes LIKE '%(card)%' OR notes LIKE '%(visa)%' THEN 0
+                    WHEN notes LIKE '%(انستاباي)%' OR notes LIKE '%(instapay)%' OR notes LIKE '%(bank)%' THEN 0
+                    WHEN notes LIKE '%(محفظة)%' OR notes LIKE '%(wallet)%' THEN 0
+                    ELSE fine_amount
+                  END as total
            FROM rentals
            WHERE branch_id = ANY($1::int[])
              AND actual_return_date >= $2::date
              AND actual_return_date < $3::date
              AND status = 'returned'
-             AND (
-               ${normalizedPaymentMethodSql('payment_method')} = 'cash'
-               OR ${normalizedPaymentMethodSql('payment_method')} = 'split'
-             )
              AND COALESCE(fine_amount, 0) > 0
            UNION ALL
            SELECT p.branch_id, p.amount as total
@@ -1777,11 +1825,23 @@ async function getDailyReport(query = {}, user = null) {
          GROUP BY e.branch_id`,
         reportParams
       ),
+      db.query(
+        `SELECT branch_id, COALESCE(SUM(amount), 0) as total
+         FROM supplier_transactions
+         WHERE branch_id = ANY($1::int[])
+           AND transaction_type = 'payment'
+           AND COALESCE(paid_from_drawer, TRUE) IS TRUE
+           AND COALESCE(payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
+           AND transaction_date >= $2::date
+           AND transaction_date < $3::date
+         GROUP BY branch_id`,
+        reportParams
+      ),
     ]);
 
     const salesByBranch = rowsByBranch(salesRes.rows, row => ({ total: Number(row.total), count: Number(row.count) }));
     const finesByBranch = rowsByBranch(finesRes.rows, row => Number(row.total));
-    const returnsByBranch = rowsByBranch(returnsRes.rows, row => ({ total: Number(row.total), count: Number(row.count) }));
+    const returnsByBranch = rowsByBranch(returnsRes.rows, row => ({ total: Number(row.total), count: Number(row.count), cash_total: Number(row.cash_total || 0) }));
     const cogsByBranch = rowsByBranch(cogsRes.rows, row => Number(row.total));
     const returnCogsByBranch = rowsByBranch(returnCogsRes.rows, row => Number(row.total));
     const expensesByBranch = rowsByBranch(expensesRes.rows, row => Number(row.total));
@@ -1792,6 +1852,7 @@ async function getDailyReport(query = {}, user = null) {
     const cashByBranch = rowsByBranch(cashRes.rows, row => Number(row.total));
     const inventoryValueByBranch = rowsByBranch(inventoryValueRes.rows, row => Number(row.total));
     const advancesByBranch = rowsByBranch(advancesRes.rows, row => Number(row.total));
+    const supplierPaymentsByBranch = rowsByBranch(supplierPaymentsRes.rows, row => Number(row.total));
 
     report = branches.map(branch => {
       const branchId = Number(branch.id);
@@ -1804,12 +1865,14 @@ async function getDailyReport(query = {}, user = null) {
       const expenses = expensesByBranch.get(branchId) || 0;
       const cash_expenses = cashExpensesByBranch.get(branchId) || 0;
       const advances = advancesByBranch.get(branchId) || 0;
+      const supplier_payments = supplierPaymentsByBranch.get(branchId) || 0;
       const total_salaries_paid = salariesByBranch.get(branchId) || 0;
       const total_rentals = rentals.total + (finesByBranch.get(branchId) || 0);
       const total_tailoring = tailoring.total;
       const total_revenue = total_sales + total_rentals + total_tailoring;
-      const cash_drawer = (cashByBranch.get(branchId) || 0) - returns.total - cash_expenses;
-      const physical_cash_in_drawer = Math.max(0, (cashByBranch.get(branchId) || 0) - returns.total - cash_expenses - advances);
+      const cash_returns = returns.cash_total || 0;
+      const cash_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - supplier_payments;
+      const physical_cash_in_drawer = Math.max(0, (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - advances - supplier_payments);
       const gross_profit = total_revenue - cogs;
       const net_profit = total_revenue - (cogs + expenses + total_salaries_paid);
 
@@ -1828,6 +1891,8 @@ async function getDailyReport(query = {}, user = null) {
         salaries: total_salaries_paid,
         advances,
         total_advances: advances,
+        supplier_payments,
+        total_supplier_payments: supplier_payments,
         total_rentals,
         rentals: total_rentals,
         total_tailoring,
@@ -1912,19 +1977,33 @@ async function getDailyReport(query = {}, user = null) {
          AND ${normalizedPaymentMethodSql('payment_method')} = 'split' AND COALESCE(wallet_amount, 0) > 0
        UNION ALL
        SELECT CASE
-                WHEN ${normalizedPaymentMethodSql('payment_method')} = 'split' THEN 'cash'
-                ELSE ${normalizedPaymentMethodSql('payment_method')}
+                WHEN COALESCE(notes, '') LIKE '%(فيزا)%' OR COALESCE(notes, '') LIKE '%(card)%' OR COALESCE(notes, '') LIKE '%(visa)%' THEN 'visa'
+                WHEN COALESCE(notes, '') LIKE '%(انستاباي)%' OR COALESCE(notes, '') LIKE '%(instapay)%' OR COALESCE(notes, '') LIKE '%(bank)%' THEN 'bank_transfer'
+                WHEN COALESCE(notes, '') LIKE '%(محفظة)%' OR COALESCE(notes, '') LIKE '%(wallet)%' THEN 'wallet'
+                ELSE 'cash'
               END as payment_method,
               fine_amount as total
        FROM rentals
        WHERE status = 'returned' AND actual_return_date >= $1::date AND actual_return_date < $2::date ${pFilter}
          AND COALESCE(fine_amount, 0) > 0
+         AND NOT (COALESCE(notes, '') LIKE '%خصم%من التأمين%')
        UNION ALL
        SELECT ${normalizedPaymentMethodSql('COALESCE(p.payment_method, t.payment_method)')} as payment_method, p.amount as total
        FROM tailoring_payments p
        JOIN tailoring_orders t ON p.tailoring_order_id = t.id
        WHERE p.payment_date >= $1::date AND p.payment_date < $2::date ${pFilter.replace('branch_id', 'p.branch_id')}
          AND COALESCE(p.amount, 0) > 0
+       UNION ALL
+       SELECT CASE 
+                WHEN COALESCE(refund_method, 'cash') IN ('card', 'visa') THEN 'visa'
+                WHEN COALESCE(refund_method, 'cash') IN ('bank_transfer', 'instapay') THEN 'bank_transfer'
+                WHEN COALESCE(refund_method, 'cash') IN ('wallet', 'vodafone') THEN 'wallet'
+                ELSE 'cash'
+              END as payment_method,
+              -total_return_amount as total
+       FROM returns
+       WHERE return_date >= $1::date AND return_date < $2::date ${pFilter}
+         AND COALESCE(refund_method, 'cash') <> 'customer_credit'
      ) payments
      GROUP BY payment_method`,
     params
@@ -2190,14 +2269,17 @@ async function getDailyReport(query = {}, user = null) {
     acc.cash_in_drawer += Number(curr.cash_in_drawer || 0);
     acc.physical_cash_in_drawer += Number(curr.physical_cash_in_drawer || 0);
     acc.net_profit += Number(curr.net_profit || 0);
+    acc.supplier_payments += Number(curr.supplier_payments || 0);
+    acc.total_supplier_payments += Number(curr.total_supplier_payments || curr.supplier_payments || 0);
     return acc;
   }, {
     total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0,
     expenses: 0, total_expenses: 0, salaries: 0, total_salaries_paid: 0,
     advances: 0, total_advances: 0, cash_drawer: 0, cash_in_drawer: 0,
-    physical_cash_in_drawer: 0, net_profit: 0
+    physical_cash_in_drawer: 0, net_profit: 0, supplier_payments: 0, total_supplier_payments: 0
   });
 
+  overallDailySummary.supplier_payments = overallDailySummary.total_supplier_payments;
   overallDailySummary.sales = overallDailySummary.total_sales;
   overallDailySummary.rentals = overallDailySummary.total_rentals;
   overallDailySummary.tailoring = overallDailySummary.total_tailoring;
@@ -2780,17 +2862,41 @@ async function getExtendedDailyReport(query = {}, user = null) {
         0 as remaining_amount,
         COALESCE(e.name, 'غير محدد') as seller_name,
         TO_CHAR(r.actual_return_date, 'YYYY-MM-DD') as delivery_date,
-        'cash' as payment_method,
-        'cash' as raw_payment_method,
-        r.fine_amount as cash_amount,
-        0 as card_amount,
-        0 as bank_transfer_amount,
+        CASE
+          WHEN r.notes LIKE '%خصم%من التأمين%' THEN 'deposit'
+          WHEN r.notes LIKE '%(فيزا)%' OR r.notes LIKE '%(card)%' OR r.notes LIKE '%(visa)%' THEN 'visa'
+          WHEN r.notes LIKE '%(انستاباي)%' OR r.notes LIKE '%(instapay)%' OR r.notes LIKE '%(bank)%' THEN 'bank_transfer'
+          WHEN r.notes LIKE '%(محفظة)%' OR r.notes LIKE '%(wallet)%' THEN 'wallet'
+          ELSE 'cash'
+        END as payment_method,
+        CASE
+          WHEN r.notes LIKE '%خصم%من التأمين%' THEN 'deposit'
+          WHEN r.notes LIKE '%(فيزا)%' OR r.notes LIKE '%(card)%' OR r.notes LIKE '%(visa)%' THEN 'visa'
+          WHEN r.notes LIKE '%(انستاباي)%' OR r.notes LIKE '%(instapay)%' OR r.notes LIKE '%(bank)%' THEN 'bank_transfer'
+          WHEN r.notes LIKE '%(محفظة)%' OR r.notes LIKE '%(wallet)%' THEN 'wallet'
+          ELSE 'cash'
+        END as raw_payment_method,
+        CASE
+          WHEN r.notes LIKE '%خصم%من التأمين%' THEN 0
+          WHEN r.notes LIKE '%(فيزا)%' OR r.notes LIKE '%(card)%' OR r.notes LIKE '%(visa)%' THEN 0
+          WHEN r.notes LIKE '%(انستاباي)%' OR r.notes LIKE '%(instapay)%' OR r.notes LIKE '%(bank)%' THEN 0
+          WHEN r.notes LIKE '%(محفظة)%' OR r.notes LIKE '%(wallet)%' THEN 0
+          ELSE r.fine_amount
+        END as cash_amount,
+        CASE
+          WHEN r.notes LIKE '%(فيزا)%' OR r.notes LIKE '%(card)%' OR r.notes LIKE '%(visa)%' THEN r.fine_amount
+          ELSE 0
+        END as card_amount,
+        CASE
+          WHEN r.notes LIKE '%(انستاباي)%' OR r.notes LIKE '%(instapay)%' OR r.notes LIKE '%(bank)%' THEN r.fine_amount
+          ELSE 0
+        END as bank_transfer_amount,
         0 as wallet_amount,
         null as payment_splits,
         'rental_fine' as transaction_type,
         'غرامة تأخير' as type_label
       FROM rentals r
-      LEFT JOIN inventory i ON r.inventory_id = i.id
+      LEFT JOIN rental_inventory i ON COALESCE(r.rental_inventory_id, r.inventory_id) = i.id
       LEFT JOIN employees e ON r.seller_id = e.id
       WHERE r.status = 'returned'
         AND COALESCE(r.fine_amount, 0) > 0
@@ -3133,17 +3239,18 @@ async function getExtendedDailyReport(query = {}, user = null) {
         else if (m === 'wallet') walletCollected += a;
         else cashCollected += a;
       });
-    } else if (Number(inv.cash_amount) !== 0 || Number(inv.card_amount) !== 0 || Number(inv.bank_transfer_amount) !== 0 || Number(inv.wallet_amount) !== 0) {
+    } else if (inv.cash_amount !== undefined && inv.cash_amount !== null) {
       cashCollected += Number(inv.cash_amount || 0);
       cardCollected += Number(inv.card_amount || 0);
       bankCollected += Number(inv.bank_transfer_amount || 0);
       walletCollected += Number(inv.wallet_amount || 0);
     } else {
       const pm = (inv.payment_method || '').toLowerCase();
-      if (pm === 'cash') cashCollected += inv.paid_amount;
-      else if (pm === 'visa' || pm === 'card') cardCollected += inv.paid_amount;
-      else if (pm === 'bank_transfer' || pm === 'instapay') bankCollected += inv.paid_amount;
-      else if (pm === 'wallet') walletCollected += inv.paid_amount;
+      if (['cash', 'نقدي', 'كاش'].includes(pm)) cashCollected += inv.paid_amount;
+      else if (['visa', 'card', 'فيزا', 'بطاقة'].includes(pm)) cardCollected += inv.paid_amount;
+      else if (['bank_transfer', 'instapay', 'انستاباي', 'تحويل بنكي'].includes(pm)) bankCollected += inv.paid_amount;
+      else if (['wallet', 'محفظة', 'فودافون'].includes(pm)) walletCollected += inv.paid_amount;
+      else if (['deposit', 'تأمين', 'خصم من التأمين', 'debt', 'آجل', 'مديونية'].includes(pm)) { /* non-cash; do not inflate drawer */ }
       else cashCollected += inv.paid_amount;
     }
   });
@@ -3819,6 +3926,8 @@ module.exports = {
   getTopProductsReport,
   getDailyReport,
   getExtendedDailyReport,
+  getDailyAccountingReport: getExtendedDailyReport,
+  getShiftClosingReport: getExtendedDailyReport,
   getMonthlyOhdaReport,
   getMonthlySalarySheet,
   getSalesKpiReport,

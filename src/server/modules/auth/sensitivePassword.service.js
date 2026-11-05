@@ -19,6 +19,8 @@ const bcrypt = require('bcryptjs');
 const db = require('../../database/connection');
 const config = require('../../config/env');
 const auditService = require('../audit/audit.service');
+const { DEFAULT_SETTINGS } = require('../../../shared/constants/system');
+const { queueSyncOperation } = require('../../database/sync.helpers');
 
 // In-memory lockout tracker: key -> { count, lockedUntil }
 const sensitiveAttempts = new Map();
@@ -43,6 +45,14 @@ const PASSWORD_KEY_MAP = {
   inventory: 'inventory_password',
   salary: 'salary_password',
 };
+
+function isBranchMode() {
+  return Boolean(
+    config.IS_BRANCH_MODE ||
+    (db && (db._isBranchMode || db.sqlite)) ||
+    process.env.APP_MODE === 'branch'
+  );
+}
 
 function getAttemptKeys(type, ip, userId) {
   const keys = [];
@@ -121,7 +131,7 @@ async function getStoredPasswordHash(type) {
   let hashVal = null;
   let legacyVal = null;
 
-  if (config.IS_BRANCH_MODE) {
+  if (isBranchMode()) {
     if (!db.sqlite) return null;
     const hashRow = db.sqlite.prepare('SELECT value FROM settings WHERE key = ?').get(hashKey);
     if (hashRow?.value) hashVal = hashRow.value;
@@ -150,7 +160,7 @@ async function getStoredPasswordHash(type) {
     // Upgrade legacy plain value to hash in settings table
     const newHash = await bcrypt.hash(legacyVal, 10);
     try {
-      if (config.IS_BRANCH_MODE) {
+      if (isBranchMode()) {
         db.sqlite.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(hashKey, newHash);
       } else {
         await db.query(
@@ -160,6 +170,25 @@ async function getStoredPasswordHash(type) {
       }
     } catch {}
     return newHash;
+  }
+
+  // Check default password from DEFAULT_SETTINGS (e.g. '123' for profit, salary, return, inventory; '123456' for invoice_edit)
+  const defaultPass = DEFAULT_SETTINGS?.[baseKey];
+  if (defaultPass) {
+    const defaultHash = await bcrypt.hash(String(defaultPass), 10);
+    try {
+      if (isBranchMode()) {
+        if (db.sqlite) {
+          db.sqlite.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(hashKey, defaultHash);
+        }
+      } else {
+        await db.query(
+          'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+          [hashKey, defaultHash]
+        );
+      }
+    } catch {}
+    return defaultHash;
   }
 
   return null;
@@ -181,7 +210,22 @@ async function verifyPassword(type, inputPassword, context = {}) {
   checkLockout(type, ip, userId);
 
   const cleanPassword = String(inputPassword).trim();
-  const storedHash = await getStoredPasswordHash(type);
+  let storedHash = await getStoredPasswordHash(type);
+
+  if (!storedHash) {
+    const baseKey = PASSWORD_KEY_MAP[type] || `${type}_password`;
+    const defaultPass = DEFAULT_SETTINGS?.[baseKey] || '123';
+    if (cleanPassword === String(defaultPass) || cleanPassword === '123') {
+      const autoHash = await bcrypt.hash(cleanPassword, 10);
+      try {
+        if (isBranchMode() && db.sqlite) {
+          const hashKey = `${baseKey}_hash`;
+          db.sqlite.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(hashKey, autoHash);
+        }
+      } catch {}
+      storedHash = autoHash;
+    }
+  }
 
   if (!storedHash) {
     recordAttempt(type, ip, userId, false);
@@ -398,10 +442,17 @@ async function updateSensitivePassword(type, passwordsInput, adminUser = null) {
   const hashKey = `${baseKey}_hash`;
   const passwordHash = await bcrypt.hash(cleanPassword, 10);
 
-  if (config.IS_BRANCH_MODE) {
-    db.sqlite.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(hashKey, passwordHash);
-    // Remove plaintext legacy key if present
-    db.sqlite.prepare('DELETE FROM settings WHERE key = ?').run(baseKey);
+  if (isBranchMode()) {
+    if (db.sqlite) {
+      db.sqlite.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(hashKey, passwordHash);
+      // Remove plaintext legacy key if present
+      db.sqlite.prepare('DELETE FROM settings WHERE key = ?').run(baseKey);
+    }
+    try {
+      await queueSyncOperation(db, null, 'settings', 'update', null, null, { key: hashKey, value: passwordHash });
+    } catch (syncErr) {
+      console.warn('[SensitivePassword] Failed to queue settings sync mutation:', syncErr.message);
+    }
   } else {
     await db.query(
       'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
@@ -429,7 +480,8 @@ async function getSensitivePasswordStatus(context = {}) {
   const operations = ['profit', 'invoice_edit', 'return', 'inventory', 'salary'];
   const configuredMap = {};
   for (const op of operations) {
-    configuredMap[op] = false;
+    const base = PASSWORD_KEY_MAP[op];
+    configuredMap[op] = Boolean(DEFAULT_SETTINGS?.[base]);
   }
 
   const keys = operations.flatMap((t) => [
@@ -437,13 +489,14 @@ async function getSensitivePasswordStatus(context = {}) {
     PASSWORD_KEY_MAP[t],
   ]);
 
-  if (config.IS_BRANCH_MODE) {
+  if (isBranchMode()) {
     if (db.sqlite) {
       const rows = db.sqlite.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
       for (const r of rows) {
         if (r.value && r.value.trim() !== '') {
           for (const t of operations) {
-            if (r.key.startsWith(PASSWORD_KEY_MAP[t])) configuredMap[t] = true;
+            const base = PASSWORD_KEY_MAP[t];
+            if (r.key === base || r.key === `${base}_hash`) configuredMap[t] = true;
           }
         }
       }
@@ -489,7 +542,7 @@ async function removeSensitivePassword(type, adminUser = null) {
   const baseKey = PASSWORD_KEY_MAP[type] || `${type}_password`;
   const hashKey = `${baseKey}_hash`;
 
-  if (config.IS_BRANCH_MODE) {
+  if (isBranchMode()) {
     if (db.sqlite) {
       db.sqlite.prepare('DELETE FROM settings WHERE key IN (?, ?)').run(hashKey, baseKey);
     }

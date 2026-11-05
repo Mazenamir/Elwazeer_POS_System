@@ -9,6 +9,7 @@ const { queueSyncOperation, logActivity } = require('../../database/sync.helpers
 const { resolveOrderId } = require('./sales.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
+const { resolveEffectiveBranchId, validateBranchAccess } = require('../../middleware/branchScope.middleware');
 
 async function getNextOrderId(branchId, user = null) {
   let b_id = branchId;
@@ -16,7 +17,7 @@ async function getNextOrderId(branchId, user = null) {
     b_id = user.branch_id;
   }
 
-  let targetBranchId = (b_id && b_id !== 'all' && Number.isFinite(Number(b_id))) ? Number(b_id) : (user?.branch_id || null);
+  let targetBranchId = resolveEffectiveBranchId(user, b_id);
 
   // If no specific branch was resolved (e.g. admin viewed "all" branches), pick the primary retail branch
   if (!targetBranchId) {
@@ -195,8 +196,7 @@ async function createOrder(body, user, req) {
 
   const orderOfflineUuid = newUuid(offline_uuid);
 
-  const { validateBranchAccess } = require('../../middleware/branchScope.middleware');
-  let targetBranch = branch_id ? parseInt(branch_id, 10) : (user?.branch_id || 1);
+  let targetBranch = resolveEffectiveBranchId(user, branch_id);
   if (user) {
     validateBranchAccess(user, targetBranch);
   }
@@ -417,7 +417,7 @@ async function createOrder(body, user, req) {
     // 4. Calculate next branch_invoice_number safely with advisory lock
     await tx.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [4001, b_id]);
     const branchOrderRes = await tx.query(
-      "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
+      "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'pos') IN ('cashier', 'pos')",
       [b_id]
     );
     const nextBranchInvoiceNumber = Number(branchOrderRes.rows[0].next_no) || 1;
@@ -503,9 +503,9 @@ async function createOrder(body, user, req) {
         customer_id, total_amount, order_date, branch_id, payment_method,
         seller_id, paid_amount, change_amount, invoice_discount, invoice_discount_type,
         branch_invoice_number, offline_uuid,
-        cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits
+        cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits, order_source
       ) 
-       VALUES ($1, $2, ${CAIRO_NOW_SQL}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       VALUES ($1, $2, ${CAIRO_NOW_SQL}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'cashier')
        RETURNING id, branch_invoice_number`,
       [
         customerId, finalTotalAmount, b_id, finalPaymentMethod,

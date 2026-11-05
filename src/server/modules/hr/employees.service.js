@@ -4,7 +4,7 @@ const config = require('../../config/env');
 const { CAIRO_DATE_SQL, CAIRO_NOW_SQL } = require('../../../shared/constants/system');
 const { normalizePermissions, defaultPermissionsForRole } = require('../../../shared/constants/permissions');
 const { getCairoDateTimeParts, getMonthRange, getMonthKey, getDatabaseCairoNow, addDays } = require('../../../shared/utils/date');
-const { likePattern } = require('../../../shared/utils/string');
+const { likePattern, newUuid } = require('../../../shared/utils/string');
 const { clampInt } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { queueSyncOperation } = require('../../database/sync.helpers');
@@ -598,7 +598,22 @@ async function recordAttendance(body, user) {
      RETURNING *`,
     [employee_id, date, check_in, check_out, status || 'present', notes]
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  const empBranchRes = await db.query('SELECT branch_id FROM employees WHERE id = $1', [employee_id]);
+  const branchId = empBranchRes.rows[0]?.branch_id || user?.branch_id || config.BRANCH_ID || 1;
+  await queueSyncOperation(db, null, 'attendance', 'upsert', row.id, branchId, {
+    employee_id: row.employee_id,
+    date: row.date,
+    check_in: row.check_in,
+    check_out: row.check_out,
+    status: row.status,
+    notes: row.notes,
+    total_hours: row.total_hours,
+    late_minutes: row.late_minutes,
+    early_departure_minutes: row.early_departure_minutes,
+    overtime_minutes: row.overtime_minutes,
+  });
+  return row;
 }
 
 async function toggleAttendance(id, manualTime, user) {
@@ -649,6 +664,19 @@ async function toggleAttendance(id, manualTime, user) {
        RETURNING *`,
       [id, date, time, lateMinutes]
     );
+    const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
+    await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
+      employee_id: result.rows[0].employee_id,
+      date: result.rows[0].date,
+      check_in: result.rows[0].check_in,
+      check_out: result.rows[0].check_out,
+      status: result.rows[0].status,
+      notes: result.rows[0].notes,
+      total_hours: result.rows[0].total_hours,
+      late_minutes: result.rows[0].late_minutes,
+      early_departure_minutes: result.rows[0].early_departure_minutes,
+      overtime_minutes: result.rows[0].overtime_minutes,
+    });
     return { action: 'check_in', attendance: result.rows[0] };
   }
 
@@ -681,6 +709,19 @@ async function toggleAttendance(id, manualTime, user) {
        RETURNING *`,
       [time, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours]
     );
+    const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
+    await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
+      employee_id: result.rows[0].employee_id,
+      date: result.rows[0].date,
+      check_in: result.rows[0].check_in,
+      check_out: result.rows[0].check_out,
+      status: result.rows[0].status,
+      notes: result.rows[0].notes,
+      total_hours: result.rows[0].total_hours,
+      late_minutes: result.rows[0].late_minutes,
+      early_departure_minutes: result.rows[0].early_departure_minutes,
+      overtime_minutes: result.rows[0].overtime_minutes,
+    });
     return { action: 'check_out', attendance: result.rows[0] };
   }
 
@@ -836,6 +877,19 @@ async function recordManualAttendance(id, body, user) {
     [id, date, status, notes || null, check_in || null, check_out || null, totalHours, lateMinutes, earlyDepartureMinutes, overtimeMinutes]
   );
 
+  const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
+  await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
+    employee_id: result.rows[0].employee_id,
+    date: result.rows[0].date,
+    check_in: result.rows[0].check_in,
+    check_out: result.rows[0].check_out,
+    status: result.rows[0].status,
+    notes: result.rows[0].notes,
+    total_hours: result.rows[0].total_hours,
+    late_minutes: result.rows[0].late_minutes,
+    early_departure_minutes: result.rows[0].early_departure_minutes,
+    overtime_minutes: result.rows[0].overtime_minutes,
+  });
   return { action: 'manual_update', attendance: result.rows[0] };
 }
 
@@ -906,12 +960,26 @@ async function createEmployeeTransaction(body, user) {
     }
   }
 
+  const offlineUuid = newUuid(body?.offline_uuid);
   const cairoNow = await getDatabaseCairoNow();
   const result = await db.query(
-    'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    [employee_id, type, amount, transaction_date || cairoNow.date, notes]
+    'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+    [employee_id, type, amount, transaction_date || cairoNow.date, notes || null, offlineUuid]
   );
-  return result.rows[0];
+  const transRow = result.rows[0];
+  const empBranchRes = await db.query('SELECT branch_id FROM employees WHERE id = $1', [employee_id]);
+  const branchId = empBranchRes.rows[0]?.branch_id || user?.branch_id || config.BRANCH_ID || 1;
+  await queueSyncOperation(db, null, 'employee_transaction', 'create', transRow.id, branchId, {
+    id: transRow.id,
+    employee_id: transRow.employee_id,
+    type: transRow.type,
+    amount: transRow.amount,
+    transaction_date: transRow.transaction_date,
+    notes: transRow.notes,
+    offline_uuid: transRow.offline_uuid || offlineUuid,
+    branch_id: branchId,
+  });
+  return transRow;
 }
 
 async function getEmployeeSummary(id, monthParam, user) {

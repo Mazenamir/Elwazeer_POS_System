@@ -6,6 +6,7 @@ const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/u
 const { clampInt, parsePositiveInt } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
+const { queueSyncOperation } = require('../../database/sync.helpers');
 
 async function getSupplierOptions(query = {}) {
   const params = [];
@@ -220,7 +221,9 @@ async function createSupplier(payload) {
       createdAtVal,
     ]
   );
-  return rows[0];
+  const createdSup = rows[0];
+  await queueSyncOperation(db, null, 'supplier', 'create', createdSup.id, null, createdSup);
+  return createdSup;
 }
 
 async function updateSupplier(id, payload) {
@@ -281,7 +284,9 @@ async function updateSupplier(id, payload) {
     throw err;
   }
 
-  return rows[0];
+  const updatedSup = rows[0];
+  await queueSyncOperation(db, null, 'supplier', 'update', updatedSup.id, null, updatedSup);
+  return updatedSup;
 }
 
 async function deleteSupplier(id) {
@@ -289,6 +294,7 @@ async function deleteSupplier(id) {
     // Soft delete / archive supplier to preserve accounting history (supply_records, supplier_transactions)
     await tx.query('UPDATE inventory SET preferred_supplier_id = NULL WHERE preferred_supplier_id = $1', [id]);
     await tx.query("UPDATE suppliers SET is_active = FALSE, status = 'inactive' WHERE id = $1", [id]);
+    await queueSyncOperation(tx, null, 'supplier', 'delete', id, null, { id });
   });
   return { success: true };
 }
@@ -457,11 +463,13 @@ async function createSupplierTransaction(payload, user = null) {
     paid_from_drawer = ['cash', 'نقدي', 'كاش'].includes(payment_method.toLowerCase());
   }
 
+  let createdTxId = null;
   await db.transaction(async (tx) => {
-    await tx.query(
-      'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, branch_id, payment_method, paid_from_drawer) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [supplier_id, transaction_type, safeAmount, notes || null, branch_id, payment_method, paid_from_drawer]
+    const insertRes = await tx.query(
+      'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, branch_id, payment_method, paid_from_drawer) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+      [supplier_id, transaction_type, safeAmount, notes || null, branch_id, payment_method, paid_from_drawer ? 1 : 0]
     );
+    createdTxId = insertRes.rows[0]?.id || insertRes.lastInsertRowid;
 
     if (transaction_type === 'purchase') {
       await tx.query(
@@ -474,6 +482,17 @@ async function createSupplierTransaction(payload, user = null) {
         [safeAmount, supplier_id]
       );
     }
+
+    await queueSyncOperation(tx, null, 'supplier_transaction', 'create', createdTxId, branch_id, {
+      id: createdTxId,
+      supplier_id,
+      transaction_type,
+      amount: safeAmount,
+      notes: notes || null,
+      branch_id,
+      payment_method,
+      paid_from_drawer: paid_from_drawer ? 1 : 0,
+    });
   });
 
   return { success: true };
@@ -532,6 +551,14 @@ async function processSupplierReturn(payload) {
         [supplier_id, item.inventory_id, item.branch_id, -item.quantity, item.cost_price, new Date(), uniqueNote, purchase_transaction_id]
       );
     }
+    await queueSyncOperation(tx, null, 'supplier_transaction', 'create', returnTransactionId, supplier_id, {
+      id: returnTransactionId,
+      supplier_id,
+      transaction_type: 'return',
+      amount: total_amount,
+      notes: notes || 'مرتجع بضاعة',
+      purchase_transaction_id,
+    });
   });
 
   return { success: true };

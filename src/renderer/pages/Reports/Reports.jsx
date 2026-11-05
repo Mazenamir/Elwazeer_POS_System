@@ -101,24 +101,32 @@ export function Reports() {
   const { branches, isMultiBranch, activeBranchId } = useBranch();
   const { toast } = useToast();
 
-  const isBranchScoped = user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor';
-
+  const isBranchScoped = Boolean(user && user.role !== 'admin' && user.branch_scope !== 'all');
 
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'monthly' | 'sales' | 'rentals' | 'expenses' | 'inventory' | 'top_products'
   const [selectedBranch, setSelectedBranch] = useState(() => {
-    if (isBranchScoped && user?.branch_id) {
-      return user.branch_id.toString();
+    if (isBranchScoped) {
+      if (user?.branch_id) return user.branch_id.toString();
+      if (Array.isArray(user?.branch_ids) && user.branch_ids.length > 0) return user.branch_ids[0].toString();
+      if (branches && branches.length > 0) return branches[0].id.toString();
+      return '1';
     }
     return activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all';
   });
 
   useEffect(() => {
-    if (isBranchScoped && user?.branch_id) {
-      setSelectedBranch(user.branch_id.toString());
+    if (isBranchScoped) {
+      if (user?.branch_id) {
+        setSelectedBranch(user.branch_id.toString());
+      } else if (Array.isArray(user?.branch_ids) && user.branch_ids.length > 0) {
+        setSelectedBranch(user.branch_ids[0].toString());
+      } else if (branches && branches.length > 0) {
+        setSelectedBranch(branches[0].id.toString());
+      }
     } else if (activeBranchId) {
       setSelectedBranch(activeBranchId);
     }
-  }, [activeBranchId, isBranchScoped, user?.branch_id]);
+  }, [activeBranchId, isBranchScoped, user?.branch_id, user?.branch_ids, branches]);
   const [profitVisible, setProfitVisible] = useState(false);
   const [showProfitAuthModal, setShowProfitAuthModal] = useState(false);
   const [profitAuthInput, setProfitAuthInput] = useState('');

@@ -99,6 +99,7 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'rental_inventory', 'size_id', 'INTEGER');
   ensureSqliteColumn(sqlite, 'rental_inventory', 'gender', "TEXT DEFAULT 'both'");
   ensureSqliteColumn(sqlite, 'order_items', 'size', 'TEXT');
+  ensureSqliteColumn(sqlite, 'returns', 'refund_method', "TEXT DEFAULT 'cash'");
   ensureSqliteColumn(sqlite, 'users', 'full_name', 'TEXT');
   ensureSqliteColumn(sqlite, 'users', 'branch_scope', "TEXT DEFAULT 'single'");
   ensureSqliteColumn(sqlite, 'users', 'branch_ids', "TEXT DEFAULT '[]'");
@@ -114,6 +115,13 @@ function registerSqliteFunctions(dbInstance) {
   if (!dbInstance || dbInstance._functionsRegistered) return;
   dbInstance._functionsRegistered = true;
 
+  dbInstance.function('regexp', (pattern, val) => {
+    try {
+      return new RegExp(pattern).test(String(val ?? '')) ? 1 : 0;
+    } catch {
+      return 0;
+    }
+  });
   dbInstance.function('gen_random_uuid', () => crypto.randomUUID());
   dbInstance.function('now', () => new Date().toISOString());
   dbInstance.function('timezone', { varargs: true }, (tz, dt) => dt || new Date().toISOString());
@@ -183,6 +191,16 @@ function translatePgToSqlite(sql) {
   s = s.replace(/\(now\(\)\s+AT\s+TIME\s+ZONE\s+'[^']+'\)::date/gi, "date('now', 'localtime')");
   s = s.replace(/\(now\(\)\s+AT\s+TIME\s+ZONE\s+'[^']+'\)/gi, "datetime('now', 'localtime')");
 
+  // Column-level and general timezone: strip AT TIME ZONE '...'
+  s = s.replace(/\s+AT\s+TIME\s+ZONE\s+'[^']+'/gi, '');
+
+  // INSERT INTO ... SELECT ... ON CONFLICT DO NOTHING -> INSERT OR IGNORE INTO ... SELECT ...
+  s = s.replace(/INSERT\s+INTO\s+([a-zA-Z_]\w*(?:\s*\([^)]+\))?)\s+SELECT\s+([\s\S]+?)\s+ON\s+CONFLICT(?:\s*\([^)]*(?:\([^)]*\)[^)]*)*\))?\s+DO\s+NOTHING/gi, 'INSERT OR IGNORE INTO $1 SELECT $2');
+
+  // POSIX regex pattern translation: (\w+) ~ 'pattern' -> regexp('pattern', $1)
+  s = s.replace(/([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*~\s*'([^']+)'/g, "regexp('$2', $1)");
+  s = s.replace(/([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*!~\s*'([^']+)'/g, "(NOT regexp('$2', $1))");
+
   // ILIKE -> LIKE
   s = s.replace(/\bILIKE\b/gi, 'LIKE');
 
@@ -195,8 +213,21 @@ function translatePgToSqlite(sql) {
   s = s.replace(/\bBOOL_OR\b/gi, 'MAX');
   s = s.replace(/\bBOOL_AND\b/gi, 'MIN');
 
+  // Translate integer type casts e.g. column::bigint, column::int -> CAST(column AS INTEGER)
+  s = s.replace(/([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)::(?:int|integer|bigint|smallint)\b/gi, 'CAST($1 AS INTEGER)');
+
   // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
   s = s.replace(/::(?:double\s+precision|character\s+varying|[a-zA-Z0-9_]+)(?:\s*\[\s*\])?/g, '');
+
+  // Rental date subtraction translation using julianday
+  s = s.replace(/\b(?:GREATEST|MAX)\s*\(\s*\(\s*([^()]+?)\s*-\s*([^()]+?)\s*\)\s*,\s*0\s*\)/gi,
+    "MAX(CAST(julianday($1) - julianday($2) AS INTEGER), 0)");
+  s = s.replace(/\(\s*(date\('now',\s*'localtime'\))\s*-\s*([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\)/gi,
+    "CAST(julianday($1) - julianday($2) AS INTEGER)");
+  s = s.replace(/\(\s*([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*(date\('now',\s*'localtime'\))\s*\)/gi,
+    "CAST(julianday($1) - julianday($2) AS INTEGER)");
+  s = s.replace(/\(\s*([a-zA-Z_]\w*\.[a-zA-Z_]*date)\s*-\s*([a-zA-Z_]\w*\.[a-zA-Z_]*date)\s*\)/gi,
+    "CAST(julianday($1) - julianday($2) AS INTEGER)");
 
   // Strip FOR UPDATE
   s = s.replace(/\bFOR\s+(?:NO\s+KEY\s+|KEY\s+)?(?:UPDATE|SHARE)\b/gi, '');
@@ -212,9 +243,9 @@ function translatePgToSqlite(sql) {
   s = s.replace(/(!=|<>)\s*ALL\s*\(\s*\$(\d+)\s*\)/gi, 'NOT IN (SELECT value FROM json_each(?$2))');
 
   // EXTRACT translations to SQLite equivalents
-  // STRING_AGG translations
-  s = s.replace(/STRING_AGG\s*\(\s*DISTINCT\s+([^,]+?)\s*,\s*('[^']+')\s*\)(?:\s*FILTER\s*\(\s*WHERE\s+[^)]+\))?/gi, "replace(group_concat(DISTINCT $1), ',', $2)");
-  s = s.replace(/STRING_AGG\s*\(\s*([^,]+?)\s*,\s*('[^']+')\s*\)(?:\s*FILTER\s*\(\s*WHERE\s+[^)]+\))?/gi, "group_concat($1, $2)");
+  // STRING_AGG translations (with ORDER BY support)
+  s = s.replace(/STRING_AGG\s*\(\s*DISTINCT\s+([^,]+?)\s*,\s*('[^']+')(?:(?:\s+ORDER\s+BY\s+(?:[^()]+|\([^()]*\))+)?)\s*\)(?:\s*FILTER\s*\(\s*WHERE\s+[^)]+\))?/gi, "replace(group_concat(DISTINCT $1), ',', $2)");
+  s = s.replace(/STRING_AGG\s*\(\s*([^,]+?)\s*,\s*('[^']+')(?:(?:\s+ORDER\s+BY\s+(?:[^()]+|\([^()]*\))+)?)\s*\)(?:\s*FILTER\s*\(\s*WHERE\s+[^)]+\))?/gi, "group_concat($1, $2)");
 
   // Handle NOW() / CURRENT_TIMESTAMP - INTERVAL 'X unit(s)'
   s = s.replace(/\b(?:now\(\)|current_timestamp)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', '-$1 $2')");
@@ -254,10 +285,18 @@ if (config.IS_BRANCH_MODE) {
   fs.mkdirSync(path.dirname(config.BRANCH_SQLITE_PATH), { recursive: true });
   sqliteDb = new DatabaseSync(config.BRANCH_SQLITE_PATH);
   sqliteDb.exec('PRAGMA journal_mode = WAL;');
+  sqliteDb.exec('PRAGMA busy_timeout = 5000;');
   ensureSqliteCoreColumns(sqliteDb);
   registerSqliteFunctions(sqliteDb);
 
   // Register custom SQLite functions for seamless Postgres compatibility
+  sqliteDb.function('regexp', (pattern, val) => {
+    try {
+      return new RegExp(pattern).test(String(val ?? '')) ? 1 : 0;
+    } catch {
+      return 0;
+    }
+  });
   sqliteDb.function('gen_random_uuid', () => crypto.randomUUID());
   sqliteDb.function('now', () => new Date().toISOString());
   sqliteDb.function('timezone', { varargs: true }, (tz, dt) => dt || new Date().toISOString());

@@ -222,6 +222,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       reason TEXT,
       seller_id INTEGER,
       branch_id INTEGER,
+      refund_method TEXT DEFAULT 'cash',
       offline_uuid TEXT UNIQUE,
       pending_sync INTEGER DEFAULT 1
     );
@@ -710,6 +711,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
 
   function syncBranchUserPermissionsAndScopes(sqliteDb) {
     try {
+      sqliteDb.prepare("UPDATE users SET branch_id = 1 WHERE branch_id IS NULL AND role != 'admin'").run();
       const allBranchUsers = sqliteDb.prepare("SELECT id, username, role, permissions, branch_id, branch_scope, branch_ids FROM users").all();
       const requiredBranchPerms = [
         'Dashboard.html',

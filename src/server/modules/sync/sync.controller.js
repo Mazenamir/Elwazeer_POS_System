@@ -64,6 +64,9 @@ async function getStatus(req, res, next) {
 
 async function run(req, res, next) {
   try {
+    if (typeof syncService.isSyncActive === 'function' && syncService.isSyncActive()) {
+      return res.status(409).json({ ok: false, inProgress: true, message: 'عملية المزامنة جارية بالفعل...' });
+    }
     const result = await syncService.runSync(req.body?.limit);
     res.json(result);
   } catch (err) {
@@ -73,11 +76,34 @@ async function run(req, res, next) {
 
 async function runCycle(req, res, next) {
   try {
+    if (typeof syncService.isSyncActive === 'function' && syncService.isSyncActive()) {
+      return res.status(409).json({ ok: false, inProgress: true, message: 'عملية المزامنة جارية بالفعل...' });
+    }
     const result = await syncService.runSyncCycle({ isManual: true, limit: req.body?.limit });
     res.json(result);
   } catch (err) {
     console.error('Sync cycle failed:', err);
     res.status(500).json({ ok: false, error: err.message, message: 'حدث خطأ غير متوقع أثناء المزامنة' });
+  }
+}
+
+async function getDeadLetter(req, res, next) {
+  try {
+    const { limit, offset } = req.query || {};
+    const result = await syncService.getDeadLetterQueue({ limit, offset });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function retryDeadLetter(req, res, next) {
+  try {
+    const { id } = req.body || {};
+    const result = await syncService.requeueDeadLetter(id || 'all');
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
   }
 }
 
@@ -149,5 +175,7 @@ module.exports = {
   runCycle,
   getDiagnostics,
   configure,
+  getDeadLetter,
+  retryDeadLetter,
 };
 

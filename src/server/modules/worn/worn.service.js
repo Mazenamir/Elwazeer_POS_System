@@ -1,10 +1,12 @@
 const db = require('../../database/connection');
 const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
 const { isBranchScopedUser } = require('../../../shared/constants/permissions');
-const { likePattern } = require('../../../shared/utils/string');
+const { likePattern, newUuid } = require('../../../shared/utils/string');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { roundCurrency } = require('../../../shared/utils/numbers');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
+const { resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
+const { queueSyncOperation } = require('../../database/sync.helpers');
 
 async function getSummary(query, user) {
   const params = [];
@@ -133,12 +135,13 @@ async function createWornProduct(body, user) {
     throw err;
   }
 
-  const finalBranchId = isBranchScopedUser(user) ? user.branch_id : (branch_id || user?.branch_id || 1);
+  const finalBranchId = resolveEffectiveBranchId(user, branch_id);
   const productId = Number(product_id);
   const finalInventoryId = product_type === 'sales' ? productId : null;
   const finalRentalInventoryId = product_type === 'rental' ? productId : null;
   const shouldDeductStock = deduct_stock !== false;
   const roundedLoss = Math.max(0, roundCurrency(Number(estimated_loss || 0)));
+  const offlineUuid = newUuid(body?.offline_uuid);
 
   return await db.transaction(async (tx) => {
     if (shouldDeductStock) {
@@ -221,8 +224,8 @@ async function createWornProduct(body, user) {
 
     const result = await tx.query(
       `INSERT INTO worn_products
-        (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, reported_by, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, ${CAIRO_DATE_SQL}))
+        (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, reported_by, occurred_at, offline_uuid)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, ${CAIRO_DATE_SQL}), $12)
        RETURNING *`,
       [
         product_type,
@@ -236,10 +239,17 @@ async function createWornProduct(body, user) {
         notes || null,
         user ? user.id : null,
         occurred_at || null,
+        offlineUuid,
       ]
     );
 
-    return result.rows[0];
+    const created = result.rows[0];
+    await queueSyncOperation(tx, null, 'worn_product', 'create', created.id, finalBranchId, {
+      ...created,
+      offline_uuid: created.offline_uuid || offlineUuid,
+      deduct_stock: shouldDeductStock,
+    });
+    return created;
   });
 }
 
@@ -266,7 +276,15 @@ async function updateWornProduct(id, body, user) {
     throw err;
   }
 
-  return rows[0];
+  const updated = rows[0];
+  await queueSyncOperation(db, null, 'worn_product', 'update', updated.id, updated.branch_id, {
+    id: updated.id,
+    offline_uuid: updated.offline_uuid,
+    status: updated.status,
+    notes: updated.notes,
+    branch_id: updated.branch_id,
+  });
+  return updated;
 }
 
 module.exports = {

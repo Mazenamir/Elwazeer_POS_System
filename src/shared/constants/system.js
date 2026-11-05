@@ -23,6 +23,8 @@ const DEFAULT_SETTINGS = {
   profit_password: '123',
   salary_password: '123',
   invoice_edit_password: '123456',
+  return_password: '123',
+  inventory_password: '123',
 };
 
 const DEFAULT_RENTAL_FINE_PER_DAY = 50;

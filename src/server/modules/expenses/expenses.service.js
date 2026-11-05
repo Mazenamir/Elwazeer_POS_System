@@ -7,7 +7,7 @@ const { likePattern, newUuid } = require('../../../shared/utils/string');
 const { parsePositiveInt } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
-const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess } = require('../../middleware/branchScope.middleware');
+const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
 
 async function getExpensesSummary(query = {}, user = null) {
   const branchParams = [];
@@ -329,12 +329,15 @@ async function createExpense(body, user, req) {
   const offlineUuid = newUuid(body?.offline_uuid);
 
   if (user && user.role !== 'admin') {
-    const targetBranch = branch_id || user.branch_id;
+    const targetBranch = resolveEffectiveBranchId(user, branch_id);
     validateBranchAccess(user, targetBranch);
     branch_id = targetBranch;
   }
 
-  const final_branch_id = (branch_id === '' || branch_id === undefined) ? null : Number(branch_id);
+  let final_branch_id = (branch_id === '' || branch_id === undefined || branch_id === null)
+    ? (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : null)
+    : Number(branch_id);
+
   const final_amount = Number((amount === '' || amount === undefined) ? 0 : amount);
   const final_payment_method = ['cash', 'card', 'bank_transfer', 'wallet'].includes(payment_method) ? payment_method : 'cash';
 
@@ -348,6 +351,20 @@ async function createExpense(body, user, req) {
     const err = new Error('يجب اختيار الموظف للمكافأة');
     err.statusCode = 400;
     throw err;
+  }
+
+  if (category === 'bonus' && !final_branch_id) {
+    if (employee_id) {
+      try {
+        const empRes = await db.query('SELECT branch_id FROM employees WHERE id = $1', [employee_id]);
+        if (empRes.rows.length > 0 && empRes.rows[0].branch_id) {
+          final_branch_id = Number(empRes.rows[0].branch_id);
+        }
+      } catch {}
+    }
+    if (!final_branch_id && config.IS_BRANCH_MODE) {
+      final_branch_id = resolveEffectiveBranchId(user);
+    }
   }
 
   if (category === 'bonus' && !final_branch_id) {

@@ -10,6 +10,14 @@
 const db = require('../database/connection');
 const config = require('../config/env');
 
+function isBranchModeActive() {
+  return Boolean(
+    config.IS_BRANCH_MODE ||
+    (db && (db._isBranchMode || db.sqlite)) ||
+    process.env.APP_MODE === 'branch'
+  );
+}
+
 /**
  * Returns null if user has unrestricted all-branch access (admin or scope='all').
  * Otherwise returns an array of integer branch IDs.
@@ -44,7 +52,27 @@ function getUserAuthorizedBranchIds(user) {
     }
   }
 
+  if (isBranchModeActive() && ids.size === 0) {
+    ids.add(Number(config.BRANCH_ID || 1));
+  }
+
   return Array.from(ids);
+}
+
+/**
+ * Resolves the effective branch ID for an operation.
+ * If explicitBranchId is provided and not 'all', returns Number(explicitBranchId).
+ * If in branch mode, returns Number(config.BRANCH_ID || 1).
+ * Otherwise returns Number(user?.branch_id || config.BRANCH_ID || 1).
+ */
+function resolveEffectiveBranchId(user, explicitBranchId = null) {
+  if (explicitBranchId !== null && explicitBranchId !== undefined && explicitBranchId !== '' && explicitBranchId !== 'all') {
+    return Number(explicitBranchId);
+  }
+  if (isBranchModeActive()) {
+    return Number(config.BRANCH_ID || 1);
+  }
+  return Number(user?.branch_id || config.BRANCH_ID || 1);
 }
 
 /**
@@ -160,6 +188,7 @@ async function requireBranchRentalsEnabled(reqOrBranchId, res = null, next = nul
 
 module.exports = {
   getUserAuthorizedBranchIds,
+  resolveEffectiveBranchId,
   hasBranchAccess,
   validateBranchAccess,
   requireBranchAccess,
