@@ -216,18 +216,30 @@ function translatePgToSqlite(sql) {
   // Translate integer type casts e.g. column::bigint, column::int -> CAST(column AS INTEGER)
   s = s.replace(/([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)::(?:int|integer|bigint|smallint)\b/gi, 'CAST($1 AS INTEGER)');
 
-  // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
-  s = s.replace(/::(?:double\s+precision|character\s+varying|[a-zA-Z0-9_]+)(?:\s*\[\s*\])?/g, '');
-
-  // Rental date subtraction translation using julianday
+  // Rental date subtraction translation using julianday (must run before ::date translation)
   s = s.replace(/\b(?:GREATEST|MAX)\s*\(\s*\(\s*([^()]+?)\s*-\s*([^()]+?)\s*\)\s*,\s*0\s*\)/gi,
-    "MAX(CAST(julianday($1) - julianday($2) AS INTEGER), 0)");
+    (match, left, right) => {
+      const cleanLeft = left.replace(/::date\b/gi, '').trim();
+      const cleanRight = right.replace(/::date\b/gi, '').trim();
+      return `MAX(CAST(julianday(${cleanLeft}) - julianday(${cleanRight}) AS INTEGER), 0)`;
+    });
   s = s.replace(/\(\s*(date\('now',\s*'localtime'\))\s*-\s*([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\)/gi,
     "CAST(julianday($1) - julianday($2) AS INTEGER)");
   s = s.replace(/\(\s*([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*(date\('now',\s*'localtime'\))\s*\)/gi,
     "CAST(julianday($1) - julianday($2) AS INTEGER)");
   s = s.replace(/\(\s*([a-zA-Z_]\w*\.[a-zA-Z_]*date)\s*-\s*([a-zA-Z_]\w*\.[a-zA-Z_]*date)\s*\)/gi,
     "CAST(julianday($1) - julianday($2) AS INTEGER)");
+
+  // Translate ::date type casts to date(...) so timestamps are properly truncated to YYYY-MM-DD in SQLite
+  for (let iter = 0; iter < 2; iter++) {
+    s = s.replace(/(?:([a-zA-Z0-9_]+\s*\([^()]*\))|(\([^()]+\))|(\'[^\']+\')|(\$[0-9]+)|([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?))::date\b/gi, (match, fn, paren, lit, param, col) => {
+      const expr = fn || paren || lit || param || col;
+      return `date(${expr})`;
+    });
+  }
+
+  // Strip Postgres type casts e.g. ::int, ::date, ::timestamp, ::text, ::numeric
+  s = s.replace(/::(?:double\s+precision|character\s+varying|[a-zA-Z0-9_]+)(?:\s*\[\s*\])?/g, '');
 
   // Strip FOR UPDATE
   s = s.replace(/\bFOR\s+(?:NO\s+KEY\s+|KEY\s+)?(?:UPDATE|SHARE)\b/gi, '');
@@ -372,6 +384,15 @@ if (config.IS_BRANCH_MODE) {
       if (qMatches) maxParamIdx = qMatches.length;
     }
     const safeParams = maxParamIdx > 0 ? normalizedParams.slice(0, maxParamIdx) : [];
+
+    // Support multiple statements (e.g. TRUNCATE translations or batch resets)
+    if (safeParams.length === 0 && !isSelect && !hasReturning && sql.includes(';')) {
+      const statements = sql.split(';').map((s) => s.trim()).filter(Boolean);
+      if (statements.length > 1) {
+        sDb.exec(sql);
+        return { rows: [], rowCount: statements.length };
+      }
+    }
 
     const stmt = sDb.prepare(sql);
 

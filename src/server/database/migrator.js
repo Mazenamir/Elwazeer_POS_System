@@ -1067,6 +1067,25 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
     console.warn('Could not update static branch logos in SQLite:', err.message);
   }
 
+  // Auto-heal any stuck sync operations in SQLite sync_queue with foreign key issues
+  try {
+    const brokenOps = sqlite.prepare(`
+      SELECT id, status, payload FROM sync_queue
+      WHERE (entity_type IN ('product', 'inventory') OR last_error LIKE '%inventory_size_id_fkey%' OR last_error LIKE '%foreign key%')
+        AND status IN ('failed', 'dead_letter')
+    `).all();
+    for (const row of brokenOps) {
+      try {
+        let p = JSON.parse(row.payload);
+        if (p && (p.size_id !== null || p.color_id !== null)) {
+          p.size_id = null;
+          p.color_id = null;
+        }
+        sqlite.prepare("UPDATE sync_queue SET payload = ?, status = 'pending', attempts = 0, last_error = NULL WHERE id = ?").run(JSON.stringify(p), row.id);
+      } catch {}
+    }
+  } catch {}
+
   console.log('✨ Branch SQLite schema initialized successfully.');
 }
 

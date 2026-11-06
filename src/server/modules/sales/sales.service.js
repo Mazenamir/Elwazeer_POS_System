@@ -1,7 +1,7 @@
 const db = require('../../database/connection');
 const config = require('../../config/env');
 const { CAIRO_DATE_SQL, CAIRO_NOW_SQL } = require('../../../shared/constants/system');
-const { getCairoDateTimeParts } = require('../../../shared/utils/date');
+const { getCairoDateTimeParts, getDatabaseCairoNow } = require('../../../shared/utils/date');
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { parsePositiveInt, roundCurrency } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
@@ -10,6 +10,19 @@ const { resolveOrderId } = require('./sales.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
 const { resolveEffectiveBranchId, validateBranchAccess } = require('../../middleware/branchScope.middleware');
+
+async function getInvoiceCounterResetFilter(dbOrTx, branchId) {
+  try {
+    const res = await dbOrTx.query(
+      "SELECT value FROM settings WHERE key = $1 OR key = 'invoice_counter_reset_at' ORDER BY CASE WHEN key = $1 THEN 1 ELSE 2 END LIMIT 1",
+      [`invoice_counter_reset_at_${branchId}`]
+    );
+    if (res.rows && res.rows.length > 0 && res.rows[0].value) {
+      return String(res.rows[0].value).trim();
+    }
+  } catch {}
+  return null;
+}
 
 async function getNextOrderId(branchId, user = null) {
   let b_id = branchId;
@@ -33,10 +46,14 @@ async function getNextOrderId(branchId, user = null) {
   const finalBranchId = targetBranchId || 1;
 
   try {
-    const result = await db.query(
-      "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_id FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'",
-      [finalBranchId]
-    );
+    const resetAt = await getInvoiceCounterResetFilter(db, finalBranchId);
+    let queryStr = "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_id FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'cashier') = 'cashier'";
+    const queryParams = [finalBranchId];
+    if (resetAt) {
+      queryParams.push(resetAt);
+      queryStr += " AND order_date >= $" + queryParams.length;
+    }
+    const result = await db.query(queryStr, queryParams);
     return {
       next_id: Number(result.rows[0]?.next_id) || 1,
       branch_id: finalBranchId,
@@ -165,6 +182,7 @@ async function listOrders(query = {}, user = null, req = null) {
     ]);
     const parsedRows = (dataRes.rows || []).map((r) => ({
       ...r,
+      items: typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items); } catch { return []; } })() : (Array.isArray(r.items) ? r.items : []),
       payment_splits: typeof r.payment_splits === 'string' ? (() => { try { return JSON.parse(r.payment_splits); } catch { return null; } })() : r.payment_splits,
     }));
     return paginatedPayload(parsedRows, countRes.rows[0]?.total || 0, pagination, 'orders');
@@ -174,6 +192,7 @@ async function listOrders(query = {}, user = null, req = null) {
   const { rows } = await db.query(selectQuery, queryParams);
   return (rows || []).map((r) => ({
     ...r,
+    items: typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items); } catch { return []; } })() : (Array.isArray(r.items) ? r.items : []),
     payment_splits: typeof r.payment_splits === 'string' ? (() => { try { return JSON.parse(r.payment_splits); } catch { return null; } })() : r.payment_splits,
   }));
 }
@@ -416,10 +435,14 @@ async function createOrder(body, user, req) {
 
     // 4. Calculate next branch_invoice_number safely with advisory lock
     await tx.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [4001, b_id]);
-    const branchOrderRes = await tx.query(
-      "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'pos') IN ('cashier', 'pos')",
-      [b_id]
-    );
+    const resetAt = await getInvoiceCounterResetFilter(tx, b_id);
+    let counterQuery = "SELECT COALESCE(MAX(CAST(branch_invoice_number AS INTEGER)), 0) + 1 AS next_no FROM orders WHERE branch_id = $1 AND COALESCE(order_source, 'pos') IN ('cashier', 'pos')";
+    const counterParams = [b_id];
+    if (resetAt) {
+      counterParams.push(resetAt);
+      counterQuery += " AND order_date >= $" + counterParams.length;
+    }
+    const branchOrderRes = await tx.query(counterQuery, counterParams);
     const nextBranchInvoiceNumber = Number(branchOrderRes.rows[0].next_no) || 1;
 
     // Process payment methods, splits, and exact cash/non-cash breakdown
@@ -1265,7 +1288,11 @@ async function searchOrders(queryStr, branchId, user) {
        LIMIT 50`,
       offParams
     );
-    return rows;
+    return (rows || []).map((r) => ({
+      ...r,
+      items: typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items); } catch { return []; } })() : (Array.isArray(r.items) ? r.items : []),
+      payment_splits: typeof r.payment_splits === 'string' ? (() => { try { return JSON.parse(r.payment_splits); } catch { return null; } })() : r.payment_splits,
+    }));
   }
 
   const cleanQuery = typeof queryStr === 'string' ? queryStr.replace(/^cashier-/i, '').replace(/^#/i, '').trim() : String(queryStr || '');
@@ -1324,11 +1351,21 @@ async function searchOrders(queryStr, branchId, user) {
      LIMIT 10`,
     params
   );
-  return rows;
+  return (rows || []).map((r) => ({
+    ...r,
+    items: typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items); } catch { return []; } })() : (Array.isArray(r.items) ? r.items : []),
+    payment_splits: typeof r.payment_splits === 'string' ? (() => { try { return JSON.parse(r.payment_splits); } catch { return null; } })() : r.payment_splits,
+  }));
 }
 
 async function createReturn(body, user, req) {
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch (_) { body = {}; }
+  }
   let { order_id, items, total_return_amount, branch_id, seller_id, offline_uuid, refund_method } = body || {};
+  if (typeof items === 'string') {
+    try { items = JSON.parse(items); } catch (_) { items = []; }
+  }
   const normRefundMethod = refund_method ? normalizePaymentMethod(refund_method) : 'cash';
   const returnOfflineUuid = newUuid(offline_uuid);
 
@@ -1531,9 +1568,12 @@ async function createReturn(body, user, req) {
     }
 
     // 3. Create Return record
+    const cairoNow = await getDatabaseCairoNow(tx);
+    const returnDate = body?.return_date || cairoNow.iso_local || new Date().toISOString();
+
     const returnResult = await tx.query(
-      'INSERT INTO returns (order_id, total_return_amount, branch_id, seller_id, offline_uuid, refund_method) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-      [order_id, finalReturnAmount, branch_id, s_id, returnOfflineUuid, normRefundMethod]
+      'INSERT INTO returns (order_id, total_return_amount, branch_id, seller_id, offline_uuid, refund_method, return_date) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+      [order_id, finalReturnAmount, branch_id, s_id, returnOfflineUuid, normRefundMethod, returnDate]
     );
     const returnId = returnResult.rows[0].id;
 
@@ -1726,4 +1766,51 @@ module.exports = {
   searchOrders,
   createReturn,
   listReturns,
+  resetInvoiceCounter,
 };
+
+async function resetInvoiceCounter(body, user, req) {
+  if (!user || user.role !== 'admin') {
+    const err = new Error('عفواً، تصفير عداد الفواتير متاح للمدير (Admin) فقط.');
+    err.statusCode = 403;
+    throw err;
+  }
+  const branchId = body?.branch_id && body.branch_id !== 'all' ? Number(body.branch_id) : (user.branch_id && user.branch_id !== 'all' ? Number(user.branch_id) : 1);
+  let nowIso;
+  try {
+    const cairoNow = await getDatabaseCairoNow(db);
+    nowIso = cairoNow.iso_local || new Date().toISOString();
+  } catch {
+    nowIso = new Date().toISOString();
+  }
+
+  await db.query(
+    `INSERT INTO settings (key, value) VALUES ($1, $2)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [`invoice_counter_reset_at_${branchId}`, nowIso]
+  );
+
+  if (body?.all_branches || body?.branch_id === 'all') {
+    await db.query(
+      `INSERT INTO settings (key, value) VALUES ('invoice_counter_reset_at', $1)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [nowIso]
+    );
+  }
+
+  const { logActivity } = require('../audit/audit.service');
+  if (logActivity) {
+    try {
+      await logActivity(user.id, user.username, 'تصفير عداد الفواتير', `تم تصفير عداد الفواتير للفرع #${branchId} لتبدأ من #1`, 'POS', branchId);
+    } catch {}
+  }
+
+  return {
+    success: true,
+    message: 'تم تصفير عداد الفواتير بنجاح، وستبدأ الفاتورة القادمة من رقم #1',
+    branch_id: branchId,
+    next_id: 1,
+    reset_at: nowIso,
+  };
+}
+

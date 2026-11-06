@@ -110,6 +110,11 @@ export function ThermalReceipt({
       ? 'إيصال أمر تفصيل'
       : 'فاتورة بيع');
 
+  const safeItems = Array.isArray(items)
+    ? items
+    : (typeof items === 'string'
+      ? (() => { try { return JSON.parse(items); } catch { return []; } })()
+      : []);
   const formattedDateTime = formatReceiptDate(date);
   const normalizedSplits = Array.isArray(paymentSplits)
     ? paymentSplits
@@ -296,8 +301,8 @@ export function ThermalReceipt({
 
           {/* Items Rows */}
           <div className="divide-y divide-slate-100">
-            {items && items.length > 0 ? (
-              items.map((item, idx) => {
+            {safeItems && safeItems.length > 0 ? (
+              safeItems.map((item, idx) => {
                 const qty = Number(item.quantity || 1);
                 const unitPrice = Number(item.price_at_time ?? item.price ?? 0);
                 const itemDisc = Number(item.discount || 0);

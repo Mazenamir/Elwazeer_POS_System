@@ -254,6 +254,11 @@ async function deleteCustomer(id, user) {
       db.sqlite.prepare('UPDATE alterations SET customer_id = NULL WHERE customer_id = ?').run(id);
       db.sqlite.prepare('DELETE FROM customers WHERE id = ?').run(id);
     }
+    try {
+      await queueSyncOperation(db, null, 'customer', 'delete', id, user?.branch_id || config.BRANCH_ID || 1, { id });
+    } catch (e) {
+      console.warn('Failed to queue customer delete sync:', e.message);
+    }
     return { success: true };
   }
 

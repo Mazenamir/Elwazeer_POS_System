@@ -646,8 +646,9 @@ async function listInventory(req, user) {
 
     if (pagination.enabled) {
       const rows = db.sqlite.prepare(`
-        SELECT i.*, i.stock_level
+        SELECT i.*, i.stock_level, s.name as supplier_name
         FROM inventory i
+        LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
         ${whereClause}
         ${sqliteOrder}
         LIMIT ? OFFSET ?
@@ -658,8 +659,9 @@ async function listInventory(req, user) {
     }
 
     const rows = db.sqlite.prepare(`
-      SELECT i.*, i.stock_level
+      SELECT i.*, i.stock_level, s.name as supplier_name
       FROM inventory i
+      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
       ${whereClause}
       ${sqliteOrder}
     `).all(...params);
@@ -1096,8 +1098,8 @@ async function createProduct(body, user, file = null) {
           cost_price: numCost,
           image_url: safeImageUrl,
           preferred_supplier_id: safeSupplierId,
-          color_id: safeColorId,
-          size_id: safeSizeId,
+          color_id: null, // Branch SQLite IDs must not be sent to Central PostgreSQL to prevent foreign key errors
+          size_id: null,  // Central Server automatically resolves size_cut into Central sizes table
           gender: safeNormalizedGender,
           wholesale_price: numWholesale,
           semi_wholesale_price: numSemiWholesale,
@@ -1363,8 +1365,8 @@ async function updateProduct(id, body, user, file = null) {
           cost_price: numCost,
           image_url: safeImageUrl,
           preferred_supplier_id: safeSupplierId,
-          color_id: safeColorId,
-          size_id: safeSizeId,
+          color_id: null, // Branch SQLite IDs must not be sent to Central PostgreSQL to prevent foreign key errors
+          size_id: null,  // Central Server automatically resolves size_cut into Central sizes table
           gender: safeNormalizedGender,
           wholesale_price: numWholesale,
           semi_wholesale_price: numSemiWholesale,
@@ -1551,7 +1553,12 @@ async function getInventoryById(id, requestedBranchId, user) {
   if (!canViewAll && user) branchId = Number(user.branch_id);
 
   if (config.IS_BRANCH_MODE) {
-    const row = db.sqlite.prepare('SELECT * FROM inventory WHERE id = ? AND is_deleted = 0').get(itemId);
+    const row = db.sqlite.prepare(`
+      SELECT i.*, s.name as supplier_name
+      FROM inventory i
+      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
+      WHERE i.id = ? AND i.is_deleted = 0
+    `).get(itemId);
     if (!row) {
       const err = new Error('Product not found');
       err.statusCode = 404;
@@ -1600,6 +1607,14 @@ async function deleteProduct(id, user) {
 
   if (config.IS_BRANCH_MODE) {
     db.sqlite.prepare('UPDATE inventory SET is_deleted = 1 WHERE id = ?').run(id);
+    try {
+      await queueSyncOperation(db, null, 'product', 'delete', id, user?.branch_id || config.BRANCH_ID || 1, {
+        id,
+        is_deleted: true
+      });
+    } catch (e) {
+      console.warn('Failed to queue product delete sync operation:', e.message);
+    }
   } else {
     await db.query('UPDATE inventory SET is_deleted = TRUE WHERE id = $1', [id]);
   }
@@ -2619,8 +2634,10 @@ async function searchInventory(query = {}, user = null) {
         i.price,
         i.wholesale_price,
         i.semi_wholesale_price,
+        s.name as supplier_name,
         COALESCE(ib.stock_level, 0) as stock_level
       FROM inventory i
+      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
       LEFT JOIN inventory_branches ib ON i.id = ib.inventory_id AND ib.branch_id = ?
       WHERE i.is_deleted = 0
         ${genderClause}

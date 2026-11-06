@@ -465,9 +465,13 @@ async function createSupplierTransaction(payload, user = null) {
 
   let createdTxId = null;
   await db.transaction(async (tx) => {
+    const { getDatabaseCairoNow } = require('../../../shared/utils/date');
+    const cairoNow = await getDatabaseCairoNow(tx);
+    const txDate = payload.transaction_date || cairoNow.iso_local || new Date().toISOString();
+
     const insertRes = await tx.query(
-      'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, branch_id, payment_method, paid_from_drawer) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-      [supplier_id, transaction_type, safeAmount, notes || null, branch_id, payment_method, paid_from_drawer ? 1 : 0]
+      'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, branch_id, payment_method, paid_from_drawer, transaction_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+      [supplier_id, transaction_type, safeAmount, notes || null, branch_id, payment_method, paid_from_drawer ? 1 : 0, txDate]
     );
     createdTxId = insertRes.rows[0]?.id || insertRes.lastInsertRowid;
 

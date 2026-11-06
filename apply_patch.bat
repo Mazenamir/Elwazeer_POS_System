@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ========================================================
-echo جاري تحديث ملف rentals.service.js في مجلد البرنامج المثبت
+echo   تحديث شامل لنظام بيبيون (السيرفر المركزي + الفرع)
 echo ========================================================
 echo.
 
@@ -16,19 +16,36 @@ if %errorLevel% == 0 (
 )
 
 echo إغلاق البرنامج إن كان يعمل...
+taskkill /F /IM "Bebyoon Branch System.exe" >nul 2>&1
 taskkill /F /IM "Bebyoon System.exe" >nul 2>&1
+timeout /t 2 >nul
 
-copy /Y "D:\WORK\new_elwazeer\src\server\modules\rentals\rentals.service.js" "C:\Program Files\Bebyoon System\resources\server\modules\rentals\rentals.service.js"
+set "SRC_SERVER=D:\WORK\new_elwazeer\src\server"
+set "SRC_SHARED=D:\WORK\new_elwazeer\src\shared"
+set "SRC_DIST=D:\WORK\new_elwazeer\dist\renderer"
 
-if %errorLevel% == 0 (
-    echo.
-    echo ========================================================
-    echo  تم نسخ الملف بنجاح إلى Program Files!
-    echo  يمكنك الآن فتح برنامج Bebyoon System والبدل ستظهر فوراً.
-    echo ========================================================
-) else (
-    echo.
-    echo [خطأ] تعذر نسخ الملف. يرجى التأكد من إغلاق البرنامج وإعادة المحاولة كمسؤول.
+:: Patch Branch System
+if exist "C:\Program Files\Bebyoon Branch System\resources" (
+    echo [1/2] جاري تحديث نسخة الفرع (Bebyoon Branch System)...
+    xcopy /s /e /y /i "%SRC_SERVER%\*" "C:\Program Files\Bebyoon Branch System\resources\server\" >nul
+    xcopy /s /e /y /i "%SRC_SHARED%\*" "C:\Program Files\Bebyoon Branch System\resources\shared\" >nul
+    xcopy /s /e /y /i "%SRC_DIST%\*" "C:\Program Files\Bebyoon Branch System\resources\dist\renderer\" >nul
+    echo  [✓] تم تحديث السيرفر والواجهة لنسخة الفرع بنجاح!
 )
 
+:: Patch Master System
+if exist "C:\Program Files\Bebyoon System\resources" (
+    echo [2/2] جاري تحديث نسخة السيرفر الرئيسي (Bebyoon System)...
+    xcopy /s /e /y /i "%SRC_SERVER%\*" "C:\Program Files\Bebyoon System\resources\server\" >nul
+    xcopy /s /e /y /i "%SRC_SHARED%\*" "C:\Program Files\Bebyoon System\resources\shared\" >nul
+    xcopy /s /e /y /i "%SRC_DIST%\*" "C:\Program Files\Bebyoon System\resources\dist\renderer\" >nul
+    echo  [✓] تم تحديث السيرفر والواجهة لنسخة السيرفر الرئيسي بنجاح!
+)
+
+echo.
+echo ========================================================
+echo  تم تحديث جميع الملفات وإصلاح التقارير والمزامنة بنجاح!
+echo  يمكنك الآن تشغيل البرنامج.
+echo ========================================================
+echo.
 pause

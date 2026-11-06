@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="دليل مبسط وسهل لفهم الصلاحيات والمزامنة لنظام بيبيون / الوزير POS">
+<title>دليل الصلاحيات والمزامنة المبسط | Elwazeer POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary: #1e3a8a;
+  --primary-light: #eff6ff;
+  --accent: #2563eb;
+  --success: #059669;
+  --success-bg: #ecfdf5;
+  --warning: #d97706;
+  --warning-bg: #fffbeb;
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --dark: #0f172a;
+  --text: #334155;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --bg: #f1f5f9;
+  --white: #ffffff;
+  --radius: 16px;
+  --shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+  line-height: 1.85;
+  font-size: 15.5px;
+}
+/* Header */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 2px solid var(--border);
+  padding: 14px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1e3a8a, #2563eb);
+  color: white;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  font-weight: 900;
+  box-shadow: 0 4px 12px rgba(37,99,235,0.25);
+}
+.brand-text h1 {
+  font-size: 18px;
+  margin: 0;
+  color: var(--dark);
+  font-weight: 900;
+  line-height: 1.2;
+}
+.brand-text p {
+  font-size: 12.5px;
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+.print-btn {
+  background: var(--white);
+  border: 1.5px solid var(--border);
+  padding: 9px 18px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--dark);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+.print-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+/* Layout */
+.container {
+  max-width: 1100px;
+  margin: 28px auto;
+  padding: 0 20px;
+}
+
+/* Hero */
+.hero {
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 65%, #2563eb 100%);
+  color: white;
+  border-radius: 24px;
+  padding: 38px 36px;
+  margin-bottom: 28px;
+  box-shadow: 0 10px 30px rgba(15,23,42,0.12);
+  position: relative;
+  overflow: hidden;
+}
+.hero::after {
+  content: "💡";
+  position: absolute;
+  left: 20px;
+  bottom: -20px;
+  font-size: 140px;
+  opacity: 0.12;
+  pointer-events: none;
+}
+.hero-tag {
+  background: rgba(255,255,255,0.18);
+  display: inline-block;
+  padding: 5px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 14px;
+}
+.hero h2 {
+  font-size: 28px;
+  font-weight: 900;
+  margin: 0 0 12px;
+  line-height: 1.35;
+}
+.hero p {
+  font-size: 16px;
+  line-height: 1.8;
+  margin: 0 0 22px;
+  color: #e2e8f0;
+  max-width: 820px;
+}
+.hero-highlights {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+.highlight-item {
+  background: rgba(255,255,255,0.12);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+.highlight-item strong {
+  display: block;
+  font-size: 15px;
+  color: #fff;
+  margin-bottom: 2px;
+}
+.highlight-item span {
+  font-size: 12.5px;
+  color: #cbd5e1;
+}
+
+/* Section Box */
+.section-box {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px 30px;
+  margin-bottom: 28px;
+  box-shadow: var(--shadow);
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #f1f5f9;
+  padding-bottom: 14px;
+}
+.section-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--primary-light);
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+}
+.section-title {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--dark);
+  margin: 0;
+}
+
+/* Simple Concept Cards */
+.concept-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 18px;
+  margin: 20px 0;
+}
+.concept-card {
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 22px;
+  background: #ffffff;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.concept-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 6px 20px rgba(37,99,235,0.06);
+  transform: translateY(-2px);
+}
+.concept-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.concept-badge {
+  font-size: 13px;
+  font-weight: 800;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+.badge-admin { background: #f3e8ff; color: #6b21a8; }
+.badge-cashier { background: #dcfce7; color: #15803d; }
+.badge-rentals { background: #e0e7ff; color: #3730a3; }
+.badge-inventory { background: #fef3c7; color: #b45309; }
+.badge-accountant { background: #fee2e2; color: #991b1b; }
+
+.concept-title {
+  font-size: 17px;
+  font-weight: 900;
+  color: var(--dark);
+  margin: 0;
+}
+.concept-desc {
+  font-size: 14px;
+  color: var(--slate);
+  line-height: 1.7;
+  margin-bottom: 14px;
+}
+.concept-features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed var(--border);
+  padding-top: 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.concept-features li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.can { color: #16a34a; }
+.cant { color: #dc2626; }
+
+/* Simple Steps / Visual Guide */
+.steps-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+.step-box {
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 20px;
+  position: relative;
+}
+.step-number {
+  position: absolute;
+  top: -12px;
+  right: 18px;
+  background: var(--accent);
+  color: white;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 13px;
+}
+.step-title {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--dark);
+  margin: 8px 0 6px;
+}
+.step-text {
+  font-size: 13.5px;
+  color: var(--slate);
+  line-height: 1.65;
+  margin: 0;
+}
+
+/* Callout Box */
+.notice {
+  border-radius: 14px;
+  padding: 18px 22px;
+  margin: 20px 0;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  font-size: 14.5px;
+}
+.notice-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+.notice-info { background: var(--primary-light); border: 1.5px solid #bfdbfe; color: #1e3a8a; }
+.notice-warning { background: var(--warning-bg); border: 1.5px solid #fde68a; color: #78350f; }
+.notice-success { background: var(--success-bg); border: 1.5px solid #a7f3d0; color: #064e3b; }
+.notice-danger { background: var(--danger-bg); border: 1.5px solid #fecdd3; color: #881337; }
+
+/* FAQ Accordion / Quick QA */
+.qa-card {
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  background: white;
+}
+.qa-question {
+  background: #f8fafc;
+  padding: 16px 20px;
+  font-weight: 800;
+  font-size: 15.5px;
+  color: var(--dark);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.qa-answer {
+  padding: 18px 20px;
+  font-size: 14.5px;
+  color: #334155;
+  line-height: 1.8;
+}
+
+@media print {
+  .header, .print-btn { display: none !important; }
+  .container { max-width: 100%; margin: 0; padding: 0; }
+  .section-box, .hero { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
+  body { background: white; font-size: 13px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="brand">
+    <div class="brand-icon">B</div>
+    <div class="brand-text">
+      <h1>دليل الصلاحيات والمزامنة المبسط</h1>
+      <p>شرح بالبلدي لطريقة عمل السيستم في الفروع والإدارة</p>
+    </div>
+  </div>
+  <button class="print-btn" onclick="window.print()">
+    <span>🖨️</span>
+    <span>طباعة هذا الدليل</span>
+  </button>
+</header>
+
+<div class="container">
+
+  <!-- Hero Intro -->
+  <div class="hero">
+    <div class="hero-tag">دليل الاستخدام السريع لمدير المحل والموظفين</div>
+    <h2>إزاي السيستم بيشتغل بين الفروع والإدارة؟</h2>
+    <p>
+      الهدف من هذا الدليل هو شرح فكرة <strong>الصلاحيات</strong> (مين يشوف إيه ومين يعدل إيه) وفكرة <strong>المزامنة</strong> (إزاي البيانات بتتنقل بين المحل والسنترال) بطريقة واضحة وبسيطة جداً بدون أي تعقيدات برمجية.
+    </p>
+
+    <div class="hero-highlights">
+      <div class="highlight-item">
+        <strong>🌐 النت فصل في المحل؟</strong>
+        <span>المحل شغال بيع وطباعة فواتير عادي جداً ومفيش حاجة هتقف.</span>
+      </div>
+      <div class="highlight-item">
+        <strong>⚡ النت رجع؟</strong>
+        <span>كل فواتيرك ومصروفاتك بتترفع للسيرفر لوحدها في 30 ثانية.</span>
+      </div>
+      <div class="highlight-item">
+        <strong>🔒 أسرار محلك وأرباحك في أمان</strong>
+        <span>الكاشير مش هيقدر يشوف تكلفة البدل ولا أرباحك الصافية.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Part 1: System Idea -->
+  <div class="section-box">
+    <div class="section-head">
+      <div class="section-icon">💡</div>
+      <div>
+        <h3 class="section-title">1. الفكرة ببساطة: هو السيستم شغال إزاي؟</h3>
+      </div>
+    </div>
+    
+    <p>النظام عندك متقسم لجزأين بيكملوا بعض:</p>
+    
+    <div class="steps-container">
+      <div class="step-box">
+        <div class="step-number">أ</div>
+        <div class="step-title">نسخة السيرفر الرئيسي (الإدارة)</div>
+        <p class="step-text">
+          دي لوحة التحكم الكبيرة اللي عند صاحب المحل أو الإدارة المركزية. بتجمع مبيعات وأرباح <strong>كل الفروع مع بعض</strong>، ومنها بتضيف الأصناف الجديدة، وتحدد أسعار البدل، وتعمل حسابات الموظفين والرواتب.
+        </p>
+      </div>
+
+      <div class="step-box">
+        <div class="step-number">ب</div>
+        <div class="step-title">نسخة الفرع (جهاز الكاشير)</div>
+        <p class="step-text">
+          دي النسخة اللي شغالة على أجهزة المحلات (زي فرع الوزير أو البطاش أو دمنهور). معموله عشان الكاشير يبيع ويطبع إيصالات سريعاً، ومربوطة فقط بالبضاعة اللي في محله لحماية المخزون.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Part 2: Roles & Permissions -->
+  <div class="section-box">
+    <div class="section-head">
+      <div class="section-icon">👥</div>
+      <div>
+        <h3 class="section-title">2. مين يشوف إيه؟ (أنواع الحسابات والصلاحيات)</h3>
+      </div>
+    </div>
+
+    <p>
+      عشان محدش يلعب في حسابات التاني، لما بتعمل أكونت جديد بتختار له دور محدد من الأدوار دي:
+    </p>
+
+    <div class="concept-grid">
+      
+      <!-- Admin -->
+      <div class="concept-card">
+        <div>
+          <div class="concept-top">
+            <span class="concept-badge badge-admin">مدير النظام</span>
+            <h4 class="concept-title">الأدمن (صاحب المحل / المدير العام)</h4>
+          </div>
+          <p class="concept-desc">
+            معه المفتاح الرئيسي للنظام؛ بيشوف كل الفروع، الأرباح الصافية، تكلفة الشراء، ويقدر يضيف ويعدل أي حاجة.
+          </p>
+        </div>
+        <ul class="concept-features">
+          <li class="can">✓ رؤية أرباح ومبيعات كل الفروع مجمعة</li>
+          <li class="can">✓ تعديل الأسعار وعمل أذونات النقل بين الفروع</li>
+          <li class="can">✓ رؤية وإدارة مرتبات وسلف الموظفين</li>
+        </ul>
+      </div>
+
+      <!-- Cashier -->
+      <div class="concept-card">
+        <div>
+          <div class="concept-top">
+            <span class="concept-badge badge-cashier">نقطة البيع</span>
+            <h4 class="concept-title">الكاشير (بائع المحل)</h4>
+          </div>
+          <p class="concept-desc">
+            حسابه معمول للبيع فقط في فرعه؛ عشان يفتح شاشة الكاشير، يضرب الفاتورة بالباركود، ويطبع إيصال العميل.
+          </p>
+        </div>
+        <ul class="concept-features">
+          <li class="can">✓ ضرب فواتير البيع وإضافة بيانات العميل</li>
+          <li class="can">✓ تسجيل المصروفات اليومية النثرية من الدرج</li>
+          <li class="cant">✗ ممنوع يشوف تكلفة البضاعة أو أرباح المحل</li>
+          <li class="cant">✗ ممنوع يعدل سعر البدلة أو يحذف صنف من المخزن</li>
+        </ul>
+      </div>
+
+      <!-- Rentals -->
+      <div class="concept-card">
+        <div>
+          <div class="concept-top">
+            <span class="concept-badge badge-rentals">قسم التأجير</span>
+            <h4 class="concept-title">موظف التأجير والبروفات</h4>
+          </div>
+          <p class="concept-desc">
+            مخصص للفساتين والبدل التأجير؛ يحجز العقد للعميل، يستلم العربون، ويسجل مواعيد البروفة وميعاد الاستلام.
+          </p>
+        </div>
+        <ul class="concept-features">
+          <li class="can">✓ حجز عقود التأجير وتحديد مواعيد المناسبة</li>
+          <li class="can">✓ استلام البدل وتصفية مبلغ التأمين وحساب الغرامات</li>
+          <li class="can">✓ تسجيل بروفات وتعديلات الخياطة</li>
+        </ul>
+      </div>
+
+      <!-- Inventory -->
+      <div class="concept-card">
+        <div>
+          <div class="concept-top">
+            <span class="concept-badge badge-inventory">المخازن</span>
+            <h4 class="concept-title">مسؤول المخزن والبضاعة</h4>
+          </div>
+          <p class="concept-desc">
+            مخصص لإدارة البضاعة؛ يدخل البدل والمقاسات الجديدة، يطبع تيكت الباركود، ويطلب تحويل بضاعة من المخزن الرئيسي للفرع.
+          </p>
+        </div>
+        <ul class="concept-features">
+          <li class="can">✓ إضافة الموديلات والمقاسات الجديدة</li>
+          <li class="can">✓ طباعة ملصقات الباركود على الملابس</li>
+          <li class="can">✓ تسجيل التوالف والهوالك لاستبعادها من الجرد</li>
+        </ul>
+      </div>
+
+      <!-- Accountant -->
+      <div class="concept-card">
+        <div>
+          <div class="concept-top">
+            <span class="concept-badge badge-accountant">الحسابات</span>
+            <h4 class="concept-title">المحاسب المالي</h4>
+          </div>
+          <p class="concept-desc">
+            بيراجع الشيتات الكبيرة وحركة الكاش والدرج، ويصدر تقارير الإكسيل بدون ما يتدخل في حركة البيع اليومية.
+          </p>
+        </div>
+        <ul class="concept-features">
+          <li class="can">✓ فتح تقرير المبيعات والمجمع الشهري (Master Sheet)</li>
+          <li class="can">✓ استخراج وتصدير شيتات Excel المعتمدة</li>
+          <li class="can">✓ مراجعة كشوف حسابات الموردين وتوريدات الدرج</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Part 3: Sensitive Passwords -->
+  <div class="section-box">
+    <div class="section-head">
+      <div class="section-icon">🔐</div>
+      <div>
+        <h3 class="section-title">3. ليه بتطلب مني كلمة سر في بعض الشاشات؟ (العمليات الحساسة)</h3>
+      </div>
+    </div>
+
+    <p>
+      في عمليات خطيرة ممكن تتسبب في خسارة فلوس أو تلاعب في الكاش لو أي حد عملها؛ عشان كدة النظام حاطط عليها <strong>قفل أمان بكلمة سر</strong> حتى لو الموظف شاشته مفتوحة:
+    </p>
+
+    <div class="concept-grid">
+      <div class="concept-card">
+        <h4 class="concept-title">🔒 كلمة سر الأرباح</h4>
+        <p class="concept-desc">
+          <strong>ليه موجودة؟</strong> عشان تكلفة شراء البدلة ومكسبك الصافي ميبقاش مكشوف للكاشير أو أي عميل واقف قدام الشاشة. (الأدمن بس اللي بيفتحها).
+        </p>
+      </div>
+
+      <div class="concept-card">
+        <h4 class="concept-title">🔒 كلمة سر تعديل الفواتير</h4>
+        <p class="concept-desc">
+          <strong>ليه موجودة؟</strong> عشان الكاشير ميعرفش يعدل أو يقلل سعر فاتورة بعد ما العميل استلمها ودفع وخرج من المحل.
+        </p>
+      </div>
+
+      <div class="concept-card">
+        <h4 class="concept-title">🔒 كلمة سر المرتجع</h4>
+        <p class="concept-desc">
+          <strong>ليه موجودة؟</strong> عشان خروج فلوس كاش من الدرج كمرتجع لازم يكون بعلم وموافقة صاحب المحل أو المشرف المسئول.
+        </p>
+      </div>
+
+      <div class="concept-card">
+        <h4 class="concept-title">🔒 كلمة سر تعديل المخزون</h4>
+        <p class="concept-desc">
+          <strong>ليه موجودة؟</strong> عشان مفيش موظف يغير سعر بيع بدلة بمزاجه أو يحذف صنف من السيستم.
+        </p>
+      </div>
+
+      <div class="concept-card">
+        <h4 class="concept-title">🔒 كلمة سر الرواتب</h4>
+        <p class="concept-desc">
+          <strong>ليه موجودة؟</strong> عشان مرتبات وسلف وخصومات الموظفين تفضل سرية ومحدش يطلع عليها.
+        </p>
+      </div>
+    </div>
+
+    <div class="notice notice-danger">
+      <div class="notice-icon">⛔</div>
+      <div>
+        <strong>أمان مشدد:</strong> لو أي شخص حاول يخمن كلمة السر وكتبها <strong>5 مرات غلط</strong>، السيستم هيقفل الشاشة دي تماماً لمدة <strong>10 دقائق</strong> وهيسجل محاولة التخمين دي في تقرير الأمان.
+      </div>
+    </div>
+  </div>
+
+  <!-- Part 4: Sync Explanation -->
+  <div class="section-box">
+    <div class="section-head">
+      <div class="section-icon">🔄</div>
+      <div>
+        <h3 class="section-title">4. إزاي المزامنة شغالة بالبلدي؟ (ليه ده بيسمّع وده لأ؟)</h3>
+      </div>
+    </div>
+
+    <p>المزامنة بين الفرع والإدارة بتشتغل بقاعدتين بسيطتين جداً:</p>
+
+    <div class="steps-container">
+      <div class="step-box">
+        <div class="step-number">1</div>
+        <div class="step-title">من الفرع للسيرفر (بيطلع لوحده كل 30 ثانية) 🚀</div>
+        <p class="step-text">
+          أي حاجة بيعملها الفرع بتتصدر للسيرفر في ثواني أوتوماتيك:<br>
+          • فواتير البيع اللي الكاشير بيعملها.<br>
+          • المصروفات النقدية اللي بتتسجل.<br>
+          • تسجيل حضور وانصراف الموظفين.<br>
+          • سلف الموظفين بالدرج.
+        </p>
+      </div>
+
+      <div class="step-box">
+        <div class="step-number">2</div>
+        <div class="step-title">من السيرفر للفرع (بينزل كل 5 دقائق) 📥</div>
+        <p class="step-text">
+          الحاجات اللي الإدارة بتعملها بتنزل للفروع كل 5 دقايق:<br>
+          • أسعار البدل والموديلات الجديدة.<br>
+          • أكونتات الموظفين الجدد.<br>
+          • أذونات البضاعة اللي اتنقلت للفرع.<br>
+          <em>(ولو مستعجل: اضغط زرار "سحب البيانات" فوق هتنزل في ثانيتها).</em>
+        </p>
+      </div>
+    </div>
+
+    <div class="notice notice-info">
+      <div class="notice-icon">💡</div>
+      <div>
+        <strong>ليه المبيعات القديمة مش ظاهرة في نسخة الفرع الجديد؟</strong><br>
+        نسخة الفرع مصممة أمنياً عشان تبدأ من الصفر وتحسب مبيعات الفرع ده فقط من ساعة ما ركبناه؛ مبيعات فروع زمان وفروع تانية بتفضل متجمعة في السيرفر الرئيسي للإدارة فقط عشان حجم البرنامج يفضل خفيف وميتقلش جهاز الكاشير.
+      </div>
+    </div>
+  </div>
+
+  <!-- Part 5: FAQ & Common Issues -->
+  <div class="section-box">
+    <div class="section-head">
+      <div class="section-icon">❓</div>
+      <div>
+        <h3 class="section-title">5. لو وقفت في مشكلة.. حلها إيه في ثواني؟ (سؤال وجواب)</h3>
+      </div>
+    </div>
+
+    <!-- Q1 -->
+    <div class="qa-card">
+      <div class="qa-question">
+        <span>🔴</span>
+        <span>المزامنة مش شغالة والدائرة فوق حمراء (أوفلاين)؟</span>
+      </div>
+      <div class="qa-answer">
+        <strong>السبب:</strong> عنوان السيرفر اللي مكتوب في جهاز الفرع فيه غلط، أو راوتر السيرفر رستر والآي بي الخارجي اتغير.<br>
+        <strong>الحل:</strong> اضغط على علامة المزامنة فوق واكتب الآي بي الصح:<br>
+        • لو بتجرب على نفس اللابتوب: اكتب <code>http://127.0.0.1:6253</code><br>
+        • لو في نفس المحل على نفس الواي فاي: اكتب آي بي جهاز السيرفر الداخلي (مثل <code>http://192.168.1.14:6253</code>)<br>
+        • لو فرع في مكان تاني عبر النت: استخدم رابط <strong>Tailscale</strong> الثابت.
+      </div>
+    </div>
+
+    <!-- Q2 -->
+    <div class="qa-card">
+      <div class="qa-question">
+        <span>👤</span>
+        <span>عملت أكونت جديد للموظف ومظهرش في الفرع ليه؟</span>
+      </div>
+      <div class="qa-answer">
+        <strong>السبب 1:</strong> وأنت بتعمل الأكونت نسيت تحدد فرعه وسبته على "المخزن الرئيسي فرع 1"؛ والسيستم مبيبعتش موظفي فرع 1 لفرع 8 أمنياً. (ادخل اختار فرع الموظف صح).<br>
+        <strong>السبب 2:</strong> دورة الـ 5 دقائق ممرتش بعد؛ في جهاز الفرع اضغط على علامة المزامنة ثم اضغط <strong>"سحب وتحديث الأصناف والبيانات"</strong> وهيظهر فوراً.
+      </div>
+    </div>
+
+    <!-- Q3 -->
+    <div class="qa-card">
+      <div class="qa-question">
+        <span>🚫</span>
+        <span>الصنف ظاهر في الشاشة بس لما باجي أبيع بيقول "الصنف غير متوفر في الفرع ومتوفر في المخزن الرئيسي"؟</span>
+      </div>
+      <div class="qa-answer">
+        <strong>السبب:</strong> القطعة موجودة عندك في المحل باليد، بس على الكمبيوتر مسجلة إنها في "المخزن الرئيسي"، والسيستم بيمنع بيع بدلة رصيدها 0 في فرعك عشان الجرد ميبوظش.<br>
+        <strong>الحل:</strong> من شاشة المخزون اعمل <strong>"تحويل بضاعة"</strong> من المخزن الرئيسي إلى فرعك، أو افتح الصنف وزود رصيد فرعك 1 قطعة واضغط حفظ، واعمل سحب بيانات في الفرع وهتتباع فوراً.
+      </div>
+    </div>
+
+    <!-- Q4 -->
+    <div class="qa-card">
+      <div class="qa-question">
+        <span>🕒</span>
+        <span>سجلت حضور للموظف من السيرفر ومظهرش كبائع نشط في كاشير الفرع؟</span>
+      </div>
+      <div class="qa-answer">
+        <strong>السبب:</strong> حضور الموظف لازم يتسجل من <strong>جهاز الفرع اللي هو شغال فيه</strong>؛ عشان السيستم يتأكد إنه واقف في المحل ويظهره في شاشة البيع، والفرع هيرفع الحضور للسيرفر لوحده في 30 ثانية.
+      </div>
+    </div>
+
+    <!-- Q5 -->
+    <div class="qa-card">
+      <div class="qa-question">
+        <span>🔄</span>
+        <span>عدلت صلاحية موظف والشاشات الجديدة مظهرتش عنده؟</span>
+      </div>
+      <div class="qa-answer">
+        <strong>الحل السريع:</strong> اطلب من الموظف يعمل <strong>تسجيل خروج (Log out) ويدخل تاني</strong>، أو يضغط على لوحة المفاتيح <code>Ctrl + R</code>؛ هتتفتح له الصلاحيات الجديدة في نفس اللحظة.
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+</body>
+</html>

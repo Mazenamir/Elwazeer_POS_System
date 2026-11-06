@@ -1725,13 +1725,13 @@ total: 0,
   const handlePrintPDF = (tab = activeTab) => {
     try {
       if (tab === 'suppliers') {
-        printElement('suppliers-print-area', 'سجل الموردين والحسابات');
+        printElement('suppliers-print-area', 'سجل الموردين والحسابات', { isA4: true });
       } else if (tab === 'branch_matrix') {
-        printElement('branch-matrix-print-area', 'تقرير أرصدة الفروع والمخزن الرئيسي');
+        printElement('branch-matrix-print-area', 'تقرير أرصدة الفروع والمخزن الرئيسي', { isA4: true, orientation: 'landscape' });
       } else if (tab === 'transfer_logs') {
-        printElement('transfer-logs-print-area', 'سجل وحالات التحويلات بين الفروع');
+        printElement('transfer-logs-print-area', 'سجل وحالات التحويلات بين الفروع', { isA4: true });
       } else {
-        printElement('inventory-print-area', 'تقرير جرد المخزون والأصناف');
+        printElement('inventory-print-area', 'تقرير جرد المخزون والأصناف', { isA4: true });
       }
     } catch (err) {
       toast.error('فشل فتح أمر الطباعة / PDF');

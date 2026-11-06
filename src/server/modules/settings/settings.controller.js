@@ -40,7 +40,9 @@ async function exportBackup(req, res, next) {
   try {
     const { backup, filename } = await settingsService.exportBackup(req.query.groups, req.user);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    const safeAsciiName = String(filename || 'backup.json').replace(/[^\x20-\x7E]/g, '_');
+    const encodedName = encodeURIComponent(filename || 'backup.json');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`);
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     res.json(backup);
   } catch (err) {

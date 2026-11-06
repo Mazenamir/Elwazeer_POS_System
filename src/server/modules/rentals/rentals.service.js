@@ -340,7 +340,19 @@ async function deleteRentalInventory(id, user) {
     throw err;
   }
 
-  await db.query('UPDATE rental_inventory SET is_deleted = TRUE WHERE id = $1', [id]);
+  if (config.IS_BRANCH_MODE) {
+    db.sqlite.prepare('UPDATE rental_inventory SET is_deleted = 1 WHERE id = ?').run(id);
+    try {
+      await queueSyncOperation(db, null, 'rental_inventory', 'delete', id, user?.branch_id || config.BRANCH_ID || 1, {
+        id,
+        is_deleted: true
+      });
+    } catch (e) {
+      console.warn('Failed to queue rental inventory delete sync:', e.message);
+    }
+  } else {
+    await db.query('UPDATE rental_inventory SET is_deleted = TRUE WHERE id = $1', [id]);
+  }
   if (user) {
     await logActivity(user.id, user.username, 'حذف منتج تأجير', `تم حذف المنتج #${id}`, 'RentalInventory');
   }
@@ -1139,6 +1151,9 @@ async function createRental(body, user, req) {
     }
 
     // 2. Create one booked row per item. Financial totals live on the first row only
+    const cairoNow = await getDatabaseCairoNow(tx);
+    const bookingDate = body?.booking_date || cairoNow.iso_local || new Date().toISOString();
+
     const createdRentals = [];
     for (let index = 0; index < rentalItemIds.length; index += 1) {
       const itemId = rentalItemIds[index];
@@ -1161,14 +1176,14 @@ async function createRental(body, user, req) {
            id_card_guarantee, notes, status, daily_fine, seller_id,
            payment_method, payment_splits, cash_amount, card_amount,
            wallet_amount, bank_transfer_amount, custom_items,
-           rental_group_uuid, offline_uuid
+           rental_group_uuid, offline_uuid, booking_date
          ) VALUES (
            $1, $2, $3, $4, $5,
            $6, $7, $8, $9, $10,
            $11, $12, 'booked', $13, $14,
            $15, $16, $17, $18,
            $19, $20, $21,
-           $22, $23
+           $22, $23, $24
          ) RETURNING *`,
         [
           customerId,
@@ -1194,6 +1209,7 @@ async function createRental(body, user, req) {
           itemCustom,
           rentalGroupUuid,
           itemOfflineUuid,
+          bookingDate,
         ]
       );
       createdRentals.push(rows[0]);

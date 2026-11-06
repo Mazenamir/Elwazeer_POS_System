@@ -3239,7 +3239,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
         else if (m === 'wallet') walletCollected += a;
         else cashCollected += a;
       });
-    } else if (inv.cash_amount !== undefined && inv.cash_amount !== null) {
+    } else if (inv.payment_method === 'split' || (Number(inv.cash_amount || 0) + Number(inv.card_amount || 0) + Number(inv.bank_transfer_amount || 0) + Number(inv.wallet_amount || 0) > 0 && ['split', 'مجزأ'].includes((inv.payment_method || '').toLowerCase()))) {
       cashCollected += Number(inv.cash_amount || 0);
       cardCollected += Number(inv.card_amount || 0);
       bankCollected += Number(inv.bank_transfer_amount || 0);
@@ -3249,8 +3249,8 @@ async function getExtendedDailyReport(query = {}, user = null) {
       if (['cash', 'نقدي', 'كاش'].includes(pm)) cashCollected += inv.paid_amount;
       else if (['visa', 'card', 'فيزا', 'بطاقة'].includes(pm)) cardCollected += inv.paid_amount;
       else if (['bank_transfer', 'instapay', 'انستاباي', 'تحويل بنكي'].includes(pm)) bankCollected += inv.paid_amount;
-      else if (['wallet', 'محفظة', 'فودافون'].includes(pm)) walletCollected += inv.paid_amount;
-      else if (['deposit', 'تأمين', 'خصم من التأمين', 'debt', 'آجل', 'مديونية'].includes(pm)) { /* non-cash; do not inflate drawer */ }
+      else if (['wallet', 'محفظة', 'فودافون', 'customer_credit', 'store_credit', 'credit', 'رصيد_عميل', 'رصيد عميل'].includes(pm)) walletCollected += inv.paid_amount;
+      else if (['deposit', 'تأمين', 'خصم من التأمين', 'debt', 'آجل', 'مديونية', 'customer_credit', 'store_credit', 'credit'].includes(pm)) { /* non-cash; do not inflate drawer */ }
       else cashCollected += inv.paid_amount;
     }
   });

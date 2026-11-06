@@ -70,7 +70,11 @@ async function searchOrders(req, res, next) {
 
 async function createReturn(req, res) {
   try {
-    const result = await service.createReturn(req.body, req.user, req);
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (_) {}
+    }
+    const result = await service.createReturn(body, req.user, req);
     res.json(result);
   } catch (err) {
     console.error(err);
@@ -91,6 +95,15 @@ async function listReturns(req, res, next) {
   }
 }
 
+async function resetInvoiceCounter(req, res, next) {
+  try {
+    const result = await service.resetInvoiceCounter(req.body, req.user, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 400).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getNextOrderId,
   listOrders,
@@ -101,4 +114,5 @@ module.exports = {
   searchOrders,
   createReturn,
   listReturns,
+  resetInvoiceCounter,
 };

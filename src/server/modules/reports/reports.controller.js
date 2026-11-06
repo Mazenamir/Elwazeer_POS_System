@@ -241,7 +241,10 @@ async function exportConsolidatedExcel(req, res, next) {
     const fileName = `consolidated-report-${branchSuffix}-${month}.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    const safeAsciiName = String(fileName || 'report.xlsx').replace(/[^\x20-\x7E]/g, '_');
+    const encodedName = encodeURIComponent(fileName || 'report.xlsx');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     res.send(Buffer.from(buffer));
   } catch (err) {
     next(err);
@@ -479,7 +482,10 @@ async function exportExcel(req, res, next) {
     }
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    const safeAsciiName = String(fileName || 'report.xlsx').replace(/[^\x20-\x7E]/g, '_');
+    const encodedName = encodeURIComponent(fileName || 'report.xlsx');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     res.send(Buffer.from(buffer));
   } catch (err) {
     next(err);

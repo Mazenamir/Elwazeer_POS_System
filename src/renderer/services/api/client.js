@@ -61,11 +61,12 @@ async function request(endpoint, options = {}) {
     headers['x-idempotency-key'] = generateIdempotencyKey();
   }
 
+  const { headers: _discardHeaders, ...restOptions } = options;
   const config = {
     method,
     headers,
     credentials: 'include', // send cookies automatically
-    ...options,
+    ...restOptions,
   };
 
   if (options.body && !(options.body instanceof FormData) && typeof options.body === 'object') {

@@ -16,8 +16,14 @@ async function requireReturnPassword(req, res, next) {
   return returnMw(req, res, next);
 }
 
-// POS Sequence
+// POS Sequence & Invoice Counter Reset (Admin Only)
 router.get('/next-order-id', requirePermission('pos.sales.view', 'index.html'), controller.getNextOrderId);
+router.post('/orders/reset-counter', (req, res, next) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'عفواً، تصفير عداد الفواتير متاح للمدير (Admin) فقط.' });
+  }
+  next();
+}, controller.resetInvoiceCounter);
 
 // Order Search (must be declared before /orders/:id)
 router.get('/orders/search', requirePermission('pos.invoices.search', 'index.html'), controller.searchOrders);

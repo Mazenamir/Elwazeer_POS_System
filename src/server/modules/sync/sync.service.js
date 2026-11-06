@@ -106,6 +106,119 @@ async function pruneSyncedQueue(customDays = null) {
   }
 }
 
+async function resolveSizeId(tx, sizeName, candidateSizeId = null) {
+  const clean = String(sizeName || '').trim();
+  if (clean) {
+    try {
+      const existing = await tx.query(
+        'SELECT id FROM sizes WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+        [clean]
+      );
+      if (existing.rows && existing.rows.length > 0) return existing.rows[0].id;
+      const inserted = await tx.query(
+        'INSERT INTO sizes (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id',
+        [clean]
+      );
+      if (inserted.rows && inserted.rows.length > 0) return inserted.rows[0].id;
+      const refetch = await tx.query(
+        'SELECT id FROM sizes WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+        [clean]
+      );
+      if (refetch.rows && refetch.rows.length > 0) return refetch.rows[0].id;
+    } catch (err) {
+      console.warn('[Sync] Non-critical size resolution warning:', err.message);
+    }
+  }
+  if (candidateSizeId) {
+    try {
+      const check = await tx.query('SELECT id FROM sizes WHERE id = $1 LIMIT 1', [candidateSizeId]);
+      if (check.rows && check.rows.length > 0) return candidateSizeId;
+    } catch {}
+  }
+  return null;
+}
+
+async function resolveColorId(tx, colorName, candidateColorId = null) {
+  const clean = String(colorName || '').trim();
+  if (clean) {
+    try {
+      const existing = await tx.query(
+        'SELECT id FROM colors WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+        [clean]
+      );
+      if (existing.rows && existing.rows.length > 0) return existing.rows[0].id;
+      const inserted = await tx.query(
+        'INSERT INTO colors (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id',
+        [clean]
+      );
+      if (inserted.rows && inserted.rows.length > 0) return inserted.rows[0].id;
+      const refetch = await tx.query(
+        'SELECT id FROM colors WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1',
+        [clean]
+      );
+      if (refetch.rows && refetch.rows.length > 0) return refetch.rows[0].id;
+    } catch (err) {
+      console.warn('[Sync] Non-critical color resolution warning:', err.message);
+    }
+  }
+  if (candidateColorId) {
+    try {
+      const check = await tx.query('SELECT id FROM colors WHERE id = $1 LIMIT 1', [candidateColorId]);
+      if (check.rows && check.rows.length > 0) return candidateColorId;
+    } catch {}
+  }
+  return null;
+}
+
+async function resolveSupplierId(tx, candidateSupplierId) {
+  if (!candidateSupplierId) return null;
+  const num = Number(candidateSupplierId);
+  if (!num) return null;
+  try {
+    const check = await tx.query('SELECT id FROM suppliers WHERE id = $1 LIMIT 1', [num]);
+    return check.rows && check.rows.length > 0 ? num : null;
+  } catch {
+    return null;
+  }
+}
+
+async function repairAndReviveDeadLetterOperations() {
+  const isBranch = Boolean(config.IS_BRANCH_MODE || db._isBranchMode || process.env.APP_MODE === 'branch');
+  if (!isBranch) return;
+
+  try {
+    const { rows } = await db.query(`
+      SELECT id, payload, last_error, entity_type
+      FROM sync_queue
+      WHERE (status IN ('failed', 'dead_letter') OR last_error IS NOT NULL)
+        AND (
+          entity_type IN ('product', 'inventory')
+          OR last_error LIKE '%inventory_size_id_fkey%'
+          OR last_error LIKE '%foreign key constraint%'
+        )
+    `);
+
+    for (const op of rows) {
+      let p = op.payload;
+      if (typeof p === 'string') {
+        try { p = JSON.parse(p); } catch { p = null; }
+      }
+      if (p && typeof p === 'object') {
+        p.size_id = null;
+        p.color_id = null;
+        const serialized = JSON.stringify(p);
+        await db.query(
+          "UPDATE sync_queue SET payload = $1, status = 'pending', attempts = 0, last_error = NULL WHERE id = $2",
+          [serialized, op.id]
+        );
+        console.log(`[Sync Repair] Repaired and revived operation #${op.id} (${op.entity_type}) for retry`);
+      }
+    }
+  } catch (err) {
+    console.warn('[Sync Repair] Failed to auto-repair sync queue operations:', err.message);
+  }
+}
+
 async function applyOperation(operation) {
   const rawPayload = operation.payload;
   let payload = {};
@@ -116,6 +229,29 @@ async function applyOperation(operation) {
   }
   return await db.transaction(async (tx) => {
     if (operation.entity_type === 'customer') {
+      if (operation.action === 'delete') {
+        const custId = payload.id || operation.entity_id;
+        if (custId) {
+          const historyCheck = await tx.query(`
+            SELECT 
+              (SELECT COUNT(*)::int FROM orders WHERE customer_id = $1) as orders_count,
+              (SELECT COUNT(*)::int FROM rentals WHERE customer_id = $1) as rentals_count,
+              (SELECT COUNT(*)::int FROM alterations WHERE customer_id = $1) as alterations_count
+          `, [custId]);
+          const hasHistory = (Number(historyCheck.rows[0]?.orders_count || 0) > 0) ||
+                             (Number(historyCheck.rows[0]?.rentals_count || 0) > 0) ||
+                             (Number(historyCheck.rows[0]?.alterations_count || 0) > 0);
+          if (hasHistory) {
+            await tx.query("UPDATE customers SET status = 'غير نشط', is_active = FALSE WHERE id = $1", [custId]);
+          } else {
+            await tx.query('UPDATE orders SET customer_id = NULL WHERE customer_id = $1', [custId]);
+            await tx.query('UPDATE rentals SET customer_id = NULL WHERE customer_id = $1', [custId]);
+            await tx.query('UPDATE alterations SET customer_id = NULL WHERE customer_id = $1', [custId]);
+            await tx.query('DELETE FROM customers WHERE id = $1', [custId]);
+          }
+        }
+        return { success: true };
+      }
       await tx.query(
         `INSERT INTO customers (name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid)
          VALUES ($1, $2, $3, $4, $5, COALESCE($6::date, CURRENT_DATE), COALESCE($7, 0), COALESCE($8, 'نشط'), $9, $10)
@@ -920,9 +1056,32 @@ async function applyOperation(operation) {
       return { success: true };
     }
 
+    if (operation.entity_type === 'rental_inventory') {
+      if (operation.action === 'delete') {
+        const riId = payload.id || operation.entity_id;
+        if (riId) {
+          await tx.query('UPDATE rental_inventory SET is_deleted = TRUE WHERE id = $1', [riId]);
+        }
+        return { success: true };
+      }
+      return { success: true };
+    }
+
     if (operation.entity_type === 'product' || operation.entity_type === 'inventory') {
+      if (operation.action === 'delete') {
+        const prodId = payload.id || operation.entity_id;
+        if (prodId) {
+          await tx.query('UPDATE inventory SET is_deleted = TRUE WHERE id = $1', [prodId]);
+        }
+        return { success: true };
+      }
       const branchId = payload.branch_id || operation.branch_id || 1;
       const initialStock = Number(payload.stock_level ?? 0);
+
+      // Safe foreign key resolution for Central PostgreSQL
+      const resolvedSizeId = await resolveSizeId(tx, payload.size_cut, payload.size_id);
+      const resolvedColorId = await resolveColorId(tx, payload.color, payload.color_id);
+      const resolvedSupplierId = await resolveSupplierId(tx, payload.preferred_supplier_id);
 
       if (operation.action === 'create') {
         let existing = null;
@@ -946,12 +1105,12 @@ async function applyOperation(operation) {
               payload.barcode || null,
               initialStock,
               payload.min_stock_level || 5,
-              payload.preferred_supplier_id || null,
+              resolvedSupplierId,
               payload.price || 0,
               payload.cost_price || 0,
               payload.image_url || null,
-              payload.color_id || null,
-              payload.size_id || null,
+              resolvedColorId,
+              resolvedSizeId,
               payload.wholesale_price || 0,
               payload.semi_wholesale_price || 0,
               payload.gender || 'both',
@@ -968,6 +1127,28 @@ async function applyOperation(operation) {
              DO UPDATE SET stock_level = EXCLUDED.stock_level`,
             [existing.id, branchId, initialStock]
           );
+        }
+
+        if (existing && Array.isArray(payload.sizes) && payload.sizes.length > 0) {
+          for (const s of payload.sizes) {
+            const sName = (s.size || s.size_name || '').trim();
+            if (!sName) continue;
+            const sSizeId = await resolveSizeId(tx, sName, s.size_id || null);
+            const sColor = (s.color || s.color_name || payload.color || '').trim();
+            const sStock = Number(s.stock ?? s.stock_level ?? 0);
+            const sBarcode = s.barcode || null;
+            try {
+              await tx.query(
+                `INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, barcode, stock_level, branch_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT (inventory_id, LOWER(TRIM(size_name)), LOWER(TRIM(COALESCE(color_name, ''))), COALESCE(branch_id, 1))
+                 DO UPDATE SET stock_level = EXCLUDED.stock_level, size_id = EXCLUDED.size_id, barcode = COALESCE(EXCLUDED.barcode, inventory_sizes.barcode)`,
+                [existing.id, sSizeId, sName, sColor, sBarcode, sStock, branchId]
+              );
+            } catch (err) {
+              console.warn('[Sync] Non-critical warning inserting inventory_sizes:', err.message);
+            }
+          }
         }
       } else if (operation.action === 'update') {
         const prodId = payload.id || operation.entity_id;
@@ -997,12 +1178,12 @@ async function applyOperation(operation) {
               payload.color || null,
               payload.barcode || null,
               payload.min_stock_level !== undefined ? payload.min_stock_level : null,
-              payload.preferred_supplier_id || null,
+              resolvedSupplierId,
               payload.price !== undefined ? payload.price : null,
               payload.cost_price !== undefined ? payload.cost_price : null,
               payload.image_url || null,
-              payload.color_id || null,
-              payload.size_id || null,
+              resolvedColorId,
+              resolvedSizeId,
               payload.wholesale_price !== undefined ? payload.wholesale_price : null,
               payload.semi_wholesale_price !== undefined ? payload.semi_wholesale_price : null,
               payload.gender || null,
@@ -1416,9 +1597,16 @@ async function exportCatalogForBranch(branchId = null) {
       )
     : db.query('SELECT id, name, initials, email, phone, national_id, join_date, total_spent, status, branch_id, offline_uuid FROM customers');
 
-  const suppliersPromise = targetBranch
-    ? db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, 0 AS balance, status, created_at, code FROM suppliers')
-    : db.query('SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code FROM suppliers');
+  const suppliersPromise = db.query(`
+    SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code,
+           COALESCE(total_purchases, 0) as total_purchases,
+           COALESCE(total_paid, 0) as total_paid,
+           COALESCE(gender_category, 'كلاهما') as gender_category,
+           company_name, address
+    FROM suppliers
+    WHERE COALESCE(is_active, TRUE) = TRUE
+  `);
+  const deletedSuppliersPromise = db.query('SELECT id FROM suppliers WHERE is_active = FALSE');
 
   const [
     usersRes,
@@ -1434,6 +1622,9 @@ async function exportCatalogForBranch(branchId = null) {
     customersRes,
     employeesRes,
     suppliersRes,
+    deletedInvRes,
+    deletedRentalRes,
+    deletedSuppliersRes,
   ] = await Promise.all([
     usersPromise,
     db.query('SELECT id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender, rentals_enabled FROM branches'),
@@ -1448,6 +1639,9 @@ async function exportCatalogForBranch(branchId = null) {
     customersPromise,
     employeesPromise,
     suppliersPromise,
+    db.query('SELECT id FROM inventory WHERE is_deleted = TRUE'),
+    db.query('SELECT id FROM rental_inventory WHERE is_deleted = TRUE'),
+    deletedSuppliersPromise,
   ]);
 
   return {
@@ -1455,9 +1649,12 @@ async function exportCatalogForBranch(branchId = null) {
     users: usersRes.rows,
     branches: branchesRes.rows,
     inventory: inventoryRes.rows,
+    deleted_inventory_ids: (deletedInvRes?.rows || []).map((r) => r.id),
     inventory_branches: invBranchesRes.rows,
     rental_inventory: rentalInvRes.rows,
+    deleted_rental_ids: (deletedRentalRes?.rows || []).map((r) => r.id),
     rental_inventory_branches: rentalBranchesRes.rows,
+    deleted_supplier_ids: (deletedSuppliersRes?.rows || []).map((r) => r.id),
     colors: colorsRes.rows,
     sizes: sizesRes.rows,
     inventory_sizes: invSizesRes.rows,
@@ -1478,6 +1675,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     const sqlite = activeSqlite;
     // 1. Users
     if (Array.isArray(catalog.users)) {
+      const cleanStaleUserStmt = sqlite.prepare("DELETE FROM users WHERE username = ? AND id != ?");
       const uStmt = sqlite.prepare(`
         INSERT INTO users (id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1496,6 +1694,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           branch_ids = COALESCE(excluded.branch_ids, users.branch_ids)
       `);
       for (const u of catalog.users) {
+        cleanStaleUserStmt.run(u.username, u.id);
         let perms = [];
         try {
           perms = typeof u.permissions === 'string' ? JSON.parse(u.permissions) : (u.permissions || []);
@@ -1578,6 +1777,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
     // 4. Inventory
     if (Array.isArray(catalog.inventory)) {
+      const cleanStaleBarcodeStmt = sqlite.prepare("DELETE FROM inventory WHERE barcode = ? AND id != ? AND barcode IS NOT NULL AND barcode != ''");
       const invStmt = sqlite.prepare(`
         INSERT INTO inventory (id, name, category, size_cut, color, barcode, stock_level, min_stock_level, preferred_supplier_id, price, cost_price, image_url, is_deleted, color_id, size_id, wholesale_price, semi_wholesale_price, gender)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1601,6 +1801,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           gender = excluded.gender
       `);
       for (const i of catalog.inventory) {
+        if (i.barcode) cleanStaleBarcodeStmt.run(i.barcode, i.id);
         invStmt.run(
           i.id, i.name, i.category || null, i.size_cut || null, i.color || null,
           i.barcode || null, i.stock_level || 0, i.min_stock_level || 5,
@@ -1608,6 +1809,38 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           i.image_url || null, i.is_deleted ? 1 : 0,
           i.color_id || null, i.size_id || null, i.wholesale_price || 0, i.semi_wholesale_price || 0, i.gender || 'both'
         );
+      }
+
+      // Explicit deleted IDs from server
+      if (Array.isArray(catalog.deleted_inventory_ids) && catalog.deleted_inventory_ids.length > 0) {
+        const delStmt = sqlite.prepare('UPDATE inventory SET is_deleted = 1 WHERE id = ?');
+        for (const delId of catalog.deleted_inventory_ids) {
+          delStmt.run(delId);
+        }
+      }
+
+      // Reconcile items omitted/removed from server catalog:
+      // Any inventory in branch SQLite that is NOT in incoming catalog
+      // and NOT a locally created unsynced item in sync_queue should be marked deleted!
+      try {
+        const incomingIds = new Set(catalog.inventory.map((i) => Number(i.id)));
+        let pendingCreationIds = new Set();
+        try {
+          const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type IN ('product', 'inventory') AND action = 'create' AND status IN ('pending', 'processing', 'retry')").all();
+          for (const r of pendingRows) {
+            if (r.entity_id) pendingCreationIds.add(Number(r.entity_id));
+          }
+        } catch {}
+
+        const allLocalItems = sqlite.prepare("SELECT id FROM inventory WHERE is_deleted = 0").all();
+        const markDeletedStmt = sqlite.prepare("UPDATE inventory SET is_deleted = 1 WHERE id = ?");
+        for (const item of allLocalItems) {
+          if (!incomingIds.has(Number(item.id)) && !pendingCreationIds.has(Number(item.id))) {
+            markDeletedStmt.run(item.id);
+          }
+        }
+      } catch (reconcileErr) {
+        console.warn('[Sync] Inventory reconcile warning:', reconcileErr.message);
       }
     }
 
@@ -1625,6 +1858,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
     // 6. Rental Inventory
     if (Array.isArray(catalog.rental_inventory)) {
+      const cleanStaleRentalBarcodeStmt = sqlite.prepare("DELETE FROM rental_inventory WHERE barcode = ? AND id != ? AND barcode IS NOT NULL AND barcode != ''");
       const riStmt = sqlite.prepare(`
         INSERT INTO rental_inventory (id, name, category, size_cut, color, barcode, price, image_url, is_deleted, stock_level, color_id, size_id, gender)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1643,11 +1877,42 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           gender = excluded.gender
       `);
       for (const ri of catalog.rental_inventory) {
+        if (ri.barcode) cleanStaleRentalBarcodeStmt.run(ri.barcode, ri.id);
         riStmt.run(
           ri.id, ri.name, ri.category || null, ri.size_cut || null, ri.color || null,
           ri.barcode || null, ri.price || 0, ri.image_url || null, ri.is_deleted ? 1 : 0, ri.stock_level || 0,
           ri.color_id || null, ri.size_id || null, ri.gender || 'both'
         );
+      }
+
+      // Explicit deleted rental IDs from server
+      if (Array.isArray(catalog.deleted_rental_ids) && catalog.deleted_rental_ids.length > 0) {
+        const delRentalStmt = sqlite.prepare('UPDATE rental_inventory SET is_deleted = 1 WHERE id = ?');
+        for (const delId of catalog.deleted_rental_ids) {
+          delRentalStmt.run(delId);
+        }
+      }
+
+      // Reconcile rental inventory omitted/removed from server catalog:
+      try {
+        const incomingRentalIds = new Set(catalog.rental_inventory.map((r) => Number(r.id)));
+        let pendingRentalCreationIds = new Set();
+        try {
+          const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'rental_inventory' AND action = 'create' AND status IN ('pending', 'processing', 'retry')").all();
+          for (const r of pendingRows) {
+            if (r.entity_id) pendingRentalCreationIds.add(Number(r.entity_id));
+          }
+        } catch {}
+
+        const allLocalRentals = sqlite.prepare("SELECT id FROM rental_inventory WHERE is_deleted = 0").all();
+        const markRentalDeletedStmt = sqlite.prepare("UPDATE rental_inventory SET is_deleted = 1 WHERE id = ?");
+        for (const item of allLocalRentals) {
+          if (!incomingRentalIds.has(Number(item.id)) && !pendingRentalCreationIds.has(Number(item.id))) {
+            markRentalDeletedStmt.run(item.id);
+          }
+        }
+      } catch (reconcileErr) {
+        console.warn('[Sync] Rental inventory reconcile warning:', reconcileErr.message);
       }
     }
 
@@ -1740,6 +2005,33 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           cust.status || 'نشط', cust.branch_id || 1, cust.offline_uuid || null
         );
       }
+
+      // Reconcile customers omitted from server catalog
+      try {
+        const incomingCustIds = new Set(catalog.customers.map((c) => Number(c.id)));
+        let pendingCustIds = new Set();
+        try {
+          const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'customer' AND status IN ('pending', 'processing', 'retry')").all();
+          for (const r of pendingRows) {
+            if (r.entity_id) pendingCustIds.add(Number(r.entity_id));
+          }
+        } catch {}
+
+        const allLocalCusts = sqlite.prepare("SELECT id, pending_sync FROM customers WHERE status != 'غير نشط'").all();
+        const markCustInactiveStmt = sqlite.prepare("UPDATE customers SET status = 'غير نشط' WHERE id = ?");
+        for (const c of allLocalCusts) {
+          if (c.pending_sync !== 1 && !incomingCustIds.has(Number(c.id)) && !pendingCustIds.has(Number(c.id))) {
+            const hasOrders = sqlite.prepare("SELECT (SELECT COUNT(*) FROM orders WHERE customer_id = ?) + (SELECT COUNT(*) FROM rentals WHERE customer_id = ?) as cnt").get(c.id, c.id)?.cnt || 0;
+            if (hasOrders === 0) {
+              sqlite.prepare("DELETE FROM customers WHERE id = ?").run(c.id);
+            } else {
+              markCustInactiveStmt.run(c.id);
+            }
+          }
+        }
+      } catch (custErr) {
+        console.warn('[Sync] Customers reconcile warning:', custErr.message);
+      }
     }
 
     // 10. Employees
@@ -1774,9 +2066,18 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
     // 11. Suppliers
     if (Array.isArray(catalog.suppliers)) {
+      try { sqlite.exec('ALTER TABLE suppliers ADD COLUMN total_purchases REAL DEFAULT 0'); } catch {}
+      try { sqlite.exec('ALTER TABLE suppliers ADD COLUMN total_paid REAL DEFAULT 0'); } catch {}
+      try { sqlite.exec('ALTER TABLE suppliers ADD COLUMN gender_category TEXT DEFAULT "كلاهما"'); } catch {}
+      try { sqlite.exec('ALTER TABLE suppliers ADD COLUMN company_name TEXT'); } catch {}
+      try { sqlite.exec('ALTER TABLE suppliers ADD COLUMN address TEXT'); } catch {}
+
       const supStmt = sqlite.prepare(`
-        INSERT INTO suppliers (id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)
+        INSERT INTO suppliers (
+          id, name, initials, category, contact_person, phone, supply_type, balance,
+          status, created_at, code, total_purchases, total_paid, gender_category, company_name, address
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           initials = excluded.initials,
@@ -1787,7 +2088,12 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           balance = excluded.balance,
           status = excluded.status,
           created_at = COALESCE(excluded.created_at, suppliers.created_at),
-          code = excluded.code
+          code = excluded.code,
+          total_purchases = excluded.total_purchases,
+          total_paid = excluded.total_paid,
+          gender_category = excluded.gender_category,
+          company_name = excluded.company_name,
+          address = excluded.address
       `);
       for (const sup of catalog.suppliers) {
         const createdAtStr = sup.created_at
@@ -1804,8 +2110,45 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           Number(sup.balance || 0),
           sup.status || 'active',
           createdAtStr,
-          sup.code || null
+          sup.code || null,
+          Number(sup.total_purchases || 0),
+          Number(sup.total_paid || 0),
+          sup.gender_category || 'كلاهما',
+          sup.company_name || null,
+          sup.address || null
         );
+      }
+
+      // Explicit deleted supplier IDs from server
+      if (Array.isArray(catalog.deleted_supplier_ids) && catalog.deleted_supplier_ids.length > 0) {
+        const delSupStmt = sqlite.prepare("UPDATE suppliers SET is_active = 0, status = 'inactive', balance = 0 WHERE id = ?");
+        for (const delId of catalog.deleted_supplier_ids) {
+          delSupStmt.run(delId);
+        }
+      }
+
+      // Reconcile suppliers removed/deleted from server catalog:
+      // Any active supplier in branch SQLite that is NOT in incoming catalog
+      // and NOT a locally created unsynced supplier in sync_queue should be marked inactive!
+      try {
+        const incomingSupIds = new Set(catalog.suppliers.map((s) => Number(s.id)));
+        let pendingCreationIds = new Set();
+        try {
+          const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'supplier' AND action = 'create' AND status IN ('pending', 'processing', 'retry')").all();
+          for (const r of pendingRows) {
+            if (r.entity_id) pendingCreationIds.add(Number(r.entity_id));
+          }
+        } catch {}
+
+        const allLocalSups = sqlite.prepare("SELECT id FROM suppliers WHERE is_active = 1").all();
+        const markSupInactiveStmt = sqlite.prepare("UPDATE suppliers SET is_active = 0, status = 'inactive', balance = 0 WHERE id = ?");
+        for (const item of allLocalSups) {
+          if (!incomingSupIds.has(Number(item.id)) && !pendingCreationIds.has(Number(item.id))) {
+            markSupInactiveStmt.run(item.id);
+          }
+        }
+      } catch (reconcileErr) {
+        console.warn('[Sync] Suppliers reconcile warning:', reconcileErr.message);
       }
     }
 
@@ -1961,6 +2304,13 @@ async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
 
   isSyncCycleActive = true;
   try {
+    // 0. Auto-repair any blocked operations with invalid foreign keys
+    try {
+      await repairAndReviveDeadLetterOperations();
+    } catch (e) {
+      console.warn('[Sync] Dead-letter repair error:', e.message);
+    }
+
     // 1. Check central server connectivity & health
     const connCheck = await checkCentralConnectivity(isManual ? 15000 : 8000);
     if (!connCheck.ok) {
@@ -2177,7 +2527,7 @@ async function getSyncDiagnostics() {
     latency_ms: conn.ok ? latencyMs : null,
     queue: {
       pending: Number(queueCounts.pending || 0) + Number(local.pending || 0),
-      failed: Number(queueCounts.failed || 0) + Number(local.failed || 0),
+      failed: Number(queueCounts.failed || 0) + Number(local.failed || 0) + Number(queueCounts.dead_letter || 0),
       dead_letter: Number(queueCounts.dead_letter || 0),
       synced: Number(queueCounts.synced || 0),
       last_error: lastErrorRecord?.last_error || null,

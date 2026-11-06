@@ -48,19 +48,31 @@ export function printHtml(htmlContent, title = 'طباعة', options = {}) {
       });
     } catch {}
 
-    const isA4 = options.isA4 === true || options.format === 'A4';
+    const isA4 = options.isA4 === true || options.format === 'A4' || options.format === 'A4-landscape';
+    const isLandscape = options.orientation === 'landscape' || options.format === 'A4-landscape';
 
     const printStyles = isA4
       ? `
       @page {
-        size: A4 portrait;
-        margin: 10mm;
+        size: A4 ${isLandscape ? 'landscape' : 'portrait'};
+        margin: 8mm;
       }
-      body {
+      html, body {
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
-        padding: 10px !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .overflow-x-auto, .overflow-y-auto, .overflow-auto {
+        overflow: visible !important;
+      }
+      table {
+        width: 100% !important;
       }
     `
       : `
@@ -284,13 +296,17 @@ export function printElement(elementOrId, title = 'طباعة', options = {}) {
     cloneImg.setAttribute('onerror', "this.style.display='none';");
   });
 
-  const elId = typeof elementOrId === 'string' ? elementOrId : el.id || '';
-  const isA4 =
-    options.format === 'A4' ||
-    options.isA4 === true ||
-    elId.includes('payslip') ||
-    elId.includes('statement') ||
-    elId.includes('report');
+  const elId = (typeof elementOrId === 'string' ? elementOrId : el?.id || '').toLowerCase();
+  
+  // Receipts are specifically 80mm thermal receipts or tickets
+  const isReceipt =
+    options.format === 'receipt' ||
+    options.isThermal === true ||
+    options.isA4 === false ||
+    elId.includes('receipt') ||
+    elId.includes('ticket');
+
+  const isA4 = options.format === 'A4' || options.format === 'A4-landscape' || options.isA4 === true || !isReceipt;
 
   const contentHtml = clone.outerHTML || clone.innerHTML;
   return printHtml(contentHtml, title, { isA4, ...options });

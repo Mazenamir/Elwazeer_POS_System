@@ -340,6 +340,10 @@ export function POS() {
     totalPages: 1,
   });
 
+  // Invoice Counter Reset State (Admin Only)
+  const [showResetCounterConfirm, setShowResetCounterConfirm] = useState(false);
+  const [resettingInvoiceCounter, setResettingInvoiceCounter] = useState(false);
+
   // Process Return Modal State
   const [showProcessReturnModal, setShowProcessReturnModal] = useState(false);
   const [returnOrderSearchQuery, setReturnOrderSearchQuery] = useState('');
@@ -1866,9 +1870,17 @@ export function POS() {
       let fullOrder = order;
       try {
         const details = await api.get(`/orders/${order.id}/details`);
-        fullOrder = { ...order, ...details, items: details.items || order.items || [] };
+        let rawItems = details?.items || order?.items || [];
+        if (typeof rawItems === 'string') {
+          try { rawItems = JSON.parse(rawItems); } catch { rawItems = []; }
+        }
+        fullOrder = { ...order, ...(details || {}), items: Array.isArray(rawItems) ? rawItems : [] };
       } catch (e) {
-        // Fallback to order with its existing items if details call fails
+        let rawItems = order?.items || [];
+        if (typeof rawItems === 'string') {
+          try { rawItems = JSON.parse(rawItems); } catch { rawItems = []; }
+        }
+        fullOrder = { ...order, items: Array.isArray(rawItems) ? rawItems : [] };
       }
       setSelectedReturnOrder(fullOrder);
 
@@ -1879,6 +1891,10 @@ export function POS() {
         const availableQty = Math.max(0, Number(item.quantity || 1) - Number(item.returned_quantity || 0));
         initialQtys[item.id] = availableQty;
         initialSelection[item.id] = availableQty > 0;
+        if (item.inventory_id) {
+          initialQtys[item.inventory_id] = availableQty;
+          initialSelection[item.inventory_id] = availableQty > 0;
+        }
       });
       setReturnQuantities(initialQtys);
       setReturnSelection(initialSelection);
@@ -1916,20 +1932,43 @@ export function POS() {
 
   const finalReturnRefund = manualReturnAmount !== '' ? Number(manualReturnAmount) : calculatedReturnAmount;
 
+  // Reset Invoice Counter (Admin Only)
+  const confirmResetInvoiceCounter = async () => {
+    try {
+      setResettingInvoiceCounter(true);
+      const chosenBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1;
+      const res = await api.post('/orders/reset-counter', { branch_id: chosenBranchId });
+      toast.success(res.message || 'تم تصفير عداد الفواتير بنجاح! ستبدأ الفاتورة القادمة من #1 🔄');
+      setShowResetCounterConfirm(false);
+      const nextIdUrl = `/next-order-id${chosenBranchId ? `?branch_id=${chosenBranchId}` : ''}`;
+      const nextRes = await api.get(nextIdUrl);
+      if (nextRes && nextRes.next_id) {
+        setNextOrderId(nextRes.next_id);
+      } else {
+        setNextOrderId(1);
+      }
+    } catch (err) {
+      toast.error(err.message || 'فشل تصفير عداد الفواتير');
+    } finally {
+      setResettingInvoiceCounter(false);
+    }
+  };
+
   // Submit Process Return
   const handleSubmitReturn = async (e) => {
     e.preventDefault();
     if (!selectedReturnOrder) return;
 
     const returnItems = (selectedReturnOrder.items || [])
-      .filter((item) => returnSelection[item.id] && Number(returnQuantities[item.id]) > 0)
+      .filter((item) => (returnSelection[item.id] || (item.inventory_id && returnSelection[item.inventory_id])) && Number(returnQuantities[item.id] ?? returnQuantities[item.inventory_id] ?? 0) > 0)
       .map((item) => {
         const financials = getItemReturnFinancials(selectedReturnOrder, item);
+        const chosenQty = Number(returnQuantities[item.id] ?? returnQuantities[item.inventory_id] ?? 1);
         return {
           id: item.inventory_id || item.id,
-          size: item.size || null,
+          size: item.size || item.size_cut || null,
           color: item.color || null,
-          quantity: Number(returnQuantities[item.id]),
+          quantity: chosenQty,
           price: financials.effectiveUnitPrice,
         };
       });
@@ -2095,11 +2134,24 @@ export function POS() {
         </div>
 
         {/* Live Invoice Badge */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#FDF5D2] text-[#7A5B04] font-extrabold text-xs border border-[#F4D95B]/70 shadow-sm font-display">
             <span>فاتورة رقم:</span>
             <span className="font-mono text-sm">#{nextOrderId}</span>
           </div>
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowResetCounterConfirm(true)}
+              disabled={resettingInvoiceCounter}
+              title="تصفير عداد الفواتير لتبدأ الفاتورة القادمة من رقم #1 (متاح للمدير فقط)"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${resettingInvoiceCounter ? 'animate-spin' : ''}`} />
+              <span>تصفير العداد</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -3064,7 +3116,17 @@ export function POS() {
                               icon={Printer}
                               title="طباعة الفاتورة"
                               onClick={() => {
-                                const orderItems = order.items || [];
+                                let orderItems = order.items;
+                                if (typeof orderItems === 'string') {
+                                  try { orderItems = JSON.parse(orderItems); } catch { orderItems = []; }
+                                }
+                                if (!Array.isArray(orderItems)) orderItems = [];
+
+                                let orderSplits = order.payment_splits;
+                                if (typeof orderSplits === 'string') {
+                                  try { orderSplits = JSON.parse(orderSplits); } catch { orderSplits = null; }
+                                }
+
                                 const itemsBaseSubtotal = orderItems.reduce((acc, it) => acc + (Number(it.price_at_time || it.price || 0) * Number(it.quantity || 1)), 0);
                                 const itemsDisc = orderItems.reduce((acc, it) => {
                                   const p = Number(it.price_at_time || it.price || 0);
@@ -3094,7 +3156,7 @@ export function POS() {
                                   paid_amount: Number(order.paid_amount || order.total_amount || 0),
                                   change_amount: Number(order.change_amount || 0),
                                   payment_method: order.payment_method || 'cash',
-                                  payment_splits: order.payment_splits,
+                                  payment_splits: orderSplits,
                                   cash_amount: order.cash_amount,
                                   bank_transfer_amount: order.bank_transfer_amount,
                                   card_amount: order.card_amount,
@@ -3806,6 +3868,48 @@ export function POS() {
             </div>
           )}
         </form>
+      </Modal>
+
+      {/* RESET INVOICE COUNTER CONFIRMATION MODAL (ADMIN ONLY) */}
+      <Modal
+        isOpen={showResetCounterConfirm}
+        onClose={() => setShowResetCounterConfirm(false)}
+        title="تصفير عداد الفواتير 🔄"
+        subtitle="إعادة ترقيم الفواتير القادمة لتبدأ من رقم #1"
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4 py-2">
+          <div className="p-4 bg-rose-50 rounded-2xl border border-rose-200 flex items-start gap-3">
+            <AlertCircle className="w-6 h-6 text-rose-600 shrink-0 mt-0.5" />
+            <div className="text-xs text-rose-900 leading-relaxed font-bold">
+              <div className="font-black text-rose-950 text-sm mb-1">تنبيه إداري:</div>
+              تصفير عداد الفواتير سيجعل الفاتورة القادمة تبدأ من رقم <strong>#1</strong>.
+              <div className="mt-1 text-slate-600 font-normal">
+                الفواتير السابقة المسجلة بالنظام لن تتأثر وستظل محفوظة بالكامل في سجلات المبيعات والتقارير.
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowResetCounterConfirm(false)}
+              disabled={resettingInvoiceCounter}
+            >
+              إلغاء
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={confirmResetInvoiceCounter}
+              isLoading={resettingInvoiceCounter}
+              icon={RotateCcw}
+            >
+              تأكيد التصفير إلى #1
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* PAY REMAINING DEBT MODAL */}
