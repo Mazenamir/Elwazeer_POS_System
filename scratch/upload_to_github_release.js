@@ -95,7 +95,34 @@ function apiRequest(options, data = null) {
   });
 }
 
-function uploadAsset(uploadUrl, filePath, assetName) {
+async function deleteAssetIfExists(releaseId, assetName) {
+  try {
+    const assets = await apiRequest({
+      hostname: 'api.github.com',
+      path: `/repos/${OWNER}/${REPO}/releases/${releaseId}/assets`,
+      method: 'GET',
+      headers: {
+        'Authorization': `token ${GITHUB_TOKEN}`,
+        'User-Agent': 'NodeJS-Uploader',
+      },
+    });
+    const match = assets.find(a => a.name === assetName);
+    if (match) {
+      console.log(`🧹 Removing existing/partial asset ${assetName} (ID: ${match.id})...`);
+      await apiRequest({
+        hostname: 'api.github.com',
+        path: `/repos/${OWNER}/${REPO}/releases/assets/${match.id}`,
+        method: 'DELETE',
+        headers: {
+          'Authorization': `token ${GITHUB_TOKEN}`,
+          'User-Agent': 'NodeJS-Uploader',
+        },
+      });
+    }
+  } catch (_) {}
+}
+
+function uploadAssetOnce(uploadUrl, filePath, assetName) {
   return new Promise((resolve, reject) => {
     const cleanUrl = uploadUrl.replace(/\{.*$/, '') + `?name=${encodeURIComponent(assetName)}`;
     const urlObj = new URL(cleanUrl);
@@ -148,6 +175,22 @@ function uploadAsset(uploadUrl, filePath, assetName) {
 
     stream.pipe(req);
   });
+}
+
+async function uploadAsset(release, filePath, assetName, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 1) {
+        console.log(`🔄 Retry attempt ${attempt}/${maxRetries} for ${assetName}...`);
+        await deleteAssetIfExists(release.id, assetName);
+        await new Promise(r => setTimeout(r, 4000));
+      }
+      return await uploadAssetOnce(release.upload_url, filePath, assetName);
+    } catch (err) {
+      console.warn(`⚠️ Attempt ${attempt} failed for ${assetName}:`, err.message);
+      if (attempt === maxRetries) throw err;
+    }
+  }
 }
 
 async function main() {
@@ -240,7 +283,7 @@ async function main() {
       continue;
     }
 
-    await uploadAsset(release.upload_url, item.path, item.name);
+    await uploadAsset(release, item.path, item.name);
   }
 
   console.log('\n🎉 ALL ASSETS UPLOADED SUCCESSFULLY TO GITHUB RELEASES!');
