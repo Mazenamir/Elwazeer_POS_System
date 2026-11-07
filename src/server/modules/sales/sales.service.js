@@ -75,7 +75,7 @@ async function listOrders(query = {}, user = null, req = null) {
               'category', i.category,
               'barcode', i.barcode,
               'color', i.color,
-              'size', i.size_cut,
+              'size', COALESCE(oi.size, i.size_cut),
               'image_url', i.image_url,
               'quantity', oi.quantity, 
               'price_at_time', oi.price_at_time,
@@ -529,7 +529,7 @@ async function createOrder(body, user, req) {
         cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits, order_source
       ) 
        VALUES ($1, $2, ${CAIRO_NOW_SQL}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'cashier')
-       RETURNING id, branch_invoice_number`,
+       RETURNING id, branch_invoice_number, order_date`,
       [
         customerId, finalTotalAmount, b_id, finalPaymentMethod,
         sellerId, netPaid, effectiveChange, invDiscountVal, invDiscountType,
@@ -538,6 +538,7 @@ async function createOrder(body, user, req) {
       ]
     );
     const newOrderId = orderResult.rows[0].id;
+    const newOrderDate = orderResult.rows[0].order_date || null;
 
     // 6. Add Items & Update Inventory atomically
     for (const item of processedOrderItems) {
@@ -565,6 +566,7 @@ async function createOrder(body, user, req) {
       customer: { name: normalizedCustomerName, phone: normalizedCustomerPhone, branch_id: b_id },
       order: {
         total_amount: finalTotalAmount,
+        order_date: newOrderDate,
         branch_id: b_id,
         payment_method: finalPaymentMethod,
         seller_id: sellerId,
@@ -764,6 +766,9 @@ async function payRemaining(id, amount, paymentMethod, user, req) {
       bank_transfer_amount: newBank,
       payment_splits: splits,
       payment_method: newPaymentMethod,
+      settled_payment_amount: safeAmount,
+      settled_payment_method: normM,
+      seller_id: user?.employee_id || null,
     });
 
     return {
@@ -813,17 +818,21 @@ async function getOrderDetails(id, user) {
 
   const { rows: itemRows } = await db.query(
     `SELECT oi.*, i.name, i.barcode, i.category, i.size_cut, i.color,
-            COALESCE(ret.returned_qty, 0)::int as returned_quantity
+            COALESCE(SUM(ret.returned_qty), 0)::int as returned_quantity
      FROM order_items oi
      LEFT JOIN inventory i ON oi.inventory_id = i.id
      LEFT JOIN (
-       SELECT ri.inventory_id, COALESCE(SUM(ri.quantity), 0) as returned_qty
+       SELECT ri.inventory_id,
+              LOWER(TRIM(COALESCE(ri.size, ''))) as size_key,
+              COALESCE(SUM(ri.quantity), 0) as returned_qty
        FROM returns r
        JOIN return_items ri ON r.id = ri.return_id
        WHERE r.order_id = $1
-       GROUP BY ri.inventory_id
+       GROUP BY ri.inventory_id, LOWER(TRIM(COALESCE(ri.size, '')))
      ) ret ON ret.inventory_id = oi.inventory_id
-     WHERE oi.order_id = $1`,
+          AND (ret.size_key = '' OR ret.size_key = LOWER(TRIM(COALESCE(oi.size, ''))))
+     WHERE oi.order_id = $1
+     GROUP BY oi.id, i.name, i.barcode, i.category, i.size_cut, i.color`,
     [resolvedId]
   );
 
@@ -834,7 +843,7 @@ async function getOrderDetails(id, user) {
   };
 }
 
-async function updateOrder(id, body, user) {
+async function updateOrder(id, body, user, req = null) {
   const {
     items,
     invoice_discount,
@@ -1213,6 +1222,28 @@ async function updateOrder(id, body, user) {
         [resolvedId, item.inventory_id, item.quantity, item.price_at_time, item.discount, item.discount_type, item.size || null]
       );
     }
+
+    await queueSyncOperation(tx, req, 'order', 'edit_order', resolvedId, branchId, {
+      id: resolvedId,
+      offline_uuid: currentOrder.offline_uuid,
+      branch_id: branchId,
+      total_amount: recalculatedTotal,
+      invoice_discount: invDiscountVal,
+      invoice_discount_type: invDiscountType,
+      customer_id: finalCustomerId,
+      customer_name: customer_name || null,
+      customer_phone: customer_phone || null,
+      payment_method: finalPaymentMethod,
+      seller_id: seller_id || currentOrder.seller_id || null,
+      paid_amount: netPaid,
+      change_amount: safeChange,
+      cash_amount: netCash,
+      card_amount: p_card,
+      wallet_amount: p_wallet,
+      bank_transfer_amount: p_bank,
+      payment_splits: cleanSplits && cleanSplits.length > 1 ? cleanSplits : null,
+      items: processedNewItems,
+    });
   });
 
   const auditService = require('../audit/audit.service');
@@ -1230,12 +1261,15 @@ async function updateOrder(id, body, user) {
 }
 
 async function searchOrders(queryStr, branchId, user) {
-  // If query looks like an offline invoice (OFF-xxxx), search by offline_uuid
-  if (typeof queryStr === 'string' && queryStr.toUpperCase().startsWith('OFF-')) {
-    const offlinePart = queryStr.slice(4);
-    const offParams = [offlinePart + '%'];
+  // If query looks like an offline invoice (OFF-xxxx) or direct UUID, search by offline_uuid
+  const trimmed = typeof queryStr === 'string' ? queryStr.trim() : '';
+  const isOff = trimmed.toUpperCase().startsWith('OFF-');
+  const isDirectUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+  if (isOff || isDirectUuid) {
+    const offlinePart = isOff ? trimmed.slice(4) : trimmed;
+    const offParams = isDirectUuid ? [offlinePart] : [offlinePart + '%', trimmed + '%'];
     const offWhere = [
-      `o.offline_uuid::text LIKE $1`,
+      isDirectUuid ? `o.offline_uuid::text = $1` : `(o.offline_uuid::text LIKE $1 OR o.offline_uuid::text LIKE $2)`,
       `COALESCE(o.order_source, 'cashier') = 'cashier'`,
     ];
 
@@ -1298,7 +1332,7 @@ async function searchOrders(queryStr, branchId, user) {
   const cleanQuery = typeof queryStr === 'string' ? queryStr.replace(/^cashier-/i, '').replace(/^#/i, '').trim() : String(queryStr || '');
   const params = [cleanQuery, likePattern(cleanQuery), likePattern(cleanQuery)];
   const where = [
-    `(o.id::text = $1 OR o.branch_invoice_number::text = $1 OR c.name ILIKE $2 OR c.phone LIKE $3)`,
+    `(o.id::text = $1 OR o.branch_invoice_number::text = $1 OR o.offline_uuid::text = $1 OR c.name ILIKE $2 OR c.phone LIKE $3)`,
     `COALESCE(o.order_source, 'cashier') = 'cashier'`,
   ];
 
@@ -1432,8 +1466,18 @@ async function createReturn(body, user, req) {
     const origItemMap = new Map();
     let totalOriginalQty = 0;
     for (const oi of originalOrderItems) {
-      origItemMap.set(Number(oi.inventory_id), oi);
-      totalOriginalQty += Number(oi.quantity || 0);
+      const invId = Number(oi.inventory_id);
+      const q = Number(oi.quantity || 0);
+      if (origItemMap.has(invId)) {
+        const existing = origItemMap.get(invId);
+        origItemMap.set(invId, {
+          ...existing,
+          quantity: Number(existing.quantity || 0) + q,
+        });
+      } else {
+        origItemMap.set(invId, { ...oi, quantity: q });
+      }
+      totalOriginalQty += q;
     }
 
     // Fetch prior returns on this order to prevent double/over returns
@@ -1487,7 +1531,8 @@ async function createReturn(body, user, req) {
         lDisc = isP ? roundCurrency((oPrice * oQty) * (dVal / 100)) : Math.min(roundCurrency(oPrice * oQty), roundCurrency(dVal));
       }
       const lNet = Math.max(0, roundCurrency((oPrice * oQty) - lDisc));
-      itemLineNets.set(Number(oi.inventory_id), lNet);
+      const invId = Number(oi.inventory_id);
+      itemLineNets.set(invId, roundCurrency((itemLineNets.get(invId) || 0) + lNet));
       orderOriginalNetSubtotal = roundCurrency(orderOriginalNetSubtotal + lNet);
     }
 
@@ -1506,6 +1551,7 @@ async function createReturn(body, user, req) {
     let calculatedReturnTotal = 0;
     let currentReturnQty = 0;
     const validatedReturnItems = [];
+    const batchReturnedByItem = new Map();
 
     for (const item of sortedReturnItems) {
       const itemId = Number(item.id ?? item.inventory_id);
@@ -1518,7 +1564,7 @@ async function createReturn(body, user, req) {
       }
 
       const origQty = Number(origItem.quantity || 0);
-      const alreadyReturned = priorReturnMap.get(itemId) || 0;
+      const alreadyReturned = (priorReturnMap.get(itemId) || 0) + (batchReturnedByItem.get(itemId) || 0);
       const remainingReturnable = origQty - alreadyReturned;
 
       if (remainingReturnable <= 0) {
@@ -1531,6 +1577,7 @@ async function createReturn(body, user, req) {
         err.statusCode = 400;
         throw err;
       }
+      batchReturnedByItem.set(itemId, (batchReturnedByItem.get(itemId) || 0) + qty);
 
       const origPrice = roundCurrency(Number(origItem.price_at_time || 0));
       const itemLineNet = itemLineNets.get(itemId) || 0;
@@ -1580,8 +1627,8 @@ async function createReturn(body, user, req) {
     // 4. Add return items and update inventory
     for (const item of validatedReturnItems) {
       await tx.query(
-        'INSERT INTO return_items (return_id, inventory_id, quantity, price_at_time) VALUES ($1, $2, $3, $4)',
-        [returnId, item.id, item.quantity, item.price]
+        'INSERT INTO return_items (return_id, inventory_id, quantity, price_at_time, size) VALUES ($1, $2, $3, $4, $5)',
+        [returnId, item.id, item.quantity, item.price, item.size || null]
       );
 
       // Return stock across sizes, branch, and global canonical level
@@ -1596,9 +1643,10 @@ async function createReturn(body, user, req) {
 
     // 5. Update Order Status (full vs partial return)
     const isFullyReturned = (totalPriorReturnedQty + currentReturnQty) >= totalOriginalQty;
+    const nextOrderStatus = isFullyReturned ? 'returned' : 'partially_returned';
     await tx.query(
       'UPDATE orders SET status = $1 WHERE id = $2',
-      [isFullyReturned ? 'returned' : 'partially_returned', order_id]
+      [nextOrderStatus, order_id]
     );
 
     // 6. Adjust customer total_spent & wallet_balance
@@ -1624,6 +1672,8 @@ async function createReturn(body, user, req) {
       offline_uuid: returnOfflineUuid,
       order_id,
       order_offline_uuid: orderRow.offline_uuid || null,
+      order_status: nextOrderStatus,
+      return_date: returnDate,
       total_return_amount: finalReturnAmount,
       refund_method: normRefundMethod,
       branch_id,
@@ -1668,7 +1718,7 @@ async function listReturns(query = {}, user = null, req = null) {
              'category', i.category,
              'barcode', i.barcode,
              'color', i.color,
-             'size', i.size_cut,
+             'size', COALESCE(ri.size, i.size_cut),
              'image_url', i.image_url,
              'quantity', ri.quantity,
              'price_at_time', ri.price_at_time
@@ -1749,11 +1799,18 @@ async function listReturns(query = {}, user = null, req = null) {
       db.query(selectQuery, queryParams),
       db.query(countQuery, params),
     ]);
-    return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination, 'returns');
+    const parsedRows = (dataRes.rows || []).map((r) => ({
+      ...r,
+      items: typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items); } catch { return []; } })() : (Array.isArray(r.items) ? r.items : []),
+    }));
+    return paginatedPayload(parsedRows, countRes.rows[0]?.total || 0, pagination, 'returns');
   }
 
   const { rows } = await db.query(selectQuery, queryParams);
-  return rows;
+  return (rows || []).map((r) => ({
+    ...r,
+    items: typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items); } catch { return []; } })() : (Array.isArray(r.items) ? r.items : []),
+  }));
 }
 
 module.exports = {
@@ -1784,11 +1841,13 @@ async function resetInvoiceCounter(body, user, req) {
     nowIso = new Date().toISOString();
   }
 
+  const resetKey = `invoice_counter_reset_at_${branchId}`;
   await db.query(
     `INSERT INTO settings (key, value) VALUES ($1, $2)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    [`invoice_counter_reset_at_${branchId}`, nowIso]
+    [resetKey, nowIso]
   );
+  await queueSyncOperation(db, req, 'settings', 'update', null, branchId, { key: resetKey, value: nowIso });
 
   if (body?.all_branches || body?.branch_id === 'all') {
     await db.query(
@@ -1796,6 +1855,7 @@ async function resetInvoiceCounter(body, user, req) {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       [nowIso]
     );
+    await queueSyncOperation(db, req, 'settings', 'update', null, branchId, { key: 'invoice_counter_reset_at', value: nowIso });
   }
 
   const { logActivity } = require('../audit/audit.service');

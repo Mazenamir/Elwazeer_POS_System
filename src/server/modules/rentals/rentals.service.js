@@ -126,11 +126,14 @@ async function createRentalInventory(body, user) {
   const itemPrice = Number(price ?? rental_price ?? 0) || 0;
   const itemGender = gender || 'both';
 
+  const effectiveBranchId = Number(body?.branch_id || user?.branch_id || config.BRANCH_ID || 1);
   if (isBranchScopedUser(user)) {
-    branch_stocks = [{ branch_id: user.branch_id, stock_level: stock_level || 0 }];
+    branch_stocks = [{ branch_id: user.branch_id, stock_level: Number(stock_level) || 0 }];
+  } else if ((stock_level !== undefined && stock_level !== null && stock_level !== '') && (!branch_stocks || !branch_stocks.length)) {
+    branch_stocks = [{ branch_id: effectiveBranchId, stock_level: Number(stock_level) || 0 }];
   }
 
-  const targetBranch = user?.branch_id || (Array.isArray(branch_stocks) && branch_stocks[0]?.branch_id);
+  const targetBranch = user?.branch_id || (Array.isArray(branch_stocks) && branch_stocks[0]?.branch_id) || effectiveBranchId;
   if (targetBranch) {
     const { isBranchRentalsEnabled } = require('../../middleware/branchScope.middleware');
     if (!await isBranchRentalsEnabled(targetBranch)) {
@@ -180,6 +183,10 @@ async function createRentalInventory(body, user) {
             );
           }
         }
+        await queueSyncOperation(tx, null, 'rental_inventory', 'create', newItem.id, targetBranch || user?.branch_id || 1, {
+          ...newItem,
+          branch_stocks: effectiveStocks,
+        });
       }
       return firstItem;
     }
@@ -208,6 +215,10 @@ async function createRentalInventory(body, user) {
         }
       }
     }
+    await queueSyncOperation(tx, null, 'rental_inventory', 'create', newItem.id, user?.branch_id || 1, {
+      ...newItem,
+      branch_stocks: Array.isArray(branch_stocks) ? branch_stocks : [],
+    });
     return newItem;
   });
 
@@ -323,6 +334,11 @@ async function updateRentalInventory(id, body, user) {
         }
       }
     }
+    await queueSyncOperation(tx, null, 'rental_inventory', 'update', id, user?.branch_id || 1, {
+      ...rows[0],
+      id: Number(id),
+      branch_stocks: Array.isArray(branch_stocks) ? branch_stocks : [],
+    });
     return rows[0];
   });
 
@@ -598,6 +614,26 @@ async function transferFromSales(body, user) {
          DO UPDATE SET stock_level = rental_inventory_branches.stock_level + $3`,
         [rentalItemId, to_branch, quantity]
       );
+
+      const createdOrUpdatedRentalItem = await tx.query('SELECT * FROM rental_inventory WHERE id = $1', [rentalItemId]);
+      await queueSyncOperation(tx, null, 'rental_inventory', 'transfer_from_sales', rentalItemId, from_branch, {
+        inventory_id,
+        from_branch,
+        to_branch,
+        quantity,
+        size: targetSize,
+        color: effectiveColor,
+        rental_item: createdOrUpdatedRentalItem.rows[0] || {
+          id: rentalItemId,
+          name: transferredItemName,
+          category: invItem.category,
+          size_cut: targetSize,
+          color: effectiveColor,
+          price: effectiveRentalPrice,
+          image_url: invItem.image_url,
+          gender: invItem.gender || 'both',
+        },
+      });
     }
 
     if (user) {
@@ -1239,6 +1275,7 @@ async function createRental(body, user, req) {
           bank_transfer_amount: itemBank,
           custom_items: itemCustom,
           rental_group_uuid: rentalGroupUuid,
+          booking_date: bookingDate,
         },
       });
     }
@@ -1302,6 +1339,17 @@ async function pickupRental(id, user) {
     }
 
     await tx.query("UPDATE rentals SET status = 'active', actual_pickup_date = CURRENT_TIMESTAMP WHERE id = ANY($1::int[])", [rentals.map((r) => r.id)]);
+
+    await queueSyncOperation(tx, null, 'rental_status', 'pickup', rentals[0].id, branchId, {
+      id: rentals[0].id,
+      rental_id: rentals[0].id,
+      offline_uuid: rentals[0].offline_uuid || null,
+      rental_group_uuid: rentals[0].rental_group_uuid || null,
+      rental_ids: rentals.map((r) => r.id),
+      rental_inventory_ids: rentals.map((r) => r.rental_inventory_id).filter(Boolean),
+      branch_id: branchId,
+      status: 'active',
+    });
 
     if (user) {
       await logActivity(
@@ -1586,7 +1634,12 @@ async function returnRental(id, bodyOrFine, user, req) {
 
     await queueSyncOperation(tx, req, 'rental', 'update', rentals[0].id, branchId, {
       id: rentals[0].id,
+      offline_uuid: rentals[0].offline_uuid || null,
+      rental_group_uuid: rentals[0].rental_group_uuid || null,
+      rental_ids: rentals.map((r) => r.id),
+      rental_inventory_ids: rentals.map((r) => r.rental_inventory_id).filter(Boolean),
       status: 'returned',
+      actual_return_date: options.actual_return_date || (await getDatabaseCairoNow(tx)).date,
       fine_amount: calculatedFine,
       remaining: remainingAfterReturn,
       paid_amount: newPaidAmount,
@@ -1741,6 +1794,9 @@ async function settleRentalPayment(id, body, user, req) {
 
     await queueSyncOperation(tx, req, 'rental', 'update', rentals[0].id, branchId, {
       id: rentals[0].id,
+      offline_uuid: rentals[0].offline_uuid || null,
+      rental_group_uuid: rentals[0].rental_group_uuid || null,
+      rental_ids: rentals.map((r) => r.id),
       remaining: updatedRemaining,
       paid_amount: newPaidAmount,
       cash_amount: currentCash,
@@ -1749,6 +1805,9 @@ async function settleRentalPayment(id, body, user, req) {
       bank_transfer_amount: currentBank,
       payment_method: finalPaymentMethod,
       payment_splits: finalSplitsJson,
+      settled_payment_amount: pay,
+      settled_payment_notes: noteMsg,
+      seller_id: user?.employee_id || rentals[0].seller_id || null,
     });
 
     if (user) {
@@ -2149,6 +2208,7 @@ async function handleScanAction(body = {}, user = null) {
 
 async function setRentalPrepared(id, body = {}, user = null) {
   const isPrepared = body.is_prepared !== false;
+  const isPrepVal = config.IS_BRANCH_MODE ? (isPrepared ? 1 : 0) : Boolean(isPrepared);
   const notes = body.notes || body.prep_notes || null;
   let preparedBy = body.prepared_by ? Number(body.prepared_by) : null;
 
@@ -2163,17 +2223,33 @@ async function setRentalPrepared(id, body = {}, user = null) {
   const result = await db.query(`
     UPDATE rentals
     SET is_prepared = $1,
-        prepared_at = CASE WHEN $1 = true THEN ${CAIRO_NOW_SQL} ELSE NULL END,
-        prepared_by = CASE WHEN $1 = true THEN COALESCE($2, prepared_by) ELSE NULL END,
+        prepared_at = CASE WHEN ${isPrepared ? '1=1' : '1=0'} THEN ${CAIRO_NOW_SQL} ELSE NULL END,
+        prepared_by = CASE WHEN ${isPrepared ? '1=1' : '1=0'} THEN COALESCE($2, prepared_by) ELSE NULL END,
         prep_notes = COALESCE($3, prep_notes)
     WHERE id = $4 OR rental_group_uuid = (SELECT rental_group_uuid FROM rentals WHERE id = $4 AND rental_group_uuid IS NOT NULL)
-    RETURNING id, is_prepared, prepared_at, prepared_by, branch_id
-  `, [isPrepared, preparedBy, notes, id]);
+    RETURNING id, is_prepared, prepared_at, prepared_by, branch_id, offline_uuid, rental_group_uuid
+  `, [isPrepVal, preparedBy, notes, id]);
 
   if (result.rows.length === 0) {
     const err = new Error('الحجز غير موجود');
     err.statusCode = 404;
     throw err;
+  }
+
+  try {
+    const targetRow = result.rows.find((r) => Number(r.id) === Number(id)) || result.rows[0];
+    await queueSyncOperation(db, null, 'rental_status', 'prepare', id, targetRow.branch_id, {
+      id: targetRow.id,
+      rental_id: targetRow.id,
+      rental_offline_uuid: targetRow.offline_uuid || null,
+      rental_group_uuid: targetRow.rental_group_uuid || null,
+      is_prepared: Boolean(isPrepared),
+      prepared_at: targetRow.prepared_at || null,
+      prepared_by: targetRow.prepared_by || null,
+      prep_notes: notes,
+    });
+  } catch (e) {
+    console.warn('Failed to queue rental prepare sync:', e.message);
   }
 
   if (user) {
@@ -2501,12 +2577,13 @@ async function addRentalItems(id, body, user) {
     let addedPrice = 0;
     const incomingCustom = Array.isArray(custom_items) ? custom_items : [];
     for (const c of incomingCustom) {
-      if (!c.name) continue;
+      const cName = c.name || c.title;
+      if (!cName) continue;
       const cPrice = Math.max(0, Number(c.price || 0));
       addedPrice += cPrice;
       existingCustom.push({
         id: c.id || `custom_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-        name: c.name,
+        name: cName,
         category: c.category || 'إكسسوار',
         price: cPrice,
         is_custom: true,
@@ -2515,6 +2592,7 @@ async function addRentalItems(id, body, user) {
     }
 
     const incomingInvItems = Array.isArray(items) ? items : [];
+    const addedInventoryItemsSync = [];
     for (const inv of incomingInvItems) {
       const invId = Number(inv.id || inv.rental_inventory_id);
       if (!invId) continue;
@@ -2558,6 +2636,20 @@ async function addRentalItems(id, body, user) {
           itemOfflineUuid,
         ]
       );
+
+      if (mainRental.status === 'active') {
+        await tx.query(
+          'UPDATE rental_inventory_branches SET stock_level = GREATEST(0, stock_level - 1) WHERE rental_inventory_id = $1 AND branch_id = $2',
+          [invId, b_id]
+        );
+      }
+
+      addedInventoryItemsSync.push({
+        rental_inventory_id: invId,
+        offline_uuid: itemOfflineUuid,
+        price: invPrice,
+        status: mainRental.status,
+      });
     }
 
     if (extra_price !== undefined && extra_price !== null && Number(extra_price) > 0) {
@@ -2586,6 +2678,19 @@ async function addRentalItems(id, body, user) {
        WHERE id = $6`,
       [newTotal, newRemaining, newDeposit, JSON.stringify(existingCustom), updatedNotes, mainRental.id]
     );
+
+    await queueSyncOperation(tx, null, 'rental', 'add_items', mainRental.id, b_id, {
+      id: mainRental.id,
+      offline_uuid: mainRental.offline_uuid || null,
+      rental_group_uuid: mainRental.rental_group_uuid || null,
+      total_price: newTotal,
+      remaining: newRemaining,
+      deposit: newDeposit,
+      custom_items: JSON.stringify(existingCustom),
+      notes: updatedNotes,
+      added_inventory_ids: addedInventoryItemsSync.map((it) => it.rental_inventory_id),
+      added_inventory_items: addedInventoryItemsSync,
+    });
 
     if (user) {
       await logActivity(

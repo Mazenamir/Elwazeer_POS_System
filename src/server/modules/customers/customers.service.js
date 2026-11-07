@@ -196,7 +196,7 @@ async function updateCustomer(id, data, user) {
   const customerStatus = status || 'عادي';
 
   if (config.IS_BRANCH_MODE) {
-    const existing = db.sqlite.prepare('SELECT branch_id FROM customers WHERE id = ?').get(id);
+    const existing = db.sqlite.prepare('SELECT id, branch_id, offline_uuid FROM customers WHERE id = ?').get(id);
     if (!existing) {
       const err = new Error('Unauthorized or not found');
       err.statusCode = 404;
@@ -212,7 +212,17 @@ async function updateCustomer(id, data, user) {
       WHERE id = ?
     `);
     stmt.run(normalizedName, initials, email || null, phone || null, national_id || null, customerStatus, id);
-    return db.sqlite.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+    const updatedRow = db.sqlite.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+    try {
+      await queueSyncOperation(db, null, 'customer', 'update', id, existing.branch_id || user?.branch_id || config.BRANCH_ID || 1, {
+        ...updatedRow,
+        id: Number(id),
+        offline_uuid: updatedRow.offline_uuid || existing.offline_uuid || null,
+      });
+    } catch (e) {
+      console.warn('Failed to queue customer update sync:', e.message);
+    }
+    return updatedRow;
   }
 
   const existingRes = await db.query('SELECT branch_id FROM customers WHERE id = $1', [id]);
@@ -237,7 +247,7 @@ async function updateCustomer(id, data, user) {
 
 async function deleteCustomer(id, user) {
   if (config.IS_BRANCH_MODE) {
-    const check = db.sqlite.prepare('SELECT branch_id FROM customers WHERE id = ?').get(id);
+    const check = db.sqlite.prepare('SELECT id, branch_id, offline_uuid, phone FROM customers WHERE id = ?').get(id);
     if (check && user && user.role !== 'admin' && !hasBranchAccess(user, check.branch_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
@@ -255,7 +265,11 @@ async function deleteCustomer(id, user) {
       db.sqlite.prepare('DELETE FROM customers WHERE id = ?').run(id);
     }
     try {
-      await queueSyncOperation(db, null, 'customer', 'delete', id, user?.branch_id || config.BRANCH_ID || 1, { id });
+      await queueSyncOperation(db, null, 'customer', 'delete', id, check?.branch_id || user?.branch_id || config.BRANCH_ID || 1, {
+        id: Number(id),
+        offline_uuid: check?.offline_uuid || null,
+        phone: check?.phone || null,
+      });
     } catch (e) {
       console.warn('Failed to queue customer delete sync:', e.message);
     }
@@ -308,7 +322,26 @@ async function getCustomerHistory(id, user, requestedLimit = 200) {
       throw err;
     }
     const orders = db.sqlite.prepare('SELECT * FROM orders WHERE customer_id = ? ORDER BY order_date DESC LIMIT ?').all(id, historyLimit);
-    const rentals = db.sqlite.prepare('SELECT * FROM rentals WHERE customer_id = ? ORDER BY booking_date DESC LIMIT ?').all(id, historyLimit);
+    for (const ord of orders) {
+      ord.items = db.sqlite.prepare(`
+        SELECT oi.*, i.name, i.category, i.size_cut, i.color
+        FROM order_items oi
+        LEFT JOIN inventory i ON oi.inventory_id = i.id
+        WHERE oi.order_id = ?
+      `).all(ord.id);
+    }
+    const rentals = db.sqlite.prepare(`
+      SELECT r.*,
+             COALESCE(ri.name, 'قطعة تأجير') as inventory_name,
+             COALESCE(ri.name, 'قطعة تأجير') as product_name,
+             COALESCE(ri.category, 'تأجير') as category,
+             ri.size_cut as size,
+             ri.color
+      FROM rentals r
+      LEFT JOIN rental_inventory ri ON r.rental_inventory_id = ri.id
+      WHERE r.customer_id = ?
+      ORDER BY r.booking_date DESC LIMIT ?
+    `).all(id, historyLimit);
     const alterations = db.sqlite.prepare('SELECT * FROM alterations WHERE customer_id = ? ORDER BY id DESC LIMIT ?').all(id, historyLimit);
     const returns = db.sqlite.prepare(`
       SELECT ret.* FROM returns ret

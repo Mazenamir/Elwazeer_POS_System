@@ -91,18 +91,22 @@ async function getUserFreshData(userId) {
   }
 
   let user = null;
-  if (config.IS_BRANCH_MODE) {
-    if (!db.sqlite) return null;
-    user = db.sqlite.prepare(`
-      SELECT id, username, role, branch_id, branch_scope, branch_ids, permissions, token_version
-      FROM users WHERE id = ?
-    `).get(numId);
-  } else {
-    const { rows } = await db.query(`
-      SELECT id, username, role, branch_id, branch_scope, branch_ids, permissions, token_version
-      FROM users WHERE id = $1
-    `, [numId]);
-    user = rows[0] || null;
+  try {
+    if (config.IS_BRANCH_MODE) {
+      if (!db.sqlite) return null;
+      user = db.sqlite.prepare(`
+        SELECT id, username, role, branch_id, branch_scope, branch_ids, permissions, token_version
+        FROM users WHERE id = ?
+      `).get(numId);
+    } else {
+      const { rows } = await db.query(`
+        SELECT id, username, role, branch_id, branch_scope, branch_ids, permissions, token_version
+        FROM users WHERE id = $1
+      `, [numId]);
+      user = rows[0] || null;
+    }
+  } catch {
+    return null;
   }
 
   if (!user) {
@@ -460,6 +464,26 @@ async function updateOwnAccount(userId, { current_password, password, new_passwo
           token_version = ?
       WHERE id = ?
     `).run(cleanUsername, cleanFullName !== undefined ? cleanFullName : null, newPasswordHash, nextVersion, userId);
+
+    const syncedRow = db.sqlite.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    if (syncedRow) {
+      try {
+        const { queueSyncOperation } = require('../sync/sync.service');
+        await queueSyncOperation(db, null, 'user', 'update', userId, syncedRow.branch_id || null, {
+          id: syncedRow.id,
+          username: syncedRow.username,
+          full_name: syncedRow.full_name,
+          password_hash: syncedRow.password_hash,
+          role: syncedRow.role,
+          branch_id: syncedRow.branch_id,
+          permissions: syncedRow.permissions,
+          employee_id: syncedRow.employee_id,
+          branch_scope: syncedRow.branch_scope,
+          branch_ids: syncedRow.branch_ids,
+          token_version: syncedRow.token_version,
+        });
+      } catch {}
+    }
   } else {
     await db.query(`
       UPDATE users
@@ -632,6 +656,23 @@ async function createBranchUser({
     );
 
     const newId = info.lastInsertRowid;
+    try {
+      const { queueSyncOperation } = require('../sync/sync.service');
+      await queueSyncOperation(db, null, 'user', 'create', newId, assignedBranchId || null, {
+        id: newId,
+        full_name: cleanFullName || null,
+        username: cleanUsername,
+        password_hash: passwordHash,
+        role: assignedRole,
+        branch_id: assignedBranchId,
+        permissions: finalPermissions,
+        employee_id: assignedEmployeeId,
+        branch_scope: assignedScope,
+        branch_ids: finalBranchIds,
+        token_version: 1,
+      });
+    } catch {}
+
     await auditService.log({
       action: 'user_created',
       resourceType: 'user',
@@ -923,6 +964,26 @@ async function updateBranchUser(id, {
 
     invalidateUserCache(id);
 
+    const syncedRow = db.sqlite.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (syncedRow) {
+      try {
+        const { queueSyncOperation } = require('../sync/sync.service');
+        await queueSyncOperation(db, null, 'user', 'update', Number(id), syncedRow.branch_id || null, {
+          id: syncedRow.id,
+          username: syncedRow.username,
+          full_name: syncedRow.full_name,
+          password_hash: syncedRow.password_hash,
+          role: syncedRow.role,
+          branch_id: syncedRow.branch_id,
+          permissions: syncedRow.permissions,
+          employee_id: syncedRow.employee_id,
+          branch_scope: syncedRow.branch_scope,
+          branch_ids: syncedRow.branch_ids,
+          token_version: syncedRow.token_version,
+        });
+      } catch {}
+    }
+
     await auditService.log({
       action: 'user_updated',
       resourceType: 'user',
@@ -1065,7 +1126,17 @@ async function deleteBranchUser(id) {
   revokeUserId(id);
 
   if (config.IS_BRANCH_MODE) {
+    const existing = db.sqlite.prepare("SELECT id, username, branch_id FROM users WHERE id = ? AND role != 'admin'").get(id);
     db.sqlite.prepare("DELETE FROM users WHERE id = ? AND role != 'admin'").run(id);
+    if (existing) {
+      try {
+        const { queueSyncOperation } = require('../sync/sync.service');
+        await queueSyncOperation(db, null, 'user', 'delete', Number(id), existing.branch_id || null, {
+          id: existing.id,
+          username: existing.username,
+        });
+      } catch {}
+    }
   } else {
     await db.query("DELETE FROM users WHERE id = $1 AND role != 'admin'", [id]);
   }

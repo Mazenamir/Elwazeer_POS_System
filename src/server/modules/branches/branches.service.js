@@ -105,7 +105,9 @@ async function updateBranch(id, data) {
           invoice_logo_height = COALESCE(?, invoice_logo_height), invoice_logo_spacing = COALESCE(?, invoice_logo_spacing), invoice_logo_filter = COALESCE(?, invoice_logo_filter),
           invoice_logo_bg_enabled = COALESCE(?, invoice_logo_bg_enabled), invoice_logo_bg_start = COALESCE(?, invoice_logo_bg_start), invoice_logo_bg_end = COALESCE(?, invoice_logo_bg_end),
           allowed_gender = COALESCE(?, allowed_gender),
-          rentals_enabled = COALESCE(?, rentals_enabled)
+          rentals_enabled = COALESCE(?, rentals_enabled),
+          cashier_footer = COALESCE(?, cashier_footer),
+          rental_footer = COALESCE(?, rental_footer)
       WHERE id = ?
     `);
     stmt.run(
@@ -122,9 +124,18 @@ async function updateBranch(id, data) {
       data.invoice_logo_bg_end !== undefined ? logoSettings.invoice_logo_bg_end : null,
       data.allowed_gender !== undefined ? data.allowed_gender : null,
       rentalsEnabled,
+      data.cashier_footer !== undefined ? data.cashier_footer : null,
+      data.rental_footer !== undefined ? data.rental_footer : null,
       id
     );
-    return db.sqlite.prepare('SELECT * FROM branches WHERE id = ?').get(id);
+    const updatedBranch = db.sqlite.prepare('SELECT * FROM branches WHERE id = ?').get(id);
+    if (updatedBranch) {
+      try {
+        const { queueSyncOperation } = require('../sync/sync.service');
+        await queueSyncOperation(db, null, 'branch', 'update', Number(id), Number(id), updatedBranch);
+      } catch {}
+    }
+    return updatedBranch;
   }
 
   const { rows } = await db.query(
@@ -141,8 +152,10 @@ async function updateBranch(id, data) {
          invoice_logo_bg_start = COALESCE($10, invoice_logo_bg_start),
          invoice_logo_bg_end = COALESCE($11, invoice_logo_bg_end),
          allowed_gender = COALESCE($12, allowed_gender),
-         rentals_enabled = COALESCE($13, rentals_enabled)
-     WHERE id = $14
+         rentals_enabled = COALESCE($13, rentals_enabled),
+         cashier_footer = COALESCE($14, cashier_footer),
+         rental_footer = COALESCE($15, rental_footer)
+     WHERE id = $16
      RETURNING *`,
     [
       name !== undefined ? name : null,
@@ -158,6 +171,8 @@ async function updateBranch(id, data) {
       data.invoice_logo_bg_end !== undefined ? logoSettings.invoice_logo_bg_end : null,
       data.allowed_gender !== undefined ? data.allowed_gender : null,
       pgRentalsEnabled,
+      data.cashier_footer !== undefined ? data.cashier_footer : null,
+      data.rental_footer !== undefined ? data.rental_footer : null,
       id,
     ]
   );

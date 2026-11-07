@@ -25,9 +25,11 @@ async function getRentalAvailability(queryable, rentalInventoryId, branchId, pic
 
   const { rows } = await queryable.query(`
     WITH ${isBranch ? 'RECURSIVE' : ''} stock AS (
-      SELECT COALESCE(stock_level, 0)::int as stock_level
-      FROM rental_inventory_branches
-      WHERE rental_inventory_id = $1 AND branch_id = $2
+      SELECT COALESCE(
+        (SELECT stock_level FROM rental_inventory_branches WHERE rental_inventory_id = $1 AND branch_id = $2),
+        (SELECT stock_level FROM rental_inventory WHERE id = $1),
+        0
+      )::int as stock_level
     ),
     active_out AS (
       SELECT COUNT(*)::int as qty

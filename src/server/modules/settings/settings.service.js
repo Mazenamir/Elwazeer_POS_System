@@ -111,8 +111,13 @@ async function saveSettings(settingsObj, user = null) {
       INSERT INTO settings (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `);
+    const { queueSyncOperation } = require('../sync/sync.service');
     for (const [key, value] of Object.entries(entriesToSave)) {
-      stmt.run(key, String(value ?? ''));
+      const strVal = String(value ?? '');
+      stmt.run(key, strVal);
+      try {
+        await queueSyncOperation(db, null, 'settings', 'update', null, user?.branch_id || null, { key, value: strVal });
+      } catch {}
     }
     return { success: true };
   }

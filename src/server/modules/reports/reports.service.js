@@ -564,11 +564,18 @@ async function getProfitReport(query = {}, user = null) {
       `SELECT branch_id, COALESCE(SUM(total), 0) as total
        FROM (
          SELECT branch_id,
-                CASE
-                  WHEN COALESCE(cash_amount, 0) > 0 THEN cash_amount
-                  WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN GREATEST(0, paid_amount - COALESCE(change_amount, 0))
-                  ELSE 0
-                END as total
+                GREATEST(0, (
+                  CASE
+                    WHEN COALESCE(cash_amount, 0) > 0 THEN cash_amount
+                    WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN GREATEST(0, paid_amount - COALESCE(change_amount, 0))
+                    ELSE 0
+                  END
+                ) - COALESCE((
+                  SELECT SUM(op_sub.amount)
+                  FROM order_payments op_sub
+                  WHERE op_sub.order_id = orders.id
+                    AND ${normalizedPaymentMethodSql('op_sub.payment_method')} = 'cash'
+                ), 0)) as total
          FROM orders
          WHERE branch_id = ANY($1::int[])
            AND status <> 'cancelled'
@@ -580,11 +587,18 @@ async function getProfitReport(query = {}, user = null) {
            )
          UNION ALL
          SELECT branch_id,
-                CASE
-                  WHEN ${normalizedPaymentMethodSql('payment_method')} = 'split' THEN COALESCE(cash_amount, 0)
-                  WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN COALESCE(NULLIF(paid_amount, 0), deposit, 0)
-                  ELSE 0
-                END as total
+                GREATEST(0, (
+                  CASE
+                    WHEN ${normalizedPaymentMethodSql('payment_method')} = 'split' THEN COALESCE(cash_amount, 0)
+                    WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN COALESCE(NULLIF(paid_amount, 0), deposit, 0)
+                    ELSE 0
+                  END
+                ) - COALESCE((
+                  SELECT SUM(rp_sub.amount)
+                  FROM rental_payments rp_sub
+                  WHERE rp_sub.rental_id = rentals.id
+                    AND ${normalizedPaymentMethodSql('rp_sub.payment_method')} = 'cash'
+                ), 0)) as total
          FROM rentals
          WHERE branch_id = ANY($1::int[])
            AND status <> 'cancelled'
@@ -617,6 +631,34 @@ async function getProfitReport(query = {}, user = null) {
            AND p.payment_date >= $2::date
            AND p.payment_date < $3::date
            AND ${normalizedPaymentMethodSql('COALESCE(p.payment_method, t.payment_method)')} = 'cash'
+
+           UNION ALL
+
+           SELECT op.branch_id, op.amount as total
+
+           FROM order_payments op
+
+           WHERE op.branch_id = ANY($1::int[])
+
+             AND op.payment_date >= $2::date
+
+             AND op.payment_date < $3::date
+
+             AND ${normalizedPaymentMethodSql('op.payment_method')} = 'cash'
+
+           UNION ALL
+
+           SELECT rp.branch_id, rp.amount as total
+
+           FROM rental_payments rp
+
+           WHERE rp.branch_id = ANY($1::int[])
+
+             AND rp.payment_date >= $2::date
+
+             AND rp.payment_date < $3::date
+
+             AND ${normalizedPaymentMethodSql('rp.payment_method')} = 'cash'
        ) cash_payments
        GROUP BY branch_id`,
       reportParams
@@ -1749,11 +1791,18 @@ async function getDailyReport(query = {}, user = null) {
         `SELECT branch_id, COALESCE(SUM(total), 0) as total
          FROM (
            SELECT branch_id,
-                  CASE
-                    WHEN COALESCE(cash_amount, 0) > 0 THEN cash_amount
-                    WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN GREATEST(0, paid_amount - COALESCE(change_amount, 0))
-                    ELSE 0
-                  END as total
+                  GREATEST(0, (
+                    CASE
+                      WHEN COALESCE(cash_amount, 0) > 0 THEN cash_amount
+                      WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN GREATEST(0, paid_amount - COALESCE(change_amount, 0))
+                      ELSE 0
+                    END
+                  ) - COALESCE((
+                    SELECT SUM(op_sub.amount)
+                    FROM order_payments op_sub
+                    WHERE op_sub.order_id = orders.id
+                      AND ${normalizedPaymentMethodSql('op_sub.payment_method')} = 'cash'
+                  ), 0)) as total
            FROM orders
            WHERE branch_id = ANY($1::int[])
              AND status <> 'cancelled'
@@ -1765,11 +1814,18 @@ async function getDailyReport(query = {}, user = null) {
              )
            UNION ALL
            SELECT branch_id,
-                  CASE
-                    WHEN ${normalizedPaymentMethodSql('payment_method')} = 'split' THEN COALESCE(cash_amount, 0)
-                    WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN COALESCE(NULLIF(paid_amount, 0), deposit, 0)
-                    ELSE 0
-                  END as total
+                  GREATEST(0, (
+                    CASE
+                      WHEN ${normalizedPaymentMethodSql('payment_method')} = 'split' THEN COALESCE(cash_amount, 0)
+                      WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN COALESCE(NULLIF(paid_amount, 0), deposit, 0)
+                      ELSE 0
+                    END
+                  ) - COALESCE((
+                    SELECT SUM(rp_sub.amount)
+                    FROM rental_payments rp_sub
+                    WHERE rp_sub.rental_id = rentals.id
+                      AND ${normalizedPaymentMethodSql('rp_sub.payment_method')} = 'cash'
+                  ), 0)) as total
            FROM rentals
            WHERE branch_id = ANY($1::int[])
              AND status <> 'cancelled'
@@ -1802,6 +1858,34 @@ async function getDailyReport(query = {}, user = null) {
              AND p.payment_date >= $2::date
              AND p.payment_date < $3::date
              AND ${normalizedPaymentMethodSql('COALESCE(p.payment_method, t.payment_method)')} = 'cash'
+
+             UNION ALL
+
+             SELECT op.branch_id, op.amount as total
+
+             FROM order_payments op
+
+             WHERE op.branch_id = ANY($1::int[])
+
+               AND op.payment_date >= $2::date
+
+               AND op.payment_date < $3::date
+
+               AND ${normalizedPaymentMethodSql('op.payment_method')} = 'cash'
+
+             UNION ALL
+
+             SELECT rp.branch_id, rp.amount as total
+
+             FROM rental_payments rp
+
+             WHERE rp.branch_id = ANY($1::int[])
+
+               AND rp.payment_date >= $2::date
+
+               AND rp.payment_date < $3::date
+
+               AND ${normalizedPaymentMethodSql('rp.payment_method')} = 'cash'
          ) cash_payments
          GROUP BY branch_id`,
         reportParams
@@ -3910,6 +3994,13 @@ async function updateDailyAttendanceQuick(data = {}, user = null) {
     resolvedStatus
   ]);
 
+  try {
+    const { queueSyncOperation } = require('../sync/sync.service');
+    if (res.rows[0]) {
+      await queueSyncOperation(db, null, 'attendance', 'upsert', res.rows[0].id, emp.branch_id, res.rows[0]);
+    }
+  } catch {}
+
   return {
     success: true,
     ...res.rows[0],
@@ -3921,6 +4012,7 @@ module.exports = {
   getDashboard,
   getTopProductsByBranch,
   getProfitReport,
+  getMonthlyReport: getProfitReport,
   getMonthlyHistory,
   getDailyHistory,
   getTopProductsReport,

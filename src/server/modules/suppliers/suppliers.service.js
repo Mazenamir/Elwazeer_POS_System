@@ -376,6 +376,23 @@ async function createSupplyRecord(payload, user) {
       [total_cost, supplier_id]
     );
 
+    await queueSyncOperation(tx, null, 'supplier_transaction', 'create', rows[0].id, b_id, {
+      supplier_id,
+      transaction_type: 'purchase',
+      amount: total_cost,
+      notes: 'فاتورة مشتريات بضاعة (إذن إضافة)',
+      branch_id: b_id,
+      purchase_batch_id: batchId,
+      supply_items: [{
+        inventory_id,
+        quantity: supplyQty,
+        cost_price,
+        notes: notes || null,
+        size: size || null,
+        color: color || null,
+      }],
+    });
+
     return rows[0];
   });
 
@@ -429,6 +446,25 @@ async function bulkRestock(payload, user) {
         `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
         [total_cost, supplier_id]
       );
+
+      await queueSyncOperation(tx, null, 'supplier_transaction', 'create', null, b_id, {
+        supplier_id,
+        transaction_type: 'purchase',
+        amount: total_cost,
+        notes: `فاتورة مشتريات بضاعة (إذن إضافة مجموعة) - عدد ${totalQty} قطعة`,
+        branch_id: b_id,
+        purchase_batch_id: batchId,
+        supply_items: (items || [])
+          .filter((it) => (parseInt(it.quantity, 10) || 0) > 0)
+          .map((it) => ({
+            inventory_id: it.inventory_id,
+            quantity: parseInt(it.quantity, 10) || 0,
+            cost_price: cost,
+            notes: 'توريد كميات (مجموعة)',
+            size: it.size || null,
+            color: it.color || null,
+          })),
+      });
     }
 
     return { success: true, totalQty, total_cost };

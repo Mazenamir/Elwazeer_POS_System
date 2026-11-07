@@ -137,7 +137,25 @@ async function createAlteration(body, user) {
     [order_id, customer_id, b_id, description, due_date, finalInventoryId]
   );
   const createdAlt = rows[0];
-  await queueSyncOperation(db, null, 'alteration', 'create', createdAlt.id, b_id, createdAlt);
+  let orderOfflineUuid = null;
+  let customerOfflineUuid = null;
+  if (order_id) {
+    try {
+      const ordCheck = await db.query('SELECT offline_uuid FROM orders WHERE id = $1', [order_id]);
+      orderOfflineUuid = ordCheck.rows[0]?.offline_uuid || null;
+    } catch {}
+  }
+  if (customer_id) {
+    try {
+      const custCheck = await db.query('SELECT offline_uuid FROM customers WHERE id = $1', [customer_id]);
+      customerOfflineUuid = custCheck.rows[0]?.offline_uuid || null;
+    } catch {}
+  }
+  await queueSyncOperation(db, null, 'alteration', 'create', createdAlt.id, b_id, {
+    ...createdAlt,
+    order_offline_uuid: orderOfflineUuid,
+    customer_offline_uuid: customerOfflineUuid,
+  });
   return createdAlt;
 }
 
@@ -459,6 +477,7 @@ async function createTailoringOrder(body, user, req = null) {
       paid_amount: order.paid_amount,
       remaining_amount: order.remaining_amount,
       payment_method: order.payment_method,
+      payments: order.payments,
       seller_id: order.seller_id,
       branch_id: branchId,
       created_by: order.created_by,
@@ -642,6 +661,7 @@ async function payRemainingTailoringOrder(id, user, body = {}, req = null) {
       remaining_amount: newRemainingAmount,
       payment_method: finalOrderPaymentMethod,
       payment_to_apply: paymentToApply,
+      payment_splits: hasSplits ? incomingSplits : null,
       branch_id: order.branch_id,
     }
     );

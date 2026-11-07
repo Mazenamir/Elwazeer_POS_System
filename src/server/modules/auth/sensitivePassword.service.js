@@ -545,6 +545,11 @@ async function removeSensitivePassword(type, adminUser = null) {
     if (db.sqlite) {
       db.sqlite.prepare('DELETE FROM settings WHERE key IN (?, ?)').run(hashKey, baseKey);
     }
+    try {
+      await queueSyncOperation(db, null, 'settings', 'delete', null, null, { key: hashKey, base_key: baseKey });
+    } catch (syncErr) {
+      console.warn('[SensitivePassword] Failed to queue settings delete mutation:', syncErr.message);
+    }
   } else {
     await db.query('DELETE FROM settings WHERE key IN ($1, $2)', [hashKey, baseKey]);
   }

@@ -99,7 +99,11 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'rental_inventory', 'size_id', 'INTEGER');
   ensureSqliteColumn(sqlite, 'rental_inventory', 'gender', "TEXT DEFAULT 'both'");
   ensureSqliteColumn(sqlite, 'order_items', 'size', 'TEXT');
+  ensureSqliteColumn(sqlite, 'return_items', 'size', 'TEXT');
   ensureSqliteColumn(sqlite, 'returns', 'refund_method', "TEXT DEFAULT 'cash'");
+  ensureSqliteColumn(sqlite, 'customers', 'wallet_balance', 'REAL DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'employees', 'join_date', 'TEXT');
+  ensureSqliteColumn(sqlite, 'employees', 'offline_uuid', 'TEXT');
   ensureSqliteColumn(sqlite, 'users', 'full_name', 'TEXT');
   ensureSqliteColumn(sqlite, 'users', 'branch_scope', "TEXT DEFAULT 'single'");
   ensureSqliteColumn(sqlite, 'users', 'branch_ids', "TEXT DEFAULT '[]'");
@@ -109,6 +113,57 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'branches', 'allowed_gender', "TEXT DEFAULT 'both'");
   ensureSqliteColumn(sqlite, 'branches', 'cashier_footer', 'TEXT');
   ensureSqliteColumn(sqlite, 'branches', 'rental_footer', 'TEXT');
+  try {
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_sizes_unique_branch
+      ON inventory_sizes (inventory_id, LOWER(TRIM(size_name)), LOWER(TRIM(COALESCE(color_name, ''))), COALESCE(branch_id, 1));
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_offline_uuid
+      ON employees (offline_uuid) WHERE offline_uuid IS NOT NULL;
+    `);
+  } catch {}
+}
+
+function parseJsonAggValue(val) {
+  if (typeof val === 'string') {
+    const t = val.trim();
+    if ((t.startsWith('[') && t.endsWith(']')) || (t.startsWith('{') && t.endsWith('}'))) {
+      try {
+        return parseJsonAggValue(JSON.parse(t));
+      } catch {
+        return val;
+      }
+    }
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val.map(parseJsonAggValue);
+  }
+  if (val && typeof val === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) {
+      out[k] = parseJsonAggValue(v);
+    }
+    return out;
+  }
+  return val;
+}
+
+function normalizeJsonAggRows(rows, sql) {
+  if (!/\bjson_group_(?:array|object)\b/i.test(sql)) {
+    return rows.map((r) => ({ ...r }));
+  }
+  return rows.map((r) => {
+    const copy = { ...r };
+    for (const [k, v] of Object.entries(copy)) {
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if ((t.startsWith('[') && t.endsWith(']')) || (t.startsWith('{') && t.endsWith('}'))) {
+          copy[k] = parseJsonAggValue(v);
+        }
+      }
+    }
+    return copy;
+  });
 }
 
 function registerSqliteFunctions(dbInstance) {
@@ -154,13 +209,21 @@ function registerSqliteFunctions(dbInstance) {
   dbInstance.function('pg_get_serial_sequence', { varargs: true }, () => '');
   dbInstance.function('to_char', { varargs: true }, (val, fmt) => {
     if (!val) return null;
-    if (typeof val === 'number' && typeof fmt === 'string' && !fmt.startsWith('YY') && !fmt.startsWith('HH')) {
+    if (typeof val === 'number' && typeof fmt === 'string' && !fmt.startsWith('YY') && !fmt.startsWith('HH') && !fmt.startsWith('DD') && fmt !== 'Day') {
       return String(val);
     }
     const d = new Date(val);
     if (isNaN(d.getTime())) return String(val);
     if (fmt === 'YYYY-MM-DD') return d.toISOString().slice(0, 10);
     if (fmt === 'YYYY-MM') return d.toISOString().slice(0, 7);
+    if (fmt === 'DD/MM') {
+      return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    }
+    if (fmt === 'Day') {
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      return days[d.getUTCDay()];
+    }
+    if (fmt === 'HH24:00') return `${String(d.getHours()).padStart(2, '0')}:00`;
     if (fmt === 'HH24:MI') return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     if (fmt === 'HH12:MI AM') {
       const hours = d.getHours();
@@ -281,8 +344,8 @@ function translatePgToSqlite(sql) {
   s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime($1, '-$2 $3')");
 
   // Intervals with param multiplication: date - ($1 * INTERVAL '1 day') -> datetime(date, '-' || $1 || ' day')
-  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '-' || $2 || ' day')");
-  s = s.replace(/(\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '+' || $2 || ' day')");
+  s = s.replace(/(date\('now',\s*'localtime'\)|datetime\('now',\s*'localtime'\)|\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*-\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '-' || $2 || ' day')");
+  s = s.replace(/(date\('now',\s*'localtime'\)|datetime\('now',\s*'localtime'\)|\$\d+|\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\+\s*\(\s*(\$\d+|\d+)\s*\*\s*INTERVAL\s+'1\s*day'\s*\)/gi, "datetime($1, '+' || $2 || ' day')");
 
   // $1 -> ?1
   s = s.replace(/\$(\d+)/g, '?$1');
@@ -300,58 +363,6 @@ if (config.IS_BRANCH_MODE) {
   sqliteDb.exec('PRAGMA busy_timeout = 5000;');
   ensureSqliteCoreColumns(sqliteDb);
   registerSqliteFunctions(sqliteDb);
-
-  // Register custom SQLite functions for seamless Postgres compatibility
-  sqliteDb.function('regexp', (pattern, val) => {
-    try {
-      return new RegExp(pattern).test(String(val ?? '')) ? 1 : 0;
-    } catch {
-      return 0;
-    }
-  });
-  sqliteDb.function('gen_random_uuid', () => crypto.randomUUID());
-  sqliteDb.function('now', () => new Date().toISOString());
-  sqliteDb.function('timezone', { varargs: true }, (tz, dt) => dt || new Date().toISOString());
-  sqliteDb.function('date_trunc', { varargs: true }, (unit, dateStr) => {
-    if (!dateStr) return null;
-    const str = String(dateStr).trim();
-    if (unit === 'month') {
-      return str.slice(0, 7) + '-01';
-    }
-    if (unit === 'year') {
-      return str.slice(0, 4) + '-01-01';
-    }
-    if (unit === 'day') {
-      return str.slice(0, 10);
-    }
-    return str;
-  });
-  sqliteDb.function('pg_advisory_xact_lock', { varargs: true }, () => 1);
-  sqliteDb.function('pg_advisory_lock', { varargs: true }, () => 1);
-  sqliteDb.function('pg_advisory_unlock', { varargs: true }, () => 1);
-  sqliteDb.function('setval', { varargs: true }, () => 1);
-  sqliteDb.function('pg_get_serial_sequence', { varargs: true }, () => '');
-  sqliteDb.function('to_char', { varargs: true }, (val, fmt) => {
-    if (!val) return null;
-    const d = new Date(val);
-    if (isNaN(d.getTime())) return String(val);
-    if (fmt === 'YYYY-MM-DD') {
-      return d.toISOString().slice(0, 10);
-    }
-    if (fmt === 'YYYY-MM') {
-      return d.toISOString().slice(0, 7);
-    }
-    if (fmt === 'HH24:MI') {
-      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    }
-    if (fmt === 'HH12:MI AM') {
-      const hours = d.getHours();
-      const h12 = hours % 12 || 12;
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      return `${String(h12).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} ${ampm}`;
-    }
-    return String(val);
-  });
 
   function executeSqliteQuery(targetDb, rawSql, params = []) {
     const sDb = targetDb || sqliteDb;
@@ -398,7 +409,7 @@ if (config.IS_BRANCH_MODE) {
 
     if (isSelect || hasReturning) {
       const rawRows = stmt.all(...safeParams);
-      const rows = rawRows.map((r) => ({ ...r }));
+      const rows = normalizeJsonAggRows(rawRows, sql);
       return { rows, rowCount: rows.length };
     } else {
       const res = stmt.run(...safeParams);
@@ -532,7 +543,7 @@ if (config.IS_BRANCH_MODE) {
 
     if (isSelect || hasReturning) {
       const rawRows = stmt.all(...safeParams);
-      const rows = rawRows.map((r) => ({ ...r }));
+      const rows = normalizeJsonAggRows(rawRows, sql);
       return { rows, rowCount: rows.length };
     } else {
       const res = stmt.run(...safeParams);

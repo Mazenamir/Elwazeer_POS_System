@@ -373,11 +373,13 @@ async function createEmployee(body, user) {
   const employee = await db.transaction(async (tx) => {
     const cairoNow = await getDatabaseCairoNow(tx);
     const cleanBranchId = (branch_id && Number(branch_id) > 0) ? Number(branch_id) : null;
+    const empUuid = body.offline_uuid || (require('crypto').randomUUID ? require('crypto').randomUUID() : ('emp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9)));
     const empResult = await tx.query(
-      'INSERT INTO employees (name, position, branch_id, basic_salary, phone, join_date, shift_start, shift_end) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [name, position, cleanBranchId, basic_salary || 0, phone, join_date || cairoNow.date, shift_start || null, shift_end || null]
+      'INSERT INTO employees (name, position, branch_id, basic_salary, phone, join_date, shift_start, shift_end, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+      [name, position, cleanBranchId, basic_salary || 0, phone, join_date || cairoNow.date, shift_start || null, shift_end || null, empUuid]
     );
 
+    let createdUser = null;
     if (create_account && username && password) {
       const userCheck = await tx.query('SELECT id FROM users WHERE username = $1', [username]);
       if (userCheck.rows.length > 0) {
@@ -387,17 +389,34 @@ async function createEmployee(body, user) {
       }
 
       const password_hash = await bcrypt.hash(password, 10);
-      await tx.query(
-        'INSERT INTO users (username, password_hash, role, branch_id, permissions, employee_id) VALUES ($1, $2, $3, $4, $5, $6)',
+      const uRes = await tx.query(
+        'INSERT INTO users (username, password_hash, role, branch_id, permissions, employee_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
         [username, password_hash, role || 'branch_user', cleanBranchId, JSON.stringify(normalizedPerms), empResult.rows[0].id]
       );
+      createdUser = uRes.rows?.[0] || null;
     }
 
     if (config.IS_BRANCH_MODE) {
       try {
-        await queueSyncOperation(tx, null, 'employee', 'create', empResult.rows[0].id, cleanBranchId || user?.branch_id || 1, empResult.rows[0]);
+        await queueSyncOperation(tx, null, 'employee', 'create', empResult.rows[0].id, cleanBranchId || user?.branch_id || 1, {
+          ...empResult.rows[0],
+          offline_uuid: empUuid,
+        });
+        if (createdUser) {
+          await queueSyncOperation(tx, null, 'user', 'create', createdUser.id, cleanBranchId || user?.branch_id || 1, {
+            id: createdUser.id,
+            username: createdUser.username,
+            password_hash: createdUser.password_hash,
+            role: createdUser.role,
+            branch_id: createdUser.branch_id,
+            permissions: createdUser.permissions,
+            employee_id: empResult.rows[0].id,
+            employee_offline_uuid: empUuid,
+            full_name: name,
+          });
+        }
       } catch (e) {
-        console.warn('Failed to queue employee create sync:', e.message);
+        console.warn('Failed to queue employee/user create sync:', e.message);
       }
     }
 
@@ -466,16 +485,35 @@ async function updateEmployee(id, body, user) {
       let updateQuery = 'UPDATE users SET username = $1, role = $2, branch_id = $3, permissions = $4';
       const params = [username, role || 'branch_user', branch_id || null, JSON.stringify(permissions)];
 
+      let newPassHash = null;
       if (password) {
-        const password_hash = await bcrypt.hash(password, 10);
+        newPassHash = await bcrypt.hash(password, 10);
         updateQuery += ', password_hash = $5 WHERE employee_id = $6';
-        params.push(password_hash, id);
+        params.push(newPassHash, id);
       } else {
         updateQuery += ' WHERE employee_id = $5';
         params.push(id);
       }
 
       await tx.query(updateQuery, params);
+
+      if (config.IS_BRANCH_MODE) {
+        try {
+          await queueSyncOperation(tx, null, 'user', 'update', userCheck.rows[0].id, branch_id || user?.branch_id || 1, {
+            id: userCheck.rows[0].id,
+            username,
+            role: role || 'branch_user',
+            branch_id: branch_id || null,
+            permissions,
+            employee_id: id,
+            employee_offline_uuid: result.rows[0].offline_uuid,
+            full_name: name || result.rows[0].name,
+            ...(newPassHash ? { password_hash: newPassHash } : {}),
+          });
+        } catch (e) {
+          console.warn('Failed to queue user update sync during employee update:', e.message);
+        }
+      }
     } else if (create_account && username && password) {
       const usernameExists = await tx.query('SELECT id FROM users WHERE username = $1', [username]);
       if (usernameExists.rows.length > 0) {
@@ -485,15 +523,37 @@ async function updateEmployee(id, body, user) {
       }
 
       const password_hash = await bcrypt.hash(password, 10);
-      await tx.query(
-        'INSERT INTO users (username, password_hash, role, branch_id, permissions, employee_id) VALUES ($1, $2, $3, $4, $5, $6)',
+      const newURes = await tx.query(
+        'INSERT INTO users (username, password_hash, role, branch_id, permissions, employee_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
         [username, password_hash, role || 'branch_user', branch_id || null, JSON.stringify(permissions), id]
       );
+      if (config.IS_BRANCH_MODE && newURes.rows?.[0]) {
+        const nu = newURes.rows[0];
+        try {
+          await queueSyncOperation(tx, null, 'user', 'create', nu.id, branch_id || user?.branch_id || 1, {
+            id: nu.id,
+            username: nu.username,
+            password_hash: nu.password_hash,
+            role: nu.role,
+            branch_id: nu.branch_id,
+            permissions: nu.permissions,
+            employee_id: id,
+            employee_offline_uuid: result.rows[0].offline_uuid,
+            full_name: name || result.rows[0].name,
+          });
+        } catch (e) {
+          console.warn('Failed to queue user create sync during employee update:', e.message);
+        }
+      }
     }
 
     if (config.IS_BRANCH_MODE) {
       try {
-        await queueSyncOperation(tx, null, 'employee', 'update', id, branch_id || user?.branch_id || 1, { id, ...body });
+        await queueSyncOperation(tx, null, 'employee', 'update', id, branch_id || user?.branch_id || 1, {
+          id,
+          ...body,
+          offline_uuid: result.rows[0].offline_uuid,
+        });
       } catch (e) {
         console.warn('Failed to queue employee update sync:', e.message);
       }
@@ -518,7 +578,7 @@ async function transferEmployee(id, targetBranchId, user) {
   }
 
   const result = await db.transaction(async (tx) => {
-    const emp = await tx.query('SELECT id, name, branch_id FROM employees WHERE id = $1', [id]);
+    const emp = await tx.query('SELECT id, name, branch_id, offline_uuid FROM employees WHERE id = $1', [id]);
     if (emp.rows.length === 0) {
       const err = new Error('Employee not found');
       err.statusCode = 404;
@@ -528,7 +588,30 @@ async function transferEmployee(id, targetBranchId, user) {
       'UPDATE employees SET branch_id = $1 WHERE id = $2 RETURNING *',
       [targetBranchId, id]
     );
+    const userCheck = await tx.query('SELECT id, username FROM users WHERE employee_id = $1', [id]);
     await tx.query('UPDATE users SET branch_id = $1 WHERE employee_id = $2', [targetBranchId, id]);
+    if (config.IS_BRANCH_MODE) {
+      try {
+        await queueSyncOperation(tx, null, 'employee', 'update', id, targetBranchId, {
+          id,
+          branch_id: targetBranchId,
+          offline_uuid: emp.rows[0].offline_uuid,
+        });
+        if (userCheck.rows.length > 0) {
+          for (const u of userCheck.rows) {
+            await queueSyncOperation(tx, null, 'user', 'update', u.id, targetBranchId, {
+              id: u.id,
+              username: u.username,
+              branch_id: targetBranchId,
+              employee_id: id,
+              employee_offline_uuid: emp.rows[0].offline_uuid,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to queue employee transfer sync:', e.message);
+      }
+    }
     return updated.rows[0];
   });
 
@@ -555,10 +638,32 @@ async function deleteEmployee(id, user) {
       }
     }
 
+    const userCheck = await tx.query('SELECT id, username FROM users WHERE employee_id = $1', [id]);
     await tx.query('DELETE FROM attendance WHERE employee_id = $1', [id]);
     await tx.query('DELETE FROM employee_transactions WHERE employee_id = $1', [id]);
     await tx.query('DELETE FROM users WHERE employee_id = $1', [id]);
-    return tx.query('DELETE FROM employees WHERE id = $1 RETURNING *', [id]);
+    const delRes = await tx.query('DELETE FROM employees WHERE id = $1 RETURNING *', [id]);
+    if (config.IS_BRANCH_MODE && delRes.rows.length > 0) {
+      try {
+        await queueSyncOperation(tx, null, 'employee', 'delete', id, delRes.rows[0].branch_id || user?.branch_id || 1, {
+          id,
+          offline_uuid: delRes.rows[0].offline_uuid,
+        });
+        if (userCheck.rows.length > 0) {
+          for (const u of userCheck.rows) {
+            await queueSyncOperation(tx, null, 'user', 'delete', u.id, delRes.rows[0].branch_id || user?.branch_id || 1, {
+              id: u.id,
+              username: u.username,
+              employee_id: id,
+              employee_offline_uuid: delRes.rows[0].offline_uuid,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to queue employee delete sync:', e.message);
+      }
+    }
+    return delRes;
   });
 
   if (result.rows.length === 0) {
@@ -805,6 +910,21 @@ async function handleCheckoutReminder(id, attendanceDate, user) {
      RETURNING *`,
     [time, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours]
   );
+  if (result.rows.length > 0) {
+    const branchId = employee.branch_id || config.BRANCH_ID || 1;
+    await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
+      employee_id: result.rows[0].employee_id,
+      date: result.rows[0].date,
+      check_in: result.rows[0].check_in,
+      check_out: result.rows[0].check_out,
+      status: result.rows[0].status,
+      notes: result.rows[0].notes,
+      total_hours: result.rows[0].total_hours,
+      late_minutes: result.rows[0].late_minutes,
+      early_departure_minutes: result.rows[0].early_departure_minutes,
+      overtime_minutes: result.rows[0].overtime_minutes,
+    });
+  }
   return { action: 'check_out', attendance: result.rows[0] };
 }
 

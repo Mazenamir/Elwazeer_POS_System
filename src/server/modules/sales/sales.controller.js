@@ -52,7 +52,7 @@ async function getOrderDetails(req, res, next) {
 
 async function updateOrder(req, res, next) {
   try {
-    const result = await service.updateOrder(req.params.id, req.body, req.user);
+    const result = await service.updateOrder(req.params.id, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     next(err);

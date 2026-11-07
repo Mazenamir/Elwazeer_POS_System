@@ -316,10 +316,18 @@ function searchSqlite({ queryStr, pattern, cleanNum, isNumeric, effectiveBranchI
         SELECT id, name, category, color, size_cut, barcode, price, stock_level, image_url
         FROM inventory
         WHERE is_deleted = 0
-          AND (name LIKE ? OR barcode LIKE ? OR category LIKE ? OR color LIKE ? ${safeNum !== null ? `OR id = ${safeNum}` : ''})
+          AND (
+            name LIKE ?
+            OR barcode LIKE ?
+            OR category LIKE ?
+            OR color LIKE ?
+            OR COALESCE(size_cut, '') LIKE ?
+            OR EXISTS (SELECT 1 FROM inventory_sizes isz WHERE isz.inventory_id = inventory.id AND isz.barcode LIKE ?)
+            ${safeNum !== null ? `OR id = ${safeNum}` : ''}
+          )
         ORDER BY id DESC
         LIMIT 8
-      `).all(pattern, pattern, pattern, pattern);
+      `).all(pattern, pattern, pattern, pattern, pattern, pattern);
       out.products = pRows;
       out.total_matches += pRows.length;
     }
@@ -329,13 +337,44 @@ function searchSqlite({ queryStr, pattern, cleanNum, isNumeric, effectiveBranchI
         SELECT c.id, c.name, c.initials, c.phone, c.status, c.total_spent, c.branch_id, b.name as branch_name
         FROM customers c
         LEFT JOIN branches b ON c.branch_id = b.id
-        WHERE (c.name LIKE ? OR c.phone LIKE ? ${safeNum !== null ? `OR c.id = ${safeNum}` : ''})
+        WHERE (c.name LIKE ? OR c.phone LIKE ? OR COALESCE(c.national_id, '') LIKE ? ${safeNum !== null ? `OR c.id = ${safeNum}` : ''})
         ${safeBranchId !== null ? `AND c.branch_id = ${safeBranchId}` : ''}
         ORDER BY c.id ASC
         LIMIT 8
-      `).all(pattern, pattern);
+      `).all(pattern, pattern, pattern);
       out.customers = cRows;
       out.total_matches += cRows.length;
+    }
+
+    if (type === 'all' || type === 'orders') {
+      const oRows = db.sqlite.prepare(`
+        SELECT
+          o.id,
+          o.branch_invoice_number,
+          o.total_amount,
+          o.paid_amount,
+          o.status,
+          o.payment_method,
+          o.order_date,
+          o.branch_id,
+          c.name as customer_name,
+          c.phone as customer_phone,
+          b.name as branch_name
+        FROM orders o
+        LEFT JOIN customers c ON o.customer_id = c.id
+        LEFT JOIN branches b ON o.branch_id = b.id
+        WHERE (
+          COALESCE(c.name, '') LIKE ?
+          OR COALESCE(c.phone, '') LIKE ?
+          OR COALESCE(o.offline_uuid, '') LIKE ?
+          ${safeNum !== null ? `OR o.branch_invoice_number = ${safeNum} OR o.id = ${safeNum}` : ''}
+        )
+        ${safeBranchId !== null ? `AND o.branch_id = ${safeBranchId}` : ''}
+        ORDER BY o.order_date DESC, o.id DESC
+        LIMIT 8
+      `).all(pattern, pattern, pattern);
+      out.orders = oRows;
+      out.total_matches += oRows.length;
     }
 
     if (type === 'all' || type === 'employees') {
@@ -343,13 +382,30 @@ function searchSqlite({ queryStr, pattern, cleanNum, isNumeric, effectiveBranchI
         SELECT e.id, e.name, e.phone, e.position, e.status, e.branch_id, b.name as branch_name
         FROM employees e
         LEFT JOIN branches b ON e.branch_id = b.id
-        WHERE (e.name LIKE ? OR e.phone LIKE ? OR e.position LIKE ? ${safeNum !== null ? `OR e.id = ${safeNum}` : ''})
+        WHERE (e.name LIKE ? OR e.phone LIKE ? OR COALESCE(e.position, '') LIKE ? ${safeNum !== null ? `OR e.id = ${safeNum}` : ''})
         ${safeBranchId !== null ? `AND e.branch_id = ${safeBranchId}` : ''}
-        ORDER BY e.name ASC
+        ORDER BY e.name ASC, e.id ASC
         LIMIT 8
       `).all(pattern, pattern, pattern);
       out.employees = eRows;
       out.total_matches += eRows.length;
+    }
+
+    if (type === 'all' || type === 'suppliers') {
+      const sRows = db.sqlite.prepare(`
+        SELECT id, name, code, phone
+        FROM suppliers
+        WHERE (
+          name LIKE ?
+          OR COALESCE(code, '') LIKE ?
+          OR COALESCE(phone, '') LIKE ?
+          ${safeNum !== null ? `OR id = ${safeNum}` : ''}
+        )
+        ORDER BY name ASC
+        LIMIT 8
+      `).all(pattern, pattern, pattern);
+      out.suppliers = sRows;
+      out.total_matches += sRows.length;
     }
   } catch (err) {
     console.error('[Search] SQLite search error:', err.message);

@@ -1,3 +1,4 @@
+process.env.APP_MODE = process.env.APP_MODE || 'branch';
 /**
  * Elwazeer POS System — Reports Routes & Master Sheet Parity Test Suite
  * 

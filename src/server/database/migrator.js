@@ -232,7 +232,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       return_id INTEGER,
       inventory_id INTEGER,
       quantity INTEGER NOT NULL,
-      price_at_time REAL NOT NULL
+      price_at_time REAL NOT NULL,
+      size TEXT
     );
 
     CREATE TABLE IF NOT EXISTS rentals (
@@ -291,7 +292,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       join_date TEXT DEFAULT CURRENT_DATE,
       shift_start TEXT,
       shift_end TEXT,
-      status TEXT DEFAULT 'active'
+      status TEXT DEFAULT 'active',
+      offline_uuid TEXT UNIQUE
     );
 
     CREATE TABLE IF NOT EXISTS attendance (
@@ -661,6 +663,11 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec("ALTER TABLE branches ADD COLUMN rental_footer TEXT"); } catch {}
 
   try { sqlite.exec("ALTER TABLE order_items ADD COLUMN size TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE return_items ADD COLUMN size TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0"); } catch {}
+  try { sqlite.exec("ALTER TABLE employees ADD COLUMN join_date TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE employees ADD COLUMN offline_uuid TEXT"); } catch {}
+  try { sqlite.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_offline_uuid ON employees (offline_uuid) WHERE offline_uuid IS NOT NULL"); } catch {}
   try { sqlite.exec("ALTER TABLE return_items ADD COLUMN discount REAL DEFAULT 0"); } catch {}
   try { sqlite.exec("ALTER TABLE return_items ADD COLUMN discount_type TEXT DEFAULT 'amount'"); } catch {}
 
