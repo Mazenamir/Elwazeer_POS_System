@@ -6,7 +6,7 @@ const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/u
 const { clampInt, parsePositiveInt } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
-const { queueSyncOperation } = require('../../database/sync.helpers');
+const { queueSyncOperation, getSupplierSyncRef } = require('../../database/sync.helpers');
 
 async function getSupplierOptions(query = {}) {
   const params = [];
@@ -216,8 +216,8 @@ async function createSupplier(payload) {
     [
       normalizedName, initials, code, contact_person, phone, extra_phone, email,
       address, city, country, supplier_type, company_name, tax_id,
-      payment_method || 'نقدي', payment_terms || 0, currency || 'ج.م',
-      moq || 0, lead_time || 0, rating || 5, notes, status || 'active', logo_url, supply_type, normalizedGenderCat,
+      payment_method || 'نقدي', parseInt(payment_terms, 10) || 0, currency || 'ج.م',
+      parseInt(moq, 10) || 0, parseInt(lead_time, 10) || 0, parseInt(rating, 10) || 5, notes, status || 'active', logo_url, supply_type, normalizedGenderCat,
       createdAtVal,
     ]
   );
@@ -376,8 +376,10 @@ async function createSupplyRecord(payload, user) {
       [total_cost, supplier_id]
     );
 
+    const supplierRef = await getSupplierSyncRef(tx, supplier_id);
     await queueSyncOperation(tx, null, 'supplier_transaction', 'create', rows[0].id, b_id, {
       supplier_id,
+      supplier_ref: supplierRef,
       transaction_type: 'purchase',
       amount: total_cost,
       notes: 'فاتورة مشتريات بضاعة (إذن إضافة)',
@@ -447,8 +449,10 @@ async function bulkRestock(payload, user) {
         [total_cost, supplier_id]
       );
 
+      const supplierRef = await getSupplierSyncRef(tx, supplier_id);
       await queueSyncOperation(tx, null, 'supplier_transaction', 'create', null, b_id, {
         supplier_id,
+        supplier_ref: supplierRef,
         transaction_type: 'purchase',
         amount: total_cost,
         notes: `فاتورة مشتريات بضاعة (إذن إضافة مجموعة) - عدد ${totalQty} قطعة`,
@@ -523,9 +527,11 @@ async function createSupplierTransaction(payload, user = null) {
       );
     }
 
+    const supplierRef = await getSupplierSyncRef(tx, supplier_id);
     await queueSyncOperation(tx, null, 'supplier_transaction', 'create', createdTxId, branch_id, {
       id: createdTxId,
       supplier_id,
+      supplier_ref: supplierRef,
       transaction_type,
       amount: safeAmount,
       notes: notes || null,
@@ -591,9 +597,11 @@ async function processSupplierReturn(payload) {
         [supplier_id, item.inventory_id, item.branch_id, -item.quantity, item.cost_price, new Date(), uniqueNote, purchase_transaction_id]
       );
     }
+    const supplierRef = await getSupplierSyncRef(tx, supplier_id);
     await queueSyncOperation(tx, null, 'supplier_transaction', 'create', returnTransactionId, supplier_id, {
       id: returnTransactionId,
       supplier_id,
+      supplier_ref: supplierRef,
       transaction_type: 'return',
       amount: total_amount,
       notes: notes || 'مرتجع بضاعة',

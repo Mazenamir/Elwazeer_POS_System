@@ -18,6 +18,21 @@ async function queueSyncOperation(tx, req, entityType, action, entityId, branchI
   return operationUuid;
 }
 
+// Snapshot of a supplier's identifying fields so the central server can resolve
+// (or create) the same supplier even when branch-local IDs differ from central IDs.
+async function getSupplierSyncRef(q, supplierId) {
+  if (!supplierId) return null;
+  try {
+    const { rows } = await q.query(
+      'SELECT id, name, code, phone, company_name, address, gender_category FROM suppliers WHERE id = $1',
+      [supplierId]
+    );
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 // Activity logger (no-op stub preserved from legacy server.js)
 async function logActivity() {
   return;
@@ -26,5 +41,6 @@ async function logActivity() {
 module.exports = {
   shouldQueueSync,
   queueSyncOperation,
+  getSupplierSyncRef,
   logActivity,
 };

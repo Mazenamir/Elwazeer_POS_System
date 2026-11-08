@@ -5,7 +5,7 @@ const db = require('../../database/connection');
 const config = require('../../config/env');
 const { getInitialsFromName, newUuid } = require('../../../shared/utils/string');
 const { parsePositiveInt } = require('../../../shared/utils/numbers');
-const { logActivity, queueSyncOperation } = require('../../database/sync.helpers');
+const { logActivity, queueSyncOperation, getSupplierSyncRef } = require('../../database/sync.helpers');
 const offlineStore = require('./offline.store');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
@@ -182,6 +182,136 @@ async function resolveSupplierId(tx, candidateSupplierId) {
   }
 }
 
+async function findSupplierByIdentity(tx, ref) {
+  const name = String(ref?.name || '').trim();
+  if (!name) return null;
+  const byName = await tx.query(
+    'SELECT id FROM suppliers WHERE TRIM(name) = $1 ORDER BY COALESCE(is_active, TRUE) DESC, id ASC LIMIT 1',
+    [name]
+  );
+  if (byName.rows.length) return byName.rows[0].id;
+  const code = String(ref?.code || '').trim();
+  if (code) {
+    const byCode = await tx.query('SELECT id FROM suppliers WHERE code = $1 ORDER BY id ASC LIMIT 1', [code]);
+    if (byCode.rows.length) return byCode.rows[0].id;
+  }
+  return null;
+}
+
+// Branch-local supplier IDs are not guaranteed to match central IDs.
+// Resolve by (id + matching name) -> name/code -> create from snapshot.
+async function resolveSupplierForSync(tx, candidateId, ref) {
+  const id = Number(candidateId) || null;
+  const refName = String(ref?.name || '').trim();
+
+  if (refName) {
+    if (id) {
+      const byId = await tx.query('SELECT id, name FROM suppliers WHERE id = $1', [id]);
+      if (byId.rows.length && String(byId.rows[0].name || '').trim() === refName) return id;
+    }
+    const found = await findSupplierByIdentity(tx, ref);
+    if (found) return found;
+    const ins = await tx.query(
+      `INSERT INTO suppliers (
+        name, initials, code, phone, company_name, address, gender_category,
+        payment_method, payment_terms, currency, moq, lead_time, rating, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'رجالي'), $8, $9, $10, $11, $12, $13, 'active')
+       RETURNING id`,
+      [
+        refName,
+        getInitialsFromName(refName),
+        ref.code || null,
+        ref.phone || null,
+        ref.company_name || null,
+        ref.address || null,
+        ref.gender_category || null,
+        ref.payment_method || 'نقدي',
+        parseInt(ref.payment_terms, 10) || 0,
+        ref.currency || 'ج.م',
+        parseInt(ref.moq, 10) || 0,
+        parseInt(ref.lead_time, 10) || 0,
+        parseInt(ref.rating, 10) || 5,
+      ]
+    );
+    return ins.rows[0].id;
+  }
+
+  if (id) {
+    const byId = await tx.query('SELECT id FROM suppliers WHERE id = $1', [id]);
+    if (byId.rows.length) return id;
+  }
+
+  // Safety fallback: if no supplier identity ref was provided and ID does not exist on central,
+  // auto-create a placeholder supplier record so financial transactions never violate FK constraints.
+  const fallbackName = `مورد فرع #${candidateId || 'مجهول'}`;
+  const insFallback = await tx.query(
+    `INSERT INTO suppliers (name, initials, gender_category, notes, status)
+     VALUES ($1, $2, 'مشترك', 'تم إنشاؤه تلقائياً لعدم توفر بيانات المورد أثناء مزامنة المعاملة', 'active')
+     RETURNING id`,
+    [fallbackName, getInitialsFromName(fallbackName)]
+  );
+  return insFallback.rows[0].id;
+}
+
+// Safely resolve user ID against central database; if invalid or missing, returns null
+// to prevent foreign key violations (expenses_created_by_fkey, etc.)
+async function resolveUserId(tx, candidateUserId) {
+  if (!candidateUserId) return null;
+  const num = Number(candidateUserId);
+  if (!Number.isInteger(num) || num <= 0) return null;
+  try {
+    const check = await tx.query('SELECT id FROM users WHERE id = $1 LIMIT 1', [num]);
+    return check.rows.length ? check.rows[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
+// Safely resolve employee ID against central database;
+// checks ID first, then optional phone/name, and auto-provisions placeholder if needed
+async function resolveEmployeeForSync(tx, candidateEmployeeId, employeeRef = null) {
+  const id = Number(candidateEmployeeId) || null;
+  if (id) {
+    try {
+      const check = await tx.query('SELECT id FROM employees WHERE id = $1 LIMIT 1', [id]);
+      if (check.rows.length) return check.rows[0].id;
+    } catch {}
+  }
+  if (employeeRef && typeof employeeRef === 'object') {
+    if (employeeRef.offline_uuid) {
+      try {
+        const byUuid = await tx.query('SELECT id FROM employees WHERE offline_uuid = $1 LIMIT 1', [employeeRef.offline_uuid]);
+        if (byUuid.rows.length) return byUuid.rows[0].id;
+      } catch {}
+    }
+    if (employeeRef.phone) {
+      try {
+        const byPhone = await tx.query('SELECT id FROM employees WHERE phone = $1 LIMIT 1', [employeeRef.phone]);
+        if (byPhone.rows.length) return byPhone.rows[0].id;
+      } catch {}
+    }
+    if (employeeRef.name) {
+      try {
+        const byName = await tx.query('SELECT id FROM employees WHERE TRIM(name) = $1 LIMIT 1', [String(employeeRef.name).trim()]);
+        if (byName.rows.length) return byName.rows[0].id;
+      } catch {}
+    }
+  }
+  if (id) {
+    try {
+      const fallbackName = employeeRef?.name || `موظف فرع #${id}`;
+      const ins = await tx.query(
+        `INSERT INTO employees (name, position, branch_id, basic_salary, status, join_date)
+         VALUES ($1, 'موظف فرع', 1, 0, 'active', CURRENT_DATE)
+         RETURNING id`,
+        [fallbackName]
+      );
+      return ins.rows[0].id;
+    } catch {}
+  }
+  return null;
+}
+
 async function repairAndReviveDeadLetterOperations() {
   const isBranch = Boolean(config.IS_BRANCH_MODE || db._isBranchMode || process.env.APP_MODE === 'branch');
   if (!isBranch) return;
@@ -192,8 +322,11 @@ async function repairAndReviveDeadLetterOperations() {
       FROM sync_queue
       WHERE (status IN ('failed', 'dead_letter') OR last_error IS NOT NULL)
         AND (
-          entity_type IN ('product', 'inventory')
+          entity_type IN ('product', 'inventory', 'supplier', 'supplier_transaction', 'attendance', 'employee_transaction', 'expense', 'worn_product', 'tailoring_order', 'stock_transfer')
           OR last_error LIKE '%inventory_size_id_fkey%'
+          OR last_error LIKE '%supplier_transactions_supplier_id_fkey%'
+          OR last_error LIKE '%employee_id_fkey%'
+          OR last_error LIKE '%invalid input syntax%'
           OR last_error LIKE '%foreign key constraint%'
         )
     `);
@@ -204,8 +337,21 @@ async function repairAndReviveDeadLetterOperations() {
         try { p = JSON.parse(p); } catch { p = null; }
       }
       if (p && typeof p === 'object') {
-        p.size_id = null;
-        p.color_id = null;
+        if (op.entity_type === 'product' || op.entity_type === 'inventory') {
+          p.size_id = null;
+          p.color_id = null;
+        }
+        if (op.entity_type === 'supplier_transaction' || (op.last_error && op.last_error.includes('supplier_id_fkey'))) {
+          if (!p.supplier_ref && p.supplier_id) {
+            p.supplier_ref = await getSupplierSyncRef(db, p.supplier_id);
+          }
+        }
+        if (op.entity_type === 'supplier') {
+          if (p.payment_terms !== undefined) p.payment_terms = parseInt(p.payment_terms, 10) || 0;
+          if (p.moq !== undefined) p.moq = parseInt(p.moq, 10) || 0;
+          if (p.lead_time !== undefined) p.lead_time = parseInt(p.lead_time, 10) || 0;
+          if (p.rating !== undefined) p.rating = parseInt(p.rating, 10) || 5;
+        }
         const serialized = JSON.stringify(p);
         await db.query(
           "UPDATE sync_queue SET payload = $1, status = 'pending', attempts = 0, last_error = NULL WHERE id = $2",
@@ -316,6 +462,10 @@ async function applyOperation(operation) {
 
     if (operation.entity_type === 'expense') {
       const normExpenseMethod = normalizePaymentMethod(payload.payment_method || 'cash');
+      const createdBy = await resolveUserId(tx, payload.created_by);
+      const updatedBy = await resolveUserId(tx, payload.updated_by);
+      const deletedBy = await resolveUserId(tx, payload.deleted_by);
+
       await tx.query(
         `INSERT INTO expenses (branch_id, category, amount, expense_date, notes, offline_uuid, payment_method, created_by, updated_by, is_deleted, deleted_by)
          VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6, COALESCE($7, 'cash'), $8, $9, COALESCE($10, FALSE), $11)
@@ -339,10 +489,10 @@ async function applyOperation(operation) {
           payload.notes || null,
           payload.offline_uuid,
           normExpenseMethod,
-          payload.created_by || null,
-          payload.updated_by || null,
+          createdBy,
+          updatedBy,
           Boolean(payload.is_deleted),
-          payload.deleted_by || null,
+          deletedBy,
         ]
       );
       const marker = `[EXP-${payload.offline_uuid}]`;
@@ -362,17 +512,25 @@ async function applyOperation(operation) {
             [payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, payload.offline_uuid, existingBonus.rows[0].id]
           );
         } else if (payload.employee_id) {
-          await tx.query(
-            `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid)
-             VALUES ($1, 'bonus', $2, COALESCE($3::date, CURRENT_DATE), $4, $5)`,
-            [payload.employee_id, payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, payload.offline_uuid]
-          );
+          const bonusEmpId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
+          if (bonusEmpId) {
+            await tx.query(
+              `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid)
+               VALUES ($1, 'bonus', $2, COALESCE($3::date, CURRENT_DATE), $4, $5)`,
+              [bonusEmpId, payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, payload.offline_uuid]
+            );
+          }
         }
       }
       return;
     }
 
     if (operation.entity_type === 'attendance') {
+      const empId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
+      if (!empId) {
+        console.warn(`[Sync] Attendance skipped: cannot resolve employee #${payload.employee_id}`);
+        return;
+      }
       await tx.query(
         `INSERT INTO attendance
           (employee_id, date, check_in, check_out, status, notes, total_hours, late_minutes, early_departure_minutes, overtime_minutes)
@@ -388,7 +546,7 @@ async function applyOperation(operation) {
            early_departure_minutes = EXCLUDED.early_departure_minutes,
            overtime_minutes = EXCLUDED.overtime_minutes`,
         [
-          payload.employee_id,
+          empId,
           payload.date || null,
           payload.check_in || null,
           payload.check_out || null,
@@ -404,6 +562,11 @@ async function applyOperation(operation) {
     }
 
     if (operation.entity_type === 'employee_transaction') {
+      const empId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
+      if (!empId) {
+        console.warn(`[Sync] Employee transaction skipped: cannot resolve employee #${payload.employee_id}`);
+        return;
+      }
       await tx.query(
         `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid)
          VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6)
@@ -414,7 +577,7 @@ async function applyOperation(operation) {
            transaction_date = EXCLUDED.transaction_date,
            notes = EXCLUDED.notes`,
         [
-          payload.employee_id,
+          empId,
           payload.type,
           payload.amount || 0,
           payload.transaction_date || null,
@@ -530,6 +693,7 @@ async function applyOperation(operation) {
         }
       }
 
+      const reportedBy = await resolveUserId(tx, payload.reported_by);
       await tx.query(
         `INSERT INTO worn_products
           (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, status, reported_by, occurred_at, offline_uuid)
@@ -546,7 +710,7 @@ async function applyOperation(operation) {
           payload.estimated_loss || 0,
           payload.notes || null,
           payload.status || 'recorded',
-          payload.reported_by || null,
+          reportedBy,
           payload.occurred_at || null,
           payload.offline_uuid || null,
         ]
@@ -633,6 +797,9 @@ async function applyOperation(operation) {
         );
         invoiceNumber = String(nextRes.rows[0].next_number);
       }
+      const sellerId = await resolveEmployeeForSync(tx, payload.seller_id);
+      const createdBy = await resolveUserId(tx, payload.created_by);
+
       const insertResult = await tx.query(
         `INSERT INTO tailoring_orders
           (invoice_number, customer_name, customer_phone, product_description, measurements, total_amount,
@@ -650,9 +817,9 @@ async function applyOperation(operation) {
           paidAmount,
           remainingAmount,
           normTailoringMethod,
-          payload.seller_id || null,
+          sellerId,
           branchId,
-          payload.created_by || null,
+          createdBy,
           payload.offline_uuid,
           payload.created_at || null,
         ]
@@ -2210,7 +2377,7 @@ async function applyOperation(operation) {
         }
       }
 
-      const supplierId = payload.supplier_id;
+      const supplierId = await resolveSupplierForSync(tx, payload.supplier_id, payload.supplier_ref);
       const transType = payload.transaction_type || payload.type || 'payment';
       const amount = Number(payload.amount || 0);
       const branchId = payload.branch_id || operation.branch_id || null;
@@ -2273,7 +2440,22 @@ async function applyOperation(operation) {
         return { success: true };
       }
       const supId = payload.id;
-      const existing = supId ? await tx.query('SELECT id FROM suppliers WHERE id = $1', [supId]) : { rows: [] };
+      let targetSupId = null;
+      // Only trust the branch ID for updates when it points to the same-named supplier;
+      // on create, branch-local IDs can collide with unrelated central suppliers.
+      if (operation.action === 'update' && supId) {
+        const byId = await tx.query('SELECT id FROM suppliers WHERE id = $1', [supId]);
+        if (byId.rows.length) targetSupId = byId.rows[0].id;
+      }
+      if (!targetSupId) {
+        targetSupId = await findSupplierByIdentity(tx, payload);
+      }
+      const existing = { rows: targetSupId ? [{ id: targetSupId }] : [] };
+      const safePaymentTerms = parseInt(payload.payment_terms, 10) || 0;
+      const safeMoq = parseInt(payload.moq, 10) || 0;
+      const safeLeadTime = parseInt(payload.lead_time, 10) || 0;
+      const safeRating = parseInt(payload.rating, 10) || 5;
+
       if (existing.rows.length) {
         await tx.query(
           `UPDATE suppliers SET
@@ -2317,17 +2499,17 @@ async function applyOperation(operation) {
             payload.company_name || null,
             payload.tax_id || null,
             payload.payment_method || null,
-            payload.payment_terms !== undefined ? payload.payment_terms : null,
+            payload.payment_terms !== undefined ? safePaymentTerms : null,
             payload.currency || null,
-            payload.moq !== undefined ? payload.moq : null,
-            payload.lead_time !== undefined ? payload.lead_time : null,
-            payload.rating !== undefined ? payload.rating : null,
+            payload.moq !== undefined ? safeMoq : null,
+            payload.lead_time !== undefined ? safeLeadTime : null,
+            payload.rating !== undefined ? safeRating : null,
             payload.notes || null,
             payload.status || null,
             payload.logo_url || null,
             payload.supply_type || null,
             payload.gender_category || null,
-            supId,
+            targetSupId,
           ]
         );
       } else if (supId) {
@@ -2383,11 +2565,11 @@ async function applyOperation(operation) {
             payload.company_name || null,
             payload.tax_id || null,
             payload.payment_method || 'نقدي',
-            payload.payment_terms || 0,
+            safePaymentTerms,
             payload.currency || 'ج.م',
-            payload.moq || 0,
-            payload.lead_time || 0,
-            payload.rating || 5,
+            safeMoq,
+            safeLeadTime,
+            safeRating,
             payload.notes || null,
             payload.status || 'active',
             payload.logo_url || null,
@@ -2396,6 +2578,9 @@ async function applyOperation(operation) {
             payload.created_at || null,
           ]
         );
+        try {
+          await tx.query("SELECT setval('suppliers_id_seq', (SELECT GREATEST(MAX(id), 1) FROM suppliers), true)");
+        } catch {}
       } else {
         await tx.query(
           `INSERT INTO suppliers (
@@ -2426,11 +2611,11 @@ async function applyOperation(operation) {
             payload.company_name || null,
             payload.tax_id || null,
             payload.payment_method || 'نقدي',
-            payload.payment_terms || 0,
+            safePaymentTerms,
             payload.currency || 'ج.م',
-            payload.moq || 0,
-            payload.lead_time || 0,
-            payload.rating || 5,
+            safeMoq,
+            safeLeadTime,
+            safeRating,
             payload.notes || null,
             payload.status || 'active',
             payload.logo_url || null,
@@ -2519,10 +2704,12 @@ async function applyOperation(operation) {
 
           try {
             const sizesJson = parsedSizes ? JSON.stringify(parsedSizes) : null;
+            const createdBy = await resolveUserId(tx, payload.created_by);
+            const senderId = await resolveUserId(tx, payload.sender_id);
             await tx.query(
               `INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, sender_id, sender_name)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-              [invId, fromBranch, toBranch, qty, isDirect ? 'completed' : 'pending', sizesJson, payload.created_by || null, payload.created_by_name || null, payload.sender_id || null, payload.sender_name || null]
+              [invId, fromBranch, toBranch, qty, isDirect ? 'completed' : 'pending', sizesJson, createdBy, payload.created_by_name || null, senderId, payload.sender_name || null]
             );
           } catch (err) {
             console.warn('[Sync] Non-critical warning inserting stock_transfers:', err.message);
@@ -2554,11 +2741,12 @@ async function applyOperation(operation) {
           }
 
           try {
+            const receivedBy = await resolveUserId(tx, payload.received_by);
             await tx.query(
               `UPDATE stock_transfers
                SET status = 'received', received_by = $1, received_by_name = $2, updated_at = CURRENT_TIMESTAMP
                WHERE inventory_id = $3 AND from_branch_id = $4 AND to_branch_id = $5 AND status = 'pending'`,
-              [payload.received_by || null, payload.received_by_name || null, invId, fromBranch, toBranch]
+              [receivedBy, payload.received_by_name || null, invId, fromBranch, toBranch]
             );
           } catch (err) {
             console.warn('[Sync] Non-critical warning updating stock_transfers:', err.message);
