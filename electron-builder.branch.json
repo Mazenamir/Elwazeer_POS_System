@@ -95,5 +95,8 @@
     "repo": "Elwazeer_POS_System",
     "channel": "branch"
   },
+  "electronDownload": {
+    "isVerifyChecksum": false
+  },
   "electronVersion": "30.0.0"
 }

@@ -175,6 +175,9 @@
       "repo": "Elwazeer_POS_System",
       "channel": "latest"
     },
+    "electronDownload": {
+      "isVerifyChecksum": false
+    },
     "electronVersion": "30.0.0"
   }
 }
