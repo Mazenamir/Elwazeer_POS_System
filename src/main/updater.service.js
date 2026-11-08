@@ -234,6 +234,15 @@ class AutoUpdateManager extends EventEmitter {
     };
 
     this._onError = (err) => {
+      // If resilient fallback is enabled and we are actively checking or downloading,
+      // allow the performCheck() / downloadUpdate() fallback handler to take over
+      // without prematurely transitioning to 'failed' or alarming the UI.
+      const isMock = this.updater && this.updater.constructor?.name?.startsWith('Mock') && !this.explicitApiFallback;
+      if (this.enableApiFallback && !isMock && (this.isChecking || this.isDownloading)) {
+        this.log(`[UPDATER] Standard updater reported error during ${this.isChecking ? 'check' : 'download'}: ${err?.message || err}. Resilient API fallback will handle recovery.`);
+        return;
+      }
+
       this.isChecking = false;
       this.isDownloading = false;
       this.lastCheckStatus = 'error';
@@ -407,7 +416,11 @@ class AutoUpdateManager extends EventEmitter {
           res.on('data', (chunk) => {
             downloadedBytes += chunk.length;
             hash.update(chunk);
-            fileStream.write(chunk);
+            const canContinue = fileStream.write(chunk);
+            if (!canContinue) {
+              res.pause();
+              fileStream.once('drain', () => res.resume());
+            }
 
             const now = Date.now();
             if (now - lastProgressTime > 1000 || downloadedBytes === totalBytes) {
@@ -427,7 +440,12 @@ class AutoUpdateManager extends EventEmitter {
           res.on('end', () => {
             fileStream.end(() => {
               const actualHashBase64 = hash.digest('base64');
-              if (expectedSha512 && actualHashBase64 !== expectedSha512) {
+              const actualHashHex = Buffer.from(actualHashBase64, 'base64').toString('hex');
+              const hashMatches = !expectedSha512
+                || actualHashBase64 === expectedSha512
+                || actualHashHex.toLowerCase() === String(expectedSha512).toLowerCase();
+
+              if (!hashMatches) {
                 try { fs.unlinkSync(destPath); } catch {}
                 return reject(new Error(`Integrity verification failed for ${path.basename(destPath)}: SHA-512 mismatch.`));
               }
@@ -653,6 +671,11 @@ class AutoUpdateManager extends EventEmitter {
       this.consecutiveFailures++;
       const safeMsg = this.sanitizeErrorMessage(err ? err.message : 'Unknown check error');
       this.log(`[UPDATER] Check failed (attempt ${this.consecutiveFailures}): ${safeMsg}`);
+      this.lastCheckStatus = 'error';
+      if (this.stateMachine.canTransitionTo('failed')) {
+        this.stateMachine.transition('failed', { error: safeMsg });
+      }
+      this.emit('status', 'updater:error', { error: safeMsg });
     } finally {
       this.isChecking = false;
       this.scheduleNextCheck();

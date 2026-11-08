@@ -83,7 +83,7 @@ const suites = [
     name: 'Resilient GitHub API Fallback & Integrity Suite',
     domain: 'Auto-Updater Fallback',
     script: 'scratch/test_updater_api_fallback.js',
-    expectedChecks: 5,
+    expectedChecks: 7,
   },
   {
     id: 6,

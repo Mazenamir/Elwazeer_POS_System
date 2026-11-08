@@ -554,7 +554,10 @@ async function runSuite() {
     await cleanupTestData();
     if (b1Db) try { b1Db.close(); } catch {}
     if (b2Db) try { b2Db.close(); } catch {}
-    await pgPool.end();
+    try { await pgPool.end(); } catch {}
+    if (db && db.pool && typeof db.pool.end === 'function') {
+      try { await db.pool.end(); } catch {}
+    }
   }
 }
 
@@ -598,5 +601,10 @@ function generateMarkdownTestReport(tests, pass, fail) {
 }
 
 if (require.main === module) {
-  runSuite();
+  runSuite().then(() => {
+    process.exit(failCount > 0 ? 1 : 0);
+  }).catch((err) => {
+    console.error('Fatal sync test runner error:', err);
+    process.exit(1);
+  });
 }

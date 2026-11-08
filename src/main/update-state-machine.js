@@ -29,7 +29,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   'idle': ['checking', 'update-available', 'downloading', 'failed'],
   'checking': ['up-to-date', 'update-available', 'failed', 'idle'],
   'up-to-date': ['idle', 'checking'],
-  'update-available': ['downloading', 'idle', 'failed'],
+  'update-available': ['downloading', 'idle', 'failed', 'checking'],
   'downloading': ['downloaded', 'failed', 'idle'],
   'downloaded': ['waiting-for-safe-point', 'preparing-maintenance', 'installing', 'failed', 'idle'],
   'waiting-for-safe-point': ['preparing-maintenance', 'draining-operations', 'failed', 'idle'],
@@ -40,7 +40,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   'restarting': ['verifying-health', 'failed', 'rollback-required'],
   'verifying-health': ['completed', 'rollback-required', 'failed'],
   'completed': ['idle'],
-  'failed': ['idle', 'checking'],
+  'failed': ['idle', 'checking', 'downloading', 'update-available'],
   'rollback-required': ['failed', 'idle'],
 });
 

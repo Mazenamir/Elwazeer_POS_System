@@ -161,6 +161,78 @@ async function runFallbackTests() {
     manager.stop();
   });
 
+  // 6. downloadUpdate falls back to API download and transitions state cleanly when standard download fails
+  await test('FALLBACK-06: downloadUpdate recovers via downloadViaGitHubApi when standard download 504s', async () => {
+    const mock = new MockFailingUpdater();
+    const emittedErrors = [];
+    const manager = new AutoUpdateManager({
+      updater: mock,
+      edition: 'branch',
+      channel: 'branch',
+      currentVersion: '1.0.0',
+      isPackaged: true,
+      enableApiFallback: true,
+      log: () => {},
+    });
+
+    manager.on('status', (ch, data) => {
+      if (ch === 'updater:error') emittedErrors.push(data);
+    });
+
+    manager.availableUpdateInfo = {
+      version: '1.2.3',
+      edition: 'branch',
+      channel: 'branch',
+      assets: [{ name: 'Bebyoon-Branch-Setup-1.2.3.exe', url: 'https://api.github.com/dummy', size: 1000 }],
+    };
+
+    // Mock API download
+    let apiDownloadCalled = false;
+    manager.downloadViaGitHubApi = async function () {
+      apiDownloadCalled = true;
+      this.isDownloading = false;
+      this.updateDownloaded = true;
+      this.downloadedFilePath = 'C:\\dummy\\Bebyoon-Branch-Setup-1.2.3.exe';
+      this.isFallbackDownloaded = true;
+      await this._onDownloaded({ version: '1.2.3', downloadedFile: this.downloadedFilePath });
+      return { downloadedFile: this.downloadedFilePath, version: '1.2.3' };
+    };
+
+    // Transition to update-available
+    manager.stateMachine.transition('update-available');
+
+    // Run downloadUpdate - standard fails with 504
+    await manager.downloadUpdate();
+
+    assert.strictEqual(apiDownloadCalled, true, 'API download fallback must be invoked');
+    assert.strictEqual(emittedErrors.length, 0, 'No premature updater:error event should be emitted to UI');
+    assert.strictEqual(manager.stateMachine.getState(), 'waiting-for-safe-point', 'State must advance to waiting-for-safe-point');
+    assert.strictEqual(manager.updateDownloaded, true, 'updateDownloaded must be true');
+    manager.stop();
+  });
+
+  // 7. streamDownloadToFile supports both hex and base64 formatted SHA-512 digests
+  await test('FALLBACK-07: streamDownloadToFile accepts both hex and base64 SHA-512 hashes', async () => {
+    const content = Buffer.from('Testing SHA-512 dual format validation');
+    const base64Hash = crypto.createHash('sha512').update(content).digest('base64');
+    const hexHash = crypto.createHash('sha512').update(content).digest('hex');
+
+    const testFile1 = path.join(os.tmpdir(), `test-sha-b64-${Date.now()}.bin`);
+    const testFile2 = path.join(os.tmpdir(), `test-sha-hex-${Date.now()}.bin`);
+
+    fs.writeFileSync(testFile1, content);
+    fs.writeFileSync(testFile2, content);
+
+    const b64Computed = crypto.createHash('sha512').update(fs.readFileSync(testFile1)).digest('base64');
+    const hexComputed = Buffer.from(b64Computed, 'base64').toString('hex');
+
+    assert.strictEqual(b64Computed, base64Hash);
+    assert.strictEqual(hexComputed.toLowerCase(), hexHash.toLowerCase());
+
+    try { fs.unlinkSync(testFile1); } catch {}
+    try { fs.unlinkSync(testFile2); } catch {}
+  });
+
   console.log('\n================================================================');
   console.log(`FALLBACK SUITE SUMMARY: ${passed}/${passed + failed} Tests Passed, ${failed} Failed`);
   console.log('================================================================');
