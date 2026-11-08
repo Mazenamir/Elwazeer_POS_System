@@ -4243,6 +4243,7 @@ module.exports = {
   configureSyncServer,
   getDeadLetterQueue,
   requeueDeadLetter,
+  repairAndReviveDeadLetterOperations,
   isSyncActive: () => isSyncCycleActive,
   MAX_SYNC_ATTEMPTS,
 };
