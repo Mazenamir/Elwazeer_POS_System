@@ -17,7 +17,7 @@ async function requireReturnPassword(req, res, next) {
 }
 
 // POS Sequence & Invoice Counter Reset (Admin Only)
-router.get('/next-order-id', requirePermission('pos.sales.view', 'index.html'), controller.getNextOrderId);
+router.get('/next-order-id', requirePermission('pos.sales.view', 'pos.sales.create'), controller.getNextOrderId);
 router.post('/orders/reset-counter', (req, res, next) => {
   if (req.user?.role !== 'admin') {
     return res.status(403).json({ error: 'عفواً، تصفير عداد الفواتير متاح للمدير (Admin) فقط.' });
@@ -26,17 +26,17 @@ router.post('/orders/reset-counter', (req, res, next) => {
 }, controller.resetInvoiceCounter);
 
 // Order Search (must be declared before /orders/:id)
-router.get('/orders/search', requirePermission('pos.invoices.search', 'index.html'), controller.searchOrders);
+router.get('/orders/search', requirePermission('pos.invoices.search', 'pos.invoices.view', 'pos.returns.view', 'pos.invoices.refund'), controller.searchOrders);
 
 // Orders CRUD & Cashier
-router.get('/orders', requirePermission('pos.invoices.view', 'index.html'), controller.listOrders);
-router.post('/orders', requirePermission('pos.sales.create', 'index.html'), controller.createOrder);
-router.get('/orders/:id/details', requirePermission('pos.invoices.view', 'index.html'), controller.getOrderDetails);
-router.post('/orders/:id/pay-remaining', requirePermission('pos.invoices.view', 'index.html'), controller.payRemaining);
+router.get('/orders', requirePermission('pos.invoices.view'), controller.listOrders);
+router.post('/orders', requirePermission('pos.sales.create'), controller.createOrder);
+router.get('/orders/:id/details', requirePermission('pos.invoices.view', 'pos.returns.view', 'pos.invoices.refund'), controller.getOrderDetails);
+router.post('/orders/:id/pay-remaining', requirePermission('pos.invoices.view', 'pos.invoices.edit'), controller.payRemaining);
 router.put('/orders/:id', requirePermission('pos.invoices.edit'), requireInvoiceEditPassword, controller.updateOrder);
 
 // Returns
-router.get('/returns', requirePermission('pos.returns.view', 'index.html'), controller.listReturns);
+router.get('/returns', requirePermission('pos.returns.view'), controller.listReturns);
 router.post('/returns', requirePermission('pos.invoices.refund'), requireReturnPassword, controller.createReturn);
 
 module.exports = router;

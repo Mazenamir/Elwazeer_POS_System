@@ -129,7 +129,7 @@ const HIERARCHICAL_CATALOG = [
     modulePerm: 'inventory.access',
     legacyPerm: 'Suppliers.html',
     label: 'المخزون العام والمنتجات',
-    description: 'إدارة المنتجات، التوريدات، الأصناف، والتحويلات المخزنية',
+    description: 'إدارة المنتجات، الأصناف، التحويلات، وأرصدة الفروع والمخزن',
     group: 'المخزون والمنتجات',
     tabs: [
       {
@@ -144,9 +144,18 @@ const HIERARCHICAL_CATALOG = [
         ],
       },
       {
+        tabId: 'branch_matrix',
+        label: 'أرصدة الفروع والمخزن (Matrix)',
+        actions: [
+          { id: 'inventory.matrix.view', label: 'عرض مصفوفة وأرصدة الفروع والمخزن' },
+          { id: 'inventory_view_all_branches', label: 'رؤية مخزون كافة الفروع' },
+        ],
+      },
+      {
         tabId: 'transfers',
         label: 'التحويلات بين الفروع',
         actions: [
+          { id: 'inventory.transfers.view', label: 'عرض سجل ومتابعة التحويلات' },
           { id: 'inventory.transfers.request', label: 'طلب تحويل بضاعة بين الفروع' },
           { id: 'inventory.transfers.approve', label: 'الموافقة على تحويلات المخزون' },
           { id: 'inventory.transfers.receive', label: 'تأكيد استلام شحنة المخزون' },
@@ -157,7 +166,6 @@ const HIERARCHICAL_CATALOG = [
         label: 'صلاحيات مخزنية متقدمة',
         actions: [
           { id: 'inventory_admin', label: 'إدارة متقدمة للمخزون (تحويل، تسعير)' },
-          { id: 'inventory_view_all_branches', label: 'رؤية مخزون كافة الفروع' },
         ],
       },
     ],
@@ -166,13 +174,13 @@ const HIERARCHICAL_CATALOG = [
     moduleId: 'suppliers',
     modulePerm: 'suppliers.access',
     legacyPerm: 'Suppliers.html',
-    label: 'الموردون والتوريدات',
-    description: 'دليل الموردين، التوريدات، الدفعات، وكشوف الحساب',
+    label: 'سجل الموردين والشركات',
+    description: 'دليل الموردين، فواتير التوريد، الدفعات، وكشوف الحساب',
     group: 'المخزون والمنتجات',
     tabs: [
       {
         tabId: 'suppliers_list',
-        label: 'دليل الموردين',
+        label: 'دليل الموردين والتوريدات',
         actions: [
           { id: 'suppliers.list.view', label: 'عرض قائمة الموردين وأرصدتهم' },
           { id: 'suppliers.create', label: 'إضافة مورد جديد' },
@@ -580,19 +588,17 @@ const PERMISSION_PRESETS = [
     id: 'inventory_staff',
     label: 'مسؤول مخزن',
     permissions: [
-      'Suppliers.html',
       'inventory.access',
       'inventory.products.view',
       'inventory.products.create',
+      'inventory.matrix.view',
+      'inventory.transfers.view',
       'inventory.transfers.request',
-      'RentalInventory.html',
       'rental_inventory.access',
       'rental_inventory.items.view',
-      'Barcodes.html',
       'barcodes.access',
       'barcodes.generate',
       'barcodes.print',
-      'WornProducts.html',
       'worn_products.access',
       'worn_products.view',
       'worn_products.create',
@@ -615,7 +621,8 @@ const PERMISSION_PRESETS = [
       'cash_drawer.settlement.view',
       'cash_drawer.settlement.close',
       'Customers.html',
-      'Suppliers.html',
+      'suppliers.access',
+      'suppliers.list.view',
     ],
   },
   {
@@ -685,22 +692,29 @@ function hasPermission(user, permission) {
     return false;
   }
 
-  // 1. If requested permission is a legacy page identifier (e.g. 'index.html'):
-  // User has access if they possess the legacy permission directly, OR module access, OR any non-sensitive granular action in that module
+  // 1. If requested permission is a legacy page identifier (e.g. 'index.html', 'Suppliers.html'):
+  // User has access if they possess the legacy permission directly, OR module access, OR any granular action in that module
   if (LEGACY_TO_GRANULAR_MAP[permission]) {
     const granularSet = LEGACY_TO_GRANULAR_MAP[permission];
     const hasAnyGranular = granularSet.some((gp) => permissions.includes(gp));
     if (hasAnyGranular) return true;
   }
 
-  // 2. If requested permission is non-sensitive granular (e.g. 'pos.sales.create'):
-  // User has access if they hold the granular permission, OR if they have the legacy parent module permission
+  // 2. If requested permission is non-sensitive granular (e.g. 'inventory.products.view'):
+  // If user holds the legacy parent module permission (e.g. 'Suppliers.html'):
+  // CRITICAL: The legacy parent permission ONLY acts as a fallback for pure legacy users who have
+  // NO granular permissions configured for this legacy module! If the user has any granular permissions
+  // configured for this module, their granular assignment is strictly authoritative.
   const legacyParent = GRANULAR_TO_LEGACY_MAP[permission];
   if (legacyParent && permissions.includes(legacyParent)) {
-    return true;
+    const moduleGranularSet = LEGACY_TO_GRANULAR_MAP[legacyParent] || [];
+    const hasAnyConfiguredGranularInModule = moduleGranularSet.some((gp) => permissions.includes(gp));
+    if (!hasAnyConfiguredGranularInModule) {
+      return true;
+    }
   }
 
-  // 3. If requested permission is module-level access (e.g. 'pos.access'):
+  // 3. If requested permission is module-level access (e.g. 'pos.access', 'inventory.access'):
   // If user holds any action in that module, grant module access
   if (permission.endsWith('.access')) {
     const prefix = permission.replace(/\.access$/, '');
@@ -718,13 +732,22 @@ function expandPermissionsWithLegacy(permissions) {
 
   if (expanded.has('*')) return Array.from(expanded);
 
+  // For each legacy .html permission, if the list already contains granular permissions
+  // for that legacy module, clean out the legacy token so it doesn't cause broad accidental grants.
+  // Legacy tokens for modules WITHOUT granular permissions are retained to preserve backward compatibility.
   for (const perm of list) {
-    const legacyPage = GRANULAR_TO_LEGACY_MAP[perm];
-    if (legacyPage) {
-      expanded.add(legacyPage);
+    if (ALL_PERMISSIONS.includes(perm) || (typeof perm === 'string' && perm.endsWith('.html'))) {
+      const moduleGranular = LEGACY_TO_GRANULAR_MAP[perm] || [];
+      const hasGranularForThisModule = moduleGranular.some((gp) => list.includes(gp));
+      if (hasGranularForThisModule) {
+        expanded.delete(perm);
+      }
     }
+  }
+
+  for (const perm of Array.from(expanded)) {
     const dotIdx = perm.indexOf('.');
-    if (dotIdx > 0) {
+    if (dotIdx > 0 && !perm.endsWith('.html')) {
       const modulePrefix = perm.slice(0, dotIdx);
       expanded.add(`${modulePrefix}.access`);
     }
@@ -742,6 +765,7 @@ function hasInventoryAdminAccess(user) {
     permissions.includes('admin') ||
     permissions.includes('manage_inventory') ||
     hasPermission(user, 'inventory.products.edit') ||
+    hasPermission(user, 'inventory.products.delete') ||
     hasPermission(user, 'inventory.products.create') ||
     hasPermission(user, 'inventory.transfers.approve')
   );

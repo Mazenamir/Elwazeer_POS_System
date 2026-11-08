@@ -3,12 +3,22 @@ const router = express.Router();
 const expensesController = require('./expenses.controller');
 const { requirePermission } = require('../../middleware/auth.middleware');
 
-// Expenses (requires Expenses.html permission or admin)
-router.get('/expenses/summary', requirePermission('Expenses.html'), expensesController.getExpensesSummary);
-router.get('/expenses/cashiers', requirePermission('Expenses.html'), expensesController.listExpenseCashiers);
-router.get('/expenses', requirePermission('Expenses.html'), expensesController.listExpenses);
-router.post('/expenses', requirePermission('Expenses.html'), expensesController.createExpense);
-router.put('/expenses/:id', requirePermission('Expenses.html'), expensesController.updateExpense);
-router.delete('/expenses/:id', requirePermission('Expenses.html'), expensesController.deleteExpense);
+// Expenses summary & cashiers
+router.get(
+  '/expenses/summary',
+  requirePermission('expenses.list.view', 'cash_drawer.settlement.view', 'expenses.create', 'pos.sales.view'),
+  expensesController.getExpensesSummary
+);
+router.get(
+  '/expenses/cashiers',
+  requirePermission('expenses.list.view', 'cash_drawer.settlement.view'),
+  expensesController.listExpenseCashiers
+);
+
+// Expenses CRUD
+router.get('/expenses', requirePermission('expenses.list.view', 'expenses.create'), expensesController.listExpenses);
+router.post('/expenses', requirePermission('expenses.create'), expensesController.createExpense);
+router.put('/expenses/:id', requirePermission('expenses.create'), expensesController.updateExpense);
+router.delete('/expenses/:id', requirePermission('expenses.delete'), expensesController.deleteExpense);
 
 module.exports = router;

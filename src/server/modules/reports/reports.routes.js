@@ -5,22 +5,22 @@ const { requirePermission } = require('../../middleware/rbac.middleware');
 const { exportLimiter } = require('../../middleware/rateLimit.middleware');
 
 // Dashboard & Top Products shortcuts (requires Dashboard.html permission or admin)
-router.get(['/dashboard', '/reports/dashboard'], requirePermission('Dashboard.html'), reportsController.getDashboard);
-router.get(['/top-products', '/reports/top-products-by-branch'], requirePermission('Dashboard.html'), reportsController.getTopProductsByBranch);
+router.get(['/dashboard', '/reports/dashboard'], requirePermission('dashboard.stats.view'), reportsController.getDashboard);
+router.get(['/top-products', '/reports/top-products-by-branch'], requirePermission('dashboard.stats.view', 'reports.sales.view'), reportsController.getTopProductsByBranch);
 
-// Reports (requires Reports.html permission or admin)
-router.get(['/reports/profit', '/profit'], requirePermission('Reports.html'), reportsController.getProfitReport);
-router.get(['/reports/monthly-history', '/monthly-history'], requirePermission('Reports.html'), reportsController.getMonthlyHistory);
-router.get(['/reports/daily-history', '/daily-history'], requirePermission('Reports.html'), reportsController.getDailyHistory);
-router.get(['/reports/top-products', '/top-products-report'], requirePermission('Reports.html'), reportsController.getTopProductsReport);
-router.get(['/reports/daily', '/daily'], requirePermission('Reports.html'), reportsController.getDailyReport);
+// Reports
+router.get(['/reports/profit', '/profit'], requirePermission('reports.profits.view'), reportsController.getProfitReport);
+router.get(['/reports/monthly-history', '/monthly-history'], requirePermission('reports.monthly.view', 'reports.sales.view'), reportsController.getMonthlyHistory);
+router.get(['/reports/daily-history', '/daily-history'], requirePermission('reports.daily.view', 'reports.sales.view'), reportsController.getDailyHistory);
+router.get(['/reports/top-products', '/top-products-report'], requirePermission('reports.sales.view'), reportsController.getTopProductsReport);
+router.get(['/reports/daily', '/daily'], requirePermission('reports.daily.view', 'reports.sales.view', 'cash_drawer.settlement.view'), reportsController.getDailyReport);
 
 // Additional report queries
-router.get(['/reports/summary', '/summary'], requirePermission('Reports.html'), reportsController.getSummaryReport);
-router.get(['/reports/sales', '/sales'], requirePermission('Reports.html'), reportsController.getSalesReport);
-router.get(['/reports/rentals', '/rentals'], requirePermission('Reports.html'), reportsController.getRentalsReport);
-router.get(['/reports/expenses', '/expenses'], requirePermission('Reports.html'), reportsController.getExpensesReport);
-router.get(['/reports/inventory', '/inventory'], requirePermission('Reports.html'), reportsController.getInventoryReport);
+router.get(['/reports/summary', '/summary'], requirePermission('reports.sales.view', 'reports.daily.view', 'reports.monthly.view'), reportsController.getSummaryReport);
+router.get(['/reports/sales', '/sales'], requirePermission('reports.sales.view'), reportsController.getSalesReport);
+router.get(['/reports/rentals', '/rentals'], requirePermission('reports.sales.view', 'rentals.contracts.view'), reportsController.getRentalsReport);
+router.get(['/reports/expenses', '/expenses'], requirePermission('reports.sales.view', 'expenses.list.view'), reportsController.getExpensesReport);
+router.get(['/reports/inventory', '/inventory'], requirePermission('reports.sales.view', 'inventory.products.view'), reportsController.getInventoryReport);
 
 // Extended Excel-modeled branch reports & Master Sheet
 const masterSheetRoutes = [
@@ -31,29 +31,29 @@ const masterSheetRoutes = [
   '/monthly-master',
   '/master',
 ];
-router.get(masterSheetRoutes, requirePermission('Reports.html'), reportsController.getMonthlyMasterReport);
+router.get(masterSheetRoutes, requirePermission('reports.master_sheet.view'), reportsController.getMonthlyMasterReport);
 
-router.get(['/reports/extended-daily', '/extended-daily'], requirePermission('Reports.html'), reportsController.getExtendedDailyReport);
-router.get(['/reports/ohda', '/ohda'], requirePermission('Reports.html'), reportsController.getMonthlyOhdaReport);
-router.get(['/reports/salary-sheet', '/salary-sheet'], requirePermission('Reports.html'), reportsController.getMonthlySalarySheet);
-router.get(['/reports/kpi', '/kpi'], requirePermission('Reports.html'), reportsController.getSalesKpiReport);
-router.get(['/reports/suppliers-ledger', '/suppliers-ledger'], requirePermission('Reports.html'), reportsController.getSuppliersLedger);
-router.post(['/reports/attendance-quick-log', '/attendance-quick-log'], requirePermission('Reports.html'), reportsController.updateDailyAttendanceQuick);
+router.get(['/reports/extended-daily', '/extended-daily'], requirePermission('reports.daily.view', 'reports.sales.view', 'cash_drawer.settlement.view'), reportsController.getExtendedDailyReport);
+router.get(['/reports/ohda', '/ohda'], requirePermission('reports.sales.view', 'reports.monthly.view', 'expenses.list.view', 'employees.payroll.view'), reportsController.getMonthlyOhdaReport);
+router.get(['/reports/salary-sheet', '/salary-sheet'], requirePermission('employees.payroll.view', 'reports.sales.view'), reportsController.getMonthlySalarySheet);
+router.get(['/reports/kpi', '/kpi'], requirePermission('reports.sales.view', 'reports.monthly.view'), reportsController.getSalesKpiReport);
+router.get(['/reports/suppliers-ledger', '/suppliers-ledger'], requirePermission('suppliers.list.view', 'reports.sales.view'), reportsController.getSuppliersLedger);
+router.post(['/reports/attendance-quick-log', '/attendance-quick-log'], requirePermission('employees.attendance.edit', 'employees.attendance.view'), reportsController.updateDailyAttendanceQuick);
 
 // Exports (.xlsx and printable HTML)
-router.get(['/reports/export/excel', '/export/excel'], requirePermission('Reports.html', 'Suppliers.html'), exportLimiter, reportsController.exportExcel);
+router.get(['/reports/export/excel', '/export/excel'], requirePermission('reports.export.excel', 'inventory.products.view', 'suppliers.list.view'), exportLimiter, reportsController.exportExcel);
 router.get([
   '/reports/export/consolidated-excel',
   '/reports/export/master-excel',
   '/export/consolidated-excel',
   '/export/master-excel',
-], requirePermission('Reports.html'), exportLimiter, reportsController.exportConsolidatedExcel);
-router.get(['/reports/export/pdf-html', '/export/pdf-html'], requirePermission('Reports.html'), exportLimiter, reportsController.exportPdfHtml);
+], requirePermission('reports.export.excel', 'reports.master_sheet.view'), exportLimiter, reportsController.exportConsolidatedExcel);
+router.get(['/reports/export/pdf-html', '/export/pdf-html'], requirePermission('reports.export.pdf', 'reports.sales.view'), exportLimiter, reportsController.exportPdfHtml);
 router.get([
   '/reports/export/master-pdf',
   '/export/master-pdf',
   '/reports/export/consolidated-pdf',
   '/export/consolidated-pdf',
-], requirePermission('Reports.html'), exportLimiter, reportsController.exportMasterPdf);
+], requirePermission('reports.export.pdf', 'reports.master_sheet.view'), exportLimiter, reportsController.exportMasterPdf);
 
 module.exports = router;

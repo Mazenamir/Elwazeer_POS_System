@@ -104,14 +104,51 @@ const CATEGORY_DISPLAY_MAP = {
 };
 
 export function POS() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches, activeBranch } = useBranch();
   const toast = useToast();
   const [searchParams] = useSearchParams();
 
-  // Top Tabs: 'pos' | 'history' | 'returns'
-  const initialPosTab = searchParams.get('tab') || (searchParams.get('orderId') ? 'history' : 'pos');
+  // Granular Tab Permissions Gating
+  const canAccessSales = Boolean(isAdmin || hasPermission('pos.sales.view') || hasPermission('pos.sales.create'));
+  const canAccessHistory = Boolean(isAdmin || hasPermission('pos.invoices.view'));
+  const canAccessReturns = Boolean(isAdmin || hasPermission('pos.returns.view'));
+  const canAccessExpenses = Boolean(isAdmin || hasPermission('expenses.list.view') || hasPermission('expenses.create'));
+
+  const accessibleTabs = useMemo(() => {
+    const list = [];
+    if (canAccessSales) list.push('pos');
+    if (canAccessHistory) list.push('history');
+    if (canAccessReturns) list.push('returns');
+    if (canAccessExpenses) list.push('expenses');
+    return list;
+  }, [canAccessSales, canAccessHistory, canAccessReturns, canAccessExpenses]);
+
+  // Top Tabs: 'pos' | 'history' | 'returns' | 'expenses'
+  const initialPosTab = useMemo(() => {
+    const paramTab = searchParams.get('tab');
+    if (paramTab && accessibleTabs.includes(paramTab)) return paramTab;
+    if (searchParams.get('orderId') && canAccessHistory) return 'history';
+    return accessibleTabs[0] || 'pos';
+  }, [searchParams, accessibleTabs, canAccessHistory]);
+
   const [activeTab, setActiveTab] = useState(initialPosTab);
+
+  // Tab switching & redirect guards
+  useEffect(() => {
+    if (!accessibleTabs.length) return;
+    if (!accessibleTabs.includes(activeTab)) {
+      setActiveTab(accessibleTabs[0]);
+    }
+  }, [activeTab, accessibleTabs]);
+
+  useEffect(() => {
+    const requested = searchParams.get('tab');
+    if (requested && accessibleTabs.includes(requested) && activeTab !== requested) {
+      setActiveTab(requested);
+    }
+  }, [searchParams, accessibleTabs, activeTab]);
+
   const [categoriesList, setCategoriesList] = useState(['الكل']);
   const [categoryCounts, setCategoryCounts] = useState({});
 
@@ -1255,6 +1292,10 @@ export function POS() {
 
   // Open Checkout Modal
   const openCheckout = () => {
+    if (!isAdmin && !hasPermission('pos.sales.create')) {
+      toast.error('غير مصرح لك بإنشاء فواتير مبيعات');
+      return;
+    }
     if (currentCart.length === 0) {
       toast.warning('السلة فارغة! برجاء إضافة منتجات أولاً');
       return;
@@ -2084,53 +2125,61 @@ export function POS() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FFFDF9] p-3 rounded-3xl border border-[#E6DECD] shadow-sm no-print">
         {/* Navigation Tabs */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setActiveTab('pos')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
-              activeTab === 'pos'
-                ? 'bg-[#151515] text-white shadow-sm'
-                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
-            }`}
-          >
-            <ShoppingCart className="w-4 h-4" />
-            <span>نقطة البيع (الكاشير)</span>
-          </button>
+          {canAccessSales && (
+            <button
+              onClick={() => setActiveTab('pos')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
+                activeTab === 'pos'
+                  ? 'bg-[#151515] text-white shadow-sm'
+                  : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
+              }`}
+            >
+              <ShoppingCart className="w-4 h-4" />
+              <span>نقطة البيع (الكاشير)</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
-              activeTab === 'history'
-                ? 'bg-[#151515] text-white shadow-sm'
-                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
-            }`}
-          >
-            <Receipt className="w-4 h-4" />
-            <span>سجل مبيعات الكاشير</span>
-          </button>
+          {canAccessHistory && (
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
+                activeTab === 'history'
+                  ? 'bg-[#151515] text-white shadow-sm'
+                  : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
+              }`}
+            >
+              <Receipt className="w-4 h-4" />
+              <span>سجل مبيعات الكاشير</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab('returns')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
-              activeTab === 'returns'
-                ? 'bg-[#151515] text-white shadow-sm'
-                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
-            }`}
-          >
-            <Undo2 className="w-4 h-4" />
-            <span>المرتجعات</span>
-          </button>
+          {canAccessReturns && (
+            <button
+              onClick={() => setActiveTab('returns')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
+                activeTab === 'returns'
+                  ? 'bg-[#151515] text-white shadow-sm'
+                  : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
+              }`}
+            >
+              <Undo2 className="w-4 h-4" />
+              <span>المرتجعات</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab('expenses')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
-              activeTab === 'expenses'
-                ? 'bg-[#151515] text-white shadow-sm'
-                : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
-            }`}
-          >
-            <Wallet className="w-4 h-4" />
-            <span>المصروفات</span>
-          </button>
+          {canAccessExpenses && (
+            <button
+              onClick={() => setActiveTab('expenses')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all cursor-pointer font-display ${
+                activeTab === 'expenses'
+                  ? 'bg-[#151515] text-white shadow-sm'
+                  : 'text-[#777266] hover:bg-[#FAF6ED] hover:text-[#24221F]'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+              <span>المصروفات</span>
+            </button>
+          )}
         </div>
 
         {/* Live Invoice Badge */}
@@ -2155,8 +2204,17 @@ export function POS() {
         </div>
       </div>
 
+      {/* Access Denied View if no accessible tabs */}
+      {accessibleTabs.length === 0 && (
+        <Card className="p-12 text-center text-[#777266]">
+          <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h3 className="text-lg font-black text-[#24221F] mb-1">غير مصرح بالوصول إلى شاشات الكاشير</h3>
+          <p className="text-sm font-bold">لا تملك أياً من الصلاحيات المطلوبة لفتح أقسام الكاشير (المبيعات، الفواتير، المرتجعات، المصروفات).</p>
+        </Card>
+      )}
+
       {/* 1. POS WORKSPACE VIEW */}
-      {activeTab === 'pos' && (
+      {activeTab === 'pos' && canAccessSales && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* RIGHT COLUMN (7/8 Cols): Product Catalog & Barcode Scanner */}
           <div className="lg:col-span-7 xl:col-span-8 flex flex-col gap-4">
@@ -2947,7 +3005,8 @@ export function POS() {
                 variant="primary"
                 size="lg"
                 onClick={openCheckout}
-                disabled={currentCart.length === 0}
+                disabled={currentCart.length === 0 || (!isAdmin && !hasPermission('pos.sales.create'))}
+                title={!isAdmin && !hasPermission('pos.sales.create') ? 'غير مصرح لك بإنشاء فواتير مبيعات' : undefined}
                 className="w-full !rounded-2xl !py-3.5 !bg-indigo-600 hover:!bg-indigo-700 !shadow-lg !shadow-indigo-600/30 text-white font-black text-base"
               >
                 <span>إتمام الدفع والفاتورة</span>
@@ -2959,7 +3018,7 @@ export function POS() {
       )}
 
       {/* 2. SALES HISTORY VIEW */}
-      {activeTab === 'history' && (
+      {activeTab === 'history' && canAccessHistory && (
         <Card>
           <CardHeader
             title="سجل مبيعات الكاشير"
@@ -3110,64 +3169,66 @@ export function POS() {
                         <td className="py-3.5 pl-4 text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             {/* Print Button */}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              icon={Printer}
-                              title="طباعة الفاتورة"
-                              onClick={() => {
-                                let orderItems = order.items;
-                                if (typeof orderItems === 'string') {
-                                  try { orderItems = JSON.parse(orderItems); } catch { orderItems = []; }
-                                }
-                                if (!Array.isArray(orderItems)) orderItems = [];
+                            {(isAdmin || hasPermission('pos.invoices.print')) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                icon={Printer}
+                                title="طباعة الفاتورة"
+                                onClick={() => {
+                                  let orderItems = order.items;
+                                  if (typeof orderItems === 'string') {
+                                    try { orderItems = JSON.parse(orderItems); } catch { orderItems = []; }
+                                  }
+                                  if (!Array.isArray(orderItems)) orderItems = [];
 
-                                let orderSplits = order.payment_splits;
-                                if (typeof orderSplits === 'string') {
-                                  try { orderSplits = JSON.parse(orderSplits); } catch { orderSplits = null; }
-                                }
+                                  let orderSplits = order.payment_splits;
+                                  if (typeof orderSplits === 'string') {
+                                    try { orderSplits = JSON.parse(orderSplits); } catch { orderSplits = null; }
+                                  }
 
-                                const itemsBaseSubtotal = orderItems.reduce((acc, it) => acc + (Number(it.price_at_time || it.price || 0) * Number(it.quantity || 1)), 0);
-                                const itemsDisc = orderItems.reduce((acc, it) => {
-                                  const p = Number(it.price_at_time || it.price || 0);
-                                  const q = Number(it.quantity || 1);
-                                  const d = Number(it.discount || 0);
-                                  if (d <= 0) return acc;
-                                  return acc + (it.discount_type === 'percent' ? (p * q * d) / 100 : Math.min(p * q, d));
-                                }, 0);
-                                const invDisc = Number(order.invoice_discount || order.discount || 0);
-                                const totalDisc = itemsDisc + invDisc;
-                                const calculatedSub = itemsBaseSubtotal > 0 ? itemsBaseSubtotal : (Number(order.total_amount || 0) + totalDisc);
+                                  const itemsBaseSubtotal = orderItems.reduce((acc, it) => acc + (Number(it.price_at_time || it.price || 0) * Number(it.quantity || 1)), 0);
+                                  const itemsDisc = orderItems.reduce((acc, it) => {
+                                    const p = Number(it.price_at_time || it.price || 0);
+                                    const q = Number(it.quantity || 1);
+                                    const d = Number(it.discount || 0);
+                                    if (d <= 0) return acc;
+                                    return acc + (it.discount_type === 'percent' ? (p * q * d) / 100 : Math.min(p * q, d));
+                                  }, 0);
+                                  const invDisc = Number(order.invoice_discount || order.discount || 0);
+                                  const totalDisc = itemsDisc + invDisc;
+                                  const calculatedSub = itemsBaseSubtotal > 0 ? itemsBaseSubtotal : (Number(order.total_amount || 0) + totalDisc);
 
-                                const orderBranch = branches.find((b) => b.id?.toString() === order.branch_id?.toString() || b.name === order.branch_name);
-                                setCompletedOrder({
-                                  order_number: order.branch_invoice_number || order.id,
-                                  created_at: order.created_at || order.order_date,
-                                  customer_name: order.customer_name,
-                                  customer_phone: order.customer_phone,
-                                  seller_name: order.seller_name,
-                                  branch_id: order.branch_id,
-                                  branch_name: order.branch_name || orderBranch?.name,
-                                  branch_logo: order.branch_logo_url || order.branch_logo || orderBranch?.logo_url,
-                                  items: orderItems,
-                                  subtotal: calculatedSub,
-                                  discount: totalDisc,
-                                  total_amount: Number(order.total_amount || 0),
-                                  paid_amount: Number(order.paid_amount || order.total_amount || 0),
-                                  change_amount: Number(order.change_amount || 0),
-                                  payment_method: order.payment_method || 'cash',
-                                  payment_splits: orderSplits,
-                                  cash_amount: order.cash_amount,
-                                  bank_transfer_amount: order.bank_transfer_amount,
-                                  card_amount: order.card_amount,
-                                  wallet_amount: order.wallet_amount,
-                                });
-                                setShowInvoiceModal(true);
-                              }}
-                            />
+                                  const orderBranch = branches.find((b) => b.id?.toString() === order.branch_id?.toString() || b.name === order.branch_name);
+                                  setCompletedOrder({
+                                    order_number: order.branch_invoice_number || order.id,
+                                    created_at: order.created_at || order.order_date,
+                                    customer_name: order.customer_name,
+                                    customer_phone: order.customer_phone,
+                                    seller_name: order.seller_name,
+                                    branch_id: order.branch_id,
+                                    branch_name: order.branch_name || orderBranch?.name,
+                                    branch_logo: order.branch_logo_url || order.branch_logo || orderBranch?.logo_url,
+                                    items: orderItems,
+                                    subtotal: calculatedSub,
+                                    discount: totalDisc,
+                                    total_amount: Number(order.total_amount || 0),
+                                    paid_amount: Number(order.paid_amount || order.total_amount || 0),
+                                    change_amount: Number(order.change_amount || 0),
+                                    payment_method: order.payment_method || 'cash',
+                                    payment_splits: orderSplits,
+                                    cash_amount: order.cash_amount,
+                                    bank_transfer_amount: order.bank_transfer_amount,
+                                    card_amount: order.card_amount,
+                                    wallet_amount: order.wallet_amount,
+                                  });
+                                  setShowInvoiceModal(true);
+                                }}
+                              />
+                            )}
 
                             {/* Edit Invoice Button */}
-                            {!isReturned && (
+                            {!isReturned && (isAdmin || hasPermission('pos.invoices.edit')) && (
                               <button
                                 onClick={() => openEditInvoicePasswordPrompt(order)}
                                 className="p-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors"
@@ -3189,7 +3250,7 @@ export function POS() {
                             )}
 
                             {/* Return Button */}
-                            {!isReturned && (
+                            {!isReturned && (isAdmin || hasPermission('pos.invoices.refund')) && (
                               <button
                                 onClick={() => {
                                   selectOrderForReturn(order);
@@ -3299,25 +3360,27 @@ export function POS() {
       )}
 
       {/* 3. RETURNS VIEW */}
-      {activeTab === 'returns' && (
+      {activeTab === 'returns' && canAccessReturns && (
         <Card>
           <CardHeader
             title="سجل المرتجعات"
             subtitle="إدارة فواتير المرتجعات واسترداد المبالغ وإرجاع الأصناف للمخزون"
             action={
               <div className="flex items-center gap-2">
-                <Button
-                  variant="primary"
-                  icon={Plus}
-                  onClick={() => {
-                    setSelectedReturnOrder(null);
-                    setReturnOrderSearchQuery('');
-                    setReturnFoundOrders([]);
-                    setShowProcessReturnModal(true);
-                  }}
-                >
-                  إضافة مرتجع جديد
-                </Button>
+                {(isAdmin || hasPermission('pos.invoices.refund')) && (
+                  <Button
+                    variant="primary"
+                    icon={Plus}
+                    onClick={() => {
+                      setSelectedReturnOrder(null);
+                      setReturnOrderSearchQuery('');
+                      setReturnFoundOrders([]);
+                      setShowProcessReturnModal(true);
+                    }}
+                  >
+                    إضافة مرتجع جديد
+                  </Button>
+                )}
                 <Button variant="outline" onClick={fetchReturns} icon={RotateCcw}>
                   تحديث
                 </Button>
@@ -3543,7 +3606,7 @@ export function POS() {
       )}
 
       {/* 4. EXPENSES VIEW */}
-      {activeTab === 'expenses' && (
+      {activeTab === 'expenses' && canAccessExpenses && (
         <ExpensesManager isCashierTab={true} />
       )}
 

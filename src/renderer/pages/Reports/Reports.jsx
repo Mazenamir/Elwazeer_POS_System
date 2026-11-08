@@ -97,13 +97,67 @@ function cleanBranchLabel(rawName) {
 }
 
 export function Reports() {
-  const { user } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { branches, isMultiBranch, activeBranchId } = useBranch();
   const { toast } = useToast();
 
   const isBranchScoped = Boolean(user && user.role !== 'admin' && user.branch_scope !== 'all');
 
-  const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'monthly' | 'sales' | 'rentals' | 'expenses' | 'inventory' | 'top_products'
+  // Granular Tab Permissions Gating
+  const canAccessDaily = Boolean(isAdmin || hasPermission('reports.daily.view') || hasPermission('reports.sales.view'));
+  const canAccessMaster = Boolean(isAdmin || hasPermission('reports.master_sheet.view'));
+  const canAccessMonthly = Boolean(isAdmin || hasPermission('reports.monthly.view') || hasPermission('reports.sales.view'));
+  const canAccessSales = Boolean(isAdmin || hasPermission('reports.sales.view'));
+  const canAccessTopProducts = Boolean(isAdmin || hasPermission('reports.sales.view'));
+  const canAccessSalary = Boolean(isAdmin || hasPermission('employees.payroll.view') || hasPermission('reports.sales.view'));
+  const canAccessOhda = Boolean(
+    isAdmin ||
+    hasPermission('reports.sales.view') ||
+    hasPermission('reports.monthly.view') ||
+    hasPermission('employees.payroll.view') ||
+    hasPermission('expenses.list.view')
+  );
+  const canAccessKpi = Boolean(isAdmin || hasPermission('reports.sales.view') || hasPermission('reports.monthly.view'));
+  const canAccessSuppliersLedger = Boolean(isAdmin || hasPermission('suppliers.list.view') || hasPermission('reports.sales.view'));
+  const canAccessRentals = Boolean(isAdmin || hasPermission('rentals.contracts.view') || hasPermission('reports.sales.view'));
+  const canAccessExpenses = Boolean(isAdmin || hasPermission('expenses.list.view') || hasPermission('reports.sales.view'));
+  const canAccessInventory = Boolean(isAdmin || hasPermission('inventory.products.view') || hasPermission('reports.sales.view'));
+
+  // Action / Export Permissions
+  const canExportExcel = Boolean(isAdmin || hasPermission('reports.export.excel'));
+  const canExportPdf = Boolean(isAdmin || hasPermission('reports.export.pdf'));
+  const canViewProfits = Boolean(isAdmin || hasPermission('reports.profits.view'));
+
+  const accessibleTabs = useMemo(() => {
+    const list = [];
+    if (canAccessDaily) list.push('daily');
+    if (canAccessMaster) list.push('master');
+    if (canAccessOhda) list.push('ohda');
+    if (canAccessSalary) list.push('salary');
+    if (canAccessKpi) list.push('kpi');
+    if (canAccessSuppliersLedger) list.push('suppliers_ledger');
+    if (canAccessSales) list.push('sales');
+    if (canAccessRentals) list.push('rentals');
+    if (canAccessExpenses) list.push('expenses');
+    if (canAccessInventory) list.push('inventory');
+    if (canAccessMonthly) list.push('monthly');
+    if (canAccessTopProducts) list.push('top_products');
+    return list;
+  }, [
+    canAccessDaily, canAccessMaster, canAccessOhda, canAccessSalary, canAccessKpi,
+    canAccessSuppliersLedger, canAccessSales, canAccessRentals, canAccessExpenses,
+    canAccessInventory, canAccessMonthly, canAccessTopProducts
+  ]);
+
+  const [activeTab, setActiveTab] = useState(() => accessibleTabs[0] || 'daily');
+
+  // Tab switching & redirect guards
+  useEffect(() => {
+    if (!accessibleTabs.length) return;
+    if (!accessibleTabs.includes(activeTab)) {
+      setActiveTab(accessibleTabs[0]);
+    }
+  }, [activeTab, accessibleTabs]);
   const [selectedBranch, setSelectedBranch] = useState(() => {
     if (isBranchScoped) {
       if (user?.branch_id) return user.branch_id.toString();
@@ -606,7 +660,10 @@ export function Reports() {
 
   // Initial and reactive fetch
   useEffect(() => {
-    loadProfitSummary();
+    if (!accessibleTabs.length) return;
+    if (canViewProfits) {
+      loadProfitSummary();
+    }
     if (activeTab === 'daily') {
       loadDailyHistory();
     } else if (activeTab === 'master') {
@@ -1130,6 +1187,18 @@ export function Reports() {
     }
   };
 
+  if (!accessibleTabs.length) {
+    return (
+      <div className="space-y-6">
+        <Card className="p-12 text-center text-[#777266]">
+          <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h3 className="text-lg font-black text-[#24221F] mb-1">غير مصرح بالوصول إلى شاشات التقارير</h3>
+          <p className="text-sm font-bold">لا تملك أياً من الصلاحيات المطلوبة لفتح تقارير المبيعات أو التشغيل أو الرواتب أو المجمع.</p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -1167,46 +1236,54 @@ export function Reports() {
           )}
 
           {/* Export to Excel & PDF first */}
-          <Button
-            variant="primary"
-            icon={FileSpreadsheet}
-            isLoading={exportingExcel}
-            disabled={exportingExcel || exportingPDF || exportingConsolidated}
-            onClick={() => exportToExcel()}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black shadow-sm"
-          >
-            تصدير إكسيل (.xlsx)
-          </Button>
+          {canExportExcel && (
+            <Button
+              variant="primary"
+              icon={FileSpreadsheet}
+              isLoading={exportingExcel}
+              disabled={exportingExcel || exportingPDF || exportingConsolidated}
+              onClick={() => exportToExcel()}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-black shadow-sm"
+            >
+              تصدير إكسيل (.xlsx)
+            </Button>
+          )}
 
-          <Button
-            variant="primary"
-            icon={Printer}
-            isLoading={exportingPDF}
-            disabled={exportingPDF || exportingExcel || exportingConsolidated}
-            onClick={() => exportToPDF()}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-black shadow-sm"
-          >
-            طباعة / PDF
-          </Button>
+          {canExportPdf && (
+            <Button
+              variant="primary"
+              icon={Printer}
+              isLoading={exportingPDF}
+              disabled={exportingPDF || exportingExcel || exportingConsolidated}
+              onClick={() => exportToPDF()}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-black shadow-sm"
+            >
+              طباعة / PDF
+            </Button>
+          )}
 
-          <Button
-            variant="outline"
-            icon={FileSpreadsheet}
-            isLoading={exportingConsolidated}
-            disabled={exportingConsolidated || exportingExcel || exportingPDF}
-            onClick={exportConsolidatedExcel}
-            className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-emerald-50/40 font-bold"
-          >
-            تصدير مجمع الفرع (36 شيت)
-          </Button>
+          {canExportExcel && (
+            <Button
+              variant="outline"
+              icon={FileSpreadsheet}
+              isLoading={exportingConsolidated}
+              disabled={exportingConsolidated || exportingExcel || exportingPDF}
+              onClick={exportConsolidatedExcel}
+              className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-emerald-50/40 font-bold"
+            >
+              تصدير مجمع الفرع (36 شيت)
+            </Button>
+          )}
 
-          <Button
-            variant="outline"
-            icon={profitVisible ? EyeOff : Eye}
-            onClick={handleToggleProfitVisibility}
-          >
-            {profitVisible ? 'إخفاء الأرباح' : 'إظهار الأرباح 🔒'}
-          </Button>
+          {canViewProfits && (
+            <Button
+              variant="outline"
+              icon={profitVisible ? EyeOff : Eye}
+              onClick={handleToggleProfitVisibility}
+            >
+              {profitVisible ? 'إخفاء الأرباح' : 'إظهار الأرباح 🔒'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1271,150 +1348,174 @@ export function Reports() {
 
       {/* Navigation Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('daily')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'daily'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>التقارير اليومية وحركة الدرج</span>
-        </button>
+          {canAccessDaily && (
+            <button
+              onClick={() => setActiveTab('daily')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'daily'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Calendar className="w-4 h-4" />
+              <span>التقارير اليومية وحركة الدرج</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('master')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'master'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>المجمع الشهري (MASTER SHEET)</span>
-        </button>
+          {canAccessMaster && (
+            <button
+              onClick={() => setActiveTab('master')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'master'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Layers className="w-4 h-4" />
+              <span>المجمع الشهري (MASTER SHEET)</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('ohda')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'ohda'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>العهدة وسلف الشهر (OHDA)</span>
-        </button>
+          {canAccessOhda && (
+            <button
+              onClick={() => setActiveTab('ohda')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'ohda'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>العهدة وسلف الشهر (OHDA)</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('salary')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'salary'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Briefcase className="w-4 h-4" />
-          <span>مسير المرتبات الشامل (SALARY)</span>
-        </button>
+          {canAccessSalary && (
+            <button
+              onClick={() => setActiveTab('salary')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'salary'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Briefcase className="w-4 h-4" />
+              <span>مسير المرتبات الشامل (SALARY)</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('kpi')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'kpi'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Award className="w-4 h-4" />
-          <span>تقييم وأداء البائعين (KPI)</span>
-        </button>
+          {canAccessKpi && (
+            <button
+              onClick={() => setActiveTab('kpi')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'kpi'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Award className="w-4 h-4" />
+              <span>تقييم وأداء البائعين (KPI)</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('suppliers_ledger')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'suppliers_ledger'
-              ? 'bg-emerald-800 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-          <span>كشوف حسابات الموردين (LEDGER)</span>
-        </button>
+          {canAccessSuppliersLedger && (
+            <button
+              onClick={() => setActiveTab('suppliers_ledger')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'suppliers_ledger'
+                  ? 'bg-emerald-800 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+              <span>كشوف حسابات الموردين (LEDGER)</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('sales')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'sales'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <ShoppingBag className="w-4 h-4" />
-          <span>فواتير المبيعات</span>
-        </button>
+          {canAccessSales && (
+            <button
+              onClick={() => setActiveTab('sales')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'sales'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>فواتير المبيعات</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('rentals')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'rentals'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Repeat className="w-4 h-4" />
-          <span>عقود التأجير</span>
-        </button>
+          {canAccessRentals && (
+            <button
+              onClick={() => setActiveTab('rentals')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'rentals'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Repeat className="w-4 h-4" />
+              <span>عقود التأجير</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('expenses')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'expenses'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <TrendingDown className="w-4 h-4" />
-          <span>سجل المصروفات</span>
-        </button>
+          {canAccessExpenses && (
+            <button
+              onClick={() => setActiveTab('expenses')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'expenses'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <TrendingDown className="w-4 h-4" />
+              <span>سجل المصروفات</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('inventory')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'inventory'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>جرد وتقييم المخزون</span>
-        </button>
+          {canAccessInventory && (
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'inventory'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Layers className="w-4 h-4" />
+              <span>جرد وتقييم المخزون</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('monthly')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'monthly'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span>التقرير الشهري والمقارنات</span>
-        </button>
+          {canAccessMonthly && (
+            <button
+              onClick={() => setActiveTab('monthly')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'monthly'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>التقرير الشهري والمقارنات</span>
+            </button>
+          )}
 
-        <button
-          onClick={() => setActiveTab('top_products')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'top_products'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <Package className="w-4 h-4" />
-          <span>الأكثر مبيعاً</span>
-        </button>
-      </div>
+          {canAccessTopProducts && (
+            <button
+              onClick={() => setActiveTab('top_products')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+                activeTab === 'top_products'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Package className="w-4 h-4" />
+              <span>الأكثر مبيعاً</span>
+            </button>
+          )}
+        </div>
 
       {/* Month Filter Bar for Month-based Tabs */}
       {['ohda', 'salary', 'kpi'].includes(activeTab) && (
@@ -1445,18 +1546,20 @@ export function Reports() {
               </div>
             </div>
 
-            <div className="self-end">
-              <Button
-                variant="outline"
-                icon={FileSpreadsheet}
-                size="sm"
-                isLoading={exportingConsolidated}
-                onClick={exportConsolidatedExcel}
-                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-emerald-50/20 font-bold"
-              >
-                تصدير شيت المجمع الشهري (36 شيت)
-              </Button>
-            </div>
+            {canExportExcel && (
+              <div className="self-end">
+                <Button
+                  variant="outline"
+                  icon={FileSpreadsheet}
+                  size="sm"
+                  isLoading={exportingConsolidated}
+                  onClick={exportConsolidatedExcel}
+                  className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-emerald-50/20 font-bold"
+                >
+                  تصدير شيت المجمع الشهري (36 شيت)
+                </Button>
+              </div>
+            )}
           </div>
         </Card>
       )}

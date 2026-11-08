@@ -40,13 +40,24 @@ import {
   KeyRound,
   Sparkles,
   Gift,
+  ShieldAlert,
 } from 'lucide-react';
 
 export function Employees() {
-  const { user } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { branches, activeBranchId, isMultiBranch } = useBranch();
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
+
+  // Granular Permissions Gating
+  const canViewEmployees = Boolean(isAdmin || hasPermission('employees.list.view'));
+  const canCreateEmployee = Boolean(isAdmin || hasPermission('employees.create'));
+  const canEditEmployee = Boolean(isAdmin || hasPermission('employees.edit'));
+  const canViewAttendance = Boolean(isAdmin || hasPermission('employees.attendance.view') || hasPermission('employees.attendance.edit'));
+  const canEditAttendance = Boolean(isAdmin || hasPermission('employees.attendance.edit'));
+  const canViewPayroll = Boolean(isAdmin || hasPermission('employees.payroll.view'));
+  const canExecutePayroll = Boolean(isAdmin || hasPermission('employees.payroll.execute'));
+  const canCreateAdvance = Boolean(isAdmin || hasPermission('employees.advances.create'));
 
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -130,12 +141,20 @@ export function Employees() {
   const [summaryData, setSummaryData] = useState({ daily_summary: [], monthly_summary: [] });
   const [activeSummaryTab, setActiveSummaryTab] = useState('daily');
   const [loadingSummary, setLoadingSummary] = useState(false);
-  const [txForm, setTxForm] = useState({
-    type: 'advance',
+  const [txForm, setTxForm] = useState(() => ({
+    type: canCreateAdvance ? 'advance' : 'deduction',
     amount: '',
     notes: '',
     transaction_date: new Date().toISOString().split('T')[0],
-  });
+  }));
+
+  useEffect(() => {
+    if (txForm.type === 'advance' && !canCreateAdvance && canExecutePayroll) {
+      setTxForm((prev) => ({ ...prev, type: 'deduction' }));
+    } else if (txForm.type !== 'advance' && !canExecutePayroll && canCreateAdvance) {
+      setTxForm((prev) => ({ ...prev, type: 'advance' }));
+    }
+  }, [canCreateAdvance, canExecutePayroll, txForm.type]);
 
   // Payslip Modal
   const [showPayslipModal, setShowPayslipModal] = useState(false);
@@ -153,6 +172,10 @@ export function Employees() {
 
   // Load Employees
   const loadEmployees = useCallback(async () => {
+    if (!canViewEmployees) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const res = await client.get('/employees', { params: { month: selectedMonth } });
@@ -167,7 +190,7 @@ export function Employees() {
     } finally {
       setLoading(false);
     }
-  }, [selectedMonth, toast]);
+  }, [canViewEmployees, selectedMonth, toast]);
 
   useEffect(() => {
     loadEmployees();
@@ -495,7 +518,7 @@ export function Employees() {
     setShowSummaryModal(true);
     setLoadingSummary(true);
     setTxForm({
-      type: 'advance',
+      type: canCreateAdvance ? 'advance' : 'deduction',
       amount: '',
       notes: '',
       transaction_date: new Date().toISOString().split('T')[0],
@@ -516,6 +539,14 @@ export function Employees() {
 
   // Open Salary & Transactions Summary
   const openSummaryModal = (emp) => {
+    setTxForm((prev) => ({
+      ...prev,
+      type: canCreateAdvance ? 'advance' : 'deduction',
+      amount: '',
+      notes: '',
+      transaction_date: new Date().toISOString().split('T')[0],
+    }));
+
     const proceed = (pwd) => {
       executeOpenSummary(emp, pwd);
     };
@@ -534,6 +565,14 @@ export function Employees() {
   // Save Financial Transaction
   const handleSaveTransaction = async (e) => {
     e.preventDefault();
+    if (txForm.type === 'advance' && !canCreateAdvance) {
+      toast({ title: 'غير مصرح', message: 'ليس لديك صلاحية تسجيل السلف', variant: 'danger' });
+      return;
+    }
+    if (txForm.type !== 'advance' && !canExecutePayroll) {
+      toast({ title: 'غير مصرح', message: 'ليس لديك صلاحية تسجيل حركات الرواتب والخصومات والمكافآت', variant: 'danger' });
+      return;
+    }
     if (!txForm.amount || Number(txForm.amount) <= 0) {
       toast({ title: 'تنبيه', message: 'يرجى إدخال مبلغ صحيح', variant: 'warning' });
       return;
@@ -682,6 +721,20 @@ export function Employees() {
   };
 
 
+  if (!canViewEmployees) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-[#EBE8E2] text-center space-y-4">
+        <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-[#24221F]">غير مصرح بالدخول</h2>
+          <p className="text-sm text-[#777266] mt-1">ليس لديك صلاحية لعرض قائمة الموظفين والموارد البشرية</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -702,16 +755,20 @@ export function Employees() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            icon={salaryVisible ? EyeOff : Eye}
-            onClick={handleToggleSalaryVisibility}
-          >
-            {salaryVisible ? 'إخفاء الرواتب' : 'إظهار الرواتب'}
-          </Button>
-          <Button variant="primary" icon={Plus} onClick={handleOpenAdd}>
-            إضافة موظف جديد
-          </Button>
+          {canViewPayroll && (
+            <Button
+              variant="outline"
+              icon={salaryVisible ? EyeOff : Eye}
+              onClick={handleToggleSalaryVisibility}
+            >
+              {salaryVisible ? 'إخفاء الرواتب' : 'إظهار الرواتب'}
+            </Button>
+          )}
+          {canCreateEmployee && (
+            <Button variant="primary" icon={Plus} onClick={handleOpenAdd}>
+              إضافة موظف جديد
+            </Button>
+          )}
         </div>
       </div>
 
@@ -889,14 +946,16 @@ export function Employees() {
                 <th className="py-3.5 px-4">
                   <div className="flex items-center gap-1.5">
                     <span>الراتب الأساسي</span>
-                    <button
-                      type="button"
-                      onClick={handleToggleSalaryVisibility}
-                      className="p-1 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-                      title={salaryVisible ? 'إخفاء الرواتب' : 'إظهار الرواتب'}
-                    >
-                      {salaryVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
+                    {canViewPayroll && (
+                      <button
+                        type="button"
+                        onClick={handleToggleSalaryVisibility}
+                        className="p-1 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                        title={salaryVisible ? 'إخفاء الرواتب' : 'إظهار الرواتب'}
+                      >
+                        {salaryVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
                   </div>
                 </th>
                 <th className="py-3.5 px-4 whitespace-nowrap">
@@ -1041,76 +1100,88 @@ export function Employees() {
                             </span>
                           )}
 
-                          <button
-                            type="button"
-                            onClick={() => handleToggleAttendance(emp)}
-                            title={
-                              isCheckedIn && !isCheckedOut
-                                ? 'تسجيل انصراف الآن'
-                                : isCheckedOut
-                                ? 'تم تسجيل اليوم'
-                                : 'تسجيل حضور الآن'
-                            }
-                            className={`p-1.5 rounded-lg border transition-all ${
-                              isCheckedIn && !isCheckedOut
-                                ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                                : isCheckedOut
-                                ? 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                            }`}
-                          >
-                            {isCheckedIn && !isCheckedOut ? (
-                              <LogOut className="w-3.5 h-3.5" />
-                            ) : (
-                              <LogIn className="w-3.5 h-3.5" />
-                            )}
-                          </button>
+                          {canEditAttendance && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAttendance(emp)}
+                              title={
+                                isCheckedIn && !isCheckedOut
+                                  ? 'تسجيل انصراف الآن'
+                                  : isCheckedOut
+                                  ? 'تم تسجيل اليوم'
+                                  : 'تسجيل حضور الآن'
+                              }
+                              className={`p-1.5 rounded-lg border transition-all ${
+                                isCheckedIn && !isCheckedOut
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                                  : isCheckedOut
+                                  ? 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                                  : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                              }`}
+                            >
+                              {isCheckedIn && !isCheckedOut ? (
+                                <LogOut className="w-3.5 h-3.5" />
+                              ) : (
+                                <LogIn className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          )}
                         </div>
                       </td>
 
                       <td className="py-3.5 px-4">
                         <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => openAttendanceModal(emp)}
-                            title="سجل الحضور والبصمة"
-                            className="p-1.5 rounded-lg text-cyan-600 hover:bg-cyan-50 transition-colors"
-                          >
-                            <Calendar className="w-4 h-4" />
-                          </button>
+                          {canViewAttendance && (
+                            <button
+                              onClick={() => openAttendanceModal(emp)}
+                              title="سجل الحضور والبصمة"
+                              className="p-1.5 rounded-lg text-cyan-600 hover:bg-cyan-50 transition-colors"
+                            >
+                              <Calendar className="w-4 h-4" />
+                            </button>
+                          )}
 
-                          <button
-                            onClick={() => openManualAttendance(emp)}
-                            title="تسجيل حضور/انصراف يدوي"
-                            className="p-1.5 rounded-lg text-teal-600 hover:bg-teal-50 transition-colors"
-                          >
-                            <UserCheck className="w-4 h-4" />
-                          </button>
+                          {canEditAttendance && (
+                            <button
+                              onClick={() => openManualAttendance(emp)}
+                              title="تسجيل حضور/انصراف يدوي"
+                              className="p-1.5 rounded-lg text-teal-600 hover:bg-teal-50 transition-colors"
+                            >
+                              <UserCheck className="w-4 h-4" />
+                            </button>
+                          )}
 
-                          <button
-                            onClick={() => openSummaryModal(emp)}
-                            title="الحركات المالية وكشف الراتب"
-                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors"
-                          >
-                            <DollarSign className="w-4 h-4" />
-                          </button>
+                          {(canViewPayroll || canCreateAdvance) && (
+                            <button
+                              onClick={() => openSummaryModal(emp)}
+                              title="الحركات المالية وكشف الراتب"
+                              className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors"
+                            >
+                              <DollarSign className="w-4 h-4" />
+                            </button>
+                          )}
 
-                          <button
-                            onClick={() => openPayslipModal(emp)}
-                            title="طباعة قسيمة الراتب (Payslip)"
-                            className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
-                          >
-                            <Receipt className="w-4 h-4" />
-                          </button>
+                          {canViewPayroll && (
+                            <button
+                              onClick={() => openPayslipModal(emp)}
+                              title="طباعة قسيمة الراتب (Payslip)"
+                              className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            >
+                              <Receipt className="w-4 h-4" />
+                            </button>
+                          )}
 
-                          <button
-                            onClick={() => openSalesReportModal(emp)}
-                            title="سجل مبيعات وعمولات الموظف"
-                            className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
-                          >
-                            <TrendingUp className="w-4 h-4" />
-                          </button>
+                          {Boolean(isAdmin || hasPermission('reports.sales.view')) && (
+                            <button
+                              onClick={() => openSalesReportModal(emp)}
+                              title="سجل مبيعات وعمولات الموظف"
+                              className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
+                            >
+                              <TrendingUp className="w-4 h-4" />
+                            </button>
+                          )}
 
-                          {user?.role === 'admin' && (
+                          {(isAdmin || canEditEmployee) && (
                             <button
                               onClick={() => {
                                 setTransferEmp(emp);
@@ -1124,21 +1195,25 @@ export function Employees() {
                             </button>
                           )}
 
-                          <button
-                            onClick={() => handleOpenEdit(emp)}
-                            title="تعديل بيانات الموظف"
-                            className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
+                          {canEditEmployee && (
+                            <button
+                              onClick={() => handleOpenEdit(emp)}
+                              title="تعديل بيانات الموظف"
+                              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          )}
 
-                          <button
-                            onClick={() => handleDeleteEmployee(emp.id, emp.name)}
-                            title="حذف الموظف"
-                            className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {(isAdmin || canEditEmployee) && (
+                            <button
+                              onClick={() => handleDeleteEmployee(emp.id, emp.name)}
+                              title="حذف الموظف"
+                              className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1494,62 +1569,68 @@ export function Employees() {
       >
         <div className="space-y-6">
           {/* Add transaction form */}
-          <form onSubmit={handleSaveTransaction} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-            <p className="text-xs font-black text-slate-800">تسجيل حركة مالية جديدة</p>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-500 mb-1">نوع الحركة</label>
-                <select
-                  className="w-full h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
-                  value={txForm.type}
-                  onChange={(e) => setTxForm({ ...txForm, type: e.target.value })}
-                >
-                  <option value="advance">سلفة مالية</option>
-                  <option value="deduction">خصم</option>
-                  <option value="bonus">مكافأة</option>
-                  <option value="salary_payment">تسديد / صرف راتب</option>
-                </select>
+          {(canCreateAdvance || canExecutePayroll) && (
+            <form onSubmit={handleSaveTransaction} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+              <p className="text-xs font-black text-slate-800">تسجيل حركة مالية جديدة</p>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">نوع الحركة</label>
+                  <select
+                    className="w-full h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
+                    value={txForm.type}
+                    onChange={(e) => setTxForm({ ...txForm, type: e.target.value })}
+                  >
+                    {canCreateAdvance && <option value="advance">سلفة مالية</option>}
+                    {canExecutePayroll && (
+                      <>
+                        <option value="deduction">خصم</option>
+                        <option value="bonus">مكافأة</option>
+                        <option value="salary_payment">تسديد / صرف راتب</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">المبلغ (ج.م)</label>
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    placeholder="0.00"
+                    value={txForm.amount}
+                    onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">التاريخ</label>
+                  <Input
+                    type="date"
+                    required
+                    value={txForm.transaction_date}
+                    onChange={(e) => setTxForm({ ...txForm, transaction_date: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">البيان / ملاحظة</label>
+                  <Input
+                    placeholder="سبب السلفة أو المكافأة..."
+                    value={txForm.notes}
+                    onChange={(e) => setTxForm({ ...txForm, notes: e.target.value })}
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-bold text-slate-500 mb-1">المبلغ (ج.م)</label>
-                <Input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  required
-                  placeholder="0.00"
-                  value={txForm.amount}
-                  onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })}
-                />
+              <div className="flex justify-end">
+                <Button type="submit" variant="primary" size="sm">
+                  تأكيد وقيد الحركة
+                </Button>
               </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-500 mb-1">التاريخ</label>
-                <Input
-                  type="date"
-                  required
-                  value={txForm.transaction_date}
-                  onChange={(e) => setTxForm({ ...txForm, transaction_date: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-500 mb-1">البيان / ملاحظة</label>
-                <Input
-                  placeholder="سبب السلفة أو المكافأة..."
-                  value={txForm.notes}
-                  onChange={(e) => setTxForm({ ...txForm, notes: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <Button type="submit" variant="primary" size="sm">
-                تأكيد وقيد الحركة
-              </Button>
-            </div>
-          </form>
+            </form>
+          )}
 
           {/* Tabs for Daily vs Monthly */}
           <div className="flex items-center gap-2 border-b border-slate-200 pb-2">

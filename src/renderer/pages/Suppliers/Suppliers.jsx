@@ -153,24 +153,62 @@ export function Suppliers() {
   const [activeTab, setActiveTab] = useState(initialTab); // 'inventory' | 'suppliers' | 'branch_matrix' | 'transfer_logs'
 
   // Granular Tab Gating
-  const hasSuppliersSpecific = Boolean(hasPermission('suppliers.access') || hasPermission('suppliers.list.view') || hasPermission('suppliers.create') || hasPermission('suppliers.purchases.create'));
-  const hasInventorySpecific = Boolean(hasPermission('inventory.access') || hasPermission('inventory.products.view') || hasPermission('inventory.products.create'));
-  const canAccessInventory = Boolean(isAdmin || hasInventorySpecific || (!hasSuppliersSpecific && (hasPermission('inventory_admin') || hasPermission('Suppliers.html'))));
-  const canAccessSuppliers = Boolean(isAdmin || hasSuppliersSpecific || (!hasInventorySpecific && (hasPermission('inventory_admin') || hasPermission('Suppliers.html'))));
-  const canAccessMatrix = Boolean(isAdmin || canAccessInventory || hasPermission('inventory_admin'));
-  const canAccessTransfers = Boolean(isAdmin || canAccessInventory || hasPermission('inventory.transfers.request') || hasPermission('inventory.transfers.approve') || hasPermission('inventory.transfers.receive'));
+  const hasInventorySpecific = Boolean(
+    hasPermission('inventory.products.view') ||
+    hasPermission('inventory.products.create') ||
+    hasPermission('inventory.products.edit') ||
+    hasPermission('inventory.products.delete') ||
+    hasPermission('inventory.products.duplicate')
+  );
+  const canAccessInventory = Boolean(isAdmin || hasInventorySpecific || hasPermission('inventory_admin'));
+
+  const hasSuppliersSpecific = Boolean(
+    hasPermission('suppliers.list.view') ||
+    hasPermission('suppliers.create') ||
+    hasPermission('suppliers.edit') ||
+    hasPermission('suppliers.delete') ||
+    hasPermission('suppliers.purchases.create')
+  );
+  const canAccessSuppliers = Boolean(isAdmin || hasSuppliersSpecific || hasPermission('inventory_admin'));
+
+  const canAccessMatrix = Boolean(
+    isAdmin ||
+    hasPermission('inventory.matrix.view') ||
+    hasPermission('inventory_view_all_branches') ||
+    hasPermission('inventory_admin')
+  );
+
+  const canAccessTransfers = Boolean(
+    isAdmin ||
+    hasPermission('inventory.transfers.view') ||
+    hasPermission('inventory.transfers.request') ||
+    hasPermission('inventory.transfers.approve') ||
+    hasPermission('inventory.transfers.receive') ||
+    hasPermission('inventory_admin')
+  );
+
+  const accessibleTabs = useMemo(() => {
+    const list = [];
+    if (canAccessInventory) list.push('inventory');
+    if (canAccessSuppliers) list.push('suppliers');
+    if (canAccessMatrix) list.push('branch_matrix');
+    if (canAccessTransfers) list.push('transfer_logs');
+    return list;
+  }, [canAccessInventory, canAccessSuppliers, canAccessMatrix, canAccessTransfers]);
 
   useEffect(() => {
-    if (activeTab === 'inventory' && !canAccessInventory) {
-      if (canAccessSuppliers) setActiveTab('suppliers');
-      else if (canAccessMatrix) setActiveTab('branch_matrix');
-      else if (canAccessTransfers) setActiveTab('transfer_logs');
-    } else if (activeTab === 'suppliers' && !canAccessSuppliers) {
-      if (canAccessInventory) setActiveTab('inventory');
-      else if (canAccessMatrix) setActiveTab('branch_matrix');
-      else if (canAccessTransfers) setActiveTab('transfer_logs');
+    if (!accessibleTabs.length) return;
+    if (!accessibleTabs.includes(activeTab)) {
+      setActiveTab(accessibleTabs[0]);
     }
-  }, [activeTab, canAccessInventory, canAccessSuppliers, canAccessMatrix, canAccessTransfers]);
+  }, [activeTab, accessibleTabs]);
+
+  useEffect(() => {
+    const requested = getValidTab(searchParams.get('tab'));
+    if (accessibleTabs.includes(requested) && activeTab !== requested) {
+      setActiveTab(requested);
+    }
+  }, [searchParams, accessibleTabs, activeTab]);
 
   // INVENTORY STATE
   const [products, setProducts] = useState([]);
@@ -632,6 +670,10 @@ total: 0,
 
   // Load Inventory Products
   const fetchProducts = useCallback(async () => {
+    if (!canAccessInventory) {
+      setLoadingProducts(false);
+      return;
+    }
     try {
       setLoadingProducts(true);
       const query = new URLSearchParams();
@@ -683,6 +725,10 @@ total: 0,
 
   // Load Suppliers
   const fetchSuppliers = useCallback(async (overrides) => {
+    if (!canAccessSuppliers) {
+      setLoadingSuppliers(false);
+      return;
+    }
     try {
       setLoadingSuppliers(true);
       const isPlainObj = overrides && typeof overrides === 'object' && !('nativeEvent' in overrides) && !('preventDefault' in overrides);
@@ -759,6 +805,10 @@ total: 0,
 
   // Load Inter-branch transfer requests
   const fetchRequests = useCallback(async () => {
+    if (!canAccessTransfers) {
+      setLoadingRequests(false);
+      return;
+    }
     try {
       setLoadingRequests(true);
       const data = await api.get('/inventory/transfers/requests').catch(() => []);
@@ -768,10 +818,14 @@ total: 0,
     } finally {
       setLoadingRequests(false);
     }
-  }, []);
+  }, [canAccessTransfers]);
 
   // Load Incoming Shipments pending confirmation
   const fetchIncomingShipments = useCallback(async () => {
+    if (!canAccessTransfers) {
+      setLoadingShipments(false);
+      return;
+    }
     try {
       setLoadingShipments(true);
       const branchParam = activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : '';
@@ -782,7 +836,7 @@ total: 0,
     } finally {
       setLoadingShipments(false);
     }
-  }, [activeBranchId]);
+  }, [activeBranchId, canAccessTransfers]);
 
   // Handle Receive Shipment
   const handleReceiveShipment = async (transferId) => {
@@ -800,26 +854,52 @@ total: 0,
   };
 
   useEffect(() => {
-    if (activeTab === 'inventory') {
+    if (!accessibleTabs.length) return;
+
+    if (activeTab === 'inventory' && canAccessInventory) {
       const timer = setTimeout(() => {
         fetchProducts();
-        fetchRequests();
-        fetchIncomingShipments();
+        if (canAccessTransfers) {
+          fetchRequests();
+          fetchIncomingShipments();
+        }
       }, 200);
       return () => clearTimeout(timer);
-    } else {
+    } else if (activeTab === 'suppliers' && canAccessSuppliers) {
       const timer = setTimeout(() => {
         lastFetchedSupplierQueryRef.current = '';
         fetchSuppliers({ force: true });
       }, 200);
       return () => clearTimeout(timer);
+    } else if (activeTab === 'transfer_logs' && canAccessTransfers) {
+      fetchRequests();
+      fetchIncomingShipments();
     }
-  }, [activeTab, fetchProducts, fetchSuppliers, fetchRequests, fetchIncomingShipments]);
+  }, [
+    activeTab,
+    accessibleTabs.length,
+    canAccessInventory,
+    canAccessSuppliers,
+    canAccessTransfers,
+    fetchProducts,
+    fetchSuppliers,
+    fetchRequests,
+    fetchIncomingShipments,
+  ]);
 
   // Ensure suppliers list is loaded once on initial mount for dropdowns across tabs
   useEffect(() => {
-    fetchSuppliers();
-  }, []);
+    if (!accessibleTabs.length) return;
+    if (canAccessSuppliers) {
+      fetchSuppliers();
+    } else if (canAccessInventory) {
+      api.get('/suppliers/options')
+        .then((data) => {
+          if (Array.isArray(data)) setSuppliers(data);
+        })
+        .catch(() => {});
+    }
+  }, [accessibleTabs.length, canAccessSuppliers, canAccessInventory]);
 
   // Reset pagination when branch changes
   useEffect(() => {
@@ -1948,6 +2028,20 @@ total: 0,
     }
   };
 
+  if (!accessibleTabs.length) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center min-h-[60vh] text-center" style={{ direction: 'rtl' }}>
+        <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mb-4">
+          <AlertTriangle className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-black text-slate-800 mb-2">غير مصرح لك بالوصول إلى أي من أقسام المخزون</h2>
+        <p className="text-sm font-bold text-slate-500 max-w-md">
+          يرجى التواصل مع مسؤول النظام لتفعيل صلاحيات الوصول إلى المنتجات، الموردين، أرصدة الفروع، أو سجل التحويلات.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5 max-w-[1700px] mx-auto select-none" style={{ direction: 'rtl' }}>
       {/* Top Header & Navigation Tabs */}
@@ -2046,9 +2140,9 @@ total: 0,
             تقرير PDF
           </Button>
 
-          {activeTab === 'inventory' ? (
+          {activeTab === 'inventory' && canAccessInventory ? (
             <>
-              {isAdmin && (
+              {(isAdmin || hasPermission('inventory_admin') || hasPermission('suppliers.purchases.create')) && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -2059,48 +2153,54 @@ total: 0,
                   توريدة مشتريات
                 </Button>
               )}
-              <Button
-                variant="primary"
-                size="sm"
-                icon={Plus}
-                onClick={openCreateProduct}
-                className="whitespace-nowrap font-black text-xs shadow-xs !px-3 sm:!px-4"
-              >
-                <span>إضافة منتج</span>
-                <span className="hidden xl:inline"> جديد</span>
-              </Button>
+              {(isAdmin || hasPermission('inventory.products.create')) && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={Plus}
+                  onClick={openCreateProduct}
+                  className="whitespace-nowrap font-black text-xs shadow-xs !px-3 sm:!px-4"
+                >
+                  <span>إضافة منتج</span>
+                  <span className="hidden xl:inline"> جديد</span>
+                </Button>
+              )}
             </>
-          ) : activeTab === 'suppliers' ? (
+          ) : activeTab === 'suppliers' && canAccessSuppliers ? (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={Undo2}
-                onClick={() => {
-                  setReturnSupplierId(suppliers[0]?.id ? suppliers[0].id.toString() : '');
-                  setShowReturnModal(true);
-                }}
-                className="whitespace-nowrap font-black text-xs !px-2.5 sm:!px-3.5"
-              >
-                مرتجع لمورد
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                icon={Plus}
-                onClick={openCreateSupplier}
-                className="whitespace-nowrap font-black text-xs shadow-xs !px-3 sm:!px-4"
-              >
-                <span>إضافة مورد</span>
-                <span className="hidden xl:inline"> جديد</span>
-              </Button>
+              {(isAdmin || hasPermission('inventory_admin') || hasPermission('suppliers.purchases.create') || hasPermission('suppliers.edit')) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={Undo2}
+                  onClick={() => {
+                    setReturnSupplierId(suppliers[0]?.id ? suppliers[0].id.toString() : '');
+                    setShowReturnModal(true);
+                  }}
+                  className="whitespace-nowrap font-black text-xs !px-2.5 sm:!px-3.5"
+                >
+                  مرتجع لمورد
+                </Button>
+              )}
+              {(isAdmin || hasPermission('suppliers.create')) && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={Plus}
+                  onClick={openCreateSupplier}
+                  className="whitespace-nowrap font-black text-xs shadow-xs !px-3 sm:!px-4"
+                >
+                  <span>إضافة مورد</span>
+                  <span className="hidden xl:inline"> جديد</span>
+                </Button>
+              )}
             </>
           ) : null}
         </div>
       </div>
 
       {/* TAB 1: INVENTORY MANAGEMENT */}
-      {activeTab === 'inventory' && (
+      {activeTab === 'inventory' && canAccessInventory && (
         <div className="space-y-4">
           {/* Pending Transfer Requests Banner */}
           {incomingRequests.length > 0 && (
@@ -2823,16 +2923,18 @@ total: 0,
                               </button>
 
                               {/* Duplicate Product Button */}
-                              <button
-                                onClick={() => openDuplicateModal(p)}
-                                className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                                title="تكرار المنتج (نسخ)"
-                              >
-                                <Copy className="w-4 h-4" />
-                              </button>
+                              {(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.products.duplicate') || hasPermission('inventory.products.create')) && (
+                                <button
+                                  onClick={() => openDuplicateModal(p)}
+                                  className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                  title="تكرار المنتج (نسخ)"
+                                >
+                                  <Copy className="w-4 h-4" />
+                                </button>
+                              )}
 
                               {/* Transfer Between Branches */}
-                              {branches.length > 1 && (
+                              {branches.length > 1 && (isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.request')) && (
                                 <button
                                   onClick={() => openTransferModal(p)}
                                   className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
@@ -2856,16 +2958,18 @@ total: 0,
                               </button>
 
                               {/* Edit Button */}
-                              <button
-                                onClick={() => openEditProduct(p)}
-                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                title="تعديل المنتج"
-                              >
-                                <Edit2 className="w-4 h-4" />
-                              </button>
+                              {(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.products.edit')) && (
+                                <button
+                                  onClick={() => openEditProduct(p)}
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                  title="تعديل المنتج"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              )}
 
                               {/* Delete Button */}
-                              {isAdmin && (
+                              {(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.products.delete')) && (
                                 <button
                                   onClick={() => handleDeleteProduct(p.id)}
                                   className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
@@ -2997,7 +3101,7 @@ total: 0,
       )}
 
       {/* TAB 2: SUPPLIERS DIRECTORY */}
-      {activeTab === 'suppliers' && (
+      {activeTab === 'suppliers' && canAccessSuppliers && (
         <Card>
           <CardHeader
             title="سجل الموردين والشركات"
@@ -3217,16 +3321,18 @@ total: 0,
                           </button>
 
                           {/* Edit Supplier */}
-                          <button
-                            onClick={() => openEditSupplier(s)}
-                            className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
-                            title="تعديل بيانات المورد"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
+                          {(isAdmin || hasPermission('inventory_admin') || hasPermission('suppliers.edit')) && (
+                            <button
+                              onClick={() => openEditSupplier(s)}
+                              className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
+                              title="تعديل بيانات المورد"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
 
                           {/* Delete Supplier */}
-                          {isAdmin && (
+                          {(isAdmin || hasPermission('inventory_admin') || hasPermission('suppliers.delete')) && (
                             <button
                               onClick={() => handleDeleteSupplier(s.id)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
@@ -3356,11 +3462,11 @@ total: 0,
         </Card>
       )}
 
-      {activeTab === 'branch_matrix' && (
+      {activeTab === 'branch_matrix' && canAccessMatrix && (
         <BranchStockMatrix isAdmin={isAdmin} />
       )}
 
-      {activeTab === 'transfer_logs' && (
+      {activeTab === 'transfer_logs' && canAccessTransfers && (
         <BranchTransferLogs
           isAdmin={isAdmin}
           onRefreshBanners={() => {

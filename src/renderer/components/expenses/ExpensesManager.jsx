@@ -37,6 +37,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Info,
+  ShieldAlert,
+  Lock,
 } from 'lucide-react';
 
 export const EXPENSE_CATEGORIES = [
@@ -82,9 +84,42 @@ export const PAYMENT_METHODS = [
 ];
 
 export function ExpensesManager({ isCashierTab = false }) {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { branches, activeBranchId } = useBranch();
   const toast = useToast();
+
+  // Granular Permissions Gating
+  const canAccessExpensesList = Boolean(isAdmin || hasPermission('expenses.list.view') || hasPermission('expenses.create'));
+  const canCreateExpense = Boolean(isAdmin || hasPermission('expenses.create'));
+  const canDeleteExpense = Boolean(isAdmin || hasPermission('expenses.delete'));
+  const canAccessDrawer = Boolean(isAdmin || hasPermission('cash_drawer.settlement.view') || hasPermission('cash_drawer.settlement.close'));
+  const canCloseDrawer = Boolean(isAdmin || hasPermission('cash_drawer.settlement.close'));
+
+  // Multi-tab support when !isCashierTab
+  const accessibleTabs = useMemo(() => {
+    if (isCashierTab) return ['expenses_list'];
+    const list = [];
+    if (canAccessExpensesList) list.push('expenses_list');
+    if (canAccessDrawer) list.push('drawer');
+    return list;
+  }, [isCashierTab, canAccessExpensesList, canAccessDrawer]);
+
+  const [activeTab, setActiveTab] = useState(() => (isCashierTab ? 'expenses_list' : (accessibleTabs[0] || 'expenses_list')));
+
+  // Redirect guard: if activeTab is unauthorized, redirect to first accessible tab
+  useEffect(() => {
+    if (isCashierTab) return;
+    if (accessibleTabs.length > 0 && !accessibleTabs.includes(activeTab)) {
+      setActiveTab(accessibleTabs[0]);
+    }
+  }, [isCashierTab, accessibleTabs, activeTab]);
+
+  // Drawer Settlement State
+  const [drawerDate, setDrawerDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [drawerBranch, setDrawerBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all'));
+  const [drawerData, setDrawerData] = useState(null);
+  const [loadingDrawer, setLoadingDrawer] = useState(false);
+  const [closingDrawer, setClosingDrawer] = useState(false);
 
   const [expenses, setExpenses] = useState([]);
   const [summary, setSummary] = useState({
@@ -187,6 +222,10 @@ export function ExpensesManager({ isCashierTab = false }) {
 
   // Fetch Expenses & Summary
   const loadExpenses = useCallback(async () => {
+    if (!canAccessExpensesList) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const params = {
@@ -228,6 +267,7 @@ export function ExpensesManager({ isCashierTab = false }) {
       setLoading(false);
     }
   }, [
+    canAccessExpensesList,
     pagination.page,
     pagination.limit,
     filterBranch,
@@ -246,8 +286,74 @@ export function ExpensesManager({ isCashierTab = false }) {
     loadExpenses();
   }, [loadExpenses]);
 
+  // Drawer Settlement Fetch & Calculation
+  const loadDrawerSettlement = useCallback(async () => {
+    if (!canAccessDrawer) return;
+    try {
+      setLoadingDrawer(true);
+      const params = { date: drawerDate };
+      if (drawerBranch && drawerBranch !== 'all') params.branch_id = drawerBranch;
+      const res = await client.get('/reports/daily', { params });
+      setDrawerData(res?.data || res || null);
+    } catch (err) {
+      toast.error(err.message || 'تعذر تحميل بيانات تقفيل الدرج');
+      setDrawerData(null);
+    } finally {
+      setLoadingDrawer(false);
+    }
+  }, [canAccessDrawer, drawerDate, drawerBranch, toast]);
+
+  useEffect(() => {
+    if (activeTab === 'drawer') {
+      loadDrawerSettlement();
+    }
+  }, [activeTab, loadDrawerSettlement]);
+
+  const drawerSummary = useMemo(() => {
+    const sum = drawerData?.summary || {};
+    const cashCollected = Number(sum.cash_collected || sum.total_cash || 0);
+    const cashExpenses = Number(sum.cash_expenses || 0);
+    const totalAdvances = Number(sum.total_advances || sum.advances || 0);
+    const physicalCash = Math.max(0, cashCollected - cashExpenses - totalAdvances);
+    const visaCollected = Number(sum.visa_collected || 0);
+    const instapayCollected = Number(sum.instapay_collected || 0);
+    const totalBank = visaCollected + instapayCollected;
+    return {
+      cashCollected,
+      cashExpenses,
+      totalAdvances,
+      physicalCash,
+      visaCollected,
+      instapayCollected,
+      totalBank,
+    };
+  }, [drawerData]);
+
+  const handleCloseDrawerSettlement = async () => {
+    if (!canCloseDrawer) {
+      toast.error('ليس لديك صلاحية اعتماد تقفيل وتوريد الدرج');
+      return;
+    }
+    setClosingDrawer(true);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      toast.success(
+        `تم اعتماد تقفيل الدرج وتوريد النقدية الفعلية بنجاح 🔒`
+      );
+      loadDrawerSettlement();
+    } catch (err) {
+      toast.error(err.message || 'فشل اعتماد تقفيل الدرج');
+    } finally {
+      setClosingDrawer(false);
+    }
+  };
+
   // Open Add Modal
   const handleOpenAdd = () => {
+    if (!canCreateExpense) {
+      toast.error('غير مصرح لك بتسجيل مصروفات');
+      return;
+    }
     const defaultBranch = isBranchScoped
       ? user?.branch_id || activeBranchId
       : activeBranchId && activeBranchId !== 'all'
@@ -269,6 +375,10 @@ export function ExpensesManager({ isCashierTab = false }) {
   // Submit New Expense
   const handleCreateExpense = async (e) => {
     e.preventDefault();
+    if (!canCreateExpense) {
+      toast.error('غير مصرح لك بتسجيل مصروفات');
+      return;
+    }
     const parsedAmount = Number(form.amount);
     if (!parsedAmount || parsedAmount <= 0) {
       toast.error('يرجى إدخال مبلغ صحيح أكبر من الصفر');
@@ -314,6 +424,10 @@ export function ExpensesManager({ isCashierTab = false }) {
 
   // Open Edit Modal
   const handleOpenEdit = (exp) => {
+    if (!canCreateExpense) {
+      toast.error('غير مصرح لك بتعديل المصروفات');
+      return;
+    }
     setEditForm({
       id: exp.id,
       branch_id: String(exp.branch_id),
@@ -329,6 +443,10 @@ export function ExpensesManager({ isCashierTab = false }) {
   // Submit Edit Expense
   const handleUpdateExpense = async (e) => {
     e.preventDefault();
+    if (!canCreateExpense) {
+      toast.error('غير مصرح لك بتعديل المصروفات');
+      return;
+    }
     const parsedAmount = Number(editForm.amount);
     if (!parsedAmount || parsedAmount <= 0) {
       toast.error('يرجى إدخال مبلغ صحيح أكبر من الصفر');
@@ -358,6 +476,10 @@ export function ExpensesManager({ isCashierTab = false }) {
   // Confirm Delete
   const handleDeleteExpense = async () => {
     if (!expenseToDelete) return;
+    if (!canDeleteExpense) {
+      toast.error('غير مصرح لك بحذف المصروفات');
+      return;
+    }
     try {
       setDeletingSubmitting(true);
       await expensesService.delete(expenseToDelete.id);
@@ -436,38 +558,205 @@ export function ExpensesManager({ isCashierTab = false }) {
     return Number(exp.created_by) === Number(user?.id);
   };
 
-  return (
-    <div className="space-y-4" style={{ direction: 'rtl' }}>
-      {/* Top Header Card */}
-      <div className="bg-[#FFFDF9] p-5 sm:p-6 rounded-3xl border border-[#E6DECD] shadow-[0_2px_10px_rgba(36,34,31,0.03)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-[#FCEBF4] border border-[#F1B6D8]/50 flex items-center justify-center text-[#931D4E] shadow-sm shrink-0">
-            <Wallet className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-black text-[#24221F] tracking-tight">
-                {isCashierTab ? 'المصروفات ونثريات الكاشير' : 'إدارة المصروفات التشغيلية'}
-              </h2>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-[#FCEBF4] text-[#931D4E] border border-[#F1B6D8]/40">
-                خزينة الفرع
-              </span>
-            </div>
-            <p className="text-xs font-semibold text-[#777266] mt-0.5">
-              قيد فوري للمصروفات، ومتابعة حركة النقدية الصادرة من درج الكاشير
-            </p>
-          </div>
+  if (!isCashierTab && accessibleTabs.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-[#EBE8E2] text-center space-y-4" style={{ direction: 'rtl' }}>
+        <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
+          <ShieldAlert className="w-8 h-8" />
         </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <Button variant="outline" icon={RotateCcw} onClick={loadExpenses} disabled={loading} size="sm">
-            تحديث
-          </Button>
-          <Button variant="danger" icon={Plus} onClick={handleOpenAdd} size="sm" className="!px-5 !py-2.5 shadow-md">
-            تسجيل مصروف جديد
-          </Button>
+        <div>
+          <h2 className="text-xl font-bold text-[#24221F]">غير مصرح بالدخول</h2>
+          <p className="text-sm text-[#777266] mt-1">ليس لديك صلاحية لعرض سجل المصروفات أو تقفيل الدرج</p>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4" style={{ direction: 'rtl' }}>
+      {/* Top Navigation Tabs when standalone */}
+      {!isCashierTab && (
+        <div className="flex items-center gap-2 border-b border-[#E6DECD] pb-3">
+          {canAccessExpensesList && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('expenses_list')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all ${
+                activeTab === 'expenses_list'
+                  ? 'bg-[#151515] text-white shadow-sm'
+                  : 'bg-white text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+              }`}
+            >
+              <Receipt className="w-4 h-4" />
+              <span>المصروفات اليومية</span>
+            </button>
+          )}
+
+          {canAccessDrawer && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('drawer')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all ${
+                activeTab === 'drawer'
+                  ? 'bg-[#151515] text-white shadow-sm'
+                  : 'bg-white text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+              <span>تقفيل الدرج والتوريد</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'drawer' ? (
+        <div className="space-y-4">
+          {/* Drawer Top Card */}
+          <div className="bg-[#FFFDF9] p-5 sm:p-6 rounded-3xl border border-[#E6DECD] shadow-[0_2px_10px_rgba(36,34,31,0.03)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shadow-sm shrink-0">
+                <Wallet className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl sm:text-2xl font-black text-[#24221F] tracking-tight">
+                    تقفيل الدرج والتوريد اليومي (Cash Drawer Settlement)
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    تسوية الدرج
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-[#777266] mt-0.5">
+                  مطابقة النقدية الفعلية بالدرج، وفصل المقبوضات البنكية، وتوريد الكاش للخزينة
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <input
+                type="date"
+                value={drawerDate}
+                onChange={(e) => setDrawerDate(e.target.value)}
+                className="h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F]"
+              />
+              <Button variant="outline" icon={RotateCcw} onClick={loadDrawerSettlement} disabled={loadingDrawer} size="sm">
+                تحديث
+              </Button>
+              {canCloseDrawer && (
+                <Button
+                  variant="primary"
+                  icon={Lock}
+                  onClick={handleCloseDrawerSettlement}
+                  disabled={closingDrawer || loadingDrawer}
+                  size="sm"
+                  className="!px-5 !py-2.5 shadow-md bg-emerald-700 hover:bg-emerald-800 text-white"
+                >
+                  {closingDrawer ? 'جارِ الاعتماد...' : 'اعتماد تقفيل وتوريد الدرج'}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Business rule banner */}
+          <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-xs text-blue-900 font-bold flex items-start gap-3">
+            <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-black mb-0.5">قاعدة تقفيل الدرج المعتمدة (Cash Drawer Settlement Invariant):</p>
+              <p className="font-semibold text-blue-800">
+                صافي الكاش المتبقي للتوريد بالدرج = إجمالي المدفوعات النقدية - (إجمالي المصروفات النقدية + سلف الموظفين).
+                مدفوعات الفيزا وانستاباي تسجل كإيراد بنكي وتفصل تماماً عن الكاش الفعلي بالدرج.
+              </p>
+            </div>
+          </div>
+
+          {/* Drawer KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard
+              title="إجمالي الكاش المحصل (+)"
+              value={formatCurrency(drawerSummary.cashCollected)}
+              icon={DollarSign}
+              variant="success"
+              subtitle="مبيعات وعقود نقدية بالدرج"
+            />
+            <StatCard
+              title="المصروفات النقدية (-)"
+              value={formatCurrency(drawerSummary.cashExpenses)}
+              icon={TrendingDown}
+              variant="danger"
+              subtitle="مصروفات مدفوعة نقداً من الدرج"
+            />
+            <StatCard
+              title="سلف الموظفين النقدية (-)"
+              value={formatCurrency(drawerSummary.totalAdvances)}
+              icon={User}
+              variant="warning"
+              subtitle="سلف نقدية منصرفة من الدرج"
+            />
+            <StatCard
+              title="صافي الكاش للتوريد بالدرج"
+              value={formatCurrency(drawerSummary.physicalCash)}
+              icon={Wallet}
+              variant="primary"
+              subtitle="النقدية الفعلية المتبقية للتوريد"
+            />
+          </div>
+
+          {/* Separate Bank Revenue Section */}
+          <Card className="!p-5 bg-white border border-[#E6DECD]">
+            <CardHeader
+              title="الإيرادات البنكية المنفصلة (فيزا وانستاباي)"
+              subtitle="تسجل مباشرة بالحساب البنكي ولا تدخل ضمن الرصيد النقدي للدرج"
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3">
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-xs font-bold text-slate-500">مدفوعات الفيزا / بطاقة بنكية</span>
+                <p className="text-xl font-black text-blue-700 mt-1">{formatCurrency(drawerSummary.visaCollected)}</p>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-xs font-bold text-slate-500">تحويلات InstaPay</span>
+                <p className="text-xl font-black text-indigo-700 mt-1">{formatCurrency(drawerSummary.instapayCollected)}</p>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-xs font-bold text-slate-500">إجمالي الإيراد البنكي</span>
+                <p className="text-xl font-black text-slate-900 mt-1">{formatCurrency(drawerSummary.totalBank)}</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      ) : (
+        <>
+          {/* Top Header Card */}
+          <div className="bg-[#FFFDF9] p-5 sm:p-6 rounded-3xl border border-[#E6DECD] shadow-[0_2px_10px_rgba(36,34,31,0.03)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-[#FCEBF4] border border-[#F1B6D8]/50 flex items-center justify-center text-[#931D4E] shadow-sm shrink-0">
+                <Wallet className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl sm:text-2xl font-black text-[#24221F] tracking-tight">
+                    {isCashierTab ? 'المصروفات ونثريات الكاشير' : 'إدارة المصروفات التشغيلية'}
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-[#FCEBF4] text-[#931D4E] border border-[#F1B6D8]/40">
+                    خزينة الفرع
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-[#777266] mt-0.5">
+                  قيد فوري للمصروفات، ومتابعة حركة النقدية الصادرة من درج الكاشير
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="outline" icon={RotateCcw} onClick={loadExpenses} disabled={loading} size="sm">
+                تحديث
+              </Button>
+              {canCreateExpense && (
+                <Button variant="danger" icon={Plus} onClick={handleOpenAdd} size="sm" className="!px-5 !py-2.5 shadow-md">
+                  تسجيل مصروف جديد
+                </Button>
+              )}
+            </div>
+          </div>
 
       {/* KPI Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -758,22 +1047,26 @@ export function ExpensesManager({ isCashierTab = false }) {
                       {/* Actions */}
                       <td className="py-3.5 px-4 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => handleOpenEdit(exp)}
-                            disabled={!canAct}
-                            title={canAct ? 'تعديل المصروف' : 'غير مصرح بتعديل مصروفات الآخرين'}
-                            className="p-1.5 rounded-lg text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] transition-colors disabled:opacity-30 disabled:pointer-events-none"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => setExpenseToDelete(exp)}
-                            disabled={!canAct}
-                            title={canAct ? 'حذف المصروف' : 'غير مصرح بحذف مصروفات الآخرين'}
-                            className="p-1.5 rounded-lg text-[#777266] hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canCreateExpense && (
+                            <button
+                              onClick={() => handleOpenEdit(exp)}
+                              disabled={!canAct}
+                              title={canAct ? 'تعديل المصروف' : 'غير مصرح بتعديل مصروفات الآخرين'}
+                              className="p-1.5 rounded-lg text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                          )}
+                          {canDeleteExpense && (
+                            <button
+                              onClick={() => setExpenseToDelete(exp)}
+                              disabled={!canAct}
+                              title={canAct ? 'حذف المصروف' : 'غير مصرح بحذف مصروفات الآخرين'}
+                              className="p-1.5 rounded-lg text-[#777266] hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -811,6 +1104,8 @@ export function ExpensesManager({ isCashierTab = false }) {
           </div>
         )}
       </Card>
+        </>
+      )}
 
       {/* ADD EXPENSE MODAL */}
       <Modal

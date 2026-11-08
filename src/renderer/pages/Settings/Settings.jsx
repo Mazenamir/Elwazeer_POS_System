@@ -44,6 +44,9 @@ import {
   PERMISSION_DEFINITIONS,
   PERMISSION_GROUPS,
   PERMISSION_PRESETS,
+  ALL_PERMISSIONS,
+  LEGACY_TO_GRANULAR_MAP,
+  SENSITIVE_OR_PRIVILEGED_PERMISSIONS,
   normalizePermissions,
   expandPermissionsWithLegacy,
 } from '../../constants/permissions';
@@ -614,6 +617,27 @@ export function Settings() {
     if (Array.isArray(u.branch_ids)) bIds = u.branch_ids.map(Number);
     else if (u.branch_id) bIds = [Number(u.branch_id)];
 
+    let userPermissions = normalizePermissions(u.permissions);
+    const finalUserPermissions = new Set(userPermissions);
+    const legacyTokens = userPermissions.filter(
+      (p) => ALL_PERMISSIONS.includes(p) || (typeof p === 'string' && p.endsWith('.html'))
+    );
+
+    legacyTokens.forEach((legacy) => {
+      const granularList = LEGACY_TO_GRANULAR_MAP[legacy] || [];
+      const hasGranularInModule = granularList.some((gp) => userPermissions.includes(gp));
+      if (!hasGranularInModule) {
+        granularList.forEach((g) => {
+          if (!SENSITIVE_OR_PRIVILEGED_PERMISSIONS.has(g)) {
+            finalUserPermissions.add(g);
+          }
+        });
+      }
+      finalUserPermissions.delete(legacy);
+    });
+
+    userPermissions = Array.from(finalUserPermissions);
+
     setUserForm({
       full_name: u.full_name || u.name || '',
       username: u.username || '',
@@ -622,7 +646,7 @@ export function Settings() {
       branch_scope: scope,
       branch_id: String(u.branch_id || branches[0]?.id || '1'),
       branch_ids: bIds,
-      permissions: normalizePermissions(u.permissions),
+      permissions: userPermissions,
     });
     setPermSearch('');
     setShowUserModal(true);
