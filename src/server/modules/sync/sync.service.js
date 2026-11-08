@@ -799,12 +799,13 @@ async function applyOperation(operation) {
       }
       const sellerId = await resolveEmployeeForSync(tx, payload.seller_id);
       const createdBy = await resolveUserId(tx, payload.created_by);
+      const dueDate = payload.due_date || payload.delivery_date || null;
 
       const insertResult = await tx.query(
         `INSERT INTO tailoring_orders
           (invoice_number, customer_name, customer_phone, product_description, measurements, total_amount,
-           paid_amount, remaining_amount, payment_method, seller_id, branch_id, created_by, offline_uuid, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamp, timezone('utc', now())))
+           paid_amount, remaining_amount, payment_method, seller_id, branch_id, created_by, offline_uuid, created_at, due_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamp, timezone('utc', now())), $15::date)
          ON CONFLICT (offline_uuid) DO NOTHING
          RETURNING id, created_at`,
         [
@@ -822,6 +823,7 @@ async function applyOperation(operation) {
           createdBy,
           payload.offline_uuid,
           payload.created_at || null,
+          dueDate,
         ]
       );
       const insertedOrder = insertResult.rows[0];
@@ -1016,10 +1018,11 @@ async function applyOperation(operation) {
             }
             if (!alreadyRecorded) {
               const pmtNotes = `سداد دفعة متبقية للطلب #${centralOrderId}${opUuid ? ` [SYNC-${opUuid}]` : ''}`;
+              const pmtSellerId = await resolveEmployeeForSync(tx, orderData.seller_id);
               await tx.query(
                 `INSERT INTO order_payments (order_id, amount, payment_method, payment_date, branch_id, seller_id, notes)
                  VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6)`,
-                [centralOrderId, settledAmt, settledMethod, centralBranchId, orderData.seller_id || null, pmtNotes]
+                [centralOrderId, settledAmt, settledMethod, centralBranchId, pmtSellerId, pmtNotes]
               );
             }
           }
@@ -1435,6 +1438,7 @@ async function applyOperation(operation) {
             if (!alreadyRecorded) {
               const baseNotes = payload.settled_payment_notes || `سداد دفعة إيجار #${targetId}`;
               const pmtNotes = opUuid ? `${baseNotes} [SYNC-${opUuid}]` : baseNotes;
+              const rentalPmtSellerId = await resolveEmployeeForSync(tx, payload.seller_id || existingRental?.seller_id);
               await tx.query(
                 `INSERT INTO rental_payments (rental_id, amount, payment_method, payment_date, branch_id, seller_id, notes)
                  VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6)`,
@@ -1443,7 +1447,7 @@ async function applyOperation(operation) {
                   settledAmt,
                   settledMethod,
                   branchId,
-                  payload.seller_id || existingRental?.seller_id || null,
+                  rentalPmtSellerId,
                   pmtNotes,
                 ]
               );
