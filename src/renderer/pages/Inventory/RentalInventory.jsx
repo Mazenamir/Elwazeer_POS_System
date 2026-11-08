@@ -234,7 +234,18 @@ export function RentalInventory() {
     setSubmitting(true);
     try {
       const parsedPrice = Number(rentalPrice) || 0;
-      const targetBranchNum = (activeBranchId && activeBranchId !== 'all') ? Number(activeBranchId) : (branches[0]?.id || 1);
+      let targetBranchNum = (activeBranchId && activeBranchId !== 'all') ? Number(activeBranchId) : null;
+      if (!targetBranchNum && editingItem) {
+        const existingWithStock = Array.isArray(editingItem.branch_stocks) && editingItem.branch_stocks.find((b) => Number(b.stock_level) > 0);
+        if (existingWithStock?.branch_id) {
+          targetBranchNum = Number(existingWithStock.branch_id);
+        } else if (Array.isArray(editingItem.branch_stocks) && editingItem.branch_stocks[0]?.branch_id) {
+          targetBranchNum = Number(editingItem.branch_stocks[0].branch_id);
+        }
+      }
+      if (!targetBranchNum) {
+        targetBranchNum = branches[0]?.id || 1;
+      }
       const parsedStock = Number(stockLevel) >= 0 ? Number(stockLevel) : 1;
       const payload = {
         name: name.trim(),
