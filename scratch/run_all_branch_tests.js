@@ -135,7 +135,7 @@ for (let i = 0; i < suites.length; i++) {
 
   const childEnv = {
     ...process.env,
-    APP_MODE: 'branch',
+    APP_MODE: suite.script === 'scripts/test_sync_integrity_suite.js' ? '' : 'branch',
     NODE_ENV: 'test',
   };
 
