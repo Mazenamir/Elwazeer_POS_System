@@ -64,6 +64,12 @@ const RELEASE_BODY = [
   '  16. العزل الصارم لبيانات الفروع ومنع تسريب أي عمليات بين فرع وآخر (Branch Scoping Isolation)',
   '  17. التحقق الكامل من التقارير المالية ومطابقة أرصدة الكاشير والدرج (Financial & Payroll Invariants)',
   '',
+  '#### 4. ⚡ التحديث التلقائي فائق المرونة (Resilient GitHub API Auto-Updater):',
+  '- **معالجة أخطاء CDN والـ HTTP 504**: التحويل التلقائي والشفاف إلى GitHub Releases API المباشر لتنزيل ملفات التحديث وبيانات القنوات (`latest.yml`, `branch.yml`, `.exe`) عند مواجهة بطء أو انقطاع في خوادم CDN الإقليمية.',
+  '- **التحقق الصارم من التوقيع الرقمي والتجزئة (SHA-512)**: فحص سلامة الملفات لحظياً قبل التثبيت لضمان عدم تلف أو تعديل حزم التثبيت.',
+  '- **إصلاح استعلام مخزون التأجير (`rental_inventory`)**: تصحيح فحص التوفر وتأمين حجوزات التأجير دون أخطاء أعمدة.',
+  '',
+  '',
   '---',
   '',
   '### 📦 ملفات التثبيت المرفقة (Installation Packages v' + VERSION + '):',
@@ -202,7 +208,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`🚀 Checking release ${TAG} on GitHub...`);
+  const deleteExisting = process.argv.includes('--delete-existing') || process.env.DELETE_EXISTING === 'true';
 
   let release;
   try {
@@ -216,7 +222,37 @@ async function main() {
       },
     });
     console.log(`Found existing release: ${release.name} (ID: ${release.id})`);
+
+    if (deleteExisting) {
+      console.log(`🗑️ Deleting existing release ${TAG} (ID: ${release.id}) from GitHub as requested...`);
+      await apiRequest({
+        hostname: 'api.github.com',
+        path: `/repos/${OWNER}/${REPO}/releases/${release.id}`,
+        method: 'DELETE',
+        headers: {
+          'Authorization': `token ${GITHUB_TOKEN}`,
+          'User-Agent': 'NodeJS-Uploader',
+        },
+      });
+      console.log(`🗑️ Deleting remote git tag ref ${TAG}...`);
+      try {
+        await apiRequest({
+          hostname: 'api.github.com',
+          path: `/repos/${OWNER}/${REPO}/git/refs/tags/${TAG}`,
+          method: 'DELETE',
+          headers: {
+            'Authorization': `token ${GITHUB_TOKEN}`,
+            'User-Agent': 'NodeJS-Uploader',
+          },
+        });
+      } catch (_) {}
+      release = null;
+    }
   } catch (err) {
+    // Release does not exist
+  }
+
+  if (!release) {
     console.log(`Release ${TAG} not found, creating new release...`);
     release = await apiRequest({
       hostname: 'api.github.com',

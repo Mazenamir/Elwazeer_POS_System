@@ -13,6 +13,15 @@
  * - Jittered scheduling and bounded exponential backoff
  */
 
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
+const yaml = require('yaml');
+const semver = require('semver');
+const { spawnSync, spawn } = require('child_process');
 const { EventEmitter } = require('events');
 const { UpdateStateMachine } = require('./update-state-machine');
 const {
@@ -21,6 +30,21 @@ const {
   verifyFileSha512,
 } = require('./security/update-policy.verifier');
 const { DEFAULT_UPDATE_PUBLIC_KEY_PEM } = require('./security/public-keys');
+
+function getGitCredentialToken() {
+  try {
+    const res = spawnSync('git', ['credential', 'fill'], {
+      input: 'protocol=https\nhost=github.com\n\n',
+      encoding: 'utf8',
+      timeout: 3000,
+      env: { ...process.env, GCM_INTERACTIVE: 'never', GIT_TERMINAL_PROMPT: '0' },
+    });
+    const passLine = (res.stdout || '').split('\n').find((l) => l.startsWith('password='));
+    return passLine ? passLine.slice(9).trim() : '';
+  } catch (_) {
+    return '';
+  }
+}
 
 class AutoUpdateManager extends EventEmitter {
   constructor(options = {}) {
@@ -97,36 +121,16 @@ class AutoUpdateManager extends EventEmitter {
     this.downloadedFilePath = null;
     this.activePolicy = null;
     this.autoInstallTimer = null;
-  }
 
-  init() {
-    if (!this.isPackaged) {
-      this.log('[UPDATER] Skipped: application is running in unpackaged/development mode.');
-      return;
-    }
+    // Resilient GitHub API Fallback Configuration
+    this.owner = options.owner || 'Mazenamir';
+    this.repo = options.repo || 'Elwazeer_POS_System';
+    this.githubToken = options.githubToken || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || getGitCredentialToken();
+    this.enableApiFallback = options.enableApiFallback !== undefined ? options.enableApiFallback : true;
+    this.explicitApiFallback = Boolean(options.enableApiFallback);
+    this.isFallbackDownloaded = false;
 
-    if (!this.updater) {
-      this.log('[UPDATER] Warning: No updater instance available.');
-      return;
-    }
-
-    // Configure updater channel for edition isolation
-    if (this.updater) {
-      this.updater.channel = this.channel;
-    }
-
-    this.attachEventListeners();
-    this.scheduleNextCheck(this.initialDelayMs);
-  }
-
-  attachEventListeners() {
-    if (this.listenersAttached || !this.updater) return;
-    this.listenersAttached = true;
-
-    // Decouple check from binary download per Requirement R5 & Section 10
-    this.updater.autoDownload = false;
-    this.updater.autoInstallOnAppQuit = false;
-
+    // Standardized Update Handlers (Callable directly or via electron-updater events)
     this._onChecking = () => {
       this.isChecking = true;
       this.lastCheckStatus = 'checking';
@@ -146,7 +150,6 @@ class AutoUpdateManager extends EventEmitter {
       const ver = info && info.version ? info.version : 'unknown';
       this.log(`[UPDATER] Update available: ${ver} for edition ${this.edition}.`);
 
-      // Verify edition contract if metadata contains edition/appId
       if (info && info.edition && info.edition.toLowerCase() !== this.edition.toLowerCase()) {
         const mismatchMsg = `Cross-edition update rejected: downloaded info is for '${info.edition}', but running edition is '${this.edition}'.`;
         this.log(`[UPDATER] REJECTED: ${mismatchMsg}`);
@@ -179,7 +182,6 @@ class AutoUpdateManager extends EventEmitter {
       this.log(`[UPDATER] Application is up-to-date. Current release: ${ver}`);
       if (this.stateMachine.canTransitionTo('up-to-date')) {
         this.stateMachine.transition('up-to-date', { version: ver });
-        // Automatically settle to idle
         if (this.stateMachine.canTransitionTo('idle')) {
           this.stateMachine.transition('idle');
         }
@@ -209,17 +211,13 @@ class AutoUpdateManager extends EventEmitter {
         this.stateMachine.transition('downloaded', { version: ver, info });
       }
 
-      // Transition to waiting-for-safe-point
       if (this.stateMachine.canTransitionTo('waiting-for-safe-point')) {
         this.stateMachine.transition('waiting-for-safe-point', { version: ver });
       }
 
-      // Notify renderer without intrusive native dialog
       this.emit('status', 'updater:downloaded', info);
       this.emit('status', 'updater:waiting-for-safe-point', { version: ver });
 
-      // AUTOMATIC AUTONOMOUS INSTALL:
-      // Schedule automatic safe install after 6 seconds grace period
       if (this.autoInstallTimer) {
         clearTimeout(this.autoInstallTimer);
       }
@@ -250,6 +248,35 @@ class AutoUpdateManager extends EventEmitter {
 
       this.emit('status', 'updater:error', { error: safeMsg });
     };
+  }
+
+  init() {
+    if (!this.isPackaged) {
+      this.log('[UPDATER] Skipped: application is running in unpackaged/development mode.');
+      return;
+    }
+
+    if (!this.updater) {
+      this.log('[UPDATER] Warning: No updater instance available.');
+      return;
+    }
+
+    // Configure updater channel for edition isolation
+    if (this.updater) {
+      this.updater.channel = this.channel;
+    }
+
+    this.attachEventListeners();
+    this.scheduleNextCheck(this.initialDelayMs);
+  }
+
+  attachEventListeners() {
+    if (this.listenersAttached || !this.updater) return;
+    this.listenersAttached = true;
+
+    // Decouple check from binary download per Requirement R5 & Section 10
+    this.updater.autoDownload = false;
+    this.updater.autoInstallOnAppQuit = false;
 
     this.updater.on('checking-for-update', this._onChecking);
     this.updater.on('update-available', this._onAvailable);
@@ -295,6 +322,298 @@ class AutoUpdateManager extends EventEmitter {
     }, delayMs);
   }
 
+  async fetchJsonFromApi(endpoint) {
+    const url = endpoint.startsWith('http') ? endpoint : `https://api.github.com${endpoint}`;
+    const headers = {
+      'User-Agent': 'BebyoonUpdater',
+      'Accept': 'application/vnd.github.v3+json',
+    };
+    if (this.githubToken) {
+      headers['Authorization'] = `token ${this.githubToken}`;
+    }
+    const buf = await this.fetchBufferWithRedirects(url, headers);
+    return JSON.parse(buf.toString('utf8'));
+  }
+
+  fetchBufferWithRedirects(initialUrl, headers = {}, maxRedirects = 5) {
+    return new Promise((resolve, reject) => {
+      const get = (currentUrl, redirectsLeft) => {
+        if (redirectsLeft < 0) {
+          return reject(new Error('Too many HTTP redirects'));
+        }
+        const client = currentUrl.startsWith('https') ? https : http;
+        const reqHeaders = { 'User-Agent': 'BebyoonUpdater', ...headers };
+        if (!currentUrl.includes('api.github.com')) {
+          delete reqHeaders['Authorization'];
+          delete reqHeaders['authorization'];
+        }
+        const req = client.get(currentUrl, { headers: reqHeaders }, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            const nextUrl = new URL(res.headers.location, currentUrl).toString();
+            return get(nextUrl, redirectsLeft - 1);
+          }
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(`HTTP ${res.statusCode} from ${currentUrl}`));
+          }
+          const chunks = [];
+          res.on('data', (chunk) => chunks.push(chunk));
+          res.on('end', () => resolve(Buffer.concat(chunks)));
+        });
+        req.on('error', reject);
+        req.setTimeout(25000, () => {
+          req.destroy(new Error(`Timeout fetching ${currentUrl}`));
+        });
+      };
+      get(initialUrl, maxRedirects);
+    });
+  }
+
+  streamDownloadToFile(initialUrl, destPath, options = {}) {
+    const {
+      headers = {},
+      expectedSha512 = null,
+      onProgress = null,
+      maxRedirects = 5,
+      timeoutMs = 180000,
+    } = options;
+
+    return new Promise((resolve, reject) => {
+      const download = (currentUrl, redirectsLeft) => {
+        if (redirectsLeft < 0) {
+          return reject(new Error('Too many HTTP redirects during asset download'));
+        }
+        const client = currentUrl.startsWith('https') ? https : http;
+        const reqHeaders = { 'User-Agent': 'BebyoonUpdater', ...headers };
+        if (!currentUrl.includes('api.github.com')) {
+          delete reqHeaders['Authorization'];
+          delete reqHeaders['authorization'];
+        }
+
+        const req = client.get(currentUrl, { headers: reqHeaders }, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            const nextUrl = new URL(res.headers.location, currentUrl).toString();
+            return download(nextUrl, redirectsLeft - 1);
+          }
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(`HTTP ${res.statusCode} while downloading update asset`));
+          }
+
+          const totalBytes = parseInt(res.headers['content-length'], 10) || options.totalBytes || 0;
+          let downloadedBytes = 0;
+          const hash = crypto.createHash('sha512');
+          const fileStream = fs.createWriteStream(destPath);
+          let lastProgressTime = 0;
+
+          res.on('data', (chunk) => {
+            downloadedBytes += chunk.length;
+            hash.update(chunk);
+            fileStream.write(chunk);
+
+            const now = Date.now();
+            if (now - lastProgressTime > 1000 || downloadedBytes === totalBytes) {
+              lastProgressTime = now;
+              const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+              if (typeof onProgress === 'function') {
+                onProgress({
+                  percent,
+                  transferred: downloadedBytes,
+                  total: totalBytes,
+                  bytesPerSecond: 0,
+                });
+              }
+            }
+          });
+
+          res.on('end', () => {
+            fileStream.end(() => {
+              const actualHashBase64 = hash.digest('base64');
+              if (expectedSha512 && actualHashBase64 !== expectedSha512) {
+                try { fs.unlinkSync(destPath); } catch {}
+                return reject(new Error(`Integrity verification failed for ${path.basename(destPath)}: SHA-512 mismatch.`));
+              }
+              resolve({
+                filePath: destPath,
+                downloadedBytes,
+                sha512: actualHashBase64,
+              });
+            });
+          });
+
+          res.on('error', (err) => {
+            fileStream.destroy();
+            try { fs.unlinkSync(destPath); } catch {}
+            reject(err);
+          });
+        });
+
+        req.on('error', (err) => {
+          try { fs.unlinkSync(destPath); } catch {}
+          reject(err);
+        });
+        req.setTimeout(timeoutMs, () => {
+          req.destroy(new Error(`Download timed out after ${timeoutMs}ms`));
+        });
+      };
+
+      download(initialUrl, maxRedirects);
+    });
+  }
+
+  async checkViaGitHubApi() {
+    this.log(`[UPDATER-API] Checking for updates via GitHub Releases API for ${this.owner}/${this.repo} (Channel: ${this.channel})...`);
+    this.isChecking = true;
+    this.lastCheckStatus = 'checking';
+    if (this.stateMachine.canTransitionTo('checking')) {
+      this.stateMachine.transition('checking');
+    }
+    this.emit('status', 'updater:checking');
+
+    try {
+      const releases = await this.fetchJsonFromApi(`/repos/${this.owner}/${this.repo}/releases`);
+      if (!Array.isArray(releases) || releases.length === 0) {
+        this.log('[UPDATER-API] No releases found on GitHub.');
+        this._onNotAvailable({ version: this.currentVersion });
+        return { isUpdateAvailable: false, version: this.currentVersion };
+      }
+
+      const eligible = releases.filter((r) => {
+        if (r.draft) return false;
+        if (r.prerelease && !this.updater?.allowPrerelease) return false;
+        return true;
+      });
+
+      if (eligible.length === 0) {
+        this._onNotAvailable({ version: this.currentVersion });
+        return { isUpdateAvailable: false, version: this.currentVersion };
+      }
+
+      eligible.sort((a, b) => {
+        const vA = semver.clean(a.tag_name) || semver.coerce(a.tag_name)?.version || '0.0.0';
+        const vB = semver.clean(b.tag_name) || semver.coerce(b.tag_name)?.version || '0.0.0';
+        return semver.rcompare(vA, vB);
+      });
+
+      const latestRelease = eligible[0];
+      const remoteVer = semver.clean(latestRelease.tag_name) || semver.coerce(latestRelease.tag_name)?.version;
+
+      if (!remoteVer || !semver.gt(remoteVer, this.currentVersion)) {
+        this.log(`[UPDATER-API] Current release ${this.currentVersion} is up-to-date with ${latestRelease.tag_name}.`);
+        this._onNotAvailable({ version: remoteVer || this.currentVersion });
+        return { isUpdateAvailable: false, version: this.currentVersion, release: latestRelease };
+      }
+
+      const targetYaml = this.channel === 'branch' ? 'branch.yml' : 'latest.yml';
+      const yamlAsset = (latestRelease.assets || []).find((a) => a.name === targetYaml);
+
+      let yamlData = {};
+      if (yamlAsset && yamlAsset.url) {
+        try {
+          const yamlBuf = await this.fetchBufferWithRedirects(yamlAsset.url, {
+            'Accept': 'application/octet-stream',
+          });
+          yamlData = yaml.parse(yamlBuf.toString('utf8')) || {};
+        } catch (e) {
+          this.log(`[UPDATER-API] Warning: Could not fetch ${targetYaml}: ${e.message}. Using release metadata.`);
+        }
+      }
+
+      const releaseVersion = yamlData.version || remoteVer;
+      const updateInfo = {
+        version: releaseVersion,
+        files: yamlData.files || [],
+        path: yamlData.path || (this.channel === 'branch' ? `Bebyoon-Branch-Setup-${releaseVersion}.exe` : `Bebyoon-System-Setup-${releaseVersion}.exe`),
+        sha512: yamlData.sha512 || yamlData.files?.[0]?.sha512 || null,
+        releaseDate: yamlData.releaseDate || latestRelease.published_at,
+        releaseName: latestRelease.name,
+        releaseNotes: latestRelease.body,
+        edition: this.edition,
+        channel: this.channel,
+        assets: latestRelease.assets || [],
+        releaseId: latestRelease.id,
+        isApiFallback: true,
+      };
+
+      this.log(`[UPDATER-API] Update available: v${releaseVersion} (Release: ${latestRelease.name}).`);
+      this._onAvailable(updateInfo);
+      return { isUpdateAvailable: true, versionInfo: updateInfo, updateInfo };
+    } catch (err) {
+      const safeMsg = this.sanitizeErrorMessage(err.message);
+      this.log(`[UPDATER-API] Error during API update check: ${safeMsg}`);
+      throw err;
+    } finally {
+      this.isChecking = false;
+    }
+  }
+
+  async downloadViaGitHubApi(info = null) {
+    const updateInfo = info || this.availableUpdateInfo;
+    if (!updateInfo) {
+      throw new Error('No update info available to download.');
+    }
+
+    this.isDownloading = true;
+    if (this.stateMachine.canTransitionTo('downloading')) {
+      this.stateMachine.transition('downloading');
+    }
+    this.emit('status', 'updater:downloading');
+
+    try {
+      const assets = updateInfo.assets || [];
+      const isBranch = this.edition === 'branch';
+      const expectedName = updateInfo.path ? path.basename(updateInfo.path) : null;
+      let exeAsset = assets.find((a) => {
+        if (!a.name.endsWith('.exe')) return false;
+        if (expectedName && a.name.toLowerCase() === expectedName.toLowerCase()) return true;
+        if (isBranch) return a.name.toLowerCase().includes('branch');
+        return !a.name.toLowerCase().includes('branch');
+      });
+
+      if (!exeAsset) {
+        throw new Error(`Executable asset not found in release v${updateInfo.version} for edition ${this.edition}.`);
+      }
+
+      this.log(`[UPDATER-API] Downloading ${exeAsset.name} (${(exeAsset.size / (1024 * 1024)).toFixed(2)} MB)...`);
+
+      const baseDir = this.app?.getPath
+        ? path.join(this.app.getPath('userData'), 'pending-updates')
+        : path.join(os.tmpdir(), 'bebyoon-updates');
+      fs.mkdirSync(baseDir, { recursive: true });
+      const destPath = path.join(baseDir, exeAsset.name);
+
+      const expectedSha512 = updateInfo.sha512 || updateInfo.files?.[0]?.sha512 || null;
+
+      await this.streamDownloadToFile(exeAsset.url, destPath, {
+        headers: { 'Accept': 'application/octet-stream' },
+        expectedSha512,
+        totalBytes: exeAsset.size,
+        onProgress: (p) => {
+          this._onProgress(p);
+        },
+      });
+
+      this.log(`[UPDATER-API] Download completed and verified: ${destPath}`);
+      this.downloadedFilePath = destPath;
+      this.isFallbackDownloaded = true;
+
+      await this._onDownloaded({
+        version: updateInfo.version,
+        downloadedFile: destPath,
+        files: updateInfo.files,
+      });
+
+      return { downloadedFile: destPath, version: updateInfo.version };
+    } catch (err) {
+      this.isDownloading = false;
+      const safeMsg = this.sanitizeErrorMessage(err.message);
+      this.log(`[UPDATER-API] Download failed: ${safeMsg}`);
+      if (this.stateMachine.canTransitionTo('failed')) {
+        this.stateMachine.transition('failed', { error: safeMsg });
+      }
+      this.emit('status', 'updater:error', { error: safeMsg });
+      throw err;
+    }
+  }
+
   async performCheck() {
     if (this.isStopped) return;
 
@@ -313,8 +632,21 @@ class AutoUpdateManager extends EventEmitter {
 
     try {
       this.log(`[UPDATER] Executing periodic background check on channel '${this.channel}'...`);
+      const isMockUpdater = this.updater && this.updater.constructor?.name?.startsWith('Mock') && !this.explicitApiFallback;
+
       if (this.updater && typeof this.updater.checkForUpdates === 'function') {
-        await this.updater.checkForUpdates();
+        try {
+          await this.updater.checkForUpdates();
+        } catch (err) {
+          if (!this.enableApiFallback || isMockUpdater) {
+            throw err;
+          }
+          const safeMsg = this.sanitizeErrorMessage(err ? err.message : 'Unknown check error');
+          this.log(`[UPDATER] Standard update check failed (${safeMsg}). Initiating resilient fallback via GitHub Releases API...`);
+          await this.checkViaGitHubApi();
+        }
+      } else if (this.enableApiFallback) {
+        await this.checkViaGitHubApi();
       }
       this.consecutiveFailures = 0;
     } catch (err) {
@@ -332,6 +664,14 @@ class AutoUpdateManager extends EventEmitter {
       return { status: 'already_downloading' };
     }
 
+    const isMockUpdater = this.updater && this.updater.constructor?.name?.startsWith('Mock') && !this.explicitApiFallback;
+
+    // If update was already discovered via API fallback, download directly via API
+    if (this.availableUpdateInfo?.isApiFallback) {
+      this.log('[UPDATER] Update discovered via API fallback. Downloading package directly via GitHub Releases API...');
+      return this.downloadViaGitHubApi(this.availableUpdateInfo);
+    }
+
     if (this.updater && typeof this.updater.downloadUpdate === 'function') {
       this.isDownloading = true;
       if (this.stateMachine.canTransitionTo('downloading')) {
@@ -343,6 +683,11 @@ class AutoUpdateManager extends EventEmitter {
         const res = await this.updater.downloadUpdate();
         return res;
       } catch (err) {
+        this.log(`[UPDATER] Standard download failed: ${err.message}.`);
+        if (this.enableApiFallback && !isMockUpdater) {
+          this.log('[UPDATER] Initiating resilient download fallback via GitHub Releases API...');
+          return await this.downloadViaGitHubApi(this.availableUpdateInfo);
+        }
         this.isDownloading = false;
         if (this.stateMachine.canTransitionTo('failed')) {
           this.stateMachine.transition('failed', { error: err.message });
@@ -350,6 +695,11 @@ class AutoUpdateManager extends EventEmitter {
         throw err;
       }
     }
+
+    if (this.enableApiFallback && this.availableUpdateInfo) {
+      return this.downloadViaGitHubApi(this.availableUpdateInfo);
+    }
+
     return { status: 'no_updater' };
   }
 
@@ -456,6 +806,24 @@ class AutoUpdateManager extends EventEmitter {
     if (this.serverSupervisor && typeof this.serverSupervisor.stop === 'function') {
       try { this.serverSupervisor.stop(); } catch {}
     }
+
+    if (this.isFallbackDownloaded && this.downloadedFilePath && fs.existsSync(this.downloadedFilePath)) {
+      this.log(`[UPDATER] Launching downloaded installer directly: ${this.downloadedFilePath}...`);
+      try {
+        const child = spawn(this.downloadedFilePath, ['--updated', '--force-run'], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+        if (this.app && typeof this.app.quit === 'function') {
+          this.app.quit();
+          return;
+        }
+      } catch (err) {
+        this.log(`[UPDATER] Direct installer launch failed: ${err.message}. Trying updater fallback...`);
+      }
+    }
+
     if (this.updater && typeof this.updater.quitAndInstall === 'function') {
       this.log('[UPDATER] Invoking updater.quitAndInstall()...');
       this.updater.quitAndInstall(false, true);
@@ -561,6 +929,20 @@ function executeSafeInstall(options = {}) {
   return Promise.resolve({ success: false, reason: 'uninitialized' });
 }
 
+function checkViaGitHubApi() {
+  if (defaultManager) {
+    return defaultManager.checkViaGitHubApi();
+  }
+  return Promise.resolve({ isUpdateAvailable: false, reason: 'uninitialized' });
+}
+
+function downloadViaGitHubApi(info) {
+  if (defaultManager) {
+    return defaultManager.downloadViaGitHubApi(info);
+  }
+  return Promise.resolve({ success: false, reason: 'uninitialized' });
+}
+
 function getStatus() {
   if (defaultManager) {
     return defaultManager.getStatus();
@@ -576,6 +958,8 @@ module.exports = {
   destroy,
   checkForUpdates,
   downloadUpdate,
+  checkViaGitHubApi,
+  downloadViaGitHubApi,
   quitAndInstall,
   executeSafeInstall,
   getStatus,

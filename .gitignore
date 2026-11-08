@@ -59,4 +59,6 @@ manual_screenshots/
 
 !scratch/test_branch_comprehensive_suite.js
 !scratch/audit_schema_parity_pg_vs_sqlite.js
+!scratch/run_all_branch_tests.js
+!scratch/test_updater_api_fallback.js
 update-policy*.json

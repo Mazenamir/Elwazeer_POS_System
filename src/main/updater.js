@@ -14,6 +14,8 @@ module.exports = {
   destroy: updaterService.destroy,
   checkForUpdates: updaterService.checkForUpdates,
   downloadUpdate: updaterService.downloadUpdate,
+  checkViaGitHubApi: updaterService.checkViaGitHubApi,
+  downloadViaGitHubApi: updaterService.downloadViaGitHubApi,
   quitAndInstall: updaterService.quitAndInstall,
   executeSafeInstall: updaterService.executeSafeInstall,
   getStatus: updaterService.getStatus,

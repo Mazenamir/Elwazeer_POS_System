@@ -1,6 +1,9 @@
 /**
  * Full Schema Parity Audit: PostgreSQL vs Branch SQLite
  */
+delete process.env.APP_MODE;
+delete process.env.BRANCH_MODE;
+
 const { DatabaseSync } = require('node:sqlite');
 const db = require('../src/server/database/connection');
 const { runBranchSqliteMigrations } = require('../src/server/database/migrator');

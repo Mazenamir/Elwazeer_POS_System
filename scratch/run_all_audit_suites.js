@@ -128,6 +128,12 @@ const suites = [
     domain: 'Database Schema Parity',
     script: 'scratch/audit_schema_parity_pg_vs_sqlite.js',
   },
+  {
+    id: 20,
+    name: 'Resilient GitHub API Fallback & Integrity Suite',
+    domain: 'Auto-Updater Fallback',
+    script: 'scratch/test_updater_api_fallback.js',
+  },
 ];
 
 console.log('========================================================================================================');
