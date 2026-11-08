@@ -30,9 +30,11 @@ async function listRentalInventory(query = {}, user = null, req = null) {
   let branchJoinFilter = '';
   const params = [];
   const where = ['ri.is_deleted = FALSE'];
+  let branchParamIdx = null;
+
   if (targetRentalBranchId) {
     params.push(targetRentalBranchId);
-    const branchParamIdx = params.length;
+    branchParamIdx = params.length;
     branchJoinFilter = `AND rib.branch_id = $${branchParamIdx}`;
     const stockFilter = (query.stock_status === 'in_stock' || query.only_branch === 'true' || query.branch_only === 'true')
       ? 'AND rib_filter.stock_level > 0'
@@ -48,6 +50,20 @@ async function listRentalInventory(query = {}, user = null, req = null) {
       OR ri.gender = 'both'
       OR ri.gender = (SELECT allowed_gender FROM branches WHERE id = $${branchParamIdx})
     )`);
+  }
+
+  if (query.stock_status && query.stock_status !== 'all') {
+    if (query.stock_status === 'in_stock') {
+      if (!targetRentalBranchId) {
+        where.push('EXISTS (SELECT 1 FROM rental_inventory_branches rib_s WHERE rib_s.rental_inventory_id = ri.id AND rib_s.stock_level > 0)');
+      }
+    } else if (query.stock_status === 'out_of_stock') {
+      if (branchParamIdx) {
+        where.push(`COALESCE((SELECT SUM(rib_s.stock_level) FROM rental_inventory_branches rib_s WHERE rib_s.rental_inventory_id = ri.id AND rib_s.branch_id = $${branchParamIdx}), 0) <= 0`);
+      } else {
+        where.push(`COALESCE((SELECT SUM(rib_s.stock_level) FROM rental_inventory_branches rib_s WHERE rib_s.rental_inventory_id = ri.id), 0) <= 0`);
+      }
+    }
   }
 
   if (query.search) {
@@ -90,18 +106,43 @@ async function listRentalInventory(query = {}, user = null, req = null) {
     where.push(`ri.size_cut ILIKE $${params.length}`);
   }
 
-
-
   const whereClause = `WHERE ${where.join(' AND ')}`;
+
+  const stockLevelExpr = branchParamIdx
+    ? `COALESCE((SELECT SUM(rib_s.stock_level) FROM rental_inventory_branches rib_s WHERE rib_s.rental_inventory_id = ri.id AND rib_s.branch_id = $${branchParamIdx}), 0)::int`
+    : `COALESCE((SELECT SUM(rib_s.stock_level) FROM rental_inventory_branches rib_s WHERE rib_s.rental_inventory_id = ri.id), 0)::int`;
+
+  const totalStockExpr = `COALESCE((SELECT SUM(rib_tot.stock_level) FROM rental_inventory_branches rib_tot WHERE rib_tot.rental_inventory_id = ri.id), 0)::int`;
+
+  const branchStocksExpr = `COALESCE((SELECT json_agg(json_build_object('branch_id', rib_all.branch_id, 'stock_level', rib_all.stock_level)) FROM rental_inventory_branches rib_all WHERE rib_all.rental_inventory_id = ri.id), '[]'::json)`;
+
+  let orderBy = 'ORDER BY ri.id DESC';
+  if (query.sort === 'price_desc') {
+    orderBy = 'ORDER BY (ri.price IS NULL), CAST(ri.price AS numeric) DESC, ri.id DESC';
+  } else if (query.sort === 'price_asc') {
+    orderBy = 'ORDER BY (ri.price IS NULL), CAST(ri.price AS numeric) ASC, ri.id DESC';
+  } else if (query.sort === 'name_asc') {
+    orderBy = 'ORDER BY TRIM(ri.name) ASC, ri.id DESC';
+  } else if (query.sort === 'name_desc') {
+    orderBy = 'ORDER BY TRIM(ri.name) DESC, ri.id DESC';
+  } else if (query.sort === 'stock_desc') {
+    orderBy = `ORDER BY ${stockLevelExpr} DESC, ri.id DESC`;
+  } else if (query.sort === 'stock_asc') {
+    orderBy = `ORDER BY ${stockLevelExpr} ASC, ri.id DESC`;
+  } else if (query.sort === 'oldest') {
+    orderBy = 'ORDER BY ri.id ASC';
+  } else if (query.sort === 'latest') {
+    orderBy = 'ORDER BY ri.id DESC';
+  }
 
   let selectQuery = `
     SELECT ri.*, 
-           COALESCE(json_agg(json_build_object('branch_id', rib.branch_id, 'stock_level', rib.stock_level)) FILTER (WHERE rib.branch_id IS NOT NULL), '[]') as branch_stocks
+           ${stockLevelExpr} as stock_level,
+           ${totalStockExpr} as total_stock,
+           ${branchStocksExpr} as branch_stocks
     FROM rental_inventory ri
-    LEFT JOIN rental_inventory_branches rib ON ri.id = rib.rental_inventory_id ${branchJoinFilter}
     ${whereClause}
-    GROUP BY ri.id
-    ORDER BY ri.id DESC
+    ${orderBy}
   `;
 
   const countQuery = `SELECT COUNT(*)::int as total FROM rental_inventory ri ${whereClause}`;
@@ -282,7 +323,7 @@ async function updateRentalInventory(id, body, user) {
     throw err;
   }
 
-  let { name, category, size_cut, color, barcode, image_url, branch_stocks, price, rental_price } = body || {};
+  let { name, category, size_cut, color, barcode, image_url, branch_stocks, stock_level, price, rental_price } = body || {};
   barcode = normalizeBarcodeInput(barcode);
   const itemPrice = Number(price ?? rental_price ?? 0) || 0;
 
@@ -290,7 +331,11 @@ async function updateRentalInventory(id, body, user) {
     const ownStock = Array.isArray(branch_stocks)
       ? branch_stocks.find((bs) => Number(bs.branch_id) === Number(user.branch_id))
       : null;
-    branch_stocks = [{ branch_id: user.branch_id, stock_level: ownStock ? ownStock.stock_level : 0 }];
+    const effStock = ownStock ? ownStock.stock_level : (stock_level !== undefined && stock_level !== null ? Number(stock_level) : 0);
+    branch_stocks = [{ branch_id: user.branch_id, stock_level: effStock }];
+  } else if ((stock_level !== undefined && stock_level !== null && stock_level !== '') && (!branch_stocks || !branch_stocks.length)) {
+    const effectiveBranchId = Number(body?.branch_id || user?.branch_id || config.BRANCH_ID || 1);
+    branch_stocks = [{ branch_id: effectiveBranchId, stock_level: Number(stock_level) || 0 }];
   }
 
   if (barcode) {
@@ -484,6 +529,27 @@ async function transferFromSales(body, user) {
              DO UPDATE SET stock_level = rental_inventory_branches.stock_level + $3`,
             [rId, to_branch, moveQty]
           );
+
+          const createdOrUpdatedRentalItem = await tx.query('SELECT * FROM rental_inventory WHERE id = $1', [rId]);
+          await queueSyncOperation(tx, null, 'rental_inventory', 'transfer_from_sales', rId, from_branch, {
+            inventory_id,
+            product_barcode: invItem.barcode,
+            from_branch,
+            to_branch,
+            quantity: moveQty,
+            size: sName,
+            color: sColor,
+            rental_item: createdOrUpdatedRentalItem.rows[0] || {
+              id: rId,
+              name: transferredItemName,
+              category: invItem.category,
+              size_cut: sName,
+              color: sColor,
+              price: effectiveRentalPrice,
+              image_url: invItem.image_url,
+              gender: invItem.gender || 'both',
+            },
+          });
         }
       } else {
         // Fallback when no inventory_sizes rows exist
@@ -533,6 +599,27 @@ async function transferFromSales(body, user) {
            DO UPDATE SET stock_level = rental_inventory_branches.stock_level + $3`,
           [rentalItemId, to_branch, quantity]
         );
+
+        const createdOrUpdatedRentalItem = await tx.query('SELECT * FROM rental_inventory WHERE id = $1', [rentalItemId]);
+        await queueSyncOperation(tx, null, 'rental_inventory', 'transfer_from_sales', rentalItemId, from_branch, {
+          inventory_id,
+          product_barcode: invItem.barcode,
+          from_branch,
+          to_branch,
+          quantity,
+          size: invItem.size_cut,
+          color: effectiveColor,
+          rental_item: createdOrUpdatedRentalItem.rows[0] || {
+            id: rentalItemId,
+            name: transferredItemName,
+            category: invItem.category,
+            size_cut: invItem.size_cut,
+            color: effectiveColor,
+            price: effectiveRentalPrice,
+            image_url: invItem.image_url,
+            gender: invItem.gender || 'both',
+          },
+        });
       }
     } else {
       // Specific size or part piece transfer
@@ -618,6 +705,7 @@ async function transferFromSales(body, user) {
       const createdOrUpdatedRentalItem = await tx.query('SELECT * FROM rental_inventory WHERE id = $1', [rentalItemId]);
       await queueSyncOperation(tx, null, 'rental_inventory', 'transfer_from_sales', rentalItemId, from_branch, {
         inventory_id,
+        product_barcode: invItem.barcode,
         from_branch,
         to_branch,
         quantity,

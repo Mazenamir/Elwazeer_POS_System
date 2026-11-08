@@ -208,7 +208,19 @@ export function RentalInventory() {
         : ''
     );
     setImageUrl(item.image_url || '');
-    setStockLevel(item.stock_level ? item.stock_level.toString() : '1');
+    let initialStock = item.stock_level;
+    if (initialStock === undefined || initialStock === null) {
+      if (activeBranchId && activeBranchId !== 'all' && Array.isArray(item.branch_stocks)) {
+        const bs = item.branch_stocks.find((b) => String(b.branch_id) === String(activeBranchId));
+        initialStock = bs?.stock_level;
+      }
+      if (initialStock === undefined || initialStock === null) {
+        initialStock = Array.isArray(item.branch_stocks) && item.branch_stocks.length > 0
+          ? item.branch_stocks.reduce((acc, bs) => acc + (Number(bs.stock_level) || 0), 0)
+          : 1;
+      }
+    }
+    setStockLevel(Number(initialStock) >= 0 ? initialStock.toString() : '1');
     setShowModal(true);
   };
 
@@ -222,6 +234,8 @@ export function RentalInventory() {
     setSubmitting(true);
     try {
       const parsedPrice = Number(rentalPrice) || 0;
+      const targetBranchNum = (activeBranchId && activeBranchId !== 'all') ? Number(activeBranchId) : (branches[0]?.id || 1);
+      const parsedStock = Number(stockLevel) >= 0 ? Number(stockLevel) : 1;
       const payload = {
         name: name.trim(),
         category,
@@ -231,11 +245,12 @@ export function RentalInventory() {
         price: parsedPrice,
         rental_price: parsedPrice,
         image_url: imageUrl.trim(),
-        stock_level: Number(stockLevel) || 1,
+        stock_level: parsedStock,
+        branch_id: targetBranchNum,
         branch_stocks: [
           {
-            branch_id: (activeBranchId && activeBranchId !== 'all') ? Number(activeBranchId) : (branches[0]?.id || 1),
-            stock_level: Number(stockLevel) || 1,
+            branch_id: targetBranchNum,
+            stock_level: parsedStock,
           },
         ],
       };
@@ -455,8 +470,38 @@ export function RentalInventory() {
                         <span className="text-slate-400 font-normal">-</span>
                       )}
                     </td>
-                    <td className="py-3 font-black text-indigo-600">
-                      {item.stock_level ?? 1} قطعة
+                    <td className="py-3 font-black">
+                      {(() => {
+                        let stock = item.stock_level;
+                        if (stock === undefined || stock === null) {
+                          if (activeBranchId && activeBranchId !== 'all' && Array.isArray(item.branch_stocks)) {
+                            const bs = item.branch_stocks.find((b) => String(b.branch_id) === String(activeBranchId));
+                            stock = bs?.stock_level;
+                          }
+                          if (stock === undefined || stock === null) {
+                            if (Array.isArray(item.branch_stocks) && item.branch_stocks.length > 0) {
+                              stock = item.branch_stocks.reduce((acc, bs) => acc + (Number(bs.stock_level) || 0), 0);
+                            } else {
+                              stock = 0;
+                            }
+                          }
+                        }
+                        const numStock = Number(stock) || 0;
+                        if (numStock > 0) {
+                          return (
+                            <span className="inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-xl text-xs font-black border border-emerald-200/80 shadow-sm">
+                              <span>{numStock.toLocaleString()}</span>
+                              <span>قطعة</span>
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1.5 text-rose-700 bg-rose-50 px-2.5 py-1 rounded-xl text-xs font-black border border-rose-200/80 shadow-sm">
+                            <span>0</span>
+                            <span>قطعة (غير متوفر)</span>
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="py-3 pl-2">
                       <div className="flex items-center gap-2">

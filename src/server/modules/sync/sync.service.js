@@ -8,7 +8,7 @@ const { parsePositiveInt } = require('../../../shared/utils/numbers');
 const { logActivity, queueSyncOperation, getSupplierSyncRef } = require('../../database/sync.helpers');
 const offlineStore = require('./offline.store');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
-const { adjustInventoryStock } = require('../inventory/inventory.helpers');
+const { adjustInventoryStock, generateUniqueBarcode, normalizeBarcodeInput } = require('../inventory/inventory.helpers');
 
 const MAX_SYNC_ATTEMPTS = 5;
 
@@ -1744,7 +1744,7 @@ async function applyOperation(operation) {
           if (check.rows.length) resolvedRiId = check.rows[0].id;
         }
         if (!resolvedRiId && payload.barcode) {
-          const byBc = await tx.query('SELECT id FROM rental_inventory WHERE barcode = $1 AND is_deleted = FALSE LIMIT 1', [payload.barcode]);
+          const byBc = await tx.query('SELECT id FROM rental_inventory WHERE barcode = $1 LIMIT 1', [payload.barcode]);
           if (byBc.rows.length) resolvedRiId = byBc.rows[0].id;
         }
         if (resolvedRiId) {
@@ -1819,41 +1819,71 @@ async function applyOperation(operation) {
         const toBranch = Number(payload.to_branch || fromBranch);
         const qty = Math.max(1, Number(payload.quantity || 1));
         const rItem = payload.rental_item || {};
-        if (invId) {
+
+        let targetInvId = null;
+        if (payload.product_barcode) {
+          const bRes = await tx.query('SELECT id FROM inventory WHERE barcode = $1 LIMIT 1', [payload.product_barcode]);
+          if (bRes.rows.length) targetInvId = bRes.rows[0].id;
+        }
+        if (!targetInvId && invId) {
+          const idRes = await tx.query('SELECT id FROM inventory WHERE id = $1 LIMIT 1', [invId]);
+          if (idRes.rows.length) targetInvId = idRes.rows[0].id;
+        }
+        if (targetInvId) {
           await adjustInventoryStock(tx, {
-            inventoryId: invId,
+            inventoryId: targetInvId,
             branchId: fromBranch,
             quantityDelta: -qty,
             size: payload.size || null,
             color: payload.color || null,
           });
         }
+
         let rId = null;
-        if (rItem.name) {
+        if (rItem.barcode) {
+          const byBc = await tx.query('SELECT id FROM rental_inventory WHERE barcode = $1 LIMIT 1', [rItem.barcode]);
+          if (byBc.rows.length) rId = byBc.rows[0].id;
+        }
+        if (!rId && rItem.name) {
           const existingRi = await tx.query(
-            'SELECT id FROM rental_inventory WHERE name = $1 AND COALESCE(category, \'\') = COALESCE($2, \'\') AND COALESCE(size_cut, \'\') = COALESCE($3, \'\') AND COALESCE(color, \'\') = COALESCE($4, \'\') AND is_deleted = FALSE LIMIT 1',
+            `SELECT id FROM rental_inventory 
+             WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) 
+               AND COALESCE(LOWER(TRIM(category)), '') = COALESCE(LOWER(TRIM($2)), '') 
+               AND COALESCE(LOWER(TRIM(size_cut)), '') = COALESCE(LOWER(TRIM($3)), '') 
+               AND COALESCE(LOWER(TRIM(color)), '') = COALESCE(LOWER(TRIM($4)), '') 
+               AND is_deleted = FALSE LIMIT 1`,
             [rItem.name, rItem.category || '', rItem.size_cut || '', rItem.color || '']
           );
           if (existingRi.rows.length) {
             rId = existingRi.rows[0].id;
-          } else {
-            const insRi = await tx.query(
-              `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url, gender, is_deleted)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
-               RETURNING id`,
-              [
-                rItem.name,
-                rItem.category || null,
-                rItem.size_cut || null,
-                rItem.color || null,
-                rItem.barcode || null,
-                Number(rItem.price || 0),
-                rItem.image_url || null,
-                rItem.gender || 'both',
-              ]
-            );
-            rId = insRi.rows[0]?.id;
           }
+        }
+        if (!rId && rItem.name) {
+          let bCode = rItem.barcode ? normalizeBarcodeInput(rItem.barcode) : null;
+          if (bCode) {
+            const conflict = await tx.query('SELECT id FROM rental_inventory WHERE barcode = $1 LIMIT 1', [bCode]);
+            if (conflict.rows.length) {
+              bCode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+            }
+          } else {
+            bCode = await generateUniqueBarcode(tx, { prefix: 'RENT' });
+          }
+          const insRi = await tx.query(
+            `INSERT INTO rental_inventory (name, category, size_cut, color, barcode, price, image_url, gender, is_deleted)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
+             RETURNING id`,
+            [
+              rItem.name,
+              rItem.category || null,
+              rItem.size_cut || null,
+              rItem.color || null,
+              bCode,
+              Number(rItem.price || 0),
+              rItem.image_url || null,
+              rItem.gender || 'both',
+            ]
+          );
+          rId = insRi.rows[0]?.id;
         }
         if (rId) {
           await tx.query(
