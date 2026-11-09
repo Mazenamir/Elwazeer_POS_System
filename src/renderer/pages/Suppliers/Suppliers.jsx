@@ -139,7 +139,7 @@ export function Suppliers() {
   const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches, selectBranch } = useBranch();
   const toast = useToast();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const getValidTab = (tab) => {
     if (tab === 'suppliers') return 'suppliers';
@@ -198,21 +198,22 @@ export function Suppliers() {
     return list;
   }, [canAccessInventory, canAccessSuppliers, canAccessMatrix, canAccessTransfers]);
 
+  const handleTabChange = useCallback((newTab) => {
+    if (!accessibleTabs.includes(newTab)) return;
+    setActiveTab(newTab);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', newTab);
+      return next;
+    }, { replace: true });
+  }, [accessibleTabs, setSearchParams]);
+
   useEffect(() => {
     if (!accessibleTabs.length) return;
     if (!accessibleTabs.includes(activeTab)) {
       setActiveTab(accessibleTabs[0]);
     }
   }, [activeTab, accessibleTabs]);
-
-  useEffect(() => {
-    const rawTab = searchParams.get('tab');
-    if (!rawTab) return;
-    const requested = getValidTab(rawTab);
-    if (accessibleTabs.includes(requested) && activeTab !== requested) {
-      setActiveTab(requested);
-    }
-  }, [searchParams, accessibleTabs, activeTab]);
 
   // INVENTORY STATE
   const [products, setProducts] = useState([]);
@@ -553,26 +554,35 @@ total: 0,
   });
   const lastFetchedSupplierQueryRef = useRef('');
 
-  // Sync when searchParams change from header navigation
+  // Sync when searchParams change from header navigation or external links
+  const lastProcessedUrlTabRef = useRef(searchParams.get('tab'));
+  const lastProcessedSearchRef = useRef(searchParams.get('search'));
+
   useEffect(() => {
-    const tabParam = searchParams.get('tab');
+    const rawTab = searchParams.get('tab');
     const searchParam = searchParams.get('search');
-    if (tabParam === 'suppliers') {
-      setActiveTab('suppliers');
-      if (searchParam !== null && searchParam !== undefined) {
-        setSupplierSearch(searchParam);
-      }
-    } else if (tabParam === 'branch_matrix') {
-      setActiveTab('branch_matrix');
-    } else if (tabParam === 'transfer_logs' || tabParam === 'transfers') {
-      setActiveTab('transfer_logs');
-    } else if (tabParam === 'inventory' || searchParam !== null) {
-      if (tabParam) setActiveTab('inventory');
-      if (searchParam !== null && searchParam !== undefined) {
-        setProductSearch(searchParam);
+
+    if (rawTab !== lastProcessedUrlTabRef.current) {
+      lastProcessedUrlTabRef.current = rawTab;
+      if (rawTab) {
+        const requested = getValidTab(rawTab);
+        if (accessibleTabs.includes(requested)) {
+          setActiveTab(requested);
+        }
       }
     }
-  }, [searchParams]);
+
+    if (searchParam !== lastProcessedSearchRef.current) {
+      lastProcessedSearchRef.current = searchParam;
+      if (searchParam !== null && searchParam !== undefined) {
+        if (rawTab === 'suppliers') {
+          setSupplierSearch(searchParam);
+        } else {
+          setProductSearch(searchParam);
+        }
+      }
+    }
+  }, [searchParams, accessibleTabs]);
 
   // Add / Edit Supplier Modal
   const [showSupplierModal, setShowSupplierModal] = useState(false);
@@ -2061,7 +2071,7 @@ total: 0,
           {canAccessInventory && (
             <button
               type="button"
-              onClick={() => setActiveTab('inventory')}
+              onClick={() => handleTabChange('inventory')}
               className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
                 activeTab === 'inventory'
                   ? 'bg-[#151515] text-white shadow-xs'
@@ -2077,7 +2087,7 @@ total: 0,
           {canAccessSuppliers && (
             <button
               type="button"
-              onClick={() => setActiveTab('suppliers')}
+              onClick={() => handleTabChange('suppliers')}
               className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
                 activeTab === 'suppliers'
                   ? 'bg-[#151515] text-white shadow-xs'
@@ -2093,7 +2103,7 @@ total: 0,
           {canAccessMatrix && (
             <button
               type="button"
-              onClick={() => setActiveTab('branch_matrix')}
+              onClick={() => handleTabChange('branch_matrix')}
               className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
                 activeTab === 'branch_matrix'
                   ? 'bg-[#151515] text-white shadow-xs'
@@ -2109,7 +2119,7 @@ total: 0,
           {canAccessTransfers && (
             <button
               type="button"
-              onClick={() => setActiveTab('transfer_logs')}
+              onClick={() => handleTabChange('transfer_logs')}
               className={`flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
                 activeTab === 'transfer_logs'
                   ? 'bg-[#151515] text-white shadow-xs'

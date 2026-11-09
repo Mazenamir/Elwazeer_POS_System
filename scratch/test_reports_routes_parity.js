@@ -1,4 +1,3 @@
-process.env.APP_MODE = process.env.APP_MODE || 'branch';
 /**
  * Elwazeer POS System — Reports Routes & Master Sheet Parity Test Suite
  * 
@@ -11,6 +10,14 @@ const assert = require('assert');
 const http = require('http');
 const jwt = require('jsonwebtoken');
 const config = require('../src/server/config/env');
+const db = require('../src/server/database/connection');
+const { runBranchSqliteMigrations } = require('../src/server/database/migrator');
+
+// If running in branch mode or SQLite fallback, ensure SQLite schema is initialized
+if (config.IS_BRANCH_MODE && db.sqlite) {
+  runBranchSqliteMigrations(db.sqlite);
+}
+
 const app = require('../src/server/app');
 const reportsRoutes = require('../src/server/modules/reports/reports.routes');
 
