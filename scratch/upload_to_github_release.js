@@ -228,6 +228,22 @@ async function main() {
       } catch (_) {}
       release = null;
     }
+    if (!deleteExisting) {
+      await apiRequest({
+        hostname: 'api.github.com',
+        path: `/repos/${OWNER}/${REPO}/releases/${release.id}`,
+        method: 'PATCH',
+        headers: {
+          'Authorization': `token ${GITHUB_TOKEN}`,
+          'User-Agent': 'NodeJS-Uploader',
+          'Content-Type': 'application/json',
+        },
+      }, {
+        name: RELEASE_NAME,
+        body: RELEASE_BODY,
+      });
+      console.log(`📝 Updated release metadata for: ${release.name}`);
+    }
   } catch (err) {
     // Release does not exist
   }
@@ -298,8 +314,8 @@ async function main() {
     }
 
     if (existingAssetNames.has(item.name)) {
-      console.log(`⏩ Asset ${item.name} already exists in release, skipping.`);
-      continue;
+      console.log(`🔄 Asset ${item.name} already exists in release, replacing with fresh build...`);
+      await deleteAssetIfExists(release.id, item.name);
     }
 
     await uploadAsset(release, item.path, item.name);
