@@ -3301,8 +3301,35 @@ total: 0,
                         <td className="py-3.5 font-bold text-[#24221F]">
                           {Number(s.total_purchases || 0).toLocaleString()} ج.م
                         </td>
-                        <td className="py-3.5 font-black text-rose-600">
-                          {Number(s.balance || 0).toLocaleString()} ج.م
+                        <td className="py-3.5">
+                          {(() => {
+                            const netDue = s.net_due !== undefined
+                              ? Number(s.net_due || 0)
+                              : ((Number(s.total_purchases || 0) > 0 || Number(s.total_paid || 0) > 0)
+                                ? (Number(s.total_purchases || 0) - Number(s.total_paid || 0))
+                                : -Number(s.balance || 0));
+                            if (netDue > 0) {
+                              return (
+                                <span className="inline-flex items-center gap-1 font-mono font-black text-rose-600 bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-md text-xs">
+                                  <span>{netDue.toLocaleString()} ج.م</span>
+                                  <span className="text-[10px] font-bold text-rose-500">(دائن له)</span>
+                                </span>
+                              );
+                            }
+                            if (netDue < 0) {
+                              return (
+                                <span className="inline-flex items-center gap-1 font-mono font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-md text-xs">
+                                  <span>{Math.abs(netDue).toLocaleString()} ج.م</span>
+                                  <span className="text-[10px] font-bold text-emerald-600">(مدين عليه)</span>
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center font-mono font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md text-xs">
+                                0 ج.م (خالص)
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="py-3.5 pl-4 text-center no-print">
                           <div className="flex items-center justify-center gap-1.5">
@@ -3318,8 +3345,13 @@ total: 0,
                           {/* Pay Supplier */}
                           <button
                             onClick={() => {
+                              const netDue = s.net_due !== undefined
+                                ? Number(s.net_due || 0)
+                                : ((Number(s.total_purchases || 0) > 0 || Number(s.total_paid || 0) > 0)
+                                  ? (Number(s.total_purchases || 0) - Number(s.total_paid || 0))
+                                  : -Number(s.balance || 0));
                               setSelectedSupplier(s);
-                              setPaymentAmount(s.balance ? Math.abs(Number(s.balance)).toString() : '');
+                              setPaymentAmount(netDue > 0 ? netDue.toString() : '');
                               setShowPaymentModal(true);
                             }}
                             className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"

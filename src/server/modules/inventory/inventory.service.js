@@ -1112,6 +1112,48 @@ async function createProduct(body, user, file = null) {
         recalcStockFromSizesSqlite(newId, b_id);
       }
 
+      if (initialStock > 0 && safeSupplierId) {
+        const batchId = purchase_batch_id || crypto.randomUUID();
+        const total_cost = initialStock * numCost;
+        try {
+          db.sqlite.prepare(`
+            INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id, supply_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          `).run(safeSupplierId, newId, initialStock, numCost, 'إضافة منتج جديد برصيد', b_id, batchId);
+        } catch (srErr) {
+          console.warn('[Branch SupplyRecord Warning]:', srErr.message);
+        }
+
+        try {
+          db.sqlite.prepare(`
+            INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id, branch_id, transaction_date)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+          `).run(safeSupplierId, 'purchase', total_cost, `فاتورة مشتريات (منتج جديد: ${name})`, batchId, b_id);
+        } catch (stErr) {
+          console.warn('[Branch SupplierTransaction Warning]:', stErr.message);
+        }
+
+        try {
+          db.sqlite.prepare(`
+            UPDATE suppliers 
+            SET total_purchases = COALESCE(total_purchases, 0) + ?,
+                balance = COALESCE(balance, 0) - ?,
+                purchase_count = COALESCE(purchase_count, 0) + 1,
+                last_supply_date = datetime('now')
+            WHERE id = ?
+          `).run(total_cost, total_cost, safeSupplierId);
+        } catch (supErr) {
+          console.warn('[Branch Supplier Balance Update Warning]:', supErr.message);
+        }
+      }
+
+      let supSnapshot = null;
+      if (safeSupplierId) {
+        try {
+          supSnapshot = db.sqlite.prepare('SELECT id, name, phone, code FROM suppliers WHERE id = ?').get(safeSupplierId);
+        } catch {}
+      }
+
       try {
         await queueSyncOperation(db, null, 'product', 'create', newId, b_id, {
           id: newId,
@@ -1126,6 +1168,7 @@ async function createProduct(body, user, file = null) {
           cost_price: numCost,
           image_url: safeImageUrl,
           preferred_supplier_id: safeSupplierId,
+          supplier_ref: supSnapshot ? { id: supSnapshot.id, name: supSnapshot.name, phone: supSnapshot.phone, code: supSnapshot.code } : null,
           color_id: null, // Branch SQLite IDs must not be sent to Central PostgreSQL to prevent foreign key errors
           size_id: null,  // Central Server automatically resolves size_cut into Central sizes table
           gender: safeNormalizedGender,
@@ -1138,11 +1181,38 @@ async function createProduct(body, user, file = null) {
         console.warn('Failed to queue product sync operation:', e.message);
       }
 
+      if (initialStock > 0 && safeSupplierId && numCost > 0) {
+        try {
+          const total_cost = initialStock * numCost;
+          const batchId = purchase_batch_id || crypto.randomUUID();
+          await queueSyncOperation(db, null, 'supplier_transaction', 'create', newId, safeSupplierId, {
+            supplier_id: safeSupplierId,
+            supplier_ref: supSnapshot ? { id: supSnapshot.id, name: supSnapshot.name, phone: supSnapshot.phone, code: supSnapshot.code } : null,
+            transaction_type: 'purchase',
+            amount: total_cost,
+            notes: `فاتورة مشتريات (منتج جديد: ${name})`,
+            branch_id: b_id,
+            purchase_batch_id: batchId,
+            supply_items: [{
+              inventory_id: newId,
+              barcode: barcode,
+              name: name,
+              quantity: initialStock,
+              cost_price: numCost,
+            }]
+          });
+        } catch (e) {
+          console.warn('Failed to queue initial purchase supplier_transaction:', e.message);
+        }
+      }
+
       invalidateInventoryMetadata();
       const resRow = db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(newId);
       const sizesRows = db.sqlite.prepare('SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ?').all(newId);
       return { ...resRow, sizes: sizesRows };
     }
+
+    const safeSupplierId = (supplier_id || preferred_supplier_id) ? (Number(supplier_id || preferred_supplier_id) || null) : null;
 
     const item = await db.transaction(async (tx) => {
       // Resolve color within transaction
@@ -1183,7 +1253,7 @@ async function createProduct(body, user, file = null) {
         [
           name, category, resolvedSizeName, resolvedColorName, initialStock, minStockLevel,
           numPrice, wholesale_price || 0, semi_wholesale_price || 0, numCost, image_url,
-          barcode, supplier_id, normalizedGender, resolvedColorId, resolvedSizeId
+          barcode, safeSupplierId, normalizedGender, resolvedColorId, resolvedSizeId
         ]
       );
       const newId = rows[0].id;
@@ -1228,20 +1298,20 @@ async function createProduct(body, user, file = null) {
         await recalcStockFromSizes(tx, newId, b_id);
       }
 
-      if (initialStock > 0) {
+      if (initialStock > 0 && safeSupplierId && numCost > 0) {
         const batchId = purchase_batch_id || crypto.randomUUID();
-        await tx.query(
-          'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-          [supplier_id, newId, initialStock, numCost, 'إضافة منتج جديد برصيد', b_id, batchId]
-        );
         const total_cost = initialStock * numCost;
         await tx.query(
-          'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, $5)',
-          [supplier_id, 'purchase', total_cost, `فاتورة مشتريات (منتج جديد: ${name})`, batchId]
+          'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [safeSupplierId, newId, initialStock, numCost, 'إضافة منتج جديد برصيد', b_id, batchId]
         );
         await tx.query(
-          `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
-          [total_cost, supplier_id]
+          'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id, branch_id) VALUES ($1, $2, $3, $4, $5, $6)',
+          [safeSupplierId, 'purchase', total_cost, `فاتورة مشتريات (منتج جديد: ${name})`, batchId, b_id]
+        );
+        await tx.query(
+          `UPDATE suppliers SET total_purchases = COALESCE(total_purchases, 0) + $1, balance = COALESCE(balance, 0) - $1, purchase_count = COALESCE(purchase_count, 0) + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
+          [total_cost, safeSupplierId]
         );
       }
 
@@ -1372,6 +1442,8 @@ async function updateProduct(id, body, user, file = null) {
       const numWholesale = wholesale_price !== undefined ? (Number(wholesale_price) || 0) : null;
       const numSemiWholesale = semi_wholesale_price !== undefined ? (Number(semi_wholesale_price) || 0) : null;
       const targetBranchId = Number(branch_id) || Number(user?.branch_id) || Number(config.BRANCH_ID) || 1;
+      const oldBranchRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(id, targetBranchId);
+      const oldStock = oldBranchRow ? Number(oldBranchRow.stock_level || 0) : 0;
 
       db.sqlite.prepare(`
         UPDATE inventory
@@ -1403,6 +1475,43 @@ async function updateProduct(id, body, user, file = null) {
       const row = db.sqlite.prepare('SELECT * FROM inventory WHERE id = ?').get(id);
       const branchStockRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(id, targetBranchId);
       const sizesRows = db.sqlite.prepare('SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND (branch_id = ? OR branch_id IS NULL)').all(id, targetBranchId);
+      const newStock = branchStockRow ? Number(branchStockRow.stock_level || 0) : 0;
+      const diff = newStock - oldStock;
+
+      if (diff > 0 && !is_correction && safeSupplierId && numCost > 0) {
+        const total_cost = diff * numCost;
+        const batchId = crypto.randomUUID();
+        try {
+          db.sqlite.prepare(`
+            INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id, supply_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          `).run(safeSupplierId, id, diff, numCost, 'تعديل كمية (زيادة رصيد)', targetBranchId, batchId);
+        } catch (srErr) {
+          console.warn('[Branch Update SupplyRecord Warning]:', srErr.message);
+        }
+
+        try {
+          db.sqlite.prepare(`
+            INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id, branch_id, transaction_date)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+          `).run(safeSupplierId, 'purchase', total_cost, `تعديل رصيد بالزيادة (${name})`, batchId, targetBranchId);
+        } catch (stErr) {
+          console.warn('[Branch Update SupplierTransaction Warning]:', stErr.message);
+        }
+
+        try {
+          db.sqlite.prepare(`
+            UPDATE suppliers 
+            SET total_purchases = COALESCE(total_purchases, 0) + ?,
+                balance = COALESCE(balance, 0) - ?,
+                purchase_count = COALESCE(purchase_count, 0) + 1,
+                last_supply_date = datetime('now')
+            WHERE id = ?
+          `).run(total_cost, total_cost, safeSupplierId);
+        } catch (supErr) {
+          console.warn('[Branch Update Supplier Balance Warning]:', supErr.message);
+        }
+      }
 
       try {
         await queueSyncOperation(db, null, 'product', 'update', id, targetBranchId, {
@@ -1457,24 +1566,28 @@ async function updateProduct(id, body, user, file = null) {
         }
       }
 
+      const safeSupplierId = (supplier_id || preferred_supplier_id) ? (Number(supplier_id || preferred_supplier_id) || null) : null;
+
       if (hasInventoryAdminAccess(user)) {
         await tx.query(
           `UPDATE inventory 
            SET name = $1, category = $2, size_cut = $3, color = $4, min_stock_level = $5,
-               preferred_supplier_id = $6, price = $7, wholesale_price = $8,
+               preferred_supplier_id = COALESCE($6, preferred_supplier_id), price = $7, wholesale_price = $8,
                semi_wholesale_price = $9, cost_price = $10,
                image_url = CASE WHEN $11::text IS NOT NULL THEN $11 ELSE image_url END,
                barcode = $12, gender = COALESCE($13, gender), color_id = $14, size_id = $15
            WHERE id = $16`,
           [
             name, category, resolvedSizeName, resolvedColorName, minStockLevel,
-            supplier_id, numPrice, wholesale_price || 0, semi_wholesale_price || 0, numCost,
+            safeSupplierId, numPrice, wholesale_price || 0, semi_wholesale_price || 0, numCost,
             image_url, barcode, normalizedGender, resolvedColorId, resolvedSizeId, id
           ]
         );
       }
 
       const targetBranchId = Number(branch_id) || Number(user?.branch_id) || 1;
+      const currentStockRes = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2', [id, targetBranchId]);
+      const oldStock = currentStockRes.rows.length ? Number(currentStockRes.rows[0].stock_level) : 0;
 
       if (hasMultiSizes && parsedSizes.length > 0) {
         const keptKeys = [];
@@ -1508,47 +1621,55 @@ async function updateProduct(id, body, user, file = null) {
           throw new Error('Unauthorized branch stock update');
         }
 
-        const currentStockRes = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2', [id, branch_id]);
-        const oldStock = currentStockRes.rows.length ? Number(currentStockRes.rows[0].stock_level) : 0;
-        const diff = Number(stock_level) - oldStock;
-
         await tx.query(
           'INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) VALUES ($1, $2, $3) ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = EXCLUDED.stock_level',
-          [id, branch_id, stock_level]
+          [id, targetBranchId, stock_level]
+        );
+      }
+
+      const afterStockRes = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2', [id, targetBranchId]);
+      const newStock = afterStockRes.rows.length ? Number(afterStockRes.rows[0].stock_level) : oldStock;
+      const diff = newStock - oldStock;
+
+      let effectiveSupplierId = safeSupplierId;
+      if (!effectiveSupplierId) {
+        const prodSupRes = await tx.query('SELECT preferred_supplier_id FROM inventory WHERE id = $1', [id]);
+        if (prodSupRes.rows.length && prodSupRes.rows[0].preferred_supplier_id) {
+          effectiveSupplierId = Number(prodSupRes.rows[0].preferred_supplier_id);
+        }
+      }
+
+      if (diff !== 0 && !is_correction && effectiveSupplierId && numCost > 0) {
+        const absDiff = Math.abs(diff);
+        const total_cost = absDiff * numCost;
+        const note = diff > 0 ? 'تعديل كمية (زيادة رصيد)' : 'تعديل كمية (نقص رصيد)';
+        const transType = diff > 0 ? 'purchase' : 'return';
+        const transNote = diff > 0 ? `تعديل رصيد بالزيادة (${name})` : `تعديل رصيد بالنقصان (${name})`;
+        const batchId = crypto.randomUUID();
+
+        await tx.query(
+          'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [effectiveSupplierId, id, diff, numCost, note, targetBranchId, batchId]
         );
 
-        if (diff !== 0 && !is_correction) {
-          const absDiff = Math.abs(diff);
-          const total_cost = absDiff * numCost;
-          const note = diff > 0 ? 'تعديل كمية (زيادة رصيد)' : 'تعديل كمية (نقص رصيد)';
-          const transType = diff > 0 ? 'purchase' : 'return';
-          const transNote = diff > 0 ? `تعديل رصيد بالزيادة (${name})` : `تعديل رصيد بالنقصان (${name})`;
-          const batchId = crypto.randomUUID();
+        await tx.query(
+          'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id, branch_id) VALUES ($1, $2, $3, $4, $5, $6)',
+          [effectiveSupplierId, transType, total_cost, transNote, batchId, targetBranchId]
+        );
 
+        if (diff > 0) {
           await tx.query(
-            'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-            [supplier_id, id, diff, numCost, note, branch_id, batchId]
+            `UPDATE suppliers SET total_purchases = COALESCE(total_purchases, 0) + $1, balance = COALESCE(balance, 0) - $1, purchase_count = COALESCE(purchase_count, 0) + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
+            [total_cost, effectiveSupplierId]
           );
-
-          await tx.query(
-            'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, $5)',
-            [supplier_id, transType, total_cost, transNote, batchId]
-          );
-
-          if (diff > 0) {
-            await tx.query(
-              `UPDATE suppliers SET total_purchases = total_purchases + $1, balance = balance - $1, purchase_count = purchase_count + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
-              [total_cost, supplier_id]
-            );
-          } else {
-            await tx.query('UPDATE suppliers SET balance = balance + $1 WHERE id = $2', [total_cost, supplier_id]);
-          }
+        } else {
+          await tx.query('UPDATE suppliers SET balance = COALESCE(balance, 0) + $1 WHERE id = $2', [total_cost, effectiveSupplierId]);
         }
-
-        const totalStockRes = await tx.query('SELECT SUM(stock_level) as total FROM inventory_branches WHERE inventory_id = $1', [id]);
-        const newTotal = totalStockRes.rows[0]?.total || 0;
-        await tx.query('UPDATE inventory SET stock_level = $1 WHERE id = $2', [newTotal, id]);
       }
+
+      const totalStockRes = await tx.query('SELECT SUM(stock_level) as total FROM inventory_branches WHERE inventory_id = $1', [id]);
+      const newTotal = totalStockRes.rows[0]?.total || 0;
+      await tx.query('UPDATE inventory SET stock_level = $1 WHERE id = $2', [newTotal, id]);
 
       const { rows } = await tx.query(`
         SELECT i.*, s.name as supplier_name,

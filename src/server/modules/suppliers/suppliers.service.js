@@ -35,6 +35,25 @@ async function getSupplierOptions(query = {}) {
   return rows;
 }
 
+function formatSupplierRow(s) {
+  const purchases = Number(s.total_purchases || 0);
+  const paid = Number(s.total_paid || 0);
+  const rawBal = Number(s.balance || 0);
+  let netDue = 0;
+  if (purchases > 0 || paid > 0) {
+    netDue = purchases - paid;
+  } else {
+    netDue = -rawBal;
+  }
+  return {
+    ...s,
+    net_due: netDue,
+    balance_due: netDue,
+    current_balance: Math.abs(netDue),
+    balance_type: netDue > 0 ? 'دائن (له)' : (netDue < 0 ? 'مدين (عليه)' : 'خالص'),
+  };
+}
+
 async function listSuppliers(query = {}, user = null, req = null) {
   const isInventoryAdmin = hasInventoryAdminAccess(user);
   const pagination = parsePagination(req || { query }, 50, 200, true);
@@ -137,7 +156,8 @@ async function listSuppliers(query = {}, user = null, req = null) {
       db.query(countQuery, params),
     ]);
 
-    const payload = paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
+    const formattedRows = dataRes.rows.map(formatSupplierRow);
+    const payload = paginatedPayload(formattedRows, countRes.rows[0]?.total || 0, pagination);
     payload.total_balance = countRes.rows[0]?.total_balance || 0;
     payload.total_men_balance = countRes.rows[0]?.total_men_balance || 0;
     payload.total_women_balance = countRes.rows[0]?.total_women_balance || 0;
@@ -151,7 +171,7 @@ async function listSuppliers(query = {}, user = null, req = null) {
   ]);
 
   return {
-    data: dataRes.rows,
+    data: dataRes.rows.map(formatSupplierRow),
     total_balance: countRes.rows[0]?.total_balance || 0,
     total_men_balance: countRes.rows[0]?.total_men_balance || 0,
     total_women_balance: countRes.rows[0]?.total_women_balance || 0,

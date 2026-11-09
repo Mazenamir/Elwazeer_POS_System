@@ -170,7 +170,21 @@ async function resolveColorId(tx, colorName, candidateColorId = null) {
   return null;
 }
 
-async function resolveSupplierId(tx, candidateSupplierId) {
+function normalizeArabicName(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .trim()
+    .toLowerCase()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/[يى]/g, 'ي')
+    .replace(/\s+/g, ' ');
+}
+
+async function resolveSupplierId(tx, candidateSupplierId, ref = null) {
+  if (ref && (ref.name || ref.phone || ref.code)) {
+    return resolveSupplierForSync(tx, candidateSupplierId, ref);
+  }
   if (!candidateSupplierId) return null;
   const num = Number(candidateSupplierId);
   if (!num) return null;
@@ -183,13 +197,33 @@ async function resolveSupplierId(tx, candidateSupplierId) {
 }
 
 async function findSupplierByIdentity(tx, ref) {
+  const phone = String(ref?.phone || '').trim();
+  if (phone) {
+    const byPhone = await tx.query(
+      'SELECT id FROM suppliers WHERE phone = $1 ORDER BY COALESCE(is_active, TRUE) DESC, id ASC LIMIT 1',
+      [phone]
+    );
+    if (byPhone.rows.length) return byPhone.rows[0].id;
+  }
+
   const name = String(ref?.name || '').trim();
-  if (!name) return null;
-  const byName = await tx.query(
-    'SELECT id FROM suppliers WHERE TRIM(name) = $1 ORDER BY COALESCE(is_active, TRUE) DESC, id ASC LIMIT 1',
-    [name]
-  );
-  if (byName.rows.length) return byName.rows[0].id;
+  if (name) {
+    const byName = await tx.query(
+      'SELECT id FROM suppliers WHERE TRIM(name) = $1 OR LOWER(TRIM(name)) = LOWER($1) ORDER BY COALESCE(is_active, TRUE) DESC, id ASC LIMIT 1',
+      [name]
+    );
+    if (byName.rows.length) return byName.rows[0].id;
+
+    // Normalized Arabic name match
+    const targetNorm = normalizeArabicName(name);
+    const allSups = await tx.query('SELECT id, name FROM suppliers ORDER BY COALESCE(is_active, TRUE) DESC, id ASC');
+    for (const s of allSups.rows) {
+      if (normalizeArabicName(s.name) === targetNorm) {
+        return s.id;
+      }
+    }
+  }
+
   const code = String(ref?.code || '').trim();
   if (code) {
     const byCode = await tx.query('SELECT id FROM suppliers WHERE code = $1 ORDER BY id ASC LIMIT 1', [code]);
@@ -1913,7 +1947,7 @@ async function applyOperation(operation) {
       // Safe foreign key resolution for Central PostgreSQL
       const resolvedSizeId = await resolveSizeId(tx, payload.size_cut, payload.size_id);
       const resolvedColorId = await resolveColorId(tx, payload.color, payload.color_id);
-      const resolvedSupplierId = await resolveSupplierId(tx, payload.preferred_supplier_id);
+      const resolvedSupplierId = await resolveSupplierId(tx, payload.preferred_supplier_id, payload.supplier_ref);
 
       if (operation.action === 'create') {
         let existing = null;
@@ -1959,6 +1993,34 @@ async function applyOperation(operation) {
              DO UPDATE SET stock_level = EXCLUDED.stock_level`,
             [existing.id, branchId, initialStock]
           );
+
+          if (resolvedSupplierId && initialStock > 0 && Number(payload.cost_price || 0) > 0) {
+            const numCost = Number(payload.cost_price || 0);
+            const total_cost = initialStock * numCost;
+            const batchId = payload.purchase_batch_id || crypto.randomUUID();
+            try {
+              const existingSr = await tx.query(
+                'SELECT id FROM supply_records WHERE supplier_id = $1 AND inventory_id = $2 AND branch_id = $3 LIMIT 1',
+                [resolvedSupplierId, existing.id, branchId]
+              );
+              if (existingSr.rows.length === 0) {
+                await tx.query(
+                  'INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                  [resolvedSupplierId, existing.id, initialStock, numCost, 'مزامنة إضافة منتج جديد برصيد', branchId, batchId]
+                );
+                await tx.query(
+                  'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id, branch_id) VALUES ($1, $2, $3, $4, $5, $6)',
+                  [resolvedSupplierId, 'purchase', total_cost, `فاتورة مشتريات (مزامنة منتج جديد: ${payload.name})`, batchId, branchId]
+                );
+                await tx.query(
+                  `UPDATE suppliers SET total_purchases = COALESCE(total_purchases, 0) + $1, balance = COALESCE(balance, 0) - $1, purchase_count = COALESCE(purchase_count, 0) + 1, last_supply_date = ${CAIRO_DATE_SQL} WHERE id = $2`,
+                  [total_cost, resolvedSupplierId]
+                );
+              }
+            } catch (supSyncErr) {
+              console.warn('[Sync] Non-critical warning updating supplier for new product:', supSyncErr.message);
+            }
+          }
         }
 
         if (existing && Array.isArray(payload.sizes) && payload.sizes.length > 0) {
@@ -3430,6 +3492,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       // and NOT a locally created unsynced item in sync_queue should be marked deleted!
       try {
         const incomingIds = new Set(catalog.inventory.map((i) => Number(i.id)));
+        const incomingBarcodes = new Set(catalog.inventory.map((i) => String(i.barcode || '').trim()).filter(Boolean));
         let pendingCreationIds = new Set();
         try {
           const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type IN ('product', 'inventory') AND action = 'create' AND status IN ('pending', 'processing', 'retry')").all();
@@ -3438,10 +3501,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           }
         } catch {}
 
-        const allLocalItems = sqlite.prepare("SELECT id FROM inventory WHERE is_deleted = 0").all();
+        const allLocalItems = sqlite.prepare("SELECT id, barcode FROM inventory WHERE is_deleted = 0").all();
         const markDeletedStmt = sqlite.prepare("UPDATE inventory SET is_deleted = 1 WHERE id = ?");
         for (const item of allLocalItems) {
-          if (!incomingIds.has(Number(item.id)) && !pendingCreationIds.has(Number(item.id))) {
+          const hasMatchingBarcode = item.barcode && incomingBarcodes.has(String(item.barcode).trim());
+          if (!incomingIds.has(Number(item.id)) && !pendingCreationIds.has(Number(item.id)) && !hasMatchingBarcode) {
             markDeletedStmt.run(item.id);
           }
         }
@@ -3775,6 +3839,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       // and NOT a locally created unsynced supplier in sync_queue should be marked inactive!
       try {
         const incomingSupIds = new Set(catalog.suppliers.map((s) => Number(s.id)));
+        const incomingPhones = new Set(catalog.suppliers.map((s) => String(s.phone || '').trim()).filter(Boolean));
         let pendingCreationIds = new Set();
         try {
           const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'supplier' AND action = 'create' AND status IN ('pending', 'processing', 'retry')").all();
@@ -3783,10 +3848,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           }
         } catch {}
 
-        const allLocalSups = sqlite.prepare("SELECT id FROM suppliers WHERE is_active = 1").all();
+        const allLocalSups = sqlite.prepare("SELECT id, phone, name FROM suppliers WHERE is_active = 1").all();
         const markSupInactiveStmt = sqlite.prepare("UPDATE suppliers SET is_active = 0, status = 'inactive', balance = 0 WHERE id = ?");
         for (const item of allLocalSups) {
-          if (!incomingSupIds.has(Number(item.id)) && !pendingCreationIds.has(Number(item.id))) {
+          const hasMatchingPhone = item.phone && incomingPhones.has(String(item.phone).trim());
+          if (!incomingSupIds.has(Number(item.id)) && !pendingCreationIds.has(Number(item.id)) && !hasMatchingPhone) {
             markSupInactiveStmt.run(item.id);
           }
         }
@@ -4458,5 +4524,7 @@ module.exports = {
   repairAndReviveDeadLetterOperations,
   isSyncActive: () => isSyncCycleActive,
   MAX_SYNC_ATTEMPTS,
+  resolveSupplierForSync,
+  resolveSupplierId,
 };
 

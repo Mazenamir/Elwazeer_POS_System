@@ -1,6 +1,6 @@
 # تقرير نتائج اختبارات تكامل المزامنة الآلية (Sync Integration Test Results)
 
-**تاريخ التنفيذ:** `2026-11-08T17:38:17.157Z`  
+**تاريخ التنفيذ:** `2026-11-09T22:19:30.689Z`  
 **النتيجة الإجمالية:** `17 / 17 ناجح (0 فشل)`  
 **نسبة النجاح:** `100.0%`  
 
@@ -10,13 +10,13 @@
 
 | رقم السيناريو | اسم السيناريو | الحالة | التفاصيل والملاحظات |
 | :---: | :--- | :---: | :--- |
-| **1** | **Create a sale while online** | ✅ **ناجح (PASSED)** | Order recorded in PG with id=2053 |
+| **1** | **Create a sale while online** | ✅ **ناجح (PASSED)** | Order recorded in PG with id=2152 |
 | **2** | **Create multiple sales while offline** | ✅ **ناجح (PASSED)** | 3 sales pending in SQLite, 0 in PG |
 | **3** | **Reconnect and synchronize** | ✅ **ناجح (PASSED)** | All 3 offline orders synchronized to PG |
 | **4** | **Disconnect during upload** | ✅ **ناجح (PASSED)** | Operation preserved in pending state with error recorded |
 | **5** | **Retry same operation multiple times (idempotency)** | ✅ **ناجح (PASSED)** | Duplicate replay ignored; exactly 1 record in PG |
 | **6** | **Restart application with pending operations** | ✅ **ناجح (PASSED)** | Pending operations survived app restart (1 pending) |
-| **7** | **Update product information on master** | ✅ **ناجح (PASSED)** | Created product #2819 on master PG |
+| **7** | **Update product information on master** | ✅ **ناجح (PASSED)** | Created product #2916 on master PG |
 | **8** | **Verify update reaches every authorized branch** | ✅ **ناجح (PASSED)** | Both Branch 1 & Branch 2 received product update |
 | **9** | **Update inventory from two different branches** | ✅ **ناجح (PASSED)** | Both branch transactions recorded safely on master |
 | **10** | **Return a previously sold item** | ✅ **ناجح (PASSED)** | Return recorded on master with refund of 3800.00 EGP |
