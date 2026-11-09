@@ -750,13 +750,16 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
         } catch {
           perms = [];
         }
-        for (const p of requiredBranchPerms) {
-          if (!perms.includes(p)) perms.push(p);
+        // Only seed default branch permissions if user has an empty permission set
+        if (perms.length === 0) {
+          for (const p of requiredBranchPerms) {
+            if (!perms.includes(p)) perms.push(p);
+          }
         }
 
         let bScope = u.branch_scope || 'single';
         let bIds = u.branch_ids || '[]';
-        if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
+        if (u.username === 'دمنهور' && (!u.branch_scope || u.branch_scope === 'single')) {
           bScope = 'selected';
           bIds = '[9, 10]';
         }
@@ -1031,7 +1034,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
             const perms = typeof u.permissions === 'object' ? JSON.stringify(u.permissions) : (u.permissions || '[]');
             let bScope = u.branch_scope || (u.role === 'admin' ? 'all' : 'single');
             let bIds = Array.isArray(u.branch_ids) ? JSON.stringify(u.branch_ids) : (u.branch_ids || '[]');
-            if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
+            if (u.username === 'دمنهور' && (!u.branch_scope || u.branch_scope === 'single')) {
               bScope = 'selected';
               bIds = '[9, 10]';
             }

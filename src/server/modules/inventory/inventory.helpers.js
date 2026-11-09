@@ -1,6 +1,13 @@
 const db = require('../../database/connection');
 const config = require('../../config/env');
-const { hasPermission, INVENTORY_ADMIN_PERMISSION, INVENTORY_VIEW_ALL_BRANCHES_PERMISSION } = require('../../../shared/constants/permissions');
+const {
+  hasPermission,
+  INVENTORY_ADMIN_PERMISSION,
+  INVENTORY_VIEW_ALL_BRANCHES_PERMISSION,
+  hasInventoryAdminAccess,
+  hasInventoryAllBranchesAccess,
+  isBranchScopedUser,
+} = require('../../../shared/constants/permissions');
 
 let inventoryMetadataCache = null;
 const INVENTORY_METADATA_TTL_MS = 5 * 60 * 1000;
@@ -30,17 +37,7 @@ function normalizeBarcodeInput(barcode) {
   return str.length > 0 ? str : null;
 }
 
-function hasInventoryAdminAccess(user) {
-  return Boolean(user && (user.role === 'admin' || hasPermission(user, INVENTORY_ADMIN_PERMISSION)));
-}
-
-function hasInventoryAllBranchesAccess(user) {
-  return Boolean(user && (user.role === 'admin' || hasPermission(user, INVENTORY_VIEW_ALL_BRANCHES_PERMISSION)));
-}
-
-function isBranchScopedUser(user) {
-  return Boolean(user && user.role !== 'admin');
-}
+// Re-exported from shared permissions: hasInventoryAdminAccess, hasInventoryAllBranchesAccess, isBranchScopedUser
 
 async function assertBarcodeAvailable(tx, barcode, { inventoryId = null, rentalInventoryId = null } = {}) {
   const normalized = normalizeBarcodeInput(barcode);

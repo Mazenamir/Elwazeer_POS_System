@@ -290,7 +290,7 @@ async function authenticateUser(username, password) {
       permissions,
     },
     config.JWT_SECRET,
-    { expiresIn: '12h' }
+    { expiresIn: '30d' }
   );
 
   let branchName = user.branch_name || null;
@@ -538,7 +538,7 @@ async function updateOwnAccount(userId, { current_password, password, new_passwo
       permissions,
     },
     config.JWT_SECRET,
-    { expiresIn: '12h' }
+    { expiresIn: '30d' }
   );
 
   return {

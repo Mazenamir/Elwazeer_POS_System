@@ -38,7 +38,7 @@ async function login(req, res, next) {
       httpOnly: true,
       secure: isHttps,
       sameSite: 'lax',
-      maxAge: 12 * 60 * 60 * 1000,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
     res.json({
@@ -402,7 +402,7 @@ async function updateOwnAccount(req, res, next) {
       httpOnly: true,
       secure: isHttps,
       sameSite: 'lax',
-      maxAge: 12 * 60 * 60 * 1000,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
     res.json({ success: true, message: 'Account updated', token, user });

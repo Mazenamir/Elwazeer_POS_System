@@ -103,7 +103,9 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
   const { branches, activeBranchId, selectBranch } = useBranch();
   const toast = useToast();
 
-  const isBranchScoped = !isAdmin && Boolean(user?.branch_id);
+  const hasAllBranchScope = Boolean(isAdmin || user?.branch_scope === 'all');
+  const canSwitchBranchInLogs = Boolean(hasAllBranchScope || (user?.branch_scope === 'selected' && branches.length > 1));
+  const isBranchScoped = !canSwitchBranchInLogs && Boolean(user?.branch_id);
   const currentBranchId = isBranchScoped ? Number(user.branch_id) : (activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : null);
 
   // Filters state
@@ -149,10 +151,10 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
 
   // Sync selected branch filter if activeBranchId changes externally
   useEffect(() => {
-    if (isAdmin) {
-      setSelectedBranchFilter(activeBranchId && activeBranchId !== 'all' ? activeBranchId.toString() : 'all');
+    if (canSwitchBranchInLogs) {
+      setSelectedBranchFilter(activeBranchId && activeBranchId !== 'all' ? activeBranchId.toString() : (hasAllBranchScope ? 'all' : (branches[0]?.id?.toString() || 'all')));
     }
-  }, [isAdmin, activeBranchId]);
+  }, [canSwitchBranchInLogs, hasAllBranchScope, branches, activeBranchId]);
 
   // Fetch transfer logs
   const fetchTransferLogs = useCallback(async () => {
@@ -454,7 +456,7 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
 
         {/* ADMIN BRANCH SWITCHER & EXPORT BUTTONS */}
         <div className="flex flex-wrap items-center gap-2">
-          {isAdmin && (
+          {canSwitchBranchInLogs && (
             <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-xl border border-white/10 text-xs">
               <Building2 className="w-4 h-4 text-amber-300" />
               <span className="font-bold text-white/90">تخصيص الفرع:</span>
@@ -466,7 +468,7 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
                 }}
                 className="bg-[#24221F] text-white rounded-lg px-2.5 py-1 text-xs font-bold border border-white/20 outline-none cursor-pointer"
               >
-                <option value="all">كافة الفروع (مجمّع)</option>
+                {hasAllBranchScope && <option value="all">كافة الفروع (مجمّع)</option>}
                 {branches.map((b) => (
                   <option key={b.id} value={b.id.toString()}>
                     {b.name} {b.is_main_warehouse ? '🏢 (المخزن الرئيسي)' : ''}

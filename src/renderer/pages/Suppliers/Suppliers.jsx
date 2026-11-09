@@ -169,7 +169,9 @@ export function Suppliers() {
     hasPermission('suppliers.delete') ||
     hasPermission('suppliers.purchases.create')
   );
-  const canAccessSuppliers = Boolean(isAdmin || hasSuppliersSpecific || hasPermission('inventory_admin'));
+  const canAccessSuppliers = Boolean(isAdmin || hasSuppliersSpecific || hasInventorySpecific || hasPermission('inventory_admin'));
+  const hasFullBranchAccess = Boolean(isAdmin || user?.branch_scope === 'all' || hasPermission('inventory_view_all_branches'));
+  const canSwitchBranchInInventory = Boolean(hasFullBranchAccess || (user?.branch_scope === 'selected' && branches.length > 1));
 
   const canAccessMatrix = Boolean(
     isAdmin ||
@@ -204,7 +206,9 @@ export function Suppliers() {
   }, [activeTab, accessibleTabs]);
 
   useEffect(() => {
-    const requested = getValidTab(searchParams.get('tab'));
+    const rawTab = searchParams.get('tab');
+    if (!rawTab) return;
+    const requested = getValidTab(rawTab);
     if (accessibleTabs.includes(requested) && activeTab !== requested) {
       setActiveTab(requested);
     }
@@ -320,11 +324,17 @@ total: 0,
   }, []);
 
   useEffect(() => {
+    if (activeBranchId) {
+      setInventoryBranchFilter(activeBranchId.toString());
+    }
+  }, [activeBranchId]);
+
+  useEffect(() => {
     const branchToUse = (inventoryBranchFilter && inventoryBranchFilter !== 'all')
       ? inventoryBranchFilter
       : (activeBranchId && activeBranchId !== 'all' ? activeBranchId : null);
     fetchMetadata(branchToUse);
-  }, [fetchMetadata, isAdmin, inventoryBranchFilter, activeBranchId]);
+  }, [fetchMetadata, hasFullBranchAccess, inventoryBranchFilter, activeBranchId]);
 
   // Add / Edit Product Modal
   const [showProductModal, setShowProductModal] = useState(false);
@@ -677,7 +687,7 @@ total: 0,
     try {
       setLoadingProducts(true);
       const query = new URLSearchParams();
-      const branchToUse = isAdmin ? inventoryBranchFilter : activeBranchId;
+      const branchToUse = canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId;
       if (branchToUse && branchToUse !== 'all') query.append('branch_id', branchToUse);
       if (productSearch.trim()) query.append('search', productSearch.trim());
       if (selectedCategory !== 'الكل') query.append('category', selectedCategory);
@@ -721,7 +731,7 @@ total: 0,
     } finally {
       setLoadingProducts(false);
     }
-  }, [isAdmin, inventoryBranchFilter, activeBranchId, productSearch, selectedCategory, stockStatusFilter, sortOrder, supplierFilter, inventoryGenderFilter, inventoryPagination.page, inventoryPagination.limit]);
+  }, [canSwitchBranchInInventory, inventoryBranchFilter, activeBranchId, productSearch, selectedCategory, stockStatusFilter, sortOrder, supplierFilter, inventoryGenderFilter, inventoryPagination.page, inventoryPagination.limit]);
 
   // Load Suppliers
   const fetchSuppliers = useCallback(async (overrides) => {
@@ -1277,7 +1287,7 @@ total: 0,
       await api.delete(`/inventory/${id}`);
       toast.success('تم حذف المنتج من المخزون');
       fetchProducts();
-      fetchMetadata(isAdmin ? inventoryBranchFilter : activeBranchId);
+      fetchMetadata(canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId);
       fetchDropdownOptions();
     } catch (err) {
       toast.error(err.message || 'فشل حذف المنتج');
@@ -1549,7 +1559,7 @@ total: 0,
 
       toast.success(`تم تحويل الصنف "${product.name}" بنجاح إلى مخزون الإيجار! 👗✨`);
       fetchProducts();
-      fetchMetadata(isAdmin ? inventoryBranchFilter : activeBranchId);
+      fetchMetadata(canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId);
     } catch (err) {
       toast.error(err.message || 'فشل تحويل المنتج لمخزون الإيجار');
     }
@@ -1712,7 +1722,7 @@ total: 0,
         params.set('type', 'inventory');
         if (inventoryGenderFilter !== 'all') params.set('gender', inventoryGenderFilter);
         if (selectedCategory !== 'الكل') params.set('category', selectedCategory);
-        const branchToUse = isAdmin ? inventoryBranchFilter : activeBranchId;
+        const branchToUse = canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId;
         if (branchToUse && branchToUse !== 'all') params.set('branch_id', branchToUse);
       } else if (tab === 'branch_matrix') {
         params.set('type', 'branch_matrix');
@@ -1722,7 +1732,7 @@ total: 0,
         if (selectedCategory !== 'الكل') params.set('category', selectedCategory);
       } else if (tab === 'transfer_logs') {
         params.set('type', 'transfer_logs');
-        const branchToUse = isAdmin ? inventoryBranchFilter : activeBranchId;
+        const branchToUse = canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId;
         if (branchToUse && branchToUse !== 'all') params.set('branch_id', branchToUse);
       } else {
         params.set('type', 'suppliers');
@@ -2501,8 +2511,8 @@ total: 0,
                   <ChevronDown className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
 
-                {/* Branch Scope Dropdown (Admin only) */}
-                {isAdmin && Array.isArray(branches) && branches.length > 0 && (
+                {/* Branch Scope Dropdown */}
+                {canSwitchBranchInInventory && Array.isArray(branches) && branches.length > 0 && (
                   <div className="relative">
                     <select
                       value={inventoryBranchFilter}
@@ -2517,7 +2527,7 @@ total: 0,
                       className="w-full h-10 pr-9 pl-8 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 shadow-2xs hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-all appearance-none cursor-pointer text-right"
                       aria-label="نطاق الرصيد"
                     >
-                      <option value="all">كل الفروع والمخازن (الإجمالي)</option>
+                      {hasFullBranchAccess && <option value="all">كل الفروع والمخازن (الإجمالي)</option>}
                       {branches.map((b) => (
                         <option key={b.id} value={b.id.toString()}>
                           {b.name}
@@ -2529,8 +2539,8 @@ total: 0,
                   </div>
                 )}
 
-                {/* Supplier Filter Dropdown (Admin only) */}
-                {isAdmin && suppliers.length > 0 && (
+                {/* Supplier Filter Dropdown */}
+                {canAccessSuppliers && suppliers.length > 0 && (
                   <div className="relative">
                     <select
                       value={supplierFilter}
@@ -3463,12 +3473,12 @@ total: 0,
       )}
 
       {activeTab === 'branch_matrix' && canAccessMatrix && (
-        <BranchStockMatrix isAdmin={isAdmin} />
+        <BranchStockMatrix isAdmin={isAdmin || hasFullBranchAccess} />
       )}
 
       {activeTab === 'transfer_logs' && canAccessTransfers && (
         <BranchTransferLogs
-          isAdmin={isAdmin}
+          isAdmin={isAdmin || hasFullBranchAccess}
           onRefreshBanners={() => {
             fetchRequests();
             fetchIncomingShipments();
@@ -4026,7 +4036,7 @@ total: 0,
                 <select
                   value={rentalFromBranch}
                   onChange={(e) => setRentalFromBranch(e.target.value)}
-                  disabled={!isAdmin && user?.role === 'branch_user'}
+                  disabled={!canSwitchBranchInInventory}
                   className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 disabled:bg-slate-100"
                 >
                   {branches.map((b) => (
@@ -4039,7 +4049,7 @@ total: 0,
                 <select
                   value={rentalToBranch}
                   onChange={(e) => setRentalToBranch(e.target.value)}
-                  disabled={!isAdmin && user?.role === 'branch_user'}
+                  disabled={!canSwitchBranchInInventory}
                   className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 disabled:bg-slate-100"
                 >
                   {branches.map((b) => (
@@ -4231,7 +4241,7 @@ total: 0,
                 <span className="w-2 h-2 rounded-full bg-rose-500"></span>
                 الفرع المحول منه (المصدر) *
               </label>
-              {isAdmin ? (
+              {canSwitchBranchInInventory ? (
                 <select
                   value={fromBranchId}
                   onChange={(e) => handleSourceBranchChange(e.target.value)}

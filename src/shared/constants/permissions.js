@@ -591,9 +591,18 @@ const PERMISSION_PRESETS = [
       'inventory.access',
       'inventory.products.view',
       'inventory.products.create',
+      'inventory.products.edit',
+      'inventory.products.duplicate',
       'inventory.matrix.view',
       'inventory.transfers.view',
       'inventory.transfers.request',
+      'inventory.transfers.approve',
+      'inventory.transfers.receive',
+      'suppliers.access',
+      'suppliers.list.view',
+      'suppliers.create',
+      'suppliers.edit',
+      'suppliers.purchases.create',
       'rental_inventory.access',
       'rental_inventory.items.view',
       'barcodes.access',
@@ -776,7 +785,7 @@ function hasInventoryAllBranchesAccess(user) {
 }
 
 function isBranchScopedUser(user) {
-  return Boolean(user && user.role !== 'admin');
+  return Boolean(user && user.role !== 'admin' && user.branch_scope !== 'all');
 }
 
 module.exports = {

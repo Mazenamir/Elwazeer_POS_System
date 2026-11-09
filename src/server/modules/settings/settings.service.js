@@ -348,6 +348,17 @@ async function resetSystem({ password, full_wipe }, user) {
         SELECT setval(pg_get_serial_sequence('branches', 'id'), COALESCE((SELECT MAX(id) FROM branches), 1), true);
       `);
     }
+
+    const newResetToken = 'reset_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    const resetAt = new Date().toISOString();
+    await tx.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+      ['system_reset_token', newResetToken]
+    );
+    await tx.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+      ['system_reset_at', resetAt]
+    );
   });
 
   invalidateInventoryMetadata();
@@ -359,6 +370,41 @@ async function resetSystem({ password, full_wipe }, user) {
   };
 }
 
+async function resetBranches({ password }, user) {
+  if (!password) {
+    const err = new Error('كلمة المرور مطلوبة');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const userRes = await db.query('SELECT password_hash FROM users WHERE id = $1', [user.id]);
+  const valid = await bcrypt.compare(password, userRes.rows[0].password_hash);
+  if (!valid) {
+    const err = new Error('كلمة المرور غير صحيحة');
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const newResetToken = 'reset_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+  const resetAt = new Date().toISOString();
+
+  await db.query(
+    'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+    ['system_reset_token', newResetToken]
+  );
+  await db.query(
+    'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+    ['system_reset_at', resetAt]
+  );
+
+  return {
+    success: true,
+    system_reset_token: newResetToken,
+    system_reset_at: resetAt,
+    message: 'تم إرسال أمر تصفير وإعادة مزامنة الفروع بنجاح',
+  };
+}
+
 module.exports = {
   getPublicSettings,
   getSettings,
@@ -367,4 +413,5 @@ module.exports = {
   exportBackup,
   restoreBackup,
   resetSystem,
+  resetBranches,
 };

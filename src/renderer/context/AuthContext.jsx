@@ -21,7 +21,8 @@ export function AuthProvider({ children }) {
       setSetupRequired(false);
 
       // Verify current authenticated session if token exists
-      const token = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('auth_token') : null;
+      const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null)
+        || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('auth_token') : null);
       if (!token) {
         setUser(null);
         setLoading(false);
@@ -53,10 +54,15 @@ export function AuthProvider({ children }) {
     });
   }, [checkAuth]);
 
-  const login = async (username, password) => {
+  const login = async (username, password, remember = true) => {
     const res = await api.post('/login', { username, password });
     if (res?.token) {
       try {
+        if (remember) {
+          localStorage.setItem('auth_token', res.token);
+        } else {
+          localStorage.removeItem('auth_token');
+        }
         sessionStorage.setItem('auth_token', res.token);
       } catch {}
     }

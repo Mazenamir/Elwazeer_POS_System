@@ -45,7 +45,8 @@ async function request(endpoint, options = {}) {
   };
 
   try {
-    const token = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('auth_token') : null;
+    const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null)
+      || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('auth_token') : null);
     if (token && !headers['Authorization'] && !headers['authorization']) {
       headers['Authorization'] = `Bearer ${token}`;
     }

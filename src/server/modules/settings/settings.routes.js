@@ -18,6 +18,7 @@ router.post('/backup/restore', requireAdmin, controller.restoreBackup);
 
 // Administrative reset endpoint
 router.post('/reset', requireAdmin, controller.resetSystem);
+router.post('/reset-branches', requireAdmin, controller.resetBranches);
 
 // Audit logging endpoint
 router.get('/audit-logs', requireAdmin, controller.getAuditLogs);

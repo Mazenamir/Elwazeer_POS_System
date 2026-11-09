@@ -26,17 +26,19 @@ async function getEmployeeOptions(query = {}, user = null) {
         params.push(-999);
         where.push(`e.branch_id = $${params.length}`);
       }
-    } else if (authBranchIds && authBranchIds.length > 0) {
-      if (authBranchIds.length === 1) {
-        params.push(authBranchIds[0]);
+    } else if (authBranchIds !== null) {
+      if (authBranchIds.length > 0) {
+        if (authBranchIds.length === 1) {
+          params.push(authBranchIds[0]);
+          where.push(`e.branch_id = $${params.length}`);
+        } else {
+          params.push(authBranchIds);
+          where.push(`e.branch_id = ANY($${params.length})`);
+        }
+      } else if (user.branch_id) {
+        params.push(user.branch_id);
         where.push(`e.branch_id = $${params.length}`);
-      } else {
-        params.push(authBranchIds);
-        where.push(`e.branch_id = ANY($${params.length})`);
       }
-    } else if (user.branch_id) {
-      params.push(user.branch_id);
-      where.push(`e.branch_id = $${params.length}`);
     }
   } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
@@ -83,17 +85,19 @@ async function getActiveSellers(query = {}, user = null) {
         params.push(-999);
         where.push(`e.branch_id = $${params.length}`);
       }
-    } else if (authBranchIds && authBranchIds.length > 0) {
-      if (authBranchIds.length === 1) {
-        params.push(authBranchIds[0]);
+    } else if (authBranchIds !== null) {
+      if (authBranchIds.length > 0) {
+        if (authBranchIds.length === 1) {
+          params.push(authBranchIds[0]);
+          where.push(`e.branch_id = $${params.length}`);
+        } else {
+          params.push(authBranchIds);
+          where.push(`e.branch_id = ANY($${params.length})`);
+        }
+      } else if (user.branch_id) {
+        params.push(user.branch_id);
         where.push(`e.branch_id = $${params.length}`);
-      } else {
-        params.push(authBranchIds);
-        where.push(`e.branch_id = ANY($${params.length})`);
       }
-    } else if (user.branch_id) {
-      params.push(user.branch_id);
-      where.push(`e.branch_id = $${params.length}`);
     }
   } else if (query.branch_id && query.branch_id !== 'all') {
     params.push(query.branch_id);
@@ -138,8 +142,8 @@ async function getCheckoutReminders(branchId, user) {
     `a.date >= ${CAIRO_DATE_SQL} - INTERVAL '1 day'`,
   ];
 
-  if (isBranchUser) {
-    if (branchId && hasBranchAccess(user, branchId)) {
+  if (isBranchUser && user.branch_scope !== 'all') {
+    if (branchId && branchId !== 'all' && hasBranchAccess(user, branchId)) {
       params.push(Number(branchId));
       where.push(`e.branch_id = $${params.length}`);
     } else {
@@ -221,17 +225,19 @@ async function listEmployees(query = {}, user = null, req = null) {
         whereParams.push(-999);
         where.push(`e.branch_id = $${whereParams.length}`);
       }
-    } else if (authBranchIds && authBranchIds.length > 0) {
-      if (authBranchIds.length === 1) {
-        whereParams.push(authBranchIds[0]);
+    } else if (authBranchIds !== null) {
+      if (authBranchIds.length > 0) {
+        if (authBranchIds.length === 1) {
+          whereParams.push(authBranchIds[0]);
+          where.push(`e.branch_id = $${whereParams.length}`);
+        } else {
+          whereParams.push(authBranchIds);
+          where.push(`e.branch_id = ANY($${whereParams.length})`);
+        }
+      } else if (user.branch_id) {
+        whereParams.push(user.branch_id);
         where.push(`e.branch_id = $${whereParams.length}`);
-      } else {
-        whereParams.push(authBranchIds);
-        where.push(`e.branch_id = ANY($${whereParams.length})`);
       }
-    } else if (user.branch_id) {
-      whereParams.push(user.branch_id);
-      where.push(`e.branch_id = $${whereParams.length}`);
     }
   } else if (query.branch_id && query.branch_id !== 'all') {
     whereParams.push(Number(query.branch_id));

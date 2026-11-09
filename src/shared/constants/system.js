@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS = {
   invoice_edit_password: '123456',
   return_password: '123',
   inventory_password: '123',
+  system_reset_token: 'initial',
+  system_reset_at: '',
 };
 
 const DEFAULT_RENTAL_FINE_PER_DAY = 50;

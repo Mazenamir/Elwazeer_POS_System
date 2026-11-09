@@ -3087,7 +3087,7 @@ async function exportCatalogForBranch(branchId = null) {
     ? db.query(
         `SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids 
          FROM users 
-         WHERE role = 'admin' OR branch_scope = 'all' OR branch_id = $1 OR branch_id IS NULL`,
+         WHERE role = 'admin' OR branch_scope = 'all' OR branch_id = $1 OR branch_id IS NULL OR (branch_scope = 'selected' AND branch_ids IS NOT NULL AND branch_ids::text ILIKE '%' || $1::text || '%')`,
         [targetBranch]
       )
     : db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users');
@@ -3153,8 +3153,12 @@ async function exportCatalogForBranch(branchId = null) {
     deletedSuppliersPromise,
   ]);
 
+  const resetTokenRow = (settingsRes?.rows || []).find((s) => s.key === 'system_reset_token');
+  const systemResetToken = resetTokenRow?.value || null;
+
   return {
     timestamp: new Date().toISOString(),
+    system_reset_token: systemResetToken,
     users: usersRes.rows,
     branches: branchesRes.rows,
     inventory: inventoryRes.rows,
@@ -3182,6 +3186,37 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
   const executeImport = (activeSqlite) => {
     const sqlite = activeSqlite;
+
+    // Check for Central Server Reset token during catalog import
+    const serverResetToken = catalog.system_reset_token || (Array.isArray(catalog.settings) ? catalog.settings.find((s) => s.key === 'system_reset_token')?.value : null);
+    if (serverResetToken && serverResetToken !== 'initial') {
+      let localResetToken = null;
+      try {
+        const tokenRow = sqlite.prepare("SELECT value FROM settings WHERE key = 'system_reset_token'").get();
+        localResetToken = tokenRow?.value || null;
+      } catch {}
+
+      if (localResetToken !== serverResetToken) {
+        console.warn(`[Sync] Server Reset token mismatch during catalog import (local: ${localResetToken}, server: ${serverResetToken}). Resetting local tables...`);
+        const tablesToWipe = [
+          'orders', 'order_items', 'order_payments', 'returns', 'return_items',
+          'rentals', 'rental_payments', 'tailoring_orders', 'tailoring_payments', 'alterations',
+          'expenses', 'attendance', 'employee_transactions', 'stock_transfers',
+          'supplier_transactions', 'supply_records', 'worn_products', 'sync_queue', 'notification_reads'
+        ];
+        for (const t of tablesToWipe) {
+          try { sqlite.exec(`DELETE FROM ${t};`); } catch {}
+        }
+        try {
+          const quoted = tablesToWipe.map((t) => `'${t}'`).join(', ');
+          sqlite.exec(`DELETE FROM sqlite_sequence WHERE name IN (${quoted});`);
+        } catch {}
+        try {
+          sqlite.prepare("INSERT INTO settings (key, value) VALUES ('system_reset_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(serverResetToken);
+        } catch {}
+      }
+    }
+
     // 1. Users
     if (Array.isArray(catalog.users)) {
       let pendingUserIds = new Set();
@@ -3228,7 +3263,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
         let bScope = u.branch_scope || 'single';
         let bIds = typeof u.branch_ids === 'object' ? JSON.stringify(u.branch_ids) : (u.branch_ids || '[]');
-        if (u.id === 10 || u.username === 'دمنهور' || u.id === 15 || u.id === 16) {
+        if (u.username === 'دمنهور' && (!u.branch_scope || u.branch_scope === 'single')) {
           bScope = 'selected';
           bIds = '[9, 10]';
         }
@@ -3241,7 +3276,27 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           pwdHash = existingUser?.password_hash || '$2b$10$temporarySanitizedUserPasswordHashFallback00000000000000000';
         }
 
-        uStmt.run(u.id, u.username, pwdHash, u.role, u.branch_id, JSON.stringify(perms), u.employee_id || null, u.full_name || null, bScope, bIds);
+        uStmt.run(u.id, u.username, pwdHash, u.role, (u.branch_id !== undefined && u.branch_id !== null) ? u.branch_id : null, JSON.stringify(perms), u.employee_id || null, u.full_name || null, bScope, bIds);
+      }
+
+      // Reconcile and purge deleted users from SQLite
+      // If a non-admin user exists in SQLite but is not in catalog.users and has no pending sync, delete them
+      try {
+        const validServerUserIds = new Set(catalog.users.map((u) => Number(u.id)));
+        const allLocalUsers = sqlite.prepare("SELECT id, username FROM users WHERE role != 'admin'").all();
+        const deleteUserStmt = sqlite.prepare("DELETE FROM users WHERE id = ?");
+        for (const lu of allLocalUsers) {
+          if (!validServerUserIds.has(Number(lu.id)) && !pendingUserIds.has(Number(lu.id)) && !pendingUsernames.has(String(lu.username))) {
+            deleteUserStmt.run(lu.id);
+            try {
+              const authService = require('../auth/auth.service');
+              authService.revokeUserId(lu.id);
+            } catch {}
+            console.log(`[Sync] Pruned deleted user #${lu.id} (${lu.username}) from branch SQLite (deleted on server)`);
+          }
+        }
+      } catch (userReconcileErr) {
+        console.warn('[Sync] User reconcile warning:', userReconcileErr.message);
       }
     }
 
@@ -3636,6 +3691,20 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           emp.shift_end || null
         );
       }
+
+      // Reconcile employees removed/deleted from server catalog
+      try {
+        const incomingEmpIds = new Set(catalog.employees.map((e) => Number(e.id)));
+        const allLocalEmps = sqlite.prepare("SELECT id FROM employees WHERE status = 'active'").all();
+        const markEmpInactiveStmt = sqlite.prepare("UPDATE employees SET status = 'inactive' WHERE id = ?");
+        for (const e of allLocalEmps) {
+          if (!incomingEmpIds.has(Number(e.id)) && !pendingEmpIds.has(Number(e.id))) {
+            markEmpInactiveStmt.run(e.id);
+          }
+        }
+      } catch (empReconcileErr) {
+        console.warn('[Sync] Employees reconcile warning:', empReconcileErr.message);
+      }
     }
 
     // 11. Suppliers
@@ -3837,7 +3906,11 @@ async function checkCentralConnectivity(timeoutMs = 5000) {
       return res;
     }
 
-    const res = { ok: true, serverTime: pingData?.time };
+    const res = {
+      ok: true,
+      serverTime: pingData?.time,
+      system_reset_token: pingData?.system_reset_token || null,
+    };
     cachedCentralConnectivity = { checked_at: Date.now(), online: true, reason: 'connected', message: '' };
     return res;
   } catch (err) {
@@ -3867,6 +3940,91 @@ async function checkCentralConnectivity(timeoutMs = 5000) {
   }
 }
 
+async function wipeBranchLocalData(newResetToken = null, targetSqlite = null) {
+  const sqlite = targetSqlite || db.sqlite;
+  if (!sqlite) {
+    console.warn('[Sync] Cannot wipe branch local data: SQLite instance unavailable');
+    return false;
+  }
+
+  console.warn('[Sync] ⚠️ Performing COMPLETE BRANCH LOCAL DATA RESET to match central server...');
+
+  sqlite.exec('PRAGMA foreign_keys = OFF;');
+  sqlite.exec('BEGIN IMMEDIATE;');
+  try {
+    const tablesToWipe = [
+      'orders',
+      'order_items',
+      'order_payments',
+      'returns',
+      'return_items',
+      'rentals',
+      'rental_payments',
+      'tailoring_orders',
+      'tailoring_payments',
+      'alterations',
+      'expenses',
+      'attendance',
+      'employee_transactions',
+      'stock_transfers',
+      'supplier_transactions',
+      'supply_records',
+      'worn_products',
+      'sync_queue',
+      'notification_reads',
+      'inventory',
+      'inventory_branches',
+      'inventory_sizes',
+      'rental_inventory',
+      'rental_inventory_branches',
+      'customers',
+      'suppliers',
+      'employees',
+    ];
+
+    for (const table of tablesToWipe) {
+      try {
+        sqlite.exec(`DELETE FROM ${table};`);
+      } catch {}
+    }
+
+    // Delete non-admin users
+    try {
+      sqlite.exec("DELETE FROM users WHERE role != 'admin';");
+    } catch {}
+
+    // Reset sqlite_sequence for wiped tables
+    try {
+      const quoted = tablesToWipe.map((t) => `'${t}'`).join(', ');
+      sqlite.exec(`DELETE FROM sqlite_sequence WHERE name IN (${quoted});`);
+    } catch {}
+
+    // Update system_reset_token in SQLite settings
+    if (newResetToken) {
+      sqlite.prepare("INSERT INTO settings (key, value) VALUES ('system_reset_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(newResetToken);
+    }
+
+    sqlite.exec('COMMIT;');
+  } catch (err) {
+    try { sqlite.exec('ROLLBACK;'); } catch {}
+    console.error('[Sync] Error during branch local wipe:', err);
+    throw err;
+  } finally {
+    sqlite.exec('PRAGMA foreign_keys = ON;');
+  }
+
+  // Invalidate cached auth sessions
+  try {
+    const authService = require('../auth/auth.service');
+    if (typeof authService.invalidateUserCache === 'function') {
+      authService.invalidateUserCache();
+    }
+  } catch {}
+
+  console.log('[Sync] ✅ Branch local data wiped successfully. Synchronized with reset token:', newResetToken);
+  return true;
+}
+
 async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
   if (!config.IS_BRANCH_MODE) {
     return { ok: true, isMaster: true, message: 'النظام يعمل كخادم مركزي رئيسي' };
@@ -3889,6 +4047,29 @@ async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
     const connCheck = await checkCentralConnectivity(isManual ? 15000 : 8000);
     if (!connCheck.ok) {
       return connCheck;
+    }
+
+    // 1.5. Detect Central Server Reset before pushing any offline operations
+    const serverResetToken = connCheck.system_reset_token;
+    if (serverResetToken && serverResetToken !== 'initial' && db.sqlite) {
+      let localResetToken = null;
+      try {
+        const tokenRow = db.sqlite.prepare("SELECT value FROM settings WHERE key = 'system_reset_token'").get();
+        localResetToken = tokenRow?.value || null;
+      } catch {}
+
+      if (localResetToken !== serverResetToken) {
+        console.warn(`[Sync] Central Server Reset detected (local: ${localResetToken}, server: ${serverResetToken}). Resetting branch database...`);
+        await wipeBranchLocalData(serverResetToken);
+        const pullRes = await pullCatalogFromCentral();
+        lastCatalogPull = Date.now();
+        return {
+          ok: true,
+          reset: true,
+          message: 'تم تصفير ومزامنة بيانات الفرع بالكامل لمطابقة السيرفر الرئيسي',
+          catalog: pullRes,
+        };
+      }
     }
 
     // 2. Push pending offline operations (drain in batches up to 10 rounds)
@@ -4268,6 +4449,7 @@ module.exports = {
   pullCatalogFromCentral,
   checkCentralConnectivity,
   runSyncCycle,
+  wipeBranchLocalData,
   startBackgroundSyncWorker,
   getSyncDiagnostics,
   configureSyncServer,

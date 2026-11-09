@@ -80,7 +80,7 @@ export function Login() {
   const [username, setUsername] = useState(() => localStorage.getItem('bebyoon_remembered_username') || '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem('bebyoon_remembered_username'));
+  const [rememberMe, setRememberMe] = useState(() => localStorage.getItem('bebyoon_remember_me') !== 'false');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isShaking, setIsShaking] = useState(false);
@@ -140,7 +140,8 @@ export function Login() {
     setLoading(true);
 
     try {
-      await login(username.trim(), password);
+      await login(username.trim(), password, rememberMe);
+      localStorage.setItem('bebyoon_remember_me', rememberMe ? 'true' : 'false');
       if (rememberMe) {
         localStorage.setItem('bebyoon_remembered_username', username.trim());
       } else {

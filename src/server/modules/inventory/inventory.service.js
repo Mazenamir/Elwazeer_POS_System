@@ -541,13 +541,11 @@ async function listInventory(req, user) {
     const params = [];
 
     const reqBranchId = req.query.branch_id && req.query.branch_id !== 'all' ? parseInt(req.query.branch_id, 10) : null;
-    let activeBranchId = 1;
+    let activeBranchId = null;
     if (reqBranchId && (canViewAllBranches || hasBranchAccess(user, reqBranchId))) {
       activeBranchId = reqBranchId;
-    } else if (user?.branch_id && hasBranchAccess(user, user.branch_id)) {
+    } else if (!canViewAllBranches && user?.branch_id && hasBranchAccess(user, user.branch_id)) {
       activeBranchId = parseInt(user.branch_id, 10);
-    } else if (reqBranchId) {
-      activeBranchId = reqBranchId;
     }
     const bId = activeBranchId;
 
@@ -712,10 +710,8 @@ async function listInventory(req, user) {
   let activeBranchId = null;
   if (reqBranchId && (canViewAllBranches || hasBranchAccess(user, reqBranchId))) {
     activeBranchId = reqBranchId;
-  } else if (user?.branch_id && hasBranchAccess(user, user.branch_id)) {
+  } else if (!canViewAllBranches && user?.branch_id && hasBranchAccess(user, user.branch_id)) {
     activeBranchId = parseInt(user.branch_id, 10);
-  } else if (reqBranchId) {
-    activeBranchId = reqBranchId;
   }
 
   const totalStockSql = 'COALESCE((SELECT SUM(stock_level) FROM inventory_branches WHERE inventory_id = i.id), i.stock_level, 0)';

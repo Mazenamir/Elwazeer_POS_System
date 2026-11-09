@@ -68,6 +68,15 @@ async function resetSystem(req, res, next) {
   }
 }
 
+async function resetBranches(req, res, next) {
+  try {
+    const result = await settingsService.resetBranches(req.body, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getAuditLogs(req, res, next) {
   try {
     const auditService = require('../audit/audit.service');
@@ -86,5 +95,6 @@ module.exports = {
   exportBackup,
   restoreBackup,
   resetSystem,
+  resetBranches,
   getAuditLogs,
 };

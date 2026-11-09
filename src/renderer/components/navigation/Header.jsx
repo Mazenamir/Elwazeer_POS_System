@@ -525,13 +525,13 @@ export function Header({ onToggleMobileMenu }) {
           <div className="w-9 h-9 rounded-2xl bg-[#F4D95B]/20 border border-[#F4D95B]/40 flex items-center justify-center text-[#24221F] shrink-0">
             <Building2 className="w-4 h-4" />
           </div>
-          {isAdmin ? (
+          {(isAdmin || user?.branch_scope === 'all' || (user?.branch_scope === 'selected' && branches.length > 1)) ? (
             <select
               value={activeBranchId}
               onChange={(e) => selectBranch(e.target.value)}
               className="bg-[#FFFDF9] border border-[#E6DECD] rounded-2xl px-3.5 py-1.5 text-xs font-bold text-[#24221F] outline-none focus:border-[#151515] transition-colors cursor-pointer shadow-sm hover:border-[#D4CBB9]"
             >
-              <option value="all">كل الفروع</option>
+              {(isAdmin || user?.branch_scope === 'all') && <option value="all">كل الفروع</option>}
               {branches.map((b) => (
                 <option key={b.id} value={b.id.toString()}>
                   {b.name}
@@ -540,8 +540,11 @@ export function Header({ onToggleMobileMenu }) {
             </select>
           ) : (
             <div className="text-xs font-bold text-[#24221F] bg-[#FFFDF9] px-3.5 py-1.5 rounded-2xl border border-[#E6DECD] shadow-sm">
-              {branches.find((b) => b.id.toString() === activeBranchId.toString())?.name ||
-                'الفرع الحالي'}
+              {activeBranchId === 'all'
+                ? 'كل الفروع'
+                : (branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name ||
+                   branches.find((b) => Number(b.id) === Number(user?.branch_id))?.name ||
+                   'الفرع الحالي')}
             </div>
           )}
         </div>

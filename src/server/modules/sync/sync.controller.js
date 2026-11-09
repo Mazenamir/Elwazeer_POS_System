@@ -23,7 +23,18 @@ async function ping(req, res) {
     });
   }
 
-  res.json({ ok: true, target: config.IS_SYNC_TARGET, time: new Date().toISOString() });
+  let systemResetToken = null;
+  try {
+    const sRes = await db.query("SELECT value FROM settings WHERE key = 'system_reset_token'");
+    systemResetToken = sRes.rows[0]?.value || null;
+  } catch {}
+
+  res.json({
+    ok: true,
+    target: config.IS_SYNC_TARGET,
+    time: new Date().toISOString(),
+    system_reset_token: systemResetToken,
+  });
 }
 
 async function apply(req, res, next) {

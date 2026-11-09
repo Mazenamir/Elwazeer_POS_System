@@ -98,11 +98,25 @@ const SENSITIVE_OPERATIONS = [
 ];
 
 export function Settings() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { branches, reloadBranches } = useBranch();
   const { toast } = useToast();
 
-  const [activeTab, setActiveTab] = useState('store'); // 'store' | 'branches' | 'users' | 'sensitive' | 'profile' | 'backup'
+  const [activeTab, setActiveTab] = useState('store');
+
+  const canAccessBranches = Boolean(isAdmin || hasPermission('settings.branches.manage'));
+  const canAccessUsers = Boolean(isAdmin || hasPermission('settings.users.manage'));
+  const canAccessSensitive = Boolean(isAdmin || hasPermission('settings.passwords.manage'));
+  const canAccessBackup = Boolean(isAdmin || hasPermission('settings.backup.export') || hasPermission('settings.backup.restore'));
+
+  const isTabAccessible = useCallback((tab) => {
+    if (tab === 'store' || tab === 'profile') return true;
+    if (tab === 'branches') return canAccessBranches;
+    if (tab === 'users') return canAccessUsers;
+    if (tab === 'sensitive') return canAccessSensitive;
+    if (tab === 'backup') return canAccessBackup;
+    return false;
+  }, [canAccessBranches, canAccessUsers, canAccessSensitive, canAccessBackup]); // 'store' | 'branches' | 'users' | 'sensitive' | 'profile' | 'backup'
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -224,6 +238,11 @@ export function Settings() {
   const [wipePassword, setWipePassword] = useState('');
   const [wipeSubmitting, setWipeSubmitting] = useState(false);
 
+  // Branch Reset Modal
+  const [showBranchResetModal, setShowBranchResetModal] = useState(false);
+  const [branchResetPassword, setBranchResetPassword] = useState('');
+  const [branchResetSubmitting, setBranchResetSubmitting] = useState(false);
+
   // Load General Settings
   const loadSettings = useCallback(async () => {
     try {
@@ -280,19 +299,19 @@ export function Settings() {
   }, [loadSettings]);
 
   useEffect(() => {
-    if (activeTab === 'users' && isAdmin) {
+    if (activeTab === 'users' && canAccessUsers) {
       loadBranchUsers();
     }
-    if (activeTab === 'sensitive' && isAdmin) {
+    if (activeTab === 'sensitive' && canAccessSensitive) {
       loadSensitiveStatus();
     }
-  }, [activeTab, isAdmin, loadBranchUsers, loadSensitiveStatus]);
+  }, [activeTab, canAccessUsers, canAccessSensitive, loadBranchUsers, loadSensitiveStatus]);
 
   useEffect(() => {
-    if (!isAdmin && activeTab !== 'store' && activeTab !== 'profile') {
+    if (!isTabAccessible(activeTab)) {
       setActiveTab('store');
     }
-  }, [isAdmin, activeTab]);
+  }, [activeTab, isTabAccessible]);
 
   // Save Settings (Store & Invoice)
   const handleSaveSettings = async (e) => {
@@ -749,6 +768,22 @@ export function Settings() {
     }));
   };
 
+  const handleExpandAllModules = () => {
+    const all = {};
+    HIERARCHICAL_CATALOG.forEach((m) => {
+      all[m.moduleId] = false;
+    });
+    setCollapsedModules(all);
+  };
+
+  const handleCollapseAllModules = () => {
+    const all = {};
+    HIERARCHICAL_CATALOG.forEach((m) => {
+      all[m.moduleId] = true;
+    });
+    setCollapsedModules(all);
+  };
+
   const filteredCatalog = React.useMemo(() => {
     if (!permSearch.trim()) return HIERARCHICAL_CATALOG;
     const q = permSearch.trim().toLowerCase();
@@ -919,7 +954,7 @@ export function Settings() {
       await client.post('/reset', { password: wipePassword, confirmation: wipeWord, full_wipe: true });
       toast({
         title: 'تم التصفير بنجاح',
-        message: 'تم مسح وتصفير كافة بيانات النظام وإعادة التهيئة',
+        message: 'تم مسح وتصفير كافة بيانات النظام، وسيتم تصفير أجهزة الفروع تلقائياً عند أول اتصال',
         variant: 'success',
       });
       setShowWipeModal(false);
@@ -930,6 +965,31 @@ export function Settings() {
       toast({ title: 'خطأ', message: err.message || 'فشل مسح البيانات', variant: 'danger' });
     } finally {
       setWipeSubmitting(false);
+    }
+  };
+
+  // Branch Database Reset
+  const handleResetBranches = async (e) => {
+    e.preventDefault();
+    if (!branchResetPassword) {
+      toast({ title: 'تنبيه', message: 'يرجى إدخال كلمة المرور', variant: 'warning' });
+      return;
+    }
+
+    try {
+      setBranchResetSubmitting(true);
+      const res = await client.post('/reset-branches', { password: branchResetPassword });
+      toast({
+        title: 'تم الإرسال بنجاح',
+        message: res.data?.message || 'تم إرسال أمر تصفير وإعادة مزامنة الفروع بنجاح',
+        variant: 'success',
+      });
+      setShowBranchResetModal(false);
+      setBranchResetPassword('');
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.response?.data?.error || err.message || 'فشل إرسال أمر التصفير', variant: 'danger' });
+    } finally {
+      setBranchResetSubmitting(false);
     }
   };
 
@@ -979,7 +1039,7 @@ export function Settings() {
           <span>بيانات المتجر والفواتير</span>
         </button>
 
-        {isAdmin && (
+        {canAccessBranches && (
           <button
             onClick={() => setActiveTab('branches')}
             className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
@@ -993,7 +1053,7 @@ export function Settings() {
           </button>
         )}
 
-        {isAdmin && (
+        {canAccessUsers && (
           <button
             onClick={() => setActiveTab('users')}
             className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
@@ -1007,7 +1067,7 @@ export function Settings() {
           </button>
         )}
 
-        {isAdmin && (
+        {canAccessSensitive && (
           <button
             onClick={() => setActiveTab('sensitive')}
             className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
@@ -1033,7 +1093,7 @@ export function Settings() {
           <span>حسابي الشخصي</span>
         </button>
 
-        {isAdmin && (
+        {canAccessBackup && (
           <button
             onClick={() => setActiveTab('backup')}
             className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
@@ -1243,7 +1303,7 @@ export function Settings() {
       )}
 
       {/* Tab 2: Branches Management */}
-      {isAdmin && activeTab === 'branches' && (
+      {canAccessBranches && activeTab === 'branches' && (
         <div className="space-y-4">
           <div className="flex justify-end">
             <Button variant="primary" icon={Plus} onClick={handleOpenAddBranch}>
@@ -1351,7 +1411,7 @@ export function Settings() {
       )}
 
       {/* Tab 3: Users Management */}
-      {isAdmin && activeTab === 'users' && (
+      {canAccessUsers && activeTab === 'users' && (
         <Card>
           <div className="p-4 flex items-center justify-between border-b border-slate-100">
             <div>
@@ -1491,7 +1551,7 @@ export function Settings() {
       )}
 
       {/* Tab: Sensitive Passwords Management */}
-      {isAdmin && activeTab === 'sensitive' && (
+      {canAccessSensitive && activeTab === 'sensitive' && (
         <div className="space-y-6">
           <Card>
             <div className="p-6 border-b border-[#E6DECD] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1762,7 +1822,7 @@ export function Settings() {
       )}
 
       {/* Tab 4: Backup & Database Maintenance */}
-      {isAdmin && activeTab === 'backup' && (
+      {canAccessBackup && activeTab === 'backup' && (
         <div className="space-y-6">
           <Card>
             <CardHeader
@@ -1844,18 +1904,38 @@ export function Settings() {
           </Card>
 
           {/* Danger Zone */}
-          <div className="bg-red-50 p-6 rounded-2xl border-2 border-red-200">
+          <div className="bg-red-50 p-6 rounded-2xl border-2 border-red-200 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-black text-amber-800 flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-amber-700" />
+                  تصفير ومزامنة أجهزة الفروع فقط
+                </h4>
+                <p className="text-xs text-slate-500 font-bold mt-1">
+                  إرسال أمر تصفير لقواعد بيانات الفروع لمسح العمليات المحلية القديمة وتنزيل بيانات السيرفر الحالية بالكامل دون التأثير على بيانات السيرفر
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                className="border-amber-400 text-amber-800 hover:bg-amber-100 font-black shrink-0"
+                icon={RefreshCw}
+                onClick={() => setShowBranchResetModal(true)}
+              >
+                تصفير بيانات الفروع
+              </Button>
+            </div>
+
+            <div className="pt-4 border-t border-red-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h4 className="text-sm font-black text-red-600 flex items-center gap-2">
                   <AlertTriangle className="w-5 h-5 text-red-600" />
-                  منطقة الخطر: تصفير ومسح كافة بيانات النظام
+                  منطقة الخطر: تصفير ومسح كافة بيانات النظام (السيرفر والفروع)
                 </h4>
                 <p className="text-xs text-slate-500 font-bold mt-1">
-                  حذف كافة المبيعات، المخزون، الموردين، والمصروفات نهائياً مع الحفاظ التام على الفروع وحساب المدير
+                  حذف كافة المبيعات، المخزون، الموردين، والمصروفات نهائياً مع تصفير الفروع التلقائي والحفاظ على الفروع وحساب المدير
                 </p>
               </div>
-              <Button variant="danger" icon={Trash2} onClick={() => setShowWipeModal(true)}>
+              <Button variant="danger" icon={Trash2} onClick={() => setShowWipeModal(true)} className="shrink-0">
                 مسح كل البيانات
               </Button>
             </div>
@@ -2324,6 +2404,24 @@ export function Settings() {
                   type="button"
                   variant="outline"
                   size="sm"
+                  onClick={handleExpandAllModules}
+                  className="text-xs !py-1 text-slate-700 font-bold"
+                >
+                  فتح كافة الأقسام
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCollapseAllModules}
+                  className="text-xs !py-1 text-slate-700 font-bold"
+                >
+                  طي كافة الأقسام
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={handleSelectAllPermissions}
                   className="text-xs !py-1"
                 >
@@ -2365,7 +2463,10 @@ export function Settings() {
                     className="rounded-2xl border border-[#E6DECD] bg-[#FFFDF9] overflow-hidden transition-all"
                   >
                     {/* Module Header */}
-                    <div className="p-3 bg-[#FAF6ED]/70 flex items-center justify-between border-b border-[#E6DECD]/70">
+                    <div
+                      onClick={() => toggleModuleCollapse(mod.moduleId)}
+                      className="p-3 bg-[#FAF6ED]/70 flex items-center justify-between border-b border-[#E6DECD]/70 cursor-pointer select-none hover:bg-[#FAF6ED] transition-colors"
+                    >
                       <div className="flex items-center gap-2.5">
                         <input
                           type="checkbox"
@@ -2373,6 +2474,7 @@ export function Settings() {
                           ref={(el) => {
                             if (el) el.indeterminate = modState.partial;
                           }}
+                          onClick={(e) => e.stopPropagation()}
                           onChange={() => handleToggleModule(mod)}
                           className="rounded text-[#151515] focus:ring-[#151515] cursor-pointer"
                         />
@@ -2396,7 +2498,10 @@ export function Settings() {
 
                       <button
                         type="button"
-                        onClick={() => toggleModuleCollapse(mod.moduleId)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleModuleCollapse(mod.moduleId);
+                        }}
                         className="p-1 rounded-lg hover:bg-[#E6DECD]/40 text-slate-600 transition-colors"
                       >
                         {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -2495,6 +2600,53 @@ export function Settings() {
         </form>
       </Modal>
 
+      {/* Branch Reset Modal */}
+      <Modal
+        isOpen={showBranchResetModal}
+        onClose={() => setShowBranchResetModal(false)}
+        title="تصفير ومزامنة أجهزة الفروع فقط"
+        size="md"
+      >
+        <form onSubmit={handleResetBranches} className="space-y-4">
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold leading-relaxed">
+            <p className="font-black mb-1">⚠️ تنبيه هام:</p>
+            سيتم إرسال أمر تصفير لجميع أجهزة الفروع المتصلة لمسح كافة العمليات والفواتير المحلية القديمة وتنزيل بيانات السيرفر الحالية بالكامل (المخزون، العملاء، المستخدمين الجدد) فور اتصالها، دون المساس ببيانات السيرفر المركزي الحالي.
+          </div>
+
+          <div>
+            <label className="block text-xs font-black text-slate-700 mb-1.5">
+              كلمة مرور المشرف (Admin Password) *
+            </label>
+            <Input
+              type="password"
+              required
+              placeholder="••••••••"
+              value={branchResetPassword}
+              onChange={(e) => setBranchResetPassword(e.target.value)}
+            />
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowBranchResetModal(false)}
+            >
+              إلغاء
+            </Button>
+            <Button
+              type="submit"
+              variant="danger"
+              icon={RefreshCw}
+              loading={branchResetSubmitting}
+              disabled={!branchResetPassword}
+            >
+              تأكيد أمر تصفير الفروع
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       {/* Wipe / Reset Modal */}
       <Modal
         isOpen={showWipeModal}
@@ -2505,7 +2657,7 @@ export function Settings() {
         <form onSubmit={handleWipeSystem} className="space-y-4">
           <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-bold leading-relaxed">
             <p className="font-black mb-1">⚠️ تحذير شديد الخطورة:</p>
-            هذه العملية لا يمكن الرجوع عنها. سيتم حذف جميع الفواتير والمخزون والعملاء وعقود التأجير وإعادة تصفير الحركات، مع الحفاظ الكامل على الفروع وحساب المدير الحالي.
+            هذه العملية لا يمكن الرجوع عنها. سيتم حذف جميع الفواتير والمخزون والعملاء وعقود التأجير وإعادة تصفير الحركات، مع تصفير كافة أجهزة الفروع المتصلة تلقائياً والحفاظ على الفروع وحساب المدير الحالي.
           </div>
 
           <div>

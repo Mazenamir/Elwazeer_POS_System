@@ -70,6 +70,13 @@ export function Employees() {
   const [filterBonusStatus, setFilterBonusStatus] = useState('all');
 
   useEffect(() => {
+    if (activeBranchId) {
+      setFilterBranch(activeBranchId.toString());
+      setPage(1);
+    }
+  }, [activeBranchId]);
+
+  useEffect(() => {
     const q = searchParams.get('search');
     if (q !== null && q !== undefined) {
       setSearch(q);

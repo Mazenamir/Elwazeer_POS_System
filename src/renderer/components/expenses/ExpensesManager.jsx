@@ -191,7 +191,8 @@ export function ExpensesManager({ isCashierTab = false }) {
   const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [deletingSubmitting, setDeletingSubmitting] = useState(false);
 
-  const isBranchScoped = !isAdmin && (user?.role === 'branch_user' || user?.role === 'cashier' || isCashierTab);
+  const hasMultiBranchAccess = Boolean(isAdmin || user?.branch_scope === 'all' || (user?.branch_scope === 'selected' && branches.length > 1));
+  const isBranchScoped = isCashierTab || (!hasMultiBranchAccess && (user?.role === 'branch_user' || user?.role === 'cashier'));
 
   // Load cashiers & employees for selects
   useEffect(() => {
@@ -910,8 +911,8 @@ export function ExpensesManager({ isCashierTab = false }) {
             </select>
           </div>
 
-          {/* Branch Filter (Only if Admin & not cashier tab) */}
-          {!isCashierTab && isAdmin && (
+          {/* Branch Filter */}
+          {!isCashierTab && hasMultiBranchAccess && (
             <div>
               <label className="block text-[11px] font-bold text-[#777266] mb-1">الفرع</label>
               <select
@@ -922,7 +923,7 @@ export function ExpensesManager({ isCashierTab = false }) {
                 }}
                 className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
               >
-                <option value="all">كل الفروع</option>
+                {(isAdmin || user?.branch_scope === 'all') && <option value="all">كل الفروع</option>}
                 {branches.map((b) => (
                   <option key={b.id} value={b.id.toString()}>
                     {b.name}
@@ -949,7 +950,7 @@ export function ExpensesManager({ isCashierTab = false }) {
             <thead>
               <tr className="bg-[#151515] text-white text-xs font-black">
                 <th className="py-3.5 px-4 whitespace-nowrap">التاريخ والوقت</th>
-                {(!isCashierTab || isAdmin) && <th className="py-3.5 px-4 whitespace-nowrap">الفرع</th>}
+                {(!isCashierTab || hasMultiBranchAccess) && <th className="py-3.5 px-4 whitespace-nowrap">الفرع</th>}
                 <th className="py-3.5 px-4 whitespace-nowrap">البند / الفئة</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">طريقة الدفع</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">المبلغ</th>
@@ -996,7 +997,7 @@ export function ExpensesManager({ isCashierTab = false }) {
                       </td>
 
                       {/* Branch */}
-                      {(!isCashierTab || isAdmin) && (
+                      {(!isCashierTab || hasMultiBranchAccess) && (
                         <td className="py-3.5 px-4 whitespace-nowrap">
                           <span className="text-xs font-extrabold text-[#565147]">
                             {exp.branch_name || 'الفرع الرئيسي'}
@@ -1118,7 +1119,7 @@ export function ExpensesManager({ isCashierTab = false }) {
         <form onSubmit={handleCreateExpense} className="space-y-4">
           <div className="space-y-3.5">
             {/* Branch Selection */}
-            {!isCashierTab && isAdmin && (
+            {!isCashierTab && hasMultiBranchAccess && (
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1.5">الفرع *</label>
                 <select
