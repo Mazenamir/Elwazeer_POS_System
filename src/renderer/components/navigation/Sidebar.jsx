@@ -98,7 +98,7 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
     if (!user) return [];
     let items = ALL_NAV_ITEMS.map((item) => ({
       ...item,
-      label: item.to === '/suppliers' ? (isAdmin ? item.adminLabel : item.staffLabel) : item.label,
+      label: item.to === '/suppliers' ? ((isAdmin && !user?.is_branch && user?.app_mode !== 'branch') ? item.adminLabel : item.staffLabel) : item.label,
     }));
     if (rentalsEnabled === false) {
       items = items.filter((item) => item.to !== '/rentals' && item.to !== '/rental-inventory');

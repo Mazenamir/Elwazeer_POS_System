@@ -1064,7 +1064,7 @@ async function createProduct(body, user, file = null) {
       const sizeName = resolvedSize?.name || (targetSizeStr || null);
       const sizeId = resolvedSize?.id || null;
 
-      const safeSupplierId = supplier_id ? (Number(supplier_id) || null) : null;
+      const safeSupplierId = (supplier_id || preferred_supplier_id) ? (Number(supplier_id || preferred_supplier_id) || null) : null;
       const safeColorId = colorId || null;
       const safeSizeId = sizeId || null;
       const safeImageUrl = image_url || null;
@@ -1143,7 +1143,16 @@ async function createProduct(body, user, file = null) {
             WHERE id = ?
           `).run(total_cost, total_cost, safeSupplierId);
         } catch (supErr) {
-          console.warn('[Branch Supplier Balance Update Warning]:', supErr.message);
+          try {
+            db.sqlite.prepare(`
+              UPDATE suppliers 
+              SET total_purchases = COALESCE(total_purchases, 0) + ?,
+                  balance = COALESCE(balance, 0) - ?
+              WHERE id = ?
+            `).run(total_cost, total_cost, safeSupplierId);
+          } catch (supFallbackErr) {
+            console.warn('[Branch Supplier Balance Update Warning]:', supFallbackErr.message);
+          }
         }
       }
 
@@ -1433,7 +1442,7 @@ async function updateProduct(id, body, user, file = null) {
       const sizeName = resolvedSize?.name || (targetSizeStr || null);
       const sizeId = resolvedSize?.id || null;
 
-      const safeSupplierId = supplier_id ? (Number(supplier_id) || null) : null;
+      const safeSupplierId = (supplier_id || preferred_supplier_id) ? (Number(supplier_id || preferred_supplier_id) || null) : null;
       const safeColorId = colorId || null;
       const safeSizeId = sizeId || null;
       const safeImageUrl = image_url || null;
@@ -1478,14 +1487,24 @@ async function updateProduct(id, body, user, file = null) {
       const newStock = branchStockRow ? Number(branchStockRow.stock_level || 0) : 0;
       const diff = newStock - oldStock;
 
-      if (diff > 0 && !is_correction && safeSupplierId && numCost > 0) {
+      let effectiveSupplierId = safeSupplierId;
+      if (!effectiveSupplierId) {
+        try {
+          const prodSup = db.sqlite.prepare('SELECT preferred_supplier_id FROM inventory WHERE id = ?').get(id);
+          if (prodSup?.preferred_supplier_id) {
+            effectiveSupplierId = Number(prodSup.preferred_supplier_id);
+          }
+        } catch {}
+      }
+
+      if (diff > 0 && !is_correction && effectiveSupplierId && numCost > 0) {
         const total_cost = diff * numCost;
         const batchId = crypto.randomUUID();
         try {
           db.sqlite.prepare(`
             INSERT INTO supply_records (supplier_id, inventory_id, quantity, cost_price, notes, branch_id, purchase_batch_id, supply_date)
             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-          `).run(safeSupplierId, id, diff, numCost, 'تعديل كمية (زيادة رصيد)', targetBranchId, batchId);
+          `).run(effectiveSupplierId, id, diff, numCost, 'تعديل كمية (زيادة رصيد)', targetBranchId, batchId);
         } catch (srErr) {
           console.warn('[Branch Update SupplyRecord Warning]:', srErr.message);
         }
@@ -1494,7 +1513,7 @@ async function updateProduct(id, body, user, file = null) {
           db.sqlite.prepare(`
             INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id, branch_id, transaction_date)
             VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-          `).run(safeSupplierId, 'purchase', total_cost, `تعديل رصيد بالزيادة (${name})`, batchId, targetBranchId);
+          `).run(effectiveSupplierId, 'purchase', total_cost, `تعديل رصيد بالزيادة (${name})`, batchId, targetBranchId);
         } catch (stErr) {
           console.warn('[Branch Update SupplierTransaction Warning]:', stErr.message);
         }
@@ -1507,9 +1526,18 @@ async function updateProduct(id, body, user, file = null) {
                 purchase_count = COALESCE(purchase_count, 0) + 1,
                 last_supply_date = datetime('now')
             WHERE id = ?
-          `).run(total_cost, total_cost, safeSupplierId);
+          `).run(total_cost, total_cost, effectiveSupplierId);
         } catch (supErr) {
-          console.warn('[Branch Update Supplier Balance Warning]:', supErr.message);
+          try {
+            db.sqlite.prepare(`
+              UPDATE suppliers 
+              SET total_purchases = COALESCE(total_purchases, 0) + ?,
+                  balance = COALESCE(balance, 0) - ?
+              WHERE id = ?
+            `).run(total_cost, total_cost, effectiveSupplierId);
+          } catch (supFallbackErr) {
+            console.warn('[Branch Update Supplier Balance Warning]:', supFallbackErr.message);
+          }
         }
       }
 

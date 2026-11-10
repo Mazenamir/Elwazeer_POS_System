@@ -598,11 +598,6 @@ const PERMISSION_PRESETS = [
       'inventory.transfers.request',
       'inventory.transfers.approve',
       'inventory.transfers.receive',
-      'suppliers.access',
-      'suppliers.list.view',
-      'suppliers.create',
-      'suppliers.edit',
-      'suppliers.purchases.create',
       'rental_inventory.access',
       'rental_inventory.items.view',
       'barcodes.access',
@@ -677,7 +672,12 @@ const SENSITIVE_OR_PRIVILEGED_PERMISSIONS = new Set([
   'employees.payroll.execute',
   'rental_inventory.items.delete',
   'rental_inventory.items.edit',
+  'suppliers.access',
+  'suppliers.list.view',
+  'suppliers.create',
+  'suppliers.edit',
   'suppliers.delete',
+  'suppliers.purchases.create',
   'customers.delete',
   'expenses.delete',
   'worn_products.delete',
@@ -699,6 +699,11 @@ function hasPermission(user, permission) {
   // Sensitive or destructive actions can NEVER be satisfied by legacy page permissions alone
   if (SENSITIVE_OR_PRIVILEGED_PERMISSIONS.has(permission)) {
     return false;
+  }
+
+  // Inventory admin privilege satisfies all inventory.* module actions (strictly excludes suppliers.*)
+  if (permissions.includes(INVENTORY_ADMIN_PERMISSION) && permission.startsWith('inventory.')) {
+    return true;
   }
 
   // 1. If requested permission is a legacy page identifier (e.g. 'index.html', 'Suppliers.html'):

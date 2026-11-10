@@ -41,14 +41,21 @@ async function login(req, res, next) {
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
+    const isBranchMode = Boolean(config.IS_BRANCH_MODE);
     res.json({
       success: true,
       token,
-      user,
+      user: {
+        ...user,
+        is_branch: isBranchMode,
+        app_mode: isBranchMode ? 'branch' : 'master',
+      },
       role: user.role,
       branch_id: user.branch_id,
       branch_scope: user.branch_scope,
       branch_ids: user.branch_ids,
+      is_branch: isBranchMode,
+      app_mode: isBranchMode ? 'branch' : 'master',
     });
   } catch (err) {
     next(err);
@@ -92,6 +99,8 @@ async function getMe(req, res, next) {
           branch_scope: user.branch_scope || (user.role === 'admin' ? 'all' : 'single'),
           branch_ids: branchIds,
           permissions: normalizePermissions(user.permissions),
+          is_branch: true,
+          app_mode: 'branch',
         },
       });
     }
@@ -122,6 +131,8 @@ async function getMe(req, res, next) {
         branch_scope: rows[0].branch_scope || (rows[0].role === 'admin' ? 'all' : 'single'),
         branch_ids: branchIds,
         permissions: normalizePermissions(rows[0].permissions),
+        is_branch: false,
+        app_mode: 'master',
       },
     });
   } catch (err) {

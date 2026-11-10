@@ -113,6 +113,10 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'branches', 'allowed_gender', "TEXT DEFAULT 'both'");
   ensureSqliteColumn(sqlite, 'branches', 'cashier_footer', 'TEXT');
   ensureSqliteColumn(sqlite, 'branches', 'rental_footer', 'TEXT');
+  ensureSqliteColumn(sqlite, 'suppliers', 'total_purchases', 'REAL DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'suppliers', 'total_paid', 'REAL DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'suppliers', 'purchase_count', 'INTEGER DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'suppliers', 'last_supply_date', 'TEXT');
   try {
     sqlite.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_sizes_unique_branch

@@ -38,15 +38,12 @@ async function getSupplierOptions(query = {}) {
 function formatSupplierRow(s) {
   const purchases = Number(s.total_purchases || 0);
   const paid = Number(s.total_paid || 0);
-  const rawBal = Number(s.balance || 0);
-  let netDue = 0;
-  if (purchases > 0 || paid > 0) {
-    netDue = purchases - paid;
-  } else {
-    netDue = -rawBal;
-  }
+  const netDue = purchases - paid;
+
   return {
     ...s,
+    total_purchases: purchases,
+    total_paid: paid,
     net_due: netDue,
     balance_due: netDue,
     current_balance: Math.abs(netDue),

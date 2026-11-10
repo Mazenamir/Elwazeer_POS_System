@@ -169,7 +169,12 @@ export function Suppliers() {
     hasPermission('suppliers.delete') ||
     hasPermission('suppliers.purchases.create')
   );
-  const canAccessSuppliers = Boolean(isAdmin || hasSuppliersSpecific || hasInventorySpecific || hasPermission('inventory_admin'));
+  const isBranchScoped = Boolean(
+    user?.is_branch ||
+    user?.app_mode === 'branch' ||
+    (user && user.role !== 'admin' && user.branch_scope !== 'all')
+  );
+  const canAccessSuppliers = Boolean(!isBranchScoped && (isAdmin || (hasPermission('suppliers.access') && hasSuppliersSpecific)));
   const hasFullBranchAccess = Boolean(isAdmin || user?.branch_scope === 'all' || hasPermission('inventory_view_all_branches'));
   const canSwitchBranchInInventory = Boolean(hasFullBranchAccess || (user?.branch_scope === 'selected' && branches.length > 1));
 
@@ -866,6 +871,8 @@ total: 0,
       toast.success('تم تأكيد استلام الشحنة وإضافتها لمخزون ومقاسات الفرع بنجاح! 📦✅');
       fetchIncomingShipments();
       fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
     } catch (err) {
       toast.error(err.message || 'فشل تأكيد استلام الشحنة');
     } finally {
@@ -879,6 +886,8 @@ total: 0,
     if (activeTab === 'inventory' && canAccessInventory) {
       const timer = setTimeout(() => {
         fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
         if (canAccessTransfers) {
           fetchRequests();
           fetchIncomingShipments();
@@ -1190,8 +1199,12 @@ total: 0,
 
         setShowProductModal(false);
         fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
         fetchDropdownOptions();
         fetchMetadata(activeBranchId);
+        lastFetchedSupplierQueryRef.current = '';
+        fetchSuppliers({ force: true });
         return;
       }
 
@@ -1260,8 +1273,12 @@ total: 0,
           setCategoriesList((prev) => [...prev, finalCategory]);
         }
         fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
         fetchDropdownOptions();
         fetchMetadata(activeBranchId);
+        lastFetchedSupplierQueryRef.current = '';
+        fetchSuppliers({ force: true });
 
         if (!editingProduct) {
           // Immediately show barcode print modal for the newly added product
@@ -1299,6 +1316,8 @@ total: 0,
       fetchProducts();
       fetchMetadata(canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId);
       fetchDropdownOptions();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
     } catch (err) {
       toast.error(err.message || 'فشل حذف المنتج');
     }
@@ -1465,6 +1484,8 @@ total: 0,
       toast.success(res?.message || 'تم تحويل كمية المخزون للفرع الآخر بنجاح! 🚚');
       setShowTransferModal(false);
       fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
       fetchRequests();
       fetchIncomingShipments();
     } catch (err) {
@@ -1536,6 +1557,8 @@ total: 0,
       toast.success(res?.message || `تم تحويل ${transferQty} قطعة إلى مخزون التأجير بنجاح! ✨`);
       setShowRentalTransferModal(false);
       fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
     } catch (err) {
       toast.error(err.message || 'فشل تحويل المنتج لمخزون التأجير');
     } finally {
@@ -1569,7 +1592,11 @@ total: 0,
 
       toast.success(`تم تحويل الصنف "${product.name}" بنجاح إلى مخزون الإيجار! 👗✨`);
       fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
       fetchMetadata(canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId);
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
     } catch (err) {
       toast.error(err.message || 'فشل تحويل المنتج لمخزون الإيجار');
     }
@@ -1614,6 +1641,8 @@ total: 0,
       toast.success('تم تكرار المنتج بنجاح! 📋');
       setShowDuplicateModal(false);
       fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
 
       // Show barcode print modal for the duplicated product
       const newlyDuplicatedProduct = {
@@ -1644,6 +1673,8 @@ total: 0,
       toast.success('تمت الموافقة على طلب التحويل بنجاح! ✅');
       fetchRequests();
       fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
     } catch (err) {
       toast.error(err.message || 'فشل الموافقة على الطلب');
     }
@@ -2040,6 +2071,8 @@ total: 0,
       toast.success('تم تسجيل فاتورة التوريد وتحديث المخزون بنجاح! 📥');
       setShowSupplyModal(false);
       fetchProducts();
+      lastFetchedSupplierQueryRef.current = '';
+      fetchSuppliers({ force: true });
       fetchSuppliers();
     } catch (err) {
       toast.error(err.message || 'فشل تسجيل فاتورة التوريد');
