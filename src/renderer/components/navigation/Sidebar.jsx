@@ -96,9 +96,10 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
 
   const navItems = React.useMemo(() => {
     if (!user) return [];
+    const canViewSuppliers = Boolean(isAdmin || hasPermission('suppliers.access') || hasPermission('suppliers.list.view'));
     let items = ALL_NAV_ITEMS.map((item) => ({
       ...item,
-      label: item.to === '/suppliers' ? ((isAdmin && !user?.is_branch && user?.app_mode !== 'branch') ? item.adminLabel : item.staffLabel) : item.label,
+      label: item.to === '/suppliers' ? (canViewSuppliers ? item.adminLabel : item.staffLabel) : item.label,
     }));
     if (rentalsEnabled === false) {
       items = items.filter((item) => item.to !== '/rentals' && item.to !== '/rental-inventory');

@@ -169,12 +169,9 @@ export function Suppliers() {
     hasPermission('suppliers.delete') ||
     hasPermission('suppliers.purchases.create')
   );
-  const isBranchScoped = Boolean(
-    user?.is_branch ||
-    user?.app_mode === 'branch' ||
-    (user && user.role !== 'admin' && user.branch_scope !== 'all')
+  const canAccessSuppliers = Boolean(
+    isAdmin || (hasPermission('suppliers.access') && hasSuppliersSpecific)
   );
-  const canAccessSuppliers = Boolean(!isBranchScoped && (isAdmin || (hasPermission('suppliers.access') && hasSuppliersSpecific)));
   const hasFullBranchAccess = Boolean(isAdmin || user?.branch_scope === 'all' || hasPermission('inventory_view_all_branches'));
   const canSwitchBranchInInventory = Boolean(hasFullBranchAccess || (user?.branch_scope === 'selected' && branches.length > 1));
 
