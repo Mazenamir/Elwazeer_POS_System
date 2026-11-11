@@ -28,6 +28,7 @@ import {
   ArrowRightLeft,
   KeyRound,
   FileText,
+  Lock,
   Info,
   Undo2,
   Filter,

@@ -63,6 +63,10 @@ export function escapeHtml(str) {
  */
 export function formatVariantText(item) {
   const parts = [];
+  if (item.category) {
+    const cat = String(item.category).trim();
+    if (cat) parts.push(`قسم: ${cat}`);
+  }
   if (item.color) {
     const c = String(item.color).trim();
     if (c) parts.push(`لون: ${c}`);
@@ -361,11 +365,11 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       display: flex;
       justify-content: center;
       align-items: center;
-      margin-bottom: 1.5mm;
+      margin-bottom: 2mm;
     }
     .barcode-logo-80 {
-      max-height: 10mm;
-      max-width: 40mm;
+      max-height: 12mm;
+      max-width: 45mm;
       object-fit: contain;
       display: block;
       margin: 0 auto;
@@ -574,8 +578,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     }
     .sticker-header-38 {
       width: 100% !important;
-      height: 3.2mm !important;
-      max-height: 3.2mm !important;
+      height: 6.2mm !important;
+      max-height: 6.2mm !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -583,8 +587,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
     }
     .sticker-logo-38 {
-      max-height: 3.0mm !important;
-      max-width: 24mm !important;
+      max-height: 6.0mm !important;
+      max-width: 28mm !important;
       width: auto !important;
       height: auto !important;
       object-fit: contain !important;
@@ -817,8 +821,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
     }
     .sticker-header-50 {
       width: 100% !important;
-      height: 4.2mm !important;
-      max-height: 4.2mm !important;
+      height: 7.2mm !important;
+      max-height: 7.2mm !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -826,8 +830,8 @@ export function generateBarcodePrintHtml(queue, paperType = 'sticker-38x25mm', s
       margin: 0 auto !important;
     }
     .sticker-logo-50 {
-      max-height: 4.0mm !important;
-      max-width: 30mm !important;
+      max-height: 7.0mm !important;
+      max-width: 36mm !important;
       width: auto !important;
       height: auto !important;
       object-fit: contain !important;

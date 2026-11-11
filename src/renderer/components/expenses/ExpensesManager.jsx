@@ -315,7 +315,7 @@ export function ExpensesManager({ isCashierTab = false }) {
     const cashCollected = Number(sum.cash_collected || sum.total_cash || 0);
     const cashExpenses = Number(sum.cash_expenses || 0);
     const totalAdvances = Number(sum.total_advances || sum.advances || 0);
-    const physicalCash = Math.max(0, cashCollected - cashExpenses - totalAdvances);
+    const physicalCash = cashCollected - cashExpenses - totalAdvances;
     const visaCollected = Number(sum.visa_collected || 0);
     const instapayCollected = Number(sum.instapay_collected || 0);
     const totalBank = visaCollected + instapayCollected;
@@ -694,11 +694,16 @@ export function ExpensesManager({ isCashierTab = false }) {
               subtitle="سلف نقدية منصرفة من الدرج"
             />
             <StatCard
-              title="صافي الكاش للتوريد بالدرج"
+              title={drawerSummary.physicalCash < 0 ? "عجز نقدي بالدرج (مسلب) ⚠️" : "صافي الكاش للتوريد بالدرج"}
               value={formatCurrency(drawerSummary.physicalCash)}
-              icon={Wallet}
-              variant="primary"
-              subtitle="النقدية الفعلية المتبقية للتوريد"
+              icon={drawerSummary.physicalCash < 0 ? AlertCircle : Wallet}
+              variant={drawerSummary.physicalCash < 0 ? "danger" : "primary"}
+              className={drawerSummary.physicalCash < 0 ? "!border-rose-400 !bg-rose-50/70" : ""}
+              subtitle={
+                drawerSummary.physicalCash < 0
+                  ? "المصروفات والسلف تجاوزت الكاش المحصل"
+                  : "النقدية الفعلية المتبقية للتوريد"
+              }
             />
           </div>
 

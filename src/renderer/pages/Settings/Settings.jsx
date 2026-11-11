@@ -842,15 +842,18 @@ export function Settings() {
     }
 
     try {
+      const isRoleAdmin = userForm.role === 'admin';
+      const isAllBranches = isRoleAdmin || userForm.branch_scope === 'all';
+      const effectiveScope = isAllBranches ? 'all' : (userForm.branch_scope || 'single');
       const payload = {
         full_name: userForm.full_name.trim(),
         username: userForm.username.trim(),
         role: userForm.role || 'branch_user',
-        branch_scope: userForm.branch_scope || 'single',
+        branch_scope: effectiveScope,
         branch_id: Number(userForm.branch_id),
-        branch_ids: userForm.branch_scope === 'selected'
+        branch_ids: effectiveScope === 'selected'
           ? (Array.isArray(userForm.branch_ids) ? userForm.branch_ids.map(Number) : [Number(userForm.branch_id)])
-          : (userForm.branch_scope === 'all' ? [] : [Number(userForm.branch_id)]),
+          : (effectiveScope === 'all' ? branches.map((b) => Number(b.id)) : [Number(userForm.branch_id)]),
         permissions: Array.isArray(userForm.permissions) ? expandPermissionsWithLegacy(userForm.permissions) : [],
       };
       if (userForm.password) payload.password = userForm.password;
@@ -2226,108 +2229,103 @@ export function Settings() {
             </div>
           </div>
 
-          {/* Branch Scoping & Multi-Branch Access */}
+          {/* Advanced Roles & All-Branch Visibility Checkboxes */}
           <div className="pt-3 border-t border-[#E6DECD] space-y-3">
-            <div>
-              <label className="block text-xs font-black text-slate-800 mb-1.5 flex items-center gap-1.5">
-                <Building className="w-3.5 h-3.5 text-[#C4823F]" />
-                <span>نطاق فروع الحساب (Branch Access Scope) *</span>
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {[
-                  {
-                    id: 'single',
-                    label: 'فرع واحد محدد',
-                    icon: '📍',
-                    desc: 'تقييد الحساب بالفرع الافتراضي المحدد فقط دون إمكانية التبديل',
-                  },
-                  {
-                    id: 'selected',
-                    label: 'فروع مخصصة',
-                    icon: '🏢',
-                    desc: 'السماح بالتبديل بين قائمة فروع معينة يتم تحديدها أدناه',
-                  },
-                  {
-                    id: 'all',
-                    label: 'كافة الفروع',
-                    icon: '🌐',
-                    desc: 'الوصول الكامل لكافة فروع المنظومة الحالية وأي فروع جديدة',
-                  },
-                ].map((scope) => {
-                  const isSelected = userForm.branch_scope === scope.id;
-                  return (
-                    <div
-                      key={scope.id}
-                      onClick={() => {
-                        const newScope = scope.id;
-                        let newIds = userForm.branch_ids || [];
-                        if (newScope === 'single') {
-                          newIds = [Number(userForm.branch_id || branches[0]?.id || 1)];
-                        } else if (newScope === 'all') {
-                          newIds = branches.map((b) => b.id);
-                        } else if (newScope === 'selected' && (!newIds || !newIds.length)) {
-                          newIds = [Number(userForm.branch_id || branches[0]?.id || 1)];
-                        }
-                        setUserForm((prev) => ({
-                          ...prev,
-                          branch_scope: newScope,
-                          branch_ids: newIds,
-                        }));
-                      }}
-                      className={`p-3 rounded-xl border cursor-pointer transition-all ${
-                        isSelected
-                          ? 'border-[#151515] bg-[#FAF6ED] ring-1 ring-[#151515]'
-                          : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-[#FAF6ED]/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 font-black text-xs text-slate-900">
-                        <span>{scope.icon}</span>
-                        <span>{scope.label}</span>
-                      </div>
-                      <p className="text-[10px] font-medium text-slate-500 mt-1">{scope.desc}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Checklist of branches when scope === 'selected' */}
-            {userForm.branch_scope === 'selected' && (
-              <div className="p-3.5 rounded-xl border border-purple-200 bg-purple-50/40 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-purple-950">
-                    حدد الفروع المسموح لهذا المستخدم بالتبديل إليها:
-                  </span>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setUserForm((prev) => ({
-                          ...prev,
-                          branch_ids: branches.map((b) => b.id),
-                        }))
-                      }
-                      className="text-[10px] font-bold text-purple-700 hover:underline"
-                    >
-                      تحديد الكل
-                    </button>
-                    <span className="text-slate-300">|</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setUserForm((prev) => ({
-                          ...prev,
-                          branch_ids: [Number(prev.branch_id)],
-                        }))
-                      }
-                      className="text-[10px] font-bold text-purple-700 hover:underline"
-                    >
-                      الفرع الأساسي فقط
-                    </button>
+            <label className="block text-xs font-black text-slate-800 mb-1 flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-[#C4823F]" />
+              <span>خيارات الرتبة وصلاحية الفروع المتقدمة (Roles & Multi-Branch Access)</span>
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Checkbox 1: Admin */}
+              <label className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer ${
+                userForm.role === 'admin'
+                  ? 'border-purple-300 bg-purple-50/70 ring-1 ring-purple-400'
+                  : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-[#FAF6ED]'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={userForm.role === 'admin'}
+                  onChange={(e) => {
+                    const isAdminRole = e.target.checked;
+                    setUserForm((prev) => ({
+                      ...prev,
+                      role: isAdminRole ? 'admin' : 'branch_user',
+                      branch_scope: isAdminRole ? 'all' : prev.branch_scope,
+                      permissions: isAdminRole
+                        ? (PERMISSION_PRESETS.find((p) => p.id === 'all')?.permissions || prev.permissions)
+                        : prev.permissions,
+                    }));
+                  }}
+                  className="mt-0.5 w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-slate-300 cursor-pointer"
+                />
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-900">
+                    <Shield className="w-3.5 h-3.5 text-purple-600" />
+                    <span>مدير عام للنظام (Full Admin Role) 👑</span>
                   </div>
+                  <p className="text-[11px] font-medium text-slate-500 mt-1 leading-relaxed">
+                    كامل الصلاحيات الإدارية وتجاوز كلمات السر الحساسة تلقائياً (المخزون، الفواتير، الأرباح، الرواتب) والوصول لكافة الفروع.
+                  </p>
                 </div>
+              </label>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {/* Checkbox 2: All Branches Access */}
+              <label className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer ${
+                userForm.role === 'admin' || userForm.branch_scope === 'all'
+                  ? 'border-amber-300 bg-amber-50/70 ring-1 ring-amber-400'
+                  : 'border-[#E6DECD] bg-[#FFFDF9] hover:bg-[#FAF6ED]'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={userForm.role === 'admin' || userForm.branch_scope === 'all'}
+                  disabled={userForm.role === 'admin'}
+                  onChange={(e) => {
+                    const isAll = e.target.checked;
+                    setUserForm((prev) => ({
+                      ...prev,
+                      branch_scope: isAll ? 'all' : 'single',
+                      branch_ids: isAll ? branches.map((b) => Number(b.id)) : [Number(prev.branch_id || branches[0]?.id || 1)],
+                    }));
+                  }}
+                  className="mt-0.5 w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+                />
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-900">
+                    <Building className="w-3.5 h-3.5 text-amber-600" />
+                    <span>صلاحية شاملة لكافة الفروع (All Branches Access) 🌐</span>
+                  </div>
+                  <p className="text-[11px] font-medium text-slate-500 mt-1 leading-relaxed">
+                    إلغاء تقييد الفرع وعرض خيار «كل الفروع» في القائمة العلوية لرؤية وتصفح داتا وموظفي وفواتير ومخزون كل الفروع بحرية.
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Branch Scoping Customization (if not All Branches) */}
+          {userForm.role !== 'admin' && userForm.branch_scope !== 'all' && (
+            <div className="p-3.5 rounded-xl border border-dashed border-[#E6DECD] bg-[#FAF6ED]/50 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700">
+                  نطاق الوصول الحالي: <span className="font-black text-slate-900">مقيد بالفرع الأساسي فقط 📍</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserForm((prev) => ({
+                      ...prev,
+                      branch_scope: prev.branch_scope === 'selected' ? 'single' : 'selected',
+                      branch_ids: [Number(prev.branch_id || branches[0]?.id || 1)],
+                    }));
+                  }}
+                  className="text-[11px] font-bold text-amber-700 hover:underline"
+                >
+                  {userForm.branch_scope === 'selected' ? 'الالتزام بالفرع الأساسي فقط' : 'تحديد فروع مخصصة إضافية...'}
+                </button>
+              </div>
+
+              {userForm.branch_scope === 'selected' && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-[#E6DECD]">
                   {branches.map((b) => {
                     const isChecked = (userForm.branch_ids || []).includes(b.id);
                     return (
@@ -2335,13 +2333,13 @@ export function Settings() {
                         key={b.id}
                         className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-bold cursor-pointer transition-colors ${
                           isChecked
-                            ? 'bg-white border-purple-400 text-purple-950 shadow-xs'
-                            : 'bg-white/60 border-purple-100 text-slate-600 hover:bg-white'
+                            ? 'bg-white border-amber-400 text-amber-950 shadow-xs'
+                            : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
                         }`}
                       >
                         <input
                           type="checkbox"
-                          className="rounded text-purple-600 focus:ring-purple-500"
+                          className="rounded text-amber-600 focus:ring-amber-500"
                           checked={isChecked}
                           onChange={(e) => {
                             const checked = e.target.checked;
@@ -2360,9 +2358,9 @@ export function Settings() {
                     );
                   })}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Hierarchical Granular Permissions Catalog */}
           <div className="pt-3 border-t border-[#E6DECD]">

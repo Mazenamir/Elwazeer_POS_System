@@ -83,7 +83,7 @@ function SimulatedSticker({ item, paperType, storeName, logoUrl, forceShadow = f
           <img
             src={logoUrl}
             alt=""
-            className="max-h-[10mm] max-w-[40mm] object-contain mb-1"
+            className="max-h-[12mm] max-w-[45mm] object-contain mb-1"
             onError={(e) => {
               e.currentTarget.style.display = 'none';
             }}
@@ -131,7 +131,7 @@ function SimulatedSticker({ item, paperType, storeName, logoUrl, forceShadow = f
       {/* Header: Logo or Store Name */}
       <div
         className="w-full flex items-center justify-center overflow-hidden shrink-0"
-        style={{ height: is50Format ? '5mm' : '4mm', maxHeight: is50Format ? '5mm' : '4mm' }}
+        style={{ height: is50Format ? '7.2mm' : '6.2mm', maxHeight: is50Format ? '7.2mm' : '6.2mm' }}
       >
         {logoUrl ? (
           <img
@@ -139,8 +139,8 @@ function SimulatedSticker({ item, paperType, storeName, logoUrl, forceShadow = f
             alt=""
             className="object-contain"
             style={{
-              maxHeight: is50Format ? '4.8mm' : '3.8mm',
-              maxWidth: is50Format ? '32mm' : '26mm',
+              maxHeight: is50Format ? '7.0mm' : '6.0mm',
+              maxWidth: is50Format ? '36mm' : '28mm',
             }}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
@@ -827,6 +827,16 @@ export function VirtualThermalPrinterModal({
                       <span>• الالتفاف: سطر واحد مع قطع آمن (...)</span>
                     </div>
                   </div>
+
+                  {/* Category */}
+                  {currentItem.category && (
+                    <div className="p-3 rounded-xl bg-[#22211F] border border-[#302F2C]">
+                      <div className="text-[11px] font-bold text-slate-400 mb-1">تصنيف / قسم المنتج:</div>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        🏷️ {currentItem.category}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Barcode Value & Encoding */}
                   <div className="p-3 rounded-xl bg-[#22211F] border border-[#302F2C]">

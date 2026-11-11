@@ -201,7 +201,7 @@ export function ThermalReceipt({
         </div>
 
         {/* TOP DIVIDER */}
-        <div className="border-b border-slate-300/80 w-full my-0.5" />
+        <div className="border-b-[1.5px] border-black w-full my-0.5" style={{ borderColor: '#000000' }} />
 
         {/* METADATA 2-COLUMN GRID */}
         <div className="space-y-0.5 text-xs mb-0.5">
@@ -286,12 +286,12 @@ export function ThermalReceipt({
         </div>
 
         {/* DIVIDER BEFORE ITEMS TABLE */}
-        <div className="border-b border-slate-300/80 w-full my-0.5" />
+        <div className="border-b-[1.5px] border-black w-full my-0.5" style={{ borderColor: '#000000' }} />
 
         {/* ITEMS TABLE */}
         <div className="mb-0.5">
           {/* Table Header Columns */}
-          <div className="flex justify-between items-center text-[10px] font-bold text-slate-600 pb-0.5 border-b border-slate-200">
+          <div className="flex justify-between items-center text-[10px] font-black text-black pb-0.5 border-b-[1.5px] border-black" style={{ borderColor: '#000000' }}>
             <div className="w-[50%] text-right font-bold">الصنف</div>
             <div className="w-[18%] text-center font-bold">الكمية</div>
             <div className="w-[32%] text-left font-bold pl-1">
@@ -300,7 +300,7 @@ export function ThermalReceipt({
           </div>
 
           {/* Items Rows */}
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-black/20" style={{ borderColor: '#000000' }}>
             {safeItems && safeItems.length > 0 ? (
               safeItems.map((item, idx) => {
                 const qty = Number(item.quantity || 1);
@@ -375,7 +375,7 @@ export function ThermalReceipt({
         </div>
 
         {/* DIVIDER UNDER ITEMS */}
-        <div className="border-b border-slate-300/80 w-full my-0.5" />
+        <div className="border-b-[1.5px] border-black w-full my-0.5" style={{ borderColor: '#000000' }} />
 
         {/* FINANCIAL SUMMARY / SUBTOTALS */}
         <div className="space-y-0.5 text-xs text-slate-700 my-0.5">
@@ -406,7 +406,7 @@ export function ThermalReceipt({
         </div>
 
         {/* DIVIDER BEFORE GRAND TOTAL */}
-        <div className="border-b border-slate-300/80 w-full my-0.5" />
+        <div className="border-b-[1.5px] border-black w-full my-0.5" style={{ borderColor: '#000000' }} />
 
         {/* PROMINENT GRAND TOTAL & BALANCES */}
         <div className="space-y-0.5 text-xs mb-1">
@@ -438,8 +438,8 @@ export function ThermalReceipt({
 
           {/* Split Payment Breakdown */}
           {type !== 'return' && isSplit && (
-            <div className="bg-slate-50 border border-slate-200 rounded p-1 my-0.5 text-[9.5px] space-y-0.5">
-              <div className="text-[9px] font-bold text-slate-600 border-b border-slate-200 pb-0.5">
+            <div className="bg-white border border-black rounded p-1 my-0.5 text-[9.5px] space-y-0.5" style={{ borderColor: '#000000' }}>
+              <div className="text-[9px] font-black text-black border-b border-black pb-0.5" style={{ borderColor: '#000000' }}>
                 تفاصيل طرق الدفع (دفع مجزأ):
               </div>
               {normalizedSplits && normalizedSplits.length > 0 ? (
@@ -496,7 +496,7 @@ export function ThermalReceipt({
         </div>
 
         {/* BARCODE, VERIFICATION BADGE & POLICY */}
-        <div className="border-t border-dashed border-slate-300 pt-0.5 mt-0.5 mb-0" />
+        <div className="border-t-[1.5px] border-dashed border-black pt-0.5 mt-0.5 mb-0" style={{ borderColor: '#000000' }} />
 
         {showBarcode && (
           <div className="text-center py-0 overflow-hidden">
@@ -508,7 +508,7 @@ export function ThermalReceipt({
         )}
 
         {showQrCode && (
-          <div className="flex items-center justify-center gap-1 py-0.5 px-2 my-0.5 bg-slate-50 rounded border border-slate-200/80 text-[8.5px] text-black font-extrabold">
+          <div className="flex items-center justify-center gap-1 py-0.5 px-2 my-0.5 bg-white rounded border border-black text-[8.5px] text-black font-extrabold" style={{ borderColor: '#000000' }}>
             <QrCode className="w-2.5 h-2.5 text-slate-800 shrink-0" />
             <span>فاتورة إلكترونية موثقة • {branchObj?.name || 'BEBYOON'} POS</span>
             <ShieldCheck className="w-2.5 h-2.5 text-emerald-600 shrink-0" />

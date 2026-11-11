@@ -36,6 +36,10 @@ import {
   Filter,
   ChevronDown,
   Users,
+  Lock,
+  Eye,
+  EyeOff,
+  AlertCircle,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
@@ -343,6 +347,14 @@ total: 0,
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [productSubmitting, setProductSubmitting] = useState(false);
+
+  // Inventory Sensitive Operation Password Modal State
+  const [showInventoryAuthModal, setShowInventoryAuthModal] = useState(false);
+  const [inventoryAuthPassword, setInventoryAuthPassword] = useState('');
+  const [inventoryAuthError, setInventoryAuthError] = useState('');
+  const [inventoryAuthLoading, setInventoryAuthLoading] = useState(false);
+  const [showInventoryAuthPassword, setShowInventoryAuthPassword] = useState(false);
+  const [pendingInventoryAction, setPendingInventoryAction] = useState(null);
 
   // Barcode Print Modal State
   const [showBarcodePrintModal, setShowBarcodePrintModal] = useState(false);
@@ -1061,8 +1073,8 @@ total: 0,
   };
 
   // Submit Save Product (Create / Update)
-  const handleSaveProduct = async (e) => {
-    e.preventDefault();
+  const handleSaveProduct = async (e, directApprovalToken = null, directPassword = null) => {
+    if (e && e.preventDefault) e.preventDefault();
     const finalName = pName.trim();
     if (!finalName) {
       toast.error('يرجى إدخال اسم المنتج أو اختياره');
@@ -1228,7 +1240,12 @@ total: 0,
           formData.append('gender', finalGender);
 
           if (editingProduct) {
-            await api.put(`/inventory/${editingProduct.id}`, formData);
+            const putHeaders = {};
+            if (directApprovalToken) putHeaders['x-approval-token'] = directApprovalToken;
+            if (directPassword) putHeaders['x-inventory-password'] = directPassword;
+            if (directApprovalToken) formData.append('approval_token', directApprovalToken);
+            if (directPassword) formData.append('inventory_password', directPassword);
+            await api.put(`/inventory/${editingProduct.id}`, formData, { headers: putHeaders });
             toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
           } else {
             createdProductResult = await api.post('/inventory', formData);
@@ -1257,7 +1274,12 @@ total: 0,
           };
 
           if (editingProduct) {
-            await api.put(`/inventory/${editingProduct.id}`, payload);
+            const putHeaders = {};
+            if (directApprovalToken) putHeaders['x-approval-token'] = directApprovalToken;
+            if (directPassword) putHeaders['x-inventory-password'] = directPassword;
+            if (directApprovalToken) payload.approval_token = directApprovalToken;
+            if (directPassword) payload.inventory_password = directPassword;
+            await api.put(`/inventory/${editingProduct.id}`, payload, { headers: putHeaders });
             toast.success('تم تحديث بيانات المنتج والمقاسات بنجاح! 📦');
           } else {
             createdProductResult = await api.post('/inventory', payload);
@@ -1298,6 +1320,22 @@ total: 0,
           setShowBarcodePrintModal(true);
         }
     } catch (err) {
+      const isPasswordRequired =
+        err.data?.code === 'PASSWORD_REQUIRED' ||
+        err.data?.passwordType === 'inventory' ||
+        (err.status === 403 && (
+          err.message?.includes('كلمة مرور') ||
+          err.message?.includes('إدارة وتعديل المخزون') ||
+          err.data?.error?.includes('كلمة مرور')
+        ));
+
+      if (isPasswordRequired) {
+        setPendingInventoryAction({ type: 'save' });
+        setInventoryAuthPassword('');
+        setInventoryAuthError('');
+        setShowInventoryAuthModal(true);
+        return;
+      }
       toast.error(err.message || 'فشل حفظ المنتج');
     } finally {
       setProductSubmitting(false);
@@ -1305,10 +1343,13 @@ total: 0,
   };
 
   // Delete Product
-  const handleDeleteProduct = async (id) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذا المنتج نهائياً من المخزون؟')) return;
+  const handleDeleteProduct = async (id, directApprovalToken = null, directPassword = null) => {
+    if (!directApprovalToken && !window.confirm('هل أنت متأكد من حذف هذا المنتج نهائياً من المخزون؟')) return;
     try {
-      await api.delete(`/inventory/${id}`);
+      const headers = {};
+      if (directApprovalToken) headers['x-approval-token'] = directApprovalToken;
+      if (directPassword) headers['x-inventory-password'] = directPassword;
+      await api.delete(`/inventory/${id}`, { headers });
       toast.success('تم حذف المنتج من المخزون');
       fetchProducts();
       fetchMetadata(canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId);
@@ -1316,7 +1357,64 @@ total: 0,
       lastFetchedSupplierQueryRef.current = '';
       fetchSuppliers({ force: true });
     } catch (err) {
+      const isPasswordRequired =
+        err.data?.code === 'PASSWORD_REQUIRED' ||
+        err.data?.passwordType === 'inventory' ||
+        (err.status === 403 && (
+          err.message?.includes('كلمة مرور') ||
+          err.message?.includes('إدارة وتعديل المخزون') ||
+          err.data?.error?.includes('كلمة مرور')
+        ));
+
+      if (isPasswordRequired) {
+        setPendingInventoryAction({ type: 'delete', id });
+        setInventoryAuthPassword('');
+        setInventoryAuthError('');
+        setShowInventoryAuthModal(true);
+        return;
+      }
       toast.error(err.message || 'فشل حذف المنتج');
+    }
+  };
+
+  // Confirm Inventory Sensitive Password Auth
+  const handleConfirmInventoryAuth = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const pwd = inventoryAuthPassword.trim();
+    if (!pwd) {
+      setInventoryAuthError('يرجى إدخال كلمة سر إدارة المخزون');
+      return;
+    }
+
+    try {
+      setInventoryAuthLoading(true);
+      setInventoryAuthError('');
+      const targetBranch = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : undefined;
+      const res = await api.post('/verify-inventory-password', {
+        password: pwd,
+        product_id: editingProduct?.id || pendingInventoryAction?.id,
+        action: pendingInventoryAction?.type === 'delete' ? 'delete' : 'edit',
+        branch_id: targetBranch,
+      });
+
+      const token = res?.approval_token || res?.data?.approval_token;
+      if (!token && !res?.ok && !res?.data?.ok) {
+        throw new Error(res?.error || res?.data?.error || 'كلمة المرور غير صحيحة');
+      }
+
+      setShowInventoryAuthModal(false);
+      setInventoryAuthPassword('');
+
+      if (pendingInventoryAction?.type === 'save') {
+        await handleSaveProduct(null, token, pwd);
+      } else if (pendingInventoryAction?.type === 'delete') {
+        await handleDeleteProduct(pendingInventoryAction.id, token, pwd);
+      }
+      setPendingInventoryAction(null);
+    } catch (err) {
+      setInventoryAuthError(err.data?.error || err.message || 'كلمة المرور غير صحيحة');
+    } finally {
+      setInventoryAuthLoading(false);
     }
   };
 
@@ -4000,6 +4098,91 @@ total: 0,
               onClick={() => setShowProductModal(false)}
             >
               إلغاء
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* INVENTORY SENSITIVE OPERATION AUTH MODAL */}
+      <Modal
+        isOpen={showInventoryAuthModal}
+        onClose={() => {
+          setShowInventoryAuthModal(false);
+          setInventoryAuthPassword('');
+          setInventoryAuthError('');
+          setPendingInventoryAction(null);
+        }}
+        title="كلمة مرور إدارة المخزون 🔒"
+        subtitle="هذه العملية محمية وتتطلب إدخال كلمة سر إدارة المخزون للمتابعة"
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleConfirmInventoryAuth} className="space-y-4">
+          <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-xs font-bold leading-relaxed flex items-start gap-2.5">
+            <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span>
+                {pendingInventoryAction?.type === 'delete'
+                  ? 'لحذف هذا الصنف من المخزون، يرجى تأكيد كلمة مرور إدارة المخزون.'
+                  : 'لتعديل وحفظ بيانات المنتج والمقاسات بالمخزون، يرجى كتابة كلمة مرور إدارة وتعديل المخزون.'}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-black text-slate-700 mb-1.5">
+              كلمة مرور إدارة وتعديل المخزون *
+            </label>
+            <div className="relative">
+              <Input
+                type={showInventoryAuthPassword ? 'text' : 'password'}
+                placeholder="أدخل كلمة المرور..."
+                value={inventoryAuthPassword}
+                onChange={(e) => {
+                  setInventoryAuthPassword(e.target.value);
+                  setInventoryAuthError('');
+                }}
+                autoFocus
+                required
+                className="pl-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowInventoryAuthPassword(!showInventoryAuthPassword)}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                tabIndex="-1"
+              >
+                {showInventoryAuthPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {inventoryAuthError && (
+              <p className="text-xs font-bold text-rose-600 mt-2 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{inventoryAuthError}</span>
+              </p>
+            )}
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowInventoryAuthModal(false);
+                setInventoryAuthPassword('');
+                setInventoryAuthError('');
+                setPendingInventoryAction(null);
+              }}
+            >
+              إلغاء
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              isLoading={inventoryAuthLoading}
+              icon={Lock}
+              className="!bg-amber-600 hover:!bg-amber-700 font-black text-white"
+            >
+              تأكيد وإتمام العملية 🔓
             </Button>
           </div>
         </form>

@@ -3154,12 +3154,9 @@ async function exportCatalogForBranch(branchId = null) {
       )
     : db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users');
 
-  const employeesPromise = targetBranch
-    ? db.query(
-        "SELECT id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end FROM employees WHERE status = 'active' AND branch_id = $1",
-        [targetBranch]
-      )
-    : db.query("SELECT id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end FROM employees WHERE status = 'active'");
+  const employeesPromise = db.query(
+    "SELECT id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end FROM employees WHERE status = 'active'"
+  );
 
   const customersPromise = targetBranch
     ? db.query(

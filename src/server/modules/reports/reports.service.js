@@ -727,7 +727,7 @@ async function getProfitReport(query = {}, user = null) {
     const supplier_payments = supplierPaymentsByBranch.get(branchId) || 0;
     const cash_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - supplier_payments;
     const advances = advancesByBranch.get(branchId) || 0;
-    const physical_cash_in_drawer = Math.max(0, cash_drawer - advances);
+    const physical_cash_in_drawer = cash_drawer - advances;
     const gross_profit = total_revenue - cogs;
     const net_profit = total_revenue - (cogs + expenses + total_salaries_paid);
     const profit_margin = total_revenue > 0 ? (net_profit / total_revenue) * 100 : 0;
@@ -796,7 +796,7 @@ async function getProfitReport(query = {}, user = null) {
   summary.profit = net_profit;
   summary.profit_margin = profit_margin;
   summary.gross_cash_drawer = summary.cash_drawer;
-  summary.physical_cash_in_drawer = Math.max(0, summary.gross_cash_drawer - summary.total_advances);
+  summary.physical_cash_in_drawer = summary.gross_cash_drawer - summary.total_advances;
   summary.cash_in_drawer = summary.physical_cash_in_drawer;
   summary.cash_drawer = summary.physical_cash_in_drawer;
   summary.supplier_payments = summary.total_supplier_payments;
@@ -1956,7 +1956,7 @@ async function getDailyReport(query = {}, user = null) {
       const total_revenue = total_sales + total_rentals + total_tailoring;
       const cash_returns = returns.cash_total || 0;
       const cash_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - supplier_payments;
-      const physical_cash_in_drawer = Math.max(0, (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - advances - supplier_payments);
+      const physical_cash_in_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - advances - supplier_payments;
       const gross_profit = total_revenue - cogs;
       const net_profit = total_revenue - (cogs + expenses + total_salaries_paid);
 
@@ -3348,7 +3348,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
   bankCollected = Math.round(bankCollected * 100) / 100;
   walletCollected = Math.round(walletCollected * 100) / 100;
 
-  const physicalCashInDrawer = Math.max(0, Math.round((cashCollected - cashExpenses - totalAdvances - totalSupplierPayments) * 100) / 100);
+  const physicalCashInDrawer = Math.round((cashCollected - cashExpenses - totalAdvances - totalSupplierPayments) * 100) / 100;
   const cashDrawerExcel = Math.round((totalPaid - totalDeductions) * 100) / 100;
 
   const paymentMethods = [
@@ -3388,7 +3388,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
       cash_in_drawer: physicalCashInDrawer,
       physical_cash_in_drawer: physicalCashInDrawer,
       cash_drawer: physicalCashInDrawer,
-      gross_cash_drawer: Math.max(0, cashCollected - cashExpenses),
+      gross_cash_drawer: Math.round((cashCollected - cashExpenses) * 100) / 100,
       net_cash: physicalCashInDrawer,
       cash_drawer_excel: cashDrawerExcel,
       cash_collected: cashCollected,

@@ -131,6 +131,32 @@ export function printHtml(htmlContent, title = 'طباعة', options = {}) {
         margin: 0 auto !important;
         display: block !important;
       }
+      .receipt-card [class*="border-b"],
+      #printable-receipt [class*="border-b"],
+      #printable-return-receipt [class*="border-b"],
+      #printable-rental-receipt [class*="border-b"],
+      #printable-sale-receipt [class*="border-b"],
+      #tailoring-receipt-ticket [class*="border-b"] {
+        border-bottom-color: #000000 !important;
+        border-bottom-width: 1.5px !important;
+      }
+      .receipt-card [class*="border-t"],
+      #printable-receipt [class*="border-t"],
+      #printable-return-receipt [class*="border-t"],
+      #printable-rental-receipt [class*="border-t"],
+      #printable-sale-receipt [class*="border-t"],
+      #tailoring-receipt-ticket [class*="border-t"] {
+        border-top-color: #000000 !important;
+        border-top-width: 1.5px !important;
+      }
+      .receipt-card [class*="border-slate-"],
+      .receipt-card [class*="border-gray-"],
+      .receipt-card hr,
+      #printable-receipt [class*="border-slate-"],
+      #printable-receipt [class*="border-gray-"],
+      #printable-receipt hr {
+        border-color: #000000 !important;
+      }
     `;
 
     const baseHref = typeof window !== 'undefined' ? window.location.href.split('?')[0].split('#')[0] : '';

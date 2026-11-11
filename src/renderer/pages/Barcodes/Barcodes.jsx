@@ -19,6 +19,7 @@ import {
   Sliders,
   Eye,
   Cpu,
+  Tag,
 } from 'lucide-react';
 import {
   PAPER_TYPES,
@@ -40,6 +41,7 @@ export function Barcodes() {
   // Search & Filters
   const [search, setSearch] = useState('');
   const [barcodeSearch, setBarcodeSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
 
   // Paper / Label Type selection (default to 38x25mm sticker)
   const [paperType, setPaperType] = useState(() => {
@@ -214,6 +216,22 @@ export function Barcodes() {
     loadInventory();
   }, [loadInventory]);
 
+  // Categories derived from loaded products
+  const categories = useMemo(() => {
+    const set = new Set();
+    products.forEach((p) => {
+      const c = String(p.category || '').trim();
+      if (c) set.add(c);
+    });
+    return Array.from(set).sort();
+  }, [products]);
+
+  // Filtered products list respecting category selection
+  const filteredProducts = useMemo(() => {
+    if (selectedCategory === 'all') return products;
+    return products.filter((p) => String(p.category || '').trim() === selectedCategory);
+  }, [products, selectedCategory]);
+
   // Toggle Selection
   const toggleSelect = (id) => {
     setSelectedIds((prev) =>
@@ -222,10 +240,14 @@ export function Barcodes() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === products.length) {
-      setSelectedIds([]);
+    const targetProducts = filteredProducts;
+    const allSelected = targetProducts.length > 0 && targetProducts.every((p) => selectedIds.includes(p.id));
+    if (allSelected) {
+      const targetIds = new Set(targetProducts.map((p) => p.id));
+      setSelectedIds((prev) => prev.filter((id) => !targetIds.has(id)));
     } else {
-      setSelectedIds(products.map((p) => p.id));
+      const newIds = new Set([...selectedIds, ...targetProducts.map((p) => p.id)]);
+      setSelectedIds(Array.from(newIds));
     }
   };
 
@@ -565,13 +587,13 @@ export function Barcodes() {
                 تم اختيار{' '}
                 <span className="text-slate-900 font-black">{selectedIds.length}</span>{' '}
                 من{' '}
-                <span className="text-slate-900 font-black">{products.length}</span>{' '}
+                <span className="text-slate-900 font-black">{filteredProducts.length}</span>{' '}
                 منتج
               </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-100">
             <Input
               placeholder="ابحث باسم المنتج أو الموديل..."
               icon={Search}
@@ -585,6 +607,29 @@ export function Barcodes() {
               value={barcodeSearch}
               onChange={(e) => setBarcodeSearch(e.target.value)}
             />
+
+            <div className="flex items-center gap-2 bg-[#FFFDF9] border border-[#E6DECD] rounded-xl px-3 py-2 shadow-xs">
+              <Tag className="w-4 h-4 text-[#C4823F] shrink-0" />
+              <label
+                htmlFor="barcode-category-select"
+                className="text-xs font-bold text-slate-600 whitespace-nowrap"
+              >
+                التصنيف:
+              </label>
+              <select
+                id="barcode-category-select"
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="text-xs font-black text-slate-900 bg-transparent border-0 focus:ring-0 cursor-pointer w-full"
+              >
+                <option value="all">كافة التصنيفات ({categories.length})</option>
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 pt-1">
               <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer select-none bg-[#FAF6ED] border border-[#E6DECD] px-3 py-1.5 rounded-xl hover:bg-[#F3ECE0] transition-colors">
@@ -634,7 +679,7 @@ export function Barcodes() {
                     className="p-1 hover:text-slate-300 transition-colors cursor-pointer"
                   >
                     {selectedIds.length > 0 &&
-                    selectedIds.length === products.length ? (
+                    selectedIds.length === filteredProducts.length ? (
                       <CheckSquare className="w-4 h-4 text-emerald-400" />
                     ) : (
                       <Square className="w-4 h-4" />
@@ -659,7 +704,7 @@ export function Barcodes() {
                     جارِ تحميل المنتجات...
                   </td>
                 </tr>
-              ) : products.length === 0 ? (
+              ) : filteredProducts.length === 0 ? (
                 <tr>
                   <td
                     colSpan={7}
@@ -670,7 +715,7 @@ export function Barcodes() {
                   </td>
                 </tr>
               ) : (
-                products.map((p) => {
+                filteredProducts.map((p) => {
                   const isSelected = selectedIds.includes(p.id);
                   const pSizes = extractProductSizes(p);
                   const hasMultiSizes = pSizes.length > 0;
@@ -693,11 +738,16 @@ export function Barcodes() {
 
                       <td className="py-3 px-4">
                         <div className="font-black text-slate-900">{p.name}</div>
-                        <div className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+                        <div className="text-xs text-slate-400 flex items-center gap-2 mt-0.5 flex-wrap">
                           <span className="font-mono text-indigo-600 font-bold">
                             كود: #{p.id}
                           </span>
-                          {p.category && <span>• {p.category}</span>}
+                          {p.category && (
+                            <span className="inline-flex items-center gap-1 font-black text-amber-900 bg-amber-50 border border-amber-300/80 px-2 py-0.5 rounded-md text-[11px] shadow-xs">
+                              <Tag className="w-3 h-3 text-amber-700" />
+                              <span>{p.category}</span>
+                            </span>
+                          )}
                           {p.color && <span>• لون: {p.color}</span>}
                           {p.stock_level !== undefined && (
                             <span className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[10px]">
