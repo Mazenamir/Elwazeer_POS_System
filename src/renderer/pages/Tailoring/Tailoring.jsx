@@ -289,7 +289,11 @@ export function Tailoring() {
 
       fetchOrders();
 
-      setSelectedReceiptOrder(res);
+      const chosenEmp = employees.find((e) => e.id?.toString() === sellerId?.toString());
+      setSelectedReceiptOrder({
+        ...res,
+        seller_name: res?.seller_name || chosenEmp?.name || 'مسؤول التفصيل',
+      });
       setShowReceiptModal(true);
     } catch (err) {
       toast.error(err.message || 'فشل حفظ أمر التفصيل');
@@ -895,7 +899,11 @@ export function Tailoring() {
             date={selectedReceiptOrder.created_at || new Date()}
             customerName={selectedReceiptOrder.customer_name}
             customerPhone={selectedReceiptOrder.customer_phone}
-            sellerName="مسؤول التفصيل"
+            sellerName={
+              selectedReceiptOrder.seller_name ||
+              employees.find((e) => e.id?.toString() === (selectedReceiptOrder.seller_id || selectedReceiptOrder.sellerId)?.toString())?.name ||
+              'مسؤول التفصيل'
+            }
             paymentMethod={selectedReceiptOrder.payment_method}
             paymentSplits={
               (selectedReceiptOrder.payment_method === 'split' ||

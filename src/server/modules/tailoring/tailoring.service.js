@@ -484,6 +484,13 @@ async function createTailoringOrder(body, user, req = null) {
       created_at: order.created_at,
     });
 
+    if (order.seller_id) {
+      const empRes = await tx.query('SELECT name FROM employees WHERE id = $1', [order.seller_id]);
+      if (empRes.rows.length > 0) {
+        order.seller_name = empRes.rows[0].name;
+      }
+    }
+
     return order;
   });
 

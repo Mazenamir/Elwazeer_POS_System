@@ -3223,7 +3223,7 @@ export function Rentals() {
             date={saleInvoiceData.created_at || new Date()}
             customerName={saleInvoiceData.customer_name}
             customerPhone={saleInvoiceData.customer_phone}
-            sellerName="مسؤول التأجير"
+            sellerName={saleInvoiceData.seller_name || employees?.find((e) => e.id?.toString() === (saleInvoiceData.seller_id || saleInvoiceData.sellerId)?.toString())?.name || 'مسؤول التأجير'}
             paymentMethod={saleInvoiceData.payment_method || 'كاش'}
             branchName={branches.find((b) => b.id?.toString() === (saleInvoiceData.branch_id || activeBranchId)?.toString())?.name || 'الفرع الرئيسي'}
             items={[
