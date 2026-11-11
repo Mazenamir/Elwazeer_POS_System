@@ -762,7 +762,6 @@ async function listBranchUsers() {
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
-      WHERE u.role != 'admin'
       ORDER BY u.id DESC
     `).all();
     return rows.map((r) => {
@@ -790,7 +789,6 @@ async function listBranchUsers() {
     FROM users u
     LEFT JOIN branches b ON u.branch_id = b.id
     LEFT JOIN employees e ON u.employee_id = e.id
-    WHERE u.role != 'admin'
     ORDER BY u.id DESC
   `);
 

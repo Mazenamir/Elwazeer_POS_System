@@ -824,7 +824,14 @@ export function Settings() {
       toast({ title: 'تنبيه', message: 'اسم الشخص / الموظف مطلوب', variant: 'warning' });
       return;
     }
-    if (!userForm.branch_id || Number(userForm.branch_id) <= 0) {
+    const isRoleAdmin = userForm.role === 'admin';
+    const isAllBranches = isRoleAdmin || userForm.branch_scope === 'all';
+    const effectiveScope = isAllBranches ? 'all' : (userForm.branch_scope || 'single');
+    const effectiveBranchId = Number(userForm.branch_id) > 0
+      ? Number(userForm.branch_id)
+      : (effectiveScope === 'all' ? Number(branches[0]?.id || 1) : 0);
+
+    if (!effectiveBranchId) {
       toast({ title: 'تنبيه', message: 'الفرع المخصص مطلوب للحساب', variant: 'warning' });
       return;
     }
@@ -842,15 +849,12 @@ export function Settings() {
     }
 
     try {
-      const isRoleAdmin = userForm.role === 'admin';
-      const isAllBranches = isRoleAdmin || userForm.branch_scope === 'all';
-      const effectiveScope = isAllBranches ? 'all' : (userForm.branch_scope || 'single');
       const payload = {
         full_name: userForm.full_name.trim(),
         username: userForm.username.trim(),
         role: userForm.role || 'branch_user',
         branch_scope: effectiveScope,
-        branch_id: Number(userForm.branch_id),
+        branch_id: effectiveBranchId,
         branch_ids: effectiveScope === 'selected'
           ? (Array.isArray(userForm.branch_ids) ? userForm.branch_ids.map(Number) : [Number(userForm.branch_id)])
           : (effectiveScope === 'all' ? branches.map((b) => Number(b.id)) : [Number(userForm.branch_id)]),

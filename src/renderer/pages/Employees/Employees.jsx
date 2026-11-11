@@ -185,7 +185,7 @@ export function Employees() {
     }
     try {
       setLoading(true);
-      const res = await client.get('/employees', { params: { month: selectedMonth } });
+      const res = await client.get('/employees', { params: { month: selectedMonth, limit: 1000, branch_id: 'all' } });
       const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : Array.isArray(res?.employees) ? res.employees : [];
       setEmployees(list);
     } catch (err) {

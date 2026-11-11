@@ -2363,6 +2363,33 @@ async function getDailyReport(query = {}, user = null) {
     physical_cash_in_drawer: 0, net_profit: 0, supplier_payments: 0, total_supplier_payments: 0
   });
 
+  let cashCollected = 0;
+  let cardCollected = 0;
+  let bankCollected = 0;
+  let walletCollected = 0;
+  (paymentRes.rows || []).forEach((r) => {
+    const amt = Number(r.total || 0);
+    const m = String(r.payment_method || '').toLowerCase();
+    if (m === 'cash') cashCollected += amt;
+    else if (m === 'visa' || m === 'card') cardCollected += amt;
+    else if (m === 'bank_transfer' || m === 'instapay' || m === 'bank') bankCollected += amt;
+    else if (m === 'wallet' || m === 'vodafone') walletCollected += amt;
+  });
+  cashCollected = Math.round(cashCollected * 100) / 100;
+  cardCollected = Math.round(cardCollected * 100) / 100;
+  bankCollected = Math.round(bankCollected * 100) / 100;
+  walletCollected = Math.round(walletCollected * 100) / 100;
+
+  const totalCashExpenses = report.reduce((sum, b) => sum + (cashExpensesByBranch.get(Number(b.id)) || 0), 0);
+
+  overallDailySummary.cash_collected = cashCollected;
+  overallDailySummary.cash_expenses = totalCashExpenses;
+  overallDailySummary.card_collected = cardCollected;
+  overallDailySummary.visa_collected = cardCollected;
+  overallDailySummary.bank_collected = bankCollected;
+  overallDailySummary.instapay_collected = bankCollected;
+  overallDailySummary.wallet_collected = walletCollected;
+  overallDailySummary.electronic_collections = cardCollected + bankCollected + walletCollected;
   overallDailySummary.supplier_payments = overallDailySummary.total_supplier_payments;
   overallDailySummary.sales = overallDailySummary.total_sales;
   overallDailySummary.rentals = overallDailySummary.total_rentals;

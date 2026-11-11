@@ -50,7 +50,7 @@ async function getEmployeeOptions(query = {}, user = null) {
     where.push(`(e.name ILIKE $${params.length} OR e.phone ILIKE $${params.length})`);
   }
 
-  const limit = clampInt(query.limit, 50, 10, 100);
+  const limit = clampInt(query.limit, 200, 10, 5000);
   params.push(limit);
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -204,7 +204,7 @@ async function getCheckoutReminders(branchId, user) {
 }
 
 async function listEmployees(query = {}, user = null, req = null) {
-  const pagination = parsePagination(req || { query }, 50, 200, true);
+  const pagination = parsePagination(req || { query }, 100, 10000, true);
   const { date: todayDate } = getCairoDateTimeParts();
   const selectedMonth = query.month && /^\d{4}-\d{2}$/.test(query.month)
     ? query.month

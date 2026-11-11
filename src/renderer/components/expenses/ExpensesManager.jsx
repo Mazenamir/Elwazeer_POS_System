@@ -205,14 +205,14 @@ export function ExpensesManager({ isCashierTab = false }) {
       .catch(() => {});
 
     client
-      .get('/employees/options')
+      .get('/employees/options?limit=1000')
       .then((res) => {
         const data = res?.employees || res || [];
         if (Array.isArray(data)) setEmployeesList(data);
       })
       .catch(() => {
         client
-          .get('/employees')
+          .get('/employees?limit=1000')
           .then((res) => {
             const list = res?.data || res || [];
             if (Array.isArray(list)) setEmployeesList(list);
@@ -294,7 +294,12 @@ export function ExpensesManager({ isCashierTab = false }) {
       setLoadingDrawer(true);
       const params = { date: drawerDate };
       if (drawerBranch && drawerBranch !== 'all') params.branch_id = drawerBranch;
-      const res = await client.get('/reports/daily', { params });
+      let res;
+      try {
+        res = await client.get('/reports/extended-daily', { params });
+      } catch {
+        res = await client.get('/reports/daily', { params });
+      }
       setDrawerData(res?.data || res || null);
     } catch (err) {
       toast.error(err.message || 'تعذر تحميل بيانات تقفيل الدرج');
@@ -315,9 +320,13 @@ export function ExpensesManager({ isCashierTab = false }) {
     const cashCollected = Number(sum.cash_collected || sum.total_cash || 0);
     const cashExpenses = Number(sum.cash_expenses || 0);
     const totalAdvances = Number(sum.total_advances || sum.advances || 0);
-    const physicalCash = cashCollected - cashExpenses - totalAdvances;
-    const visaCollected = Number(sum.visa_collected || 0);
-    const instapayCollected = Number(sum.instapay_collected || 0);
+    const supplierPayments = Number(sum.supplier_cash_payments || sum.total_supplier_cash_payments || sum.supplier_payments || 0);
+    const physicalCash = sum.physical_cash_in_drawer !== undefined && sum.physical_cash_in_drawer !== null
+      ? Number(sum.physical_cash_in_drawer)
+      : (cashCollected - cashExpenses - totalAdvances - supplierPayments);
+    const visaCollected = Number(sum.visa_collected || sum.card_collected || 0);
+    const instapayCollected = Number(sum.instapay_collected || sum.bank_collected || 0);
+    const walletCollected = Number(sum.wallet_collected || 0);
     const totalBank = visaCollected + instapayCollected;
     return {
       cashCollected,
@@ -326,6 +335,7 @@ export function ExpensesManager({ isCashierTab = false }) {
       physicalCash,
       visaCollected,
       instapayCollected,
+      walletCollected,
       totalBank,
     };
   }, [drawerData]);
