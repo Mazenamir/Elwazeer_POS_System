@@ -35,7 +35,19 @@ if (typeof Blob !== 'undefined') {
 }
 
 async function request(endpoint, options = {}) {
-  const url = endpoint.startsWith('http') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  let url = endpoint.startsWith('http') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  if (options.params && typeof options.params === 'object') {
+    const searchParams = new URLSearchParams();
+    Object.entries(options.params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        searchParams.append(k, String(v));
+      }
+    });
+    const qs = searchParams.toString();
+    if (qs) {
+      url += (url.includes('?') ? '&' : '?') + qs;
+    }
+  }
   const method = (options.method || 'GET').toUpperCase();
   
   const isBinaryRequest = options.responseType === 'blob' || options.responseType === 'arraybuffer';
@@ -62,7 +74,7 @@ async function request(endpoint, options = {}) {
     headers['x-idempotency-key'] = generateIdempotencyKey();
   }
 
-  const { headers: _discardHeaders, ...restOptions } = options;
+  const { headers: _discardHeaders, params: _discardParams, ...restOptions } = options;
   const config = {
     method,
     headers,

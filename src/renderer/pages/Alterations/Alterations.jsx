@@ -35,7 +35,7 @@ const STATUS_MAP = {
 };
 
 export function Alterations() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
 
@@ -302,7 +302,7 @@ export function Alterations() {
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
-                          {['pending', 'in_progress'].includes(alt.status) && (
+                          {(isAdmin || hasPermission('alterations.delete')) && ['pending', 'in_progress'].includes(alt.status) && (
                             <button
                               onClick={() => handleDelete(alt.id)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"

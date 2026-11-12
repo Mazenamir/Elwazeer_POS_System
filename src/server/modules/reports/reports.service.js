@@ -3173,8 +3173,8 @@ async function getExtendedDailyReport(query = {}, user = null) {
         ${normalizedPaymentMethodSql('op.payment_method')} as payment_method,
         op.payment_method as raw_payment_method,
         CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'cash' THEN op.amount ELSE 0 END as cash_amount,
-        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'card' THEN op.amount ELSE 0 END as card_amount,
-        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'bank_transfer' THEN op.amount ELSE 0 END as bank_transfer_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} IN ('card', 'visa') THEN op.amount ELSE 0 END as card_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} IN ('bank_transfer', 'instapay') THEN op.amount ELSE 0 END as bank_transfer_amount,
         CASE WHEN ${normalizedPaymentMethodSql('op.payment_method')} = 'wallet' THEN op.amount ELSE 0 END as wallet_amount,
         null as payment_splits,
         'order_payment' as transaction_type,
@@ -3204,8 +3204,8 @@ async function getExtendedDailyReport(query = {}, user = null) {
         ${normalizedPaymentMethodSql('rp.payment_method')} as payment_method,
         rp.payment_method as raw_payment_method,
         CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'cash' THEN rp.amount ELSE 0 END as cash_amount,
-        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'card' THEN rp.amount ELSE 0 END as card_amount,
-        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'bank_transfer' THEN rp.amount ELSE 0 END as bank_transfer_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} IN ('card', 'visa') THEN rp.amount ELSE 0 END as card_amount,
+        CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} IN ('bank_transfer', 'instapay') THEN rp.amount ELSE 0 END as bank_transfer_amount,
         CASE WHEN ${normalizedPaymentMethodSql('rp.payment_method')} = 'wallet' THEN rp.amount ELSE 0 END as wallet_amount,
         null as payment_splits,
         'rental_payment' as transaction_type,
@@ -3350,19 +3350,21 @@ async function getExtendedDailyReport(query = {}, user = null) {
         else if (m === 'wallet') walletCollected += a;
         else cashCollected += a;
       });
-    } else if (inv.payment_method === 'split' || (Number(inv.cash_amount || 0) + Number(inv.card_amount || 0) + Number(inv.bank_transfer_amount || 0) + Number(inv.wallet_amount || 0) > 0 && ['split', 'مجزأ'].includes((inv.payment_method || '').toLowerCase()))) {
+    } else if ((Number(inv.cash_amount || 0) + Number(inv.card_amount || 0) + Number(inv.bank_transfer_amount || 0) + Number(inv.wallet_amount || 0)) > 0) {
       cashCollected += Number(inv.cash_amount || 0);
       cardCollected += Number(inv.card_amount || 0);
       bankCollected += Number(inv.bank_transfer_amount || 0);
       walletCollected += Number(inv.wallet_amount || 0);
     } else {
       const pm = (inv.payment_method || '').toLowerCase();
-      if (['cash', 'نقدي', 'كاش'].includes(pm)) cashCollected += inv.paid_amount;
-      else if (['visa', 'card', 'فيزا', 'بطاقة'].includes(pm)) cardCollected += inv.paid_amount;
-      else if (['bank_transfer', 'instapay', 'انستاباي', 'تحويل بنكي'].includes(pm)) bankCollected += inv.paid_amount;
-      else if (['wallet', 'محفظة', 'فودافون', 'customer_credit', 'store_credit', 'credit', 'رصيد_عميل', 'رصيد عميل'].includes(pm)) walletCollected += inv.paid_amount;
-      else if (['deposit', 'تأمين', 'خصم من التأمين', 'debt', 'آجل', 'مديونية', 'customer_credit', 'store_credit', 'credit'].includes(pm)) { /* non-cash; do not inflate drawer */ }
-      else cashCollected += inv.paid_amount;
+      const rawPm = (inv.raw_payment_method || '').toLowerCase();
+      const amount = Number(inv.paid_amount !== undefined && inv.paid_amount !== null ? inv.paid_amount : (inv.total_amount || 0));
+      if (['cash', 'نقدي', 'كاش'].includes(pm) || ['cash', 'نقدي', 'كاش'].includes(rawPm)) cashCollected += amount;
+      else if (['visa', 'card', 'فيزا', 'بطاقة'].includes(pm) || ['visa', 'card', 'credit', 'فيزا'].includes(rawPm)) cardCollected += amount;
+      else if (['bank_transfer', 'instapay', 'انستاباي', 'تحويل بنكي', 'bank'].includes(pm) || ['bank_transfer', 'instapay', 'bank', 'انستاباي'].includes(rawPm)) bankCollected += amount;
+      else if (['wallet', 'محفظة', 'فودافون', 'customer_credit', 'store_credit', 'credit', 'رصيد_عميل', 'رصيد عميل'].includes(pm) || ['wallet', 'vodafone'].includes(rawPm)) walletCollected += amount;
+      else if (['deposit', 'تأمين', 'خصم من التأمين', 'debt', 'آجل', 'مديونية'].includes(pm) || ['deposit', 'debt'].includes(rawPm)) { /* non-cash; do not inflate drawer */ }
+      else cashCollected += amount;
     }
   });
 
@@ -3420,7 +3422,9 @@ async function getExtendedDailyReport(query = {}, user = null) {
       cash_drawer_excel: cashDrawerExcel,
       cash_collected: cashCollected,
       card_collected: cardCollected,
+      visa_collected: cardCollected,
       bank_collected: bankCollected,
+      instapay_collected: bankCollected,
       wallet_collected: walletCollected,
       electronic_collections: cardCollected + bankCollected + walletCollected,
       cash_expenses: cashExpenses,
@@ -4024,7 +4028,14 @@ async function updateDailyAttendanceQuick(data = {}, user = null) {
   try {
     const { queueSyncOperation } = require('../sync/sync.service');
     if (res.rows[0]) {
-      await queueSyncOperation(db, null, 'attendance', 'upsert', res.rows[0].id, emp.branch_id, res.rows[0]);
+      const row = res.rows[0];
+      await queueSyncOperation(db, null, 'attendance', 'upsert', row.id, emp.branch_id, {
+        ...row,
+        total_hours: Math.round((Number(row.total_hours) || 0) * 100) / 100,
+        late_minutes: Math.round(Number(row.late_minutes) || 0),
+        early_departure_minutes: Math.round(Number(row.early_departure_minutes) || 0),
+        overtime_minutes: Math.round(Number(row.overtime_minutes) || 0),
+      });
     }
   } catch {}
 

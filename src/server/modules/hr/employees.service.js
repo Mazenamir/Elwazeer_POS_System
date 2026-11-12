@@ -783,10 +783,10 @@ async function toggleAttendance(id, manualTime, user) {
       check_out: result.rows[0].check_out,
       status: result.rows[0].status,
       notes: result.rows[0].notes,
-      total_hours: result.rows[0].total_hours,
-      late_minutes: result.rows[0].late_minutes,
-      early_departure_minutes: result.rows[0].early_departure_minutes,
-      overtime_minutes: result.rows[0].overtime_minutes,
+      total_hours: Math.round((Number(result.rows[0].total_hours) || 0) * 100) / 100,
+      late_minutes: Math.round(Number(result.rows[0].late_minutes) || 0),
+      early_departure_minutes: Math.round(Number(result.rows[0].early_departure_minutes) || 0),
+      overtime_minutes: Math.round(Number(result.rows[0].overtime_minutes) || 0),
     });
     return { action: 'check_in', attendance: result.rows[0] };
   }
@@ -828,10 +828,10 @@ async function toggleAttendance(id, manualTime, user) {
       check_out: result.rows[0].check_out,
       status: result.rows[0].status,
       notes: result.rows[0].notes,
-      total_hours: result.rows[0].total_hours,
-      late_minutes: result.rows[0].late_minutes,
-      early_departure_minutes: result.rows[0].early_departure_minutes,
-      overtime_minutes: result.rows[0].overtime_minutes,
+      total_hours: Math.round((Number(result.rows[0].total_hours) || 0) * 100) / 100,
+      late_minutes: Math.round(Number(result.rows[0].late_minutes) || 0),
+      early_departure_minutes: Math.round(Number(result.rows[0].early_departure_minutes) || 0),
+      overtime_minutes: Math.round(Number(result.rows[0].overtime_minutes) || 0),
     });
     return { action: 'check_out', attendance: result.rows[0] };
   }
@@ -925,10 +925,10 @@ async function handleCheckoutReminder(id, attendanceDate, user) {
       check_out: result.rows[0].check_out,
       status: result.rows[0].status,
       notes: result.rows[0].notes,
-      total_hours: result.rows[0].total_hours,
-      late_minutes: result.rows[0].late_minutes,
-      early_departure_minutes: result.rows[0].early_departure_minutes,
-      overtime_minutes: result.rows[0].overtime_minutes,
+      total_hours: Math.round((Number(result.rows[0].total_hours) || 0) * 100) / 100,
+      late_minutes: Math.round(Number(result.rows[0].late_minutes) || 0),
+      early_departure_minutes: Math.round(Number(result.rows[0].early_departure_minutes) || 0),
+      overtime_minutes: Math.round(Number(result.rows[0].overtime_minutes) || 0),
     });
   }
   return { action: 'check_out', attendance: result.rows[0] };

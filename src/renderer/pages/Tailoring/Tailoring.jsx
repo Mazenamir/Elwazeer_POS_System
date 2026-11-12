@@ -50,7 +50,7 @@ function formatTailoringPaymentMethod(order) {
 }
 
 export function Tailoring() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
 
@@ -501,7 +501,7 @@ export function Tailoring() {
                         >
                           <Printer className="w-4 h-4" />
                         </button>
-                        {isAdmin && (
+                        {(isAdmin || hasPermission('tailoring.delete')) && (
                           <button
                             onClick={() => handleDelete(order.id)}
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"

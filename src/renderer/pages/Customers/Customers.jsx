@@ -35,7 +35,7 @@ import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
 
 export function Customers() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
   const [searchParams] = useSearchParams();
@@ -386,7 +386,7 @@ export function Customers() {
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        {isAdmin && (
+                        {(isAdmin || hasPermission('customers.delete')) && (
                           <button
                             onClick={() => handleDelete(c.id)}
                             className="p-1.5 text-[#777266] hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"

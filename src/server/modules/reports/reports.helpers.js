@@ -12,7 +12,7 @@ function getReportBranchId(user, query = {}) {
     process.env.APP_MODE === 'branch'
   );
   if (isBranchMode) {
-    return String(user?.branch_id || config.BRANCH_ID || query.branch_id || 1);
+    return String(config.BRANCH_ID || user?.branch_id || query.branch_id || 1);
   }
 
   if (user && user.role !== 'admin') {

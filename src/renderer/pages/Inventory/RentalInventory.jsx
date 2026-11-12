@@ -44,7 +44,7 @@ const CATEGORY_DISPLAY_MAP = {
 };
 
 export function RentalInventory() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
 
@@ -534,7 +534,7 @@ export function RentalInventory() {
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        {isAdmin && (
+                        {(isAdmin || hasPermission('rental_inventory.items.delete')) && (
                           <button
                             onClick={() => handleDelete(item.id)}
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"

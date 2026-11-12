@@ -42,16 +42,19 @@ async function login(req, res, next) {
     });
 
     const isBranchMode = Boolean(config.IS_BRANCH_MODE);
+    const effectiveBranchId = isBranchMode ? Number(config.BRANCH_ID || user.branch_id || 1) : user.branch_id;
     res.json({
       success: true,
       token,
       user: {
         ...user,
+        branch_id: effectiveBranchId,
+        physical_branch_id: Number(config.BRANCH_ID || 1),
         is_branch: isBranchMode,
         app_mode: isBranchMode ? 'branch' : 'master',
       },
       role: user.role,
-      branch_id: user.branch_id,
+      branch_id: effectiveBranchId,
       branch_scope: user.branch_scope,
       branch_ids: user.branch_ids,
       is_branch: isBranchMode,
@@ -96,6 +99,8 @@ async function getMe(req, res, next) {
       return res.json({
         user: {
           ...user,
+          branch_id: Number(config.BRANCH_ID || user.branch_id || 1),
+          physical_branch_id: Number(config.BRANCH_ID || 1),
           branch_scope: user.branch_scope || (user.role === 'admin' ? 'all' : 'single'),
           branch_ids: branchIds,
           permissions: normalizePermissions(user.permissions),

@@ -386,6 +386,18 @@ async function repairAndReviveDeadLetterOperations() {
           if (p.lead_time !== undefined) p.lead_time = parseInt(p.lead_time, 10) || 0;
           if (p.rating !== undefined) p.rating = parseInt(p.rating, 10) || 5;
         }
+        if (op.entity_type === 'attendance') {
+          if (p.late_minutes !== undefined) p.late_minutes = Math.round(Number(p.late_minutes) || 0);
+          if (p.early_departure_minutes !== undefined) p.early_departure_minutes = Math.round(Number(p.early_departure_minutes) || 0);
+          if (p.overtime_minutes !== undefined) p.overtime_minutes = Math.round(Number(p.overtime_minutes) || 0);
+          if (p.total_hours !== undefined) p.total_hours = Math.round((Number(p.total_hours) || 0) * 100) / 100;
+          if (!p.employee_ref && p.employee_id) {
+            try {
+              const empRef = await db.query('SELECT name, phone, offline_uuid FROM employees WHERE id = $1', [p.employee_id]);
+              if (empRef.rows.length) p.employee_ref = empRef.rows[0];
+            } catch {}
+          }
+        }
         const serialized = JSON.stringify(p);
         await db.query(
           "UPDATE sync_queue SET payload = $1, status = 'pending', attempts = 0, last_error = NULL WHERE id = $2",
@@ -565,6 +577,11 @@ async function applyOperation(operation) {
         console.warn(`[Sync] Attendance skipped: cannot resolve employee #${payload.employee_id}`);
         return;
       }
+      const lateMinutes = Math.round(Number(payload.late_minutes) || 0);
+      const earlyDepartureMinutes = Math.round(Number(payload.early_departure_minutes) || 0);
+      const overtimeMinutes = Math.round(Number(payload.overtime_minutes) || 0);
+      const totalHours = Math.round((Number(payload.total_hours) || 0) * 100) / 100;
+
       await tx.query(
         `INSERT INTO attendance
           (employee_id, date, check_in, check_out, status, notes, total_hours, late_minutes, early_departure_minutes, overtime_minutes)
@@ -586,10 +603,10 @@ async function applyOperation(operation) {
           payload.check_out || null,
           payload.status || 'present',
           payload.notes || null,
-          payload.total_hours || 0,
-          payload.late_minutes || 0,
-          payload.early_departure_minutes || 0,
-          payload.overtime_minutes || 0,
+          totalHours,
+          lateMinutes,
+          earlyDepartureMinutes,
+          overtimeMinutes,
         ]
       );
       return;
@@ -3027,6 +3044,13 @@ async function runSync(requestedLimit = 50) {
         try { opPayload = JSON.parse(opPayload); } catch {}
       }
 
+      if (op.entity_type === 'attendance' && opPayload && typeof opPayload === 'object') {
+        if (opPayload.late_minutes !== undefined) opPayload.late_minutes = Math.round(Number(opPayload.late_minutes) || 0);
+        if (opPayload.early_departure_minutes !== undefined) opPayload.early_departure_minutes = Math.round(Number(opPayload.early_departure_minutes) || 0);
+        if (opPayload.overtime_minutes !== undefined) opPayload.overtime_minutes = Math.round(Number(opPayload.overtime_minutes) || 0);
+        if (opPayload.total_hours !== undefined) opPayload.total_hours = Math.round((Number(opPayload.total_hours) || 0) * 100) / 100;
+      }
+
       const response = await fetchWithTimeout(`${config.SYNC_SERVER_URL}/api/sync/apply`, {
         method: 'POST',
         headers: {
@@ -3090,6 +3114,13 @@ async function runSync(requestedLimit = 50) {
       let opPayload = op.payload;
       if (typeof opPayload === 'string') {
         try { opPayload = JSON.parse(opPayload); } catch {}
+      }
+
+      if (op.entity_type === 'attendance' && opPayload && typeof opPayload === 'object') {
+        if (opPayload.late_minutes !== undefined) opPayload.late_minutes = Math.round(Number(opPayload.late_minutes) || 0);
+        if (opPayload.early_departure_minutes !== undefined) opPayload.early_departure_minutes = Math.round(Number(opPayload.early_departure_minutes) || 0);
+        if (opPayload.overtime_minutes !== undefined) opPayload.overtime_minutes = Math.round(Number(opPayload.overtime_minutes) || 0);
+        if (opPayload.total_hours !== undefined) opPayload.total_hours = Math.round((Number(opPayload.total_hours) || 0) * 100) / 100;
       }
 
       const response = await fetchWithTimeout(`${config.SYNC_SERVER_URL}/api/sync/apply`, {

@@ -10,6 +10,7 @@ import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
 import client from '../../services/api/client';
 import expensesService from '../../services/api/expenses.service';
+import reportsService from '../../services/api/reports.service';
 import {
   Receipt,
   Plus,
@@ -116,10 +117,18 @@ export function ExpensesManager({ isCashierTab = false }) {
 
   // Drawer Settlement State
   const [drawerDate, setDrawerDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [drawerBranch, setDrawerBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all'));
+  const [drawerBranch, setDrawerBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : (user?.branch_id ? user.branch_id.toString() : 'all')));
   const [drawerData, setDrawerData] = useState(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
   const [closingDrawer, setClosingDrawer] = useState(false);
+
+  useEffect(() => {
+    if (activeBranchId && activeBranchId !== 'all') {
+      setDrawerBranch(activeBranchId);
+    } else if (user?.branch_id && !isAdmin && user?.branch_scope !== 'all') {
+      setDrawerBranch(user.branch_id.toString());
+    }
+  }, [activeBranchId, user?.branch_id, isAdmin, user?.branch_scope]);
 
   const [expenses, setExpenses] = useState([]);
   const [summary, setSummary] = useState({
@@ -293,12 +302,17 @@ export function ExpensesManager({ isCashierTab = false }) {
     try {
       setLoadingDrawer(true);
       const params = { date: drawerDate };
-      if (drawerBranch && drawerBranch !== 'all') params.branch_id = drawerBranch;
+      const effectiveBranch = (drawerBranch && drawerBranch !== 'all')
+        ? drawerBranch
+        : (activeBranchId && activeBranchId !== 'all' ? activeBranchId : user?.branch_id);
+      if (effectiveBranch && effectiveBranch !== 'all') params.branch_id = effectiveBranch;
+
       let res;
       try {
-        res = await client.get('/reports/extended-daily', { params });
+        // Query /reports/extended-daily for granular payment breakdowns
+        res = await reportsService.getExtendedDaily(params);
       } catch {
-        res = await client.get('/reports/daily', { params });
+        res = await reportsService.getDailyReport(params);
       }
       setDrawerData(res?.data || res || null);
     } catch (err) {
@@ -307,7 +321,7 @@ export function ExpensesManager({ isCashierTab = false }) {
     } finally {
       setLoadingDrawer(false);
     }
-  }, [canAccessDrawer, drawerDate, drawerBranch, toast]);
+  }, [canAccessDrawer, drawerDate, drawerBranch, activeBranchId, user?.branch_id, toast]);
 
   useEffect(() => {
     if (activeTab === 'drawer') {
