@@ -29,6 +29,9 @@ function getUserAuthorizedBranchIds(user) {
   }
 
   const ids = new Set();
+  if (isBranchModeActive()) {
+    ids.add(Number(config.BRANCH_ID || 1));
+  }
   if (user.branch_id && Number(user.branch_id) > 0) {
     ids.add(Number(user.branch_id));
   }

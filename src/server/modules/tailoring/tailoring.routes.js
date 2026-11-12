@@ -8,12 +8,12 @@ const router = express.Router();
 router.get('/alterations', requirePermission('Alterations.html', 'Tailoring.html'), controller.listAlterations);
 router.post('/alterations', requirePermission('Alterations.html', 'Tailoring.html'), controller.createAlteration);
 router.patch('/alterations/:id', requirePermission('Alterations.html', 'Tailoring.html'), controller.updateAlteration);
-router.delete('/alterations/:id', requirePermission('alterations.delete', 'Alterations.html', 'Tailoring.html'), controller.deleteAlteration);
+router.delete('/alterations/:id', requirePermission('alterations.delete'), controller.deleteAlteration);
 
 // Tailoring Orders
 router.get('/tailoring-orders', requirePermission('Tailoring.html', 'Alterations.html'), controller.listTailoringOrders);
 router.post('/tailoring-orders', requirePermission('Tailoring.html', 'Alterations.html'), controller.createTailoringOrder);
-router.delete('/tailoring-orders/:id', requirePermission('tailoring.delete', 'Tailoring.html', 'Alterations.html'), controller.deleteTailoringOrder);
+router.delete('/tailoring-orders/:id', requirePermission('tailoring.delete'), controller.deleteTailoringOrder);
 router.put('/tailoring-orders/:id/pay-remaining', requirePermission('Tailoring.html', 'Alterations.html'), controller.payRemainingTailoringOrder);
 
 module.exports = router;

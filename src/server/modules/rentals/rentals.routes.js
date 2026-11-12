@@ -14,7 +14,7 @@ router.post('/rental-inventory', requirePermission('Rentals.html', 'RentalInvent
 router.post('/rental-inventory/transfer-from-sales', requirePermission('Rentals.html', 'RentalInventory.html'), controller.transferFromSales);
 router.get('/rental-inventory/:id/availability', requirePermission('Rentals.html', 'RentalInventory.html'), controller.checkAvailability);
 router.put('/rental-inventory/:id', requirePermission('Rentals.html', 'RentalInventory.html'), controller.updateRentalInventory);
-router.delete('/rental-inventory/:id', requirePermission('Rentals.html', 'RentalInventory.html'), controller.deleteRentalInventory);
+router.delete('/rental-inventory/:id', requirePermission('rental_inventory.items.delete', 'inventory_admin'), controller.deleteRentalInventory);
 
 // Rentals - Specific routes before parameterized :id
 router.get('/rentals/summary', requirePermission('Rentals.html'), controller.getRentalsSummary);

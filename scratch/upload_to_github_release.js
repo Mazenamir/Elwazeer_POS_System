@@ -51,10 +51,9 @@ const RELEASE_BODY = [
   '',
   '---',
   '',
-  '### 📦 ملفات التثبيت المرفقة (Installation Packages v' + VERSION + '):',
-  '1. **`Bebyoon-System-Setup-' + VERSION + '.exe`**: النسخة الكاملة للسيرفر المركزي (Master Server Setup).',
-  '2. **`Bebyoon-Branch-Setup-' + VERSION + '.exe`**: النسخة المخصصة لأجهزة الفروع ونقاط البيع المحلية (Branch Offline-First Setup).',
-  '3. **ملفات التحديث التلقائي الموقعة (`latest.yml`, `branch.yml`, `.blockmap`, `update-policy.json`)**.',
+  '### ℹ️ ملاحظات التثبيت والتحديث (Release Notes):',
+  '- يشمل هذا الإصدار التحديثات البرمجية والتحسينات التشغيلية المباشرة (Source & Client Build Updates).',
+  '- تم تحديث كود البناء للواجهة الأمامية `build:client` وقواعد التحقق من الصلاحيات وربط فروع الماكينات بدقة.',
 ].join('\n');
 
 function apiRequest(options, data = null) {
@@ -312,6 +311,27 @@ async function main() {
     if (!fs.existsSync(item.path)) {
       console.warn(`⚠️ File not found, skipping: ${item.path}`);
       continue;
+    }
+
+    if (item.name.endsWith('.yml')) {
+      const content = fs.readFileSync(item.path, 'utf8');
+      if (!content.includes(`version: ${VERSION}`)) {
+        console.warn(`⚠️ Skipping ${item.name}: manifest version does not match release version ${VERSION}`);
+        continue;
+      }
+    }
+
+    if (item.name.endsWith('.json')) {
+      try {
+        const policyObj = JSON.parse(fs.readFileSync(item.path, 'utf8'));
+        if (policyObj.policy?.version !== VERSION) {
+          console.warn(`⚠️ Skipping ${item.name}: update-policy version (${policyObj.policy?.version}) does not match release version ${VERSION}`);
+          continue;
+        }
+      } catch (e) {
+        console.warn(`⚠️ Skipping ${item.name}: failed to parse policy JSON: ${e.message}`);
+        continue;
+      }
     }
 
     if (existingAssetNames.has(item.name)) {

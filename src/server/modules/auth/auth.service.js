@@ -121,11 +121,14 @@ async function getUserFreshData(userId) {
     try { branchIds = JSON.parse(user.branch_ids); } catch { branchIds = []; }
   }
 
+  const isBranchMode = Boolean(config.IS_BRANCH_MODE);
+  const effectiveBranchId = isBranchMode ? Number(config.BRANCH_ID || user.branch_id || 1) : user.branch_id;
+
   const fresh = {
     id: user.id,
     username: user.username,
     role: user.role,
-    branch_id: user.branch_id,
+    branch_id: effectiveBranchId,
     branch_scope: user.branch_scope || (user.role === 'admin' ? 'all' : 'single'),
     branch_ids: branchIds,
     permissions: normalizePermissions(user.permissions),
@@ -276,6 +279,9 @@ async function authenticateUser(username, password) {
 
   const tokenVersion = Number(user.token_version || 1);
 
+  const isBranchMode = Boolean(config.IS_BRANCH_MODE);
+  const effectiveBranchId = isBranchMode ? Number(config.BRANCH_ID || user.branch_id || 1) : user.branch_id;
+
   const token = jwt.sign(
     {
       id: user.id,
@@ -283,7 +289,7 @@ async function authenticateUser(username, password) {
       full_name: user.full_name || null,
       name: displayName,
       role: user.role,
-      branch_id: user.branch_id,
+      branch_id: effectiveBranchId,
       branch_scope: branchScope,
       branch_ids: branchIds,
       token_version: tokenVersion,

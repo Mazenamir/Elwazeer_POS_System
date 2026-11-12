@@ -719,10 +719,10 @@ async function recordAttendance(body, user) {
     check_out: row.check_out,
     status: row.status,
     notes: row.notes,
-    total_hours: row.total_hours,
-    late_minutes: row.late_minutes,
-    early_departure_minutes: row.early_departure_minutes,
-    overtime_minutes: row.overtime_minutes,
+    total_hours: Math.round((Number(row.total_hours) || 0) * 100) / 100,
+    late_minutes: Math.round(Number(row.late_minutes) || 0),
+    early_departure_minutes: Math.round(Number(row.early_departure_minutes) || 0),
+    overtime_minutes: Math.round(Number(row.overtime_minutes) || 0),
   });
   return row;
 }
@@ -1011,10 +1011,10 @@ async function recordManualAttendance(id, body, user) {
     check_out: result.rows[0].check_out,
     status: result.rows[0].status,
     notes: result.rows[0].notes,
-    total_hours: result.rows[0].total_hours,
-    late_minutes: result.rows[0].late_minutes,
-    early_departure_minutes: result.rows[0].early_departure_minutes,
-    overtime_minutes: result.rows[0].overtime_minutes,
+    total_hours: Math.round((Number(result.rows[0].total_hours) || 0) * 100) / 100,
+    late_minutes: Math.round(Number(result.rows[0].late_minutes) || 0),
+    early_departure_minutes: Math.round(Number(result.rows[0].early_departure_minutes) || 0),
+    overtime_minutes: Math.round(Number(result.rows[0].overtime_minutes) || 0),
   });
   return { action: 'manual_update', attendance: result.rows[0] };
 }

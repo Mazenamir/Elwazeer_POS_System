@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/customers', requirePermission('Customers.html'), controller.listCustomers);
 router.post('/customers', requirePermission('Customers.html'), controller.createCustomer);
 router.put('/customers/:id', requirePermission('Customers.html'), controller.updateCustomer);
-router.delete('/customers/:id', requirePermission('Customers.html'), controller.deleteCustomer);
+router.delete('/customers/:id', requirePermission('customers.delete'), controller.deleteCustomer);
 router.get('/customers/:id/history', requirePermission('Customers.html'), controller.getCustomerHistory);
 
 module.exports = router;
