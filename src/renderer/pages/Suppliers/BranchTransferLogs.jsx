@@ -100,11 +100,11 @@ const formatCairoDateTime = (dateVal) => {
 
 export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }) {
   const { user } = useAuth();
-  const { branches, activeBranchId, selectBranch } = useBranch();
+  const { branches, activeBranchId, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
   const toast = useToast();
 
-  const hasAllBranchScope = Boolean(isAdmin || user?.branch_scope === 'all');
-  const canSwitchBranchInLogs = Boolean(hasAllBranchScope || (user?.branch_scope === 'selected' && branches.length > 1));
+  const hasAllBranchScope = Boolean(isAdmin || user?.role === 'accountant' || user?.branch_scope === 'all' || /^(acct|hesabat|accountant|حسابات)/i.test(user?.username || '') || hasAllBranchesAccess);
+  const canSwitchBranchInLogs = Boolean(hasAllBranchScope || canSwitchBranches || (user?.branch_scope === 'selected' && branches.length > 1));
   const isBranchScoped = !canSwitchBranchInLogs && Boolean(user?.branch_id);
   const currentBranchId = isBranchScoped ? Number(user.branch_id) : (activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : null);
 

@@ -6,6 +6,7 @@ import {
   RotateCcw,
   Printer,
   Trash2,
+  AlertTriangle,
   DollarSign,
   User,
   Phone,
@@ -97,6 +98,17 @@ export function Tailoring() {
   // Receipt Modal
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState(null);
+
+  // Cancel Tailoring Order Modal State
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [orderToCancel, setOrderToCancel] = useState(null);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+
+  // Permission check for cancelling tailoring orders
+  const canCancelTailoring = Boolean(
+    isAdmin ||
+    hasPermission('tailoring.delete')
+  );
 
   // Robust Load Employees
   useEffect(() => {
@@ -352,16 +364,49 @@ export function Tailoring() {
     }
   };
 
-  // Handle Delete
-  const handleDelete = async (id) => {
-    if (!confirm('هل تريد حذف أمر التفصيل هذا؟')) return;
+  // Handle Open Cancel Modal
+  const handleOpenCancelModal = (order) => {
+    setOrderToCancel(order);
+    setShowCancelModal(true);
+  };
+
+  // Handle Confirm Cancellation
+  const handleConfirmCancel = async () => {
+    if (!orderToCancel) return;
+    setCancelSubmitting(true);
     try {
-      await api.delete(`/tailoring-orders/${id}`);
-      toast.success('تم حذف أمر التفصيل');
+      await api.delete(`/tailoring-orders/${orderToCancel.id}`);
+      toast.success(`تم إلغاء أمر التفصيل #${orderToCancel.invoice_number || orderToCancel.id} بنجاح! ✂️↩️`);
+      setShowCancelModal(false);
+      setOrderToCancel(null);
       fetchOrders();
     } catch (err) {
-      toast.error(err.message || 'فشل حذف الأمر');
+      toast.error(err.message || 'فشل إلغاء أمر التفصيل');
+    } finally {
+      setCancelSubmitting(false);
     }
+  };
+
+  // Handle Delete (Opens Cancel Modal or falls back to confirm)
+  const handleDelete = (orderOrId) => {
+    if (typeof orderOrId === 'object' && orderOrId !== null) {
+      handleOpenCancelModal(orderOrId);
+      return;
+    }
+    const found = orders.find((o) => o.id === orderOrId);
+    if (found) {
+      handleOpenCancelModal(found);
+      return;
+    }
+    if (!confirm('هل أنت متأكد من إلغاء وحذف أمر التفصيل هذا؟')) return;
+    api.delete(`/tailoring-orders/${orderOrId}`)
+      .then(() => {
+        toast.success('تم إلغاء وحذف أمر التفصيل بنجاح');
+        fetchOrders();
+      })
+      .catch((err) => {
+        toast.error(err.message || 'فشل إلغاء الأمر');
+      });
   };
 
   return (
@@ -501,11 +546,12 @@ export function Tailoring() {
                         >
                           <Printer className="w-4 h-4" />
                         </button>
-                        {(isAdmin || hasPermission('tailoring.delete')) && (
+                        {canCancelTailoring && (
                           <button
-                            onClick={() => handleDelete(order.id)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="حذف"
+                            onClick={() => handleOpenCancelModal(order)}
+                            className="p-1.5 rounded-lg border border-rose-200 text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors"
+                            title="إلغاء أمر التفصيل"
+                            aria-label="إلغاء أمر التفصيل"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -876,6 +922,87 @@ export function Tailoring() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* CANCEL TAILORING ORDER CONFIRMATION MODAL */}
+      <Modal
+        isOpen={showCancelModal}
+        onClose={() => {
+          if (!cancelSubmitting) {
+            setShowCancelModal(false);
+            setOrderToCancel(null);
+          }
+        }}
+        title="إلغاء أمر التفصيل ✂️"
+        subtitle={orderToCancel ? `فاتورة رقم #${orderToCancel.invoice_number || orderToCancel.id} للعميل: ${orderToCancel.customer_name}` : ''}
+        maxWidth="max-w-lg"
+      >
+        {orderToCancel && (
+          <div className="space-y-4 text-right" style={{ direction: 'rtl' }}>
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-xs space-y-1.5 text-rose-900">
+              <div className="font-black text-sm text-rose-700 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>تأكيد إلغاء وحذف أمر التفصيل</span>
+              </div>
+              <p className="leading-relaxed font-semibold">
+                هل أنت متأكد من رغبتك في إلغاء أمر التفصيل هذا؟ سيتم إلغاء الأمر وحذف الفاتورة واسترداد العربون المسدد.
+              </p>
+            </div>
+
+            <div className="bg-[#FAF6ED] border border-[#E6DECD] rounded-xl p-3.5 text-xs space-y-2 font-medium">
+              <div className="flex justify-between items-center py-1 border-b border-[#E6DECD]">
+                <span className="text-slate-500 font-bold">اسم العميل:</span>
+                <span className="font-black text-slate-900">{orderToCancel.customer_name}</span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-[#E6DECD]">
+                <span className="text-slate-500 font-bold">رقم الهاتف:</span>
+                <span className="font-mono font-bold text-slate-800" dir="ltr">{orderToCancel.customer_phone}</span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-[#E6DECD]">
+                <span className="text-slate-500 font-bold">وصف القطعة:</span>
+                <span className="font-bold text-slate-800 truncate max-w-[240px]" title={orderToCancel.product_description}>
+                  {orderToCancel.product_description}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-[#E6DECD]">
+                <span className="text-slate-500 font-bold">إجمالي تكلفة التفصيل:</span>
+                <span className="font-black text-indigo-700">{Number(orderToCancel.total_amount || 0).toLocaleString()} ج.م</span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-[#E6DECD]">
+                <span className="text-slate-500 font-bold">العربون المسدد (المسترد):</span>
+                <span className="font-black text-emerald-700">{Number(orderToCancel.paid_amount || 0).toLocaleString()} ج.م</span>
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <span className="text-slate-500 font-bold">طريقة الدفع:</span>
+                <span className="font-bold text-slate-700">{formatTailoringPaymentMethod(orderToCancel)}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setShowCancelModal(false);
+                  setOrderToCancel(null);
+                }}
+                disabled={cancelSubmitting}
+              >
+                تراجع
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                icon={Trash2}
+                onClick={handleConfirmCancel}
+                isLoading={cancelSubmitting}
+                className="!bg-rose-600 hover:!bg-rose-700 text-white font-bold"
+              >
+                تأكيد إلغاء التفصيل
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* RECEIPT MODAL */}

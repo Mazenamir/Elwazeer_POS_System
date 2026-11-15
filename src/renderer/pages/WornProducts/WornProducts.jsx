@@ -25,7 +25,7 @@ import {
 
 export function WornProducts() {
   const { user } = useAuth();
-  const { branches, currentBranchId, activeBranchId, isMultiBranch } = useBranch();
+  const { branches, currentBranchId, activeBranchId, isMultiBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
   const { toast } = useToast();
 
   const [records, setRecords] = useState([]);
@@ -77,7 +77,7 @@ export function WornProducts() {
     deduct_stock: true,
   });
 
-  const isBranchScoped = user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor';
+  const isBranchScoped = !hasAllBranchesAccess && !canSwitchBranches && user?.branch_scope !== 'all' && user?.role !== 'accountant' && !/^(acct|hesabat|accountant|حسابات)/i.test(user?.username || '') && (user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor');
 
   // Load summary and list
   const loadRecords = useCallback(async () => {

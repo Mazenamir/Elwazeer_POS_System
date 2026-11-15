@@ -77,29 +77,60 @@ async function requireSalaryAccess(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   const isPayslip = (req.route?.path && req.route.path.includes('payslip')) || (req.path && req.path.includes('payslip'));
-  const hasAccess = isPayslip
-    ? hasPermission(req.user, 'employees.payroll.view')
-    : (hasPermission(req.user, 'employees.payroll.view') || hasPermission(req.user, 'employees.advances.create'));
-  if (req.user.role !== 'admin' && !hasAccess) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-  if (req.user.role === 'admin') {
+  const hasPayrollView = hasPermission(req.user, 'employees.payroll.view');
+  const hasAdvanceCreate = hasPermission(req.user, 'employees.advances.create');
+
+  if (isPayslip) {
+    if (req.user.role !== 'admin' && !hasPayrollView) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (req.user.role === 'admin') {
+      return next();
+    }
+    const password = req.headers['x-salary-password'] || req.query.salary_password;
+    if (!password) {
+      return res.status(403).json({ error: 'كلمة سر الرواتب مطلوبة للاطلاع على هذا التقرير' });
+    }
+    const isValid = await authService.verifySalaryPassword(password);
+    if (!isValid) {
+      return res.status(403).json({ error: 'كلمة سر الرواتب غير صحيحة' });
+    }
     return next();
   }
+
+  // Summary endpoint (/employees/:id/summary)
+  if (req.user.role !== 'admin' && !hasPayrollView && !hasAdvanceCreate) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  req.salaryAccessVerified = false;
+  if (req.user.role === 'admin') {
+    req.salaryAccessVerified = true;
+    return next();
+  }
+
   const password = req.headers['x-salary-password'] || req.query.salary_password;
-  if (!password) {
-    return res.status(403).json({ error: 'كلمة سر الرواتب مطلوبة للاطلاع على هذا التقرير' });
+  if (password) {
+    const isValid = await authService.verifySalaryPassword(password);
+    if (isValid && hasPayrollView) {
+      req.salaryAccessVerified = true;
+    } else if (!isValid && hasPayrollView && !hasAdvanceCreate) {
+      return res.status(403).json({ error: 'كلمة سر الرواتب غير صحيحة' });
+    }
   }
-  const isValid = await authService.verifySalaryPassword(password);
-  if (!isValid) {
-    return res.status(403).json({ error: 'كلمة سر الرواتب غير صحيحة' });
+
+  if (hasAdvanceCreate || req.salaryAccessVerified) {
+    return next();
   }
-  next();
+
+  return res.status(403).json({ error: 'كلمة سر الرواتب مطلوبة للاطلاع على هذا التقرير' });
 }
 
 // Summary, Payslip, and Sales Report
 router.get('/employees/:id/summary', requireSalaryAccess, employeesController.getEmployeeSummary);
 router.get('/employees/:id/payslip', requireSalaryAccess, employeesController.getEmployeePayslip);
 router.get('/employees/:id/sales-report', requirePermission('employees.list.view', 'reports.sales.view'), employeesController.getEmployeeSalesReport);
+
+router.requireSalaryAccess = requireSalaryAccess;
 
 module.exports = router;

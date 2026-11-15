@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../../database/connection');
 const config = require('../../config/env');
 const { CAIRO_DATE_SQL, CAIRO_NOW_SQL } = require('../../../shared/constants/system');
-const { normalizePermissions, defaultPermissionsForRole } = require('../../../shared/constants/permissions');
+const { normalizePermissions, defaultPermissionsForRole, hasPermission } = require('../../../shared/constants/permissions');
 const { getCairoDateTimeParts, getMonthRange, getMonthKey, getDatabaseCairoNow, addDays } = require('../../../shared/utils/date');
 const { likePattern, newUuid } = require('../../../shared/utils/string');
 const { clampInt } = require('../../../shared/utils/numbers');
@@ -142,7 +142,7 @@ async function getCheckoutReminders(branchId, user) {
     `a.date >= ${CAIRO_DATE_SQL} - INTERVAL '1 day'`,
   ];
 
-  if (isBranchUser && user.branch_scope !== 'all') {
+  if (isBranchUser && user.branch_scope !== 'all' && user.role !== 'accountant') {
     if (branchId && branchId !== 'all' && hasBranchAccess(user, branchId)) {
       params.push(Number(branchId));
       where.push(`e.branch_id = $${params.length}`);
@@ -1108,7 +1108,7 @@ async function createEmployeeTransaction(body, user) {
   return transRow;
 }
 
-async function getEmployeeSummary(id, monthParam, user) {
+async function getEmployeeSummary(id, monthParam, user, options = {}) {
   const isAdmin = user && user.role === 'admin';
   const isBranchUser = user && user.role !== 'admin';
 
@@ -1132,7 +1132,12 @@ async function getEmployeeSummary(id, monthParam, user) {
     throw err;
   }
 
-  const basic_salary = Number(empRes.rows[0].basic_salary);
+  const isAdvanceMode = Boolean(options.advanceOnly || options.type === 'advance');
+  const hasPayrollView = !isAdvanceMode && (isAdmin || Boolean(user && hasPermission(user, 'employees.payroll.view')));
+  const canSeeSalary = !isAdvanceMode && (isAdmin || Boolean(hasPayrollView && user?.salaryAccessVerified));
+
+  const rawBasicSalary = Number(empRes.rows[0].basic_salary);
+  const basic_salary = canSeeSalary ? rawBasicSalary : null;
   const monthRange = getMonthRange(month);
 
   const transRes = await db.query(
@@ -1149,13 +1154,15 @@ async function getEmployeeSummary(id, monthParam, user) {
 
   transRes.rows.forEach((r) => {
     if (r.type === 'advance') advances = Number(r.total);
-    if (r.type === 'deduction') deductions = Number(r.total);
-    if (r.type === 'bonus') bonuses = Number(r.total);
-    if (r.type === 'salary_payment') salaryPayments = Number(r.total);
+    if (!isAdvanceMode) {
+      if (r.type === 'deduction') deductions = Number(r.total);
+      if (r.type === 'bonus') bonuses = Number(r.total);
+      if (r.type === 'salary_payment') salaryPayments = Number(r.total);
+    }
   });
 
-  const net_salary = salaryPayments + bonuses - advances - deductions;
-  const remaining_salary = basic_salary + bonuses - advances - deductions - salaryPayments;
+  const net_salary = canSeeSalary ? (salaryPayments + bonuses - advances - deductions) : null;
+  const remaining_salary = canSeeSalary ? (rawBasicSalary + bonuses - advances - deductions - salaryPayments) : null;
 
   const [year, monthNumber] = month.split('-').map(Number);
 
@@ -1174,9 +1181,11 @@ async function getEmployeeSummary(id, monthParam, user) {
     }
     const entry = dailyMap.get(row.day);
     if (row.type === 'advance') entry.advances = Number(row.total);
-    if (row.type === 'deduction') entry.deductions = Number(row.total);
-    if (row.type === 'bonus') entry.bonuses = Number(row.total);
-    if (row.type === 'salary_payment') entry.salary_payments = Number(row.total);
+    if (!isAdvanceMode) {
+      if (row.type === 'deduction') entry.deductions = Number(row.total);
+      if (row.type === 'bonus') entry.bonuses = Number(row.total);
+      if (row.type === 'salary_payment') entry.salary_payments = Number(row.total);
+    }
   });
 
   const daily_summary = [];
@@ -1187,16 +1196,23 @@ async function getEmployeeSummary(id, monthParam, user) {
     runningDaily.advances += entry.advances;
     runningDaily.deductions += entry.deductions;
     runningDaily.bonuses += entry.bonuses;
-    if (entry.salary_payments > 0 || entry.advances > 0 || entry.deductions > 0 || entry.bonuses > 0) {
+
+    const shouldInclude = hasPayrollView
+      ? (entry.salary_payments > 0 || entry.advances > 0 || entry.deductions > 0 || entry.bonuses > 0)
+      : (entry.advances > 0);
+
+    if (shouldInclude) {
       daily_summary.push({
         day: dayKey,
-        basic_salary,
-        salary_payments: entry.salary_payments,
+        basic_salary: canSeeSalary ? rawBasicSalary : null,
+        salary_payments: hasPayrollView ? entry.salary_payments : 0,
         advances: entry.advances,
-        deductions: entry.deductions,
-        bonuses: entry.bonuses,
-        net_salary: entry.salary_payments + entry.bonuses - entry.advances - entry.deductions,
-        remaining_salary: basic_salary + runningDaily.bonuses - runningDaily.advances - runningDaily.deductions - runningDaily.salary_payments,
+        deductions: hasPayrollView ? entry.deductions : 0,
+        bonuses: hasPayrollView ? entry.bonuses : 0,
+        net_salary: canSeeSalary ? (entry.salary_payments + entry.bonuses - entry.advances - entry.deductions) : null,
+        remaining_salary: canSeeSalary
+          ? (rawBasicSalary + runningDaily.bonuses - runningDaily.advances - runningDaily.deductions - runningDaily.salary_payments)
+          : null,
       });
     }
   });
@@ -1224,24 +1240,32 @@ async function getEmployeeSummary(id, monthParam, user) {
     }
     const entry = monthlyMap.get(row.month);
     if (row.type === 'advance') entry.advances = Number(row.total);
-    if (row.type === 'deduction') entry.deductions = Number(row.total);
-    if (row.type === 'bonus') entry.bonuses = Number(row.total);
-    if (row.type === 'salary_payment') entry.salary_payments = Number(row.total);
+    if (!isAdvanceMode) {
+      if (row.type === 'deduction') entry.deductions = Number(row.total);
+      if (row.type === 'bonus') entry.bonuses = Number(row.total);
+      if (row.type === 'salary_payment') entry.salary_payments = Number(row.total);
+    }
   });
 
   const monthly_summary = [];
   monthKeys.forEach((monthKey) => {
     const entry = monthlyMap.get(monthKey) || { salary_payments: 0, advances: 0, deductions: 0, bonuses: 0 };
-    if (monthKey === month || entry.salary_payments > 0 || entry.advances > 0 || entry.deductions > 0 || entry.bonuses > 0) {
+    const shouldInclude = hasPayrollView
+      ? (monthKey === month || entry.salary_payments > 0 || entry.advances > 0 || entry.deductions > 0 || entry.bonuses > 0)
+      : (monthKey === month || entry.advances > 0);
+
+    if (shouldInclude) {
       monthly_summary.push({
         month: monthKey,
-        basic_salary,
-        salary_payments: entry.salary_payments,
+        basic_salary: canSeeSalary ? rawBasicSalary : null,
+        salary_payments: hasPayrollView ? entry.salary_payments : 0,
         advances: entry.advances,
-        deductions: entry.deductions,
-        bonuses: entry.bonuses,
-        net_salary: entry.salary_payments + entry.bonuses - entry.advances - entry.deductions,
-        remaining_salary: basic_salary + entry.bonuses - entry.advances - entry.deductions - entry.salary_payments,
+        deductions: hasPayrollView ? entry.deductions : 0,
+        bonuses: hasPayrollView ? entry.bonuses : 0,
+        net_salary: canSeeSalary ? (entry.salary_payments + entry.bonuses - entry.advances - entry.deductions) : null,
+        remaining_salary: canSeeSalary
+          ? (rawBasicSalary + entry.bonuses - entry.advances - entry.deductions - entry.salary_payments)
+          : null,
       });
     }
   });
@@ -1249,10 +1273,10 @@ async function getEmployeeSummary(id, monthParam, user) {
 
   return {
     basic_salary,
-    salary_payments: salaryPayments,
+    salary_payments: hasPayrollView ? salaryPayments : 0,
     advances,
-    deductions,
-    bonuses,
+    deductions: hasPayrollView ? deductions : 0,
+    bonuses: hasPayrollView ? bonuses : 0,
     net_salary,
     remaining_salary,
     month,
@@ -1454,9 +1478,10 @@ async function getEmployeePayslip(id, monthParam, user) {
 
 async function getEmployeeSalesReport(id, user) {
   const isAdmin = user && user.role === 'admin';
+  const isPrivileged = isAdmin || user?.branch_scope === 'all' || user?.role === 'accountant' || user?.role === 'supervisor';
   const isBranchUser = user && user.role === 'branch_user';
 
-  if (!isAdmin && !isBranchUser) {
+  if (!isPrivileged && !isBranchUser) {
     const err = new Error('Unauthorized');
     err.statusCode = 403;
     throw err;
@@ -1469,7 +1494,7 @@ async function getEmployeeSalesReport(id, user) {
     throw err;
   }
 
-  if (isBranchUser && !hasBranchAccess(user, empRes.rows[0].branch_id)) {
+  if (!hasBranchAccess(user, empRes.rows[0].branch_id)) {
     const err = new Error('Unauthorized access');
     err.statusCode = 403;
     throw err;

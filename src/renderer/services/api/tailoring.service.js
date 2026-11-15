@@ -9,6 +9,8 @@ export const tailoringService = {
   createTailoring: (data) => api.post('/tailoring', data),
   updateTailoring: (id, data) => api.put(`/tailoring/${id}`, data),
   deleteTailoring: (id) => api.delete(`/tailoring/${id}`),
+  deleteTailoringOrder: (id) => api.delete(`/tailoring-orders/${id}`),
+  cancelTailoringOrder: (id) => api.put(`/tailoring-orders/${id}/cancel`),
 
   // Alterations
   listAlterations: (params = {}) => {

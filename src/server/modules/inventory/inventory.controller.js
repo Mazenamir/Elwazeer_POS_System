@@ -2,7 +2,7 @@ const inventoryService = require('./inventory.service');
 
 async function getMetadata(req, res, next) {
   try {
-    const canViewAll = req.user?.role === 'admin' || req.user?.branch_scope === 'all';
+    const canViewAll = req.user?.role === 'admin' || req.user?.branch_scope === 'all' || req.user?.role === 'accountant';
     const branchId = req.query.branch_id && req.query.branch_id !== 'all'
       ? parseInt(req.query.branch_id, 10)
       : (canViewAll ? null : (req.user?.branch_id ? parseInt(req.user.branch_id, 10) : null));
@@ -15,7 +15,7 @@ async function getMetadata(req, res, next) {
 
 async function getCategories(req, res, next) {
   try {
-    const canViewAll = req.user?.role === 'admin' || req.user?.branch_scope === 'all';
+    const canViewAll = req.user?.role === 'admin' || req.user?.branch_scope === 'all' || req.user?.role === 'accountant';
     const branchId = req.query.branch_id && req.query.branch_id !== 'all'
       ? parseInt(req.query.branch_id, 10)
       : (canViewAll ? null : (req.user?.branch_id ? parseInt(req.user.branch_id, 10) : null));

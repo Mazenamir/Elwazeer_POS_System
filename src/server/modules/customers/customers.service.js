@@ -5,6 +5,7 @@ const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/u
 const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
 const { queueSyncOperation } = require('../../database/sync.helpers');
 const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
+const { isBranchScopedUser } = require('../../../shared/constants/permissions');
 
 
 async function listCustomers(req, user) {
@@ -16,10 +17,8 @@ async function listCustomers(req, user) {
   if (config.IS_BRANCH_MODE) {
     const where = [];
     const params = [];
-    if (user && user.role !== 'admin' && !req.query.search && !req.query.phone && !req.query.name) {
-      if (user.branch_scope === 'all') {
-        // no branch filter
-      } else if (user.branch_scope === 'selected') {
+    if (user && isBranchScopedUser(user) && !req.query.search && !req.query.phone && !req.query.name) {
+      if (user.branch_scope === 'selected') {
         const authIds = getUserAuthorizedBranchIds(user);
         const placeholders = authIds.map(() => '?').join(',');
         params.push(...authIds);
@@ -28,6 +27,9 @@ async function listCustomers(req, user) {
         params.push(user.branch_id);
         where.push('c.branch_id = ?');
       }
+    } else if (req.query.branch_id && req.query.branch_id !== 'all') {
+      params.push(Number(req.query.branch_id));
+      where.push('c.branch_id = ?');
     }
     if (req.query.search) {
       params.push(likePattern(req.query.search));
@@ -68,10 +70,8 @@ async function listCustomers(req, user) {
   const params = [];
   const where = [];
 
-  if (user && user.role !== 'admin' && !req.query.search && !req.query.phone && !req.query.name) {
-    if (user.branch_scope === 'all') {
-      // no branch filter
-    } else if (user.branch_scope === 'selected') {
+  if (user && isBranchScopedUser(user) && !req.query.search && !req.query.phone && !req.query.name) {
+    if (user.branch_scope === 'selected') {
       const authIds = getUserAuthorizedBranchIds(user);
       params.push(authIds);
       where.push(`c.branch_id = ANY($${params.length})`);
@@ -79,6 +79,9 @@ async function listCustomers(req, user) {
       params.push(user.branch_id);
       where.push(`c.branch_id = $${params.length}`);
     }
+  } else if (req.query.branch_id && req.query.branch_id !== 'all') {
+    params.push(Number(req.query.branch_id));
+    where.push(`c.branch_id = $${params.length}`);
   }
   if (req.query.search) {
     params.push(likePattern(req.query.search));
@@ -321,6 +324,11 @@ async function getCustomerHistory(id, user, requestedLimit = 200) {
       err.statusCode = 404;
       throw err;
     }
+    if (user && !hasBranchAccess(user, cust.branch_id)) {
+      const err = new Error('Unauthorized');
+      err.statusCode = 403;
+      throw err;
+    }
     const orders = db.sqlite.prepare('SELECT * FROM orders WHERE customer_id = ? ORDER BY order_date DESC LIMIT ?').all(id, historyLimit);
     for (const ord of orders) {
       ord.items = db.sqlite.prepare(`
@@ -361,7 +369,7 @@ async function getCustomerHistory(id, user, requestedLimit = 200) {
       err.statusCode = 404;
       throw err;
     }
-    if (Number(customerCheck.rows[0].branch_id) !== Number(user.branch_id)) {
+    if (!hasBranchAccess(user, customerCheck.rows[0].branch_id)) {
       const err = new Error('Unauthorized');
       err.statusCode = 403;
       throw err;

@@ -859,7 +859,7 @@ async function listRentals(query = {}, user = null, req = null) {
   const params = [DEFAULT_RENTAL_FINE_PER_DAY];
   const where = ['$1::numeric IS NOT NULL'];
 
-  if (user && (user.role === 'branch_user' || user.role === 'cashier')) {
+  if (user && isBranchScopedUser(user)) {
     params.push(user.branch_id);
     where.push(`r.branch_id = $${params.length}`);
   } else if (query.branch_id && query.branch_id !== 'all') {
@@ -2131,7 +2131,7 @@ async function handleScanAction(body = {}, user = null) {
     throw err;
   }
 
-  const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
+  const isCashierOrBranch = user && isBranchScopedUser(user);
   let targetBranchId = isCashierOrBranch && user.branch_id
     ? user.branch_id
     : (body.branch_id && body.branch_id !== 'all' ? Number(body.branch_id) : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : (user?.branch_id || null)));
@@ -2366,10 +2366,12 @@ async function setRentalPrepared(id, body = {}, user = null) {
 }
 
 async function getRentalPreparationList(query = {}, user = null) {
-  const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
+  const isCashierOrBranch = user && isBranchScopedUser(user);
   let branchId = isCashierOrBranch && user.branch_id
     ? user.branch_id
-    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : (user?.branch_id || null)));
+    : (query.branch_id && query.branch_id !== 'all'
+        ? Number(query.branch_id)
+        : (query.branch_id === 'all' ? null : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : null)));
 
   let branchFilter = '';
   const params = [];
@@ -2438,10 +2440,12 @@ async function getRentalPreparationList(query = {}, user = null) {
 }
 
 async function getRentalHistoryLedger(query = {}, user = null) {
-  const isCashierOrBranch = user && (user.role === 'branch_user' || user.role === 'cashier');
+  const isCashierOrBranch = user && isBranchScopedUser(user);
   let branchId = isCashierOrBranch && user.branch_id
     ? user.branch_id
-    : (query.branch_id && query.branch_id !== 'all' ? Number(query.branch_id) : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : (user?.branch_id || null)));
+    : (query.branch_id && query.branch_id !== 'all'
+        ? Number(query.branch_id)
+        : (query.branch_id === 'all' ? null : (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : null)));
 
   const cairoNow = await getDatabaseCairoNow(db);
   const startDate = query.start_date || query.from_date || cairoNow.date;

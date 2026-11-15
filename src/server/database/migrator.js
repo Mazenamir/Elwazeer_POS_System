@@ -89,6 +89,19 @@ async function runPostgresMigrations() {
     console.warn('Could not seed initial branches & users into PostgreSQL:', seedErr.message);
   }
 
+  // Ensure all-branch access for admin, accountant, and accounting-titled accounts in PostgreSQL
+  try {
+    await db.query(`
+      UPDATE users SET branch_scope = 'all' WHERE (
+        role IN ('admin', 'accountant')
+        OR LOWER(username) LIKE '%حسابات%'
+        OR LOWER(username) LIKE '%hesabat%'
+        OR LOWER(username) LIKE '%accountant%'
+        OR LOWER(username) LIKE 'acct%'
+      ) AND (branch_scope IS NULL OR branch_scope = 'single')
+    `);
+  } catch {}
+
   console.log('✨ All PostgreSQL migrations are up to date.');
 }
 
@@ -580,7 +593,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
     sqlite.exec("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP");
   } catch {}
   try {
-    sqlite.exec("UPDATE users SET branch_scope = 'all' WHERE role = 'admin' AND (branch_scope IS NULL OR branch_scope = 'single')");
+    sqlite.exec("UPDATE users SET branch_scope = 'all' WHERE (role = 'admin' OR role = 'accountant' OR LOWER(username) LIKE '%حسابات%' OR LOWER(username) LIKE '%hesabat%' OR LOWER(username) LIKE '%accountant%' OR LOWER(username) LIKE 'acct%') AND (branch_scope IS NULL OR branch_scope = 'single')");
   } catch {}
   try {
     sqlite.exec("ALTER TABLE branches ADD COLUMN rentals_enabled INTEGER DEFAULT 1");
@@ -738,11 +751,11 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       ];
 
       for (const u of allBranchUsers) {
-        if (u.role === 'admin') {
+        if (u.role === 'admin' || u.role === 'accountant' || /^(acct|hesabat|accountant|حسابات)/i.test(u.username || '')) {
           if (u.branch_scope !== 'all') {
             sqliteDb.prepare("UPDATE users SET branch_scope = 'all' WHERE id = ?").run(u.id);
           }
-          continue;
+          if (u.role === 'admin') continue;
         }
         let perms = [];
         try {
@@ -1032,7 +1045,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
           `);
           for (const u of seedData.users) {
             const perms = typeof u.permissions === 'object' ? JSON.stringify(u.permissions) : (u.permissions || '[]');
-            let bScope = u.branch_scope || (u.role === 'admin' ? 'all' : 'single');
+            let bScope = u.branch_scope || ((u.role === 'admin' || u.role === 'accountant' || /^(acct|hesabat|accountant|حسابات)/i.test(u.username || '')) ? 'all' : 'single');
             let bIds = Array.isArray(u.branch_ids) ? JSON.stringify(u.branch_ids) : (u.branch_ids || '[]');
             if (u.username === 'دمنهور' && (!u.branch_scope || u.branch_scope === 'single')) {
               bScope = 'selected';

@@ -141,7 +141,7 @@ const getPaginationItems = (current, total) => {
 
 export function Suppliers() {
   const { user, isAdmin, hasPermission } = useAuth();
-  const { activeBranchId, branches, selectBranch } = useBranch();
+  const { activeBranchId, branches, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -176,8 +176,8 @@ export function Suppliers() {
   const canAccessSuppliers = Boolean(
     isAdmin || (hasPermission('suppliers.access') && hasSuppliersSpecific)
   );
-  const hasFullBranchAccess = Boolean(isAdmin || user?.branch_scope === 'all' || hasPermission('inventory_view_all_branches'));
-  const canSwitchBranchInInventory = Boolean(hasFullBranchAccess || (user?.branch_scope === 'selected' && branches.length > 1));
+  const hasFullBranchAccess = Boolean(isAdmin || user?.role === 'accountant' || user?.branch_scope === 'all' || /^(acct|hesabat|accountant|حسابات)/i.test(user?.username || '') || hasAllBranchesAccess || hasPermission('inventory_view_all_branches'));
+  const canSwitchBranchInInventory = Boolean(hasFullBranchAccess || canSwitchBranches || (user?.branch_scope === 'selected' && branches.length > 1));
 
   const canAccessMatrix = Boolean(
     isAdmin ||

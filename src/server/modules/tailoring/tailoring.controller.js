@@ -58,7 +58,7 @@ async function createTailoringOrder(req, res, next) {
 
 async function deleteTailoringOrder(req, res, next) {
   try {
-    const result = await service.deleteTailoringOrder(req.params.id, req.user);
+    const result = await service.deleteTailoringOrder(req.params.id, req.user, req);
     res.json(result);
   } catch (err) {
     next(err);

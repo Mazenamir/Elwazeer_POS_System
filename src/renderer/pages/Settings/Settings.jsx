@@ -807,11 +807,25 @@ export function Settings() {
     }).filter(Boolean);
   }, [permSearch]);
 
-  const handleApplyPreset = (presetPerms) => {
-    setUserForm((prev) => ({
-      ...prev,
-      permissions: [...presetPerms],
-    }));
+  const handleApplyPreset = (preset) => {
+    const permissions = Array.isArray(preset) ? preset : (preset?.permissions || []);
+    const presetId = preset?.id;
+    setUserForm((prev) => {
+      const updated = {
+        ...prev,
+        permissions: [...permissions],
+      };
+      if (presetId === 'accountant') {
+        updated.role = 'accountant';
+        updated.branch_scope = 'all';
+        updated.branch_ids = branches.map((b) => Number(b.id));
+      } else if (presetId === 'all') {
+        updated.role = 'admin';
+        updated.branch_scope = 'all';
+        updated.branch_ids = branches.map((b) => Number(b.id));
+      }
+      return updated;
+    });
   };
 
   const handleSaveUser = async (e) => {
@@ -825,7 +839,8 @@ export function Settings() {
       return;
     }
     const isRoleAdmin = userForm.role === 'admin';
-    const isAllBranches = isRoleAdmin || userForm.branch_scope === 'all';
+    const isRoleAccountant = userForm.role === 'accountant';
+    const isAllBranches = isRoleAdmin || isRoleAccountant || userForm.branch_scope === 'all';
     const effectiveScope = isAllBranches ? 'all' : (userForm.branch_scope || 'single');
     const effectiveBranchId = Number(userForm.branch_id) > 0
       ? Number(userForm.branch_id)
@@ -2393,7 +2408,7 @@ export function Settings() {
                   <button
                     key={preset.id}
                     type="button"
-                    onClick={() => handleApplyPreset(preset.permissions)}
+                    onClick={() => handleApplyPreset(preset)}
                     className="px-2.5 py-1 text-xs font-bold rounded-xl border border-[#E6DECD] bg-[#FFFDF9] hover:bg-slate-100 text-slate-700 transition-colors"
                   >
                     {preset.label}

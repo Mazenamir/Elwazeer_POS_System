@@ -1,6 +1,7 @@
 const db = require('../../database/connection');
 const config = require('../../config/env');
 const { likePattern } = require('../../../shared/utils/string');
+const { isBranchScopedUser } = require('../../../shared/constants/permissions');
 
 /**
  * Unified Global Search Service
@@ -25,7 +26,7 @@ async function globalSearch({ q = '', branchId = 'all', type = 'all' }, user = n
   const isNumeric = /^\d+$/.test(cleanNum);
   const pattern = `%${queryStr}%`;
 
-  const isBranchScoped = user && user.role === 'branch_user';
+  const isBranchScoped = isBranchScopedUser(user);
   const effectiveBranchId = isBranchScoped
     ? user.branch_id
     : (branchId && branchId !== 'all' ? Number(branchId) : null);

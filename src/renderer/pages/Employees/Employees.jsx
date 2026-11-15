@@ -144,6 +144,7 @@ export function Employees() {
 
   // Financial Transactions & Salary Summary Modal
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [showSalaryInModal, setShowSalaryInModal] = useState(false);
   const [summaryEmp, setSummaryEmp] = useState(null);
   const [summaryData, setSummaryData] = useState({ daily_summary: [], monthly_summary: [] });
   const [activeSummaryTab, setActiveSummaryTab] = useState('daily');
@@ -293,6 +294,13 @@ export function Employees() {
         if (typeof pendingAuthAction === 'function') {
           pendingAuthAction(verifiedPwd);
           setPendingAuthAction(null);
+        }
+        if (showSummaryModal && summaryEmp) {
+          client.get(`/employees/${summaryEmp.id}/summary`, { headers: { 'x-salary-password': verifiedPwd } })
+            .then((res) => {
+              setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
+            })
+            .catch(() => {});
         }
       } else {
         setSalaryAuthError(res?.error || 'كلمة المرور غير صحيحة');
@@ -520,12 +528,14 @@ export function Employees() {
     }
   };
 
-  const executeOpenSummary = async (emp, pwd) => {
+  const executeOpenSummary = async (emp, pwd, initialType = null) => {
     setSummaryEmp(emp);
     setShowSummaryModal(true);
     setLoadingSummary(true);
+    setShowSalaryInModal(false);
+    const targetType = initialType || (canCreateAdvance ? 'advance' : 'deduction');
     setTxForm({
-      type: canCreateAdvance ? 'advance' : 'deduction',
+      type: targetType,
       amount: '',
       notes: '',
       transaction_date: new Date().toISOString().split('T')[0],
@@ -533,10 +543,11 @@ export function Employees() {
     });
     try {
       const headers = pwd ? { 'x-salary-password': pwd } : {};
-      const res = await client.get(`/employees/${emp.id}/summary`, { headers });
+      const queryParam = targetType === 'advance' ? '?type=advance' : '';
+      const res = await client.get(`/employees/${emp.id}/summary${queryParam}`, { headers });
       setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
     } catch (err) {
-      toast({ title: 'خطأ', message: err.message || 'كلمة سر الرواتب غير صحيحة أو غير مصرح', variant: 'danger' });
+      toast({ title: 'خطأ', message: err.message || 'تعذر تحميل البيانات المالية', variant: 'danger' });
       setSummaryData({ daily_summary: [], monthly_summary: [] });
       setShowSummaryModal(false);
     } finally {
@@ -545,20 +556,15 @@ export function Employees() {
   };
 
   // Open Salary & Transactions Summary
-  const openSummaryModal = (emp) => {
-    setTxForm((prev) => ({
-      ...prev,
-      type: canCreateAdvance ? 'advance' : 'deduction',
-      amount: '',
-      notes: '',
-      transaction_date: new Date().toISOString().split('T')[0],
-    }));
+  const openSummaryModal = (emp, initialType = null) => {
+    const targetType = initialType || (canCreateAdvance ? 'advance' : 'deduction');
+    const isAddingAdvance = targetType === 'advance';
 
     const proceed = (pwd) => {
-      executeOpenSummary(emp, pwd);
+      executeOpenSummary(emp, pwd, targetType);
     };
 
-    if (salaryPassword || user?.role === 'admin') {
+    if (isAddingAdvance || !canViewPayroll || salaryPassword || user?.role === 'admin') {
       proceed(salaryPassword || '');
     } else {
       setPendingAuthAction(() => (pwd) => proceed(pwd));
@@ -568,6 +574,26 @@ export function Employees() {
     }
   };
 
+  // Handle switching transaction type inside modal (e.g. advance <-> deduction)
+  const handleTxTypeChange = async (newType) => {
+    const wasAdvance = txForm.type === 'advance';
+    const isNowAdvance = newType === 'advance';
+    setTxForm((prev) => ({ ...prev, type: newType }));
+    if (wasAdvance !== isNowAdvance && summaryEmp) {
+      setLoadingSummary(true);
+      try {
+        const pwd = salaryPassword || txForm.salary_password || '';
+        const headers = pwd ? { 'x-salary-password': pwd } : {};
+        const queryParam = isNowAdvance ? '?type=advance' : '';
+        const res = await client.get(`/employees/${summaryEmp.id}/summary${queryParam}`, { headers });
+        setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
+      } catch {
+        // preserve current summary on temporary error
+      } finally {
+        setLoadingSummary(false);
+      }
+    }
+  };
 
   // Save Financial Transaction
   const handleSaveTransaction = async (e) => {
@@ -594,11 +620,17 @@ export function Employees() {
         transaction_date: txForm.transaction_date,
       });
 
-      toast({ title: 'تم الحفظ', message: 'تم تسجيل الحركة المالية بنجاح', variant: 'success' });
+      toast({
+        title: 'تم الحفظ',
+        message: txForm.type === 'advance' ? 'تم تسجيل وقيد السلفة المالية بنجاح' : 'تم تسجيل الحركة المالية بنجاح',
+        variant: 'success',
+      });
       setTxForm((prev) => ({ ...prev, amount: '', notes: '' }));
       // Reload summary
-      const headers = txForm.salary_password ? { 'x-salary-password': txForm.salary_password } : {};
-      const res = await client.get(`/employees/${summaryEmp.id}/summary`, { headers });
+      const pwd = salaryPassword || txForm.salary_password || '';
+      const headers = pwd ? { 'x-salary-password': pwd } : {};
+      const queryParam = txForm.type === 'advance' ? '?type=advance' : '';
+      const res = await client.get(`/employees/${summaryEmp.id}/summary${queryParam}`, { headers });
       setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
       loadEmployees();
     } catch (err) {
@@ -1051,7 +1083,7 @@ export function Employees() {
                           <div className="flex flex-col gap-1 items-start">
                             <button
                               type="button"
-                              onClick={() => openSummaryModal(emp)}
+                              onClick={() => openSummaryModal(emp, 'bonus')}
                               title="عرض تفاصيل المكافأة والحركات المالية"
                               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-xs"
                             >
@@ -1160,8 +1192,12 @@ export function Employees() {
 
                           {(canViewPayroll || canCreateAdvance) && (
                             <button
-                              onClick={() => openSummaryModal(emp)}
-                              title="الحركات المالية وكشف الراتب"
+                              onClick={() => openSummaryModal(emp, canCreateAdvance ? 'advance' : 'deduction')}
+                              title={
+                                canCreateAdvance && !canViewPayroll
+                                  ? 'تسجيل سلفة مالية وسجل الحركات'
+                                  : 'تسجيل سلفة / الحركات المالية'
+                              }
                               className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors"
                             >
                               <DollarSign className="w-4 h-4" />
@@ -1568,162 +1604,257 @@ export function Employees() {
       </Modal>
 
       {/* Salary & Financial Transactions Modal */}
-      <Modal
-        isOpen={showSummaryModal}
-        onClose={() => setShowSummaryModal(false)}
-        title={`الحركات المالية ومسير الراتب: ${summaryEmp?.name || ''}`}
-        maxWidth="max-w-4xl"
-      >
-        <div className="space-y-6">
-          {/* Add transaction form */}
-          {(canCreateAdvance || canExecutePayroll) && (
-            <form onSubmit={handleSaveTransaction} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-              <p className="text-xs font-black text-slate-800">تسجيل حركة مالية جديدة</p>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 mb-1">نوع الحركة</label>
-                  <select
-                    className="w-full h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
-                    value={txForm.type}
-                    onChange={(e) => setTxForm({ ...txForm, type: e.target.value })}
-                  >
-                    {canCreateAdvance && <option value="advance">سلفة مالية</option>}
-                    {canExecutePayroll && (
-                      <>
-                        <option value="deduction">خصم</option>
-                        <option value="bonus">مكافأة</option>
-                        <option value="salary_payment">تسديد / صرف راتب</option>
-                      </>
+      {(() => {
+        const isAdvanceMode = txForm.type === 'advance';
+        const canDisplaySalaryDetails = Boolean(
+          !isAdvanceMode &&
+          canViewPayroll &&
+          salaryVisible &&
+          showSalaryInModal
+        );
+        const canDisplayPayrollBreakdown = Boolean(
+          !isAdvanceMode &&
+          canViewPayroll
+        );
+        const summaryColSpan = (canDisplaySalaryDetails ? 2 : 0) + 2 + (canDisplayPayrollBreakdown ? 3 : 0);
+
+        const displayedDailySummary = isAdvanceMode
+          ? (summaryData.daily_summary || []).filter((r) => Number(r.advances || 0) > 0)
+          : (summaryData.daily_summary || []);
+
+        const displayedMonthlySummary = isAdvanceMode
+          ? (summaryData.monthly_summary || []).filter((r) => Number(r.advances || 0) > 0 || r.month === summaryData.month)
+          : (summaryData.monthly_summary || []);
+
+        return (
+          <Modal
+            isOpen={showSummaryModal}
+            onClose={() => {
+              setShowSummaryModal(false);
+              setShowSalaryInModal(false);
+            }}
+            title={
+              isAdvanceMode
+                ? `تسجيل سلفة مالية وسجل السلف: ${summaryEmp?.name || ''}`
+                : canDisplaySalaryDetails
+                ? `الحركات المالية ومسير الراتب: ${summaryEmp?.name || ''}`
+                : `الحركات المالية والمسحوبات: ${summaryEmp?.name || ''}`
+            }
+            maxWidth="max-w-4xl"
+          >
+            <div className="space-y-6">
+              {/* Add transaction form */}
+              {(canCreateAdvance || canExecutePayroll) && (
+                <form onSubmit={handleSaveTransaction} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <p className="text-xs font-black text-slate-800">
+                      {isAdvanceMode ? 'تسجيل سلفة مالية جديدة' : 'تسجيل حركة مالية جديدة'}
+                    </p>
+                    {isAdvanceMode && (
+                      <span className="text-[11px] font-bold text-slate-500 bg-white border border-slate-200 px-2.5 py-0.5 rounded-lg">
+                        🔒 بيانات الراتب الأساسي والمسير محجوبة أثناء قيد السلف
+                      </span>
                     )}
-                  </select>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">نوع الحركة</label>
+                      <select
+                        className="w-full h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
+                        value={txForm.type}
+                        onChange={(e) => handleTxTypeChange(e.target.value)}
+                      >
+                        {canCreateAdvance && <option value="advance">سلفة مالية</option>}
+                        {canExecutePayroll && (
+                          <>
+                            <option value="deduction">خصم</option>
+                            <option value="bonus">مكافأة</option>
+                            <option value="salary_payment">تسديد / صرف راتب</option>
+                          </>
+                        )}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">المبلغ (ج.م)</label>
+                      <Input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        required
+                        placeholder="0.00"
+                        value={txForm.amount}
+                        onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">التاريخ</label>
+                      <Input
+                        type="date"
+                        required
+                        value={txForm.transaction_date}
+                        onChange={(e) => setTxForm({ ...txForm, transaction_date: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">البيان / ملاحظة</label>
+                      <Input
+                        placeholder="سبب السلفة أو المكافأة..."
+                        value={txForm.notes}
+                        onChange={(e) => setTxForm({ ...txForm, notes: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button type="submit" variant="primary" size="sm">
+                      {isAdvanceMode ? 'تأكيد وقيد السلفة' : 'تأكيد وقيد الحركة'}
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* Tabs for Daily vs Monthly & Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSummaryTab('daily')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                      activeSummaryTab === 'daily'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {isAdvanceMode ? 'سجل السلف اليومي' : 'كشف الحساب اليومي'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSummaryTab('monthly')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                      activeSummaryTab === 'monthly'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {isAdvanceMode ? 'سجل السلف الشهري' : 'كشف الحساب الشهري'}
+                  </button>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 mb-1">المبلغ (ج.م)</label>
-                  <Input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    required
-                    placeholder="0.00"
-                    value={txForm.amount}
-                    onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })}
-                  />
-                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
+                    إجمالي سلف الشهر: {formatCurrency(summaryData.advances || 0)}
+                  </span>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 mb-1">التاريخ</label>
-                  <Input
-                    type="date"
-                    required
-                    value={txForm.transaction_date}
-                    onChange={(e) => setTxForm({ ...txForm, transaction_date: e.target.value })}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 mb-1">البيان / ملاحظة</label>
-                  <Input
-                    placeholder="سبب السلفة أو المكافأة..."
-                    value={txForm.notes}
-                    onChange={(e) => setTxForm({ ...txForm, notes: e.target.value })}
-                  />
+                  {canViewPayroll && !isAdvanceMode && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (canDisplaySalaryDetails) {
+                          setShowSalaryInModal(false);
+                        } else if (salaryVisible || user?.role === 'admin') {
+                          setShowSalaryInModal(true);
+                          if (!salaryVisible) setSalaryVisible(true);
+                        } else {
+                          setPendingAuthAction(() => (pwd) => {
+                            setShowSalaryInModal(true);
+                          });
+                          setSalaryAuthInput('');
+                          setSalaryAuthError('');
+                          setShowSalaryAuthModal(true);
+                        }
+                      }}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all ${
+                        canDisplaySalaryDetails
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                      }`}
+                      title={canDisplaySalaryDetails ? 'إخفاء أعمدة الراتب الأساسي والمسير' : 'عرض أعمدة الراتب الأساسي والمسير'}
+                    >
+                      {canDisplaySalaryDetails ? <EyeOff className="w-3.5 h-3.5 text-amber-700" /> : <Eye className="w-3.5 h-3.5 text-slate-500" />}
+                      <span>{canDisplaySalaryDetails ? 'إخفاء الراتب الأساسي' : 'عرض الراتب الأساسي'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <Button type="submit" variant="primary" size="sm">
-                  تأكيد وقيد الحركة
-                </Button>
-              </div>
-            </form>
-          )}
-
-          {/* Tabs for Daily vs Monthly */}
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-            <button
-              type="button"
-              onClick={() => setActiveSummaryTab('daily')}
-              className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
-                activeSummaryTab === 'daily'
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              كشف الحساب اليومي
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSummaryTab('monthly')}
-              className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
-                activeSummaryTab === 'monthly'
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              كشف الحساب الشهري
-            </button>
-          </div>
-
-          {/* Table */}
-          <div className="overflow-x-auto max-h-80 border border-slate-200 rounded-2xl">
-            <table className="w-full text-right border-collapse text-xs">
-              <thead className="sticky top-0 bg-slate-100 border-b border-slate-200">
-                <tr>
-                  <th className="py-2.5 px-3 font-black text-slate-700">
-                    {activeSummaryTab === 'daily' ? 'اليوم' : 'الشهر'}
-                  </th>
-                  <th className="py-2.5 px-3 font-black text-slate-700">الراتب الأساسي</th>
-                  <th className="py-2.5 px-3 font-black text-slate-700">المكافآت (+)</th>
-                  <th className="py-2.5 px-3 font-black text-slate-700">السلف (-)</th>
-                  <th className="py-2.5 px-3 font-black text-slate-700">الخصومات (-)</th>
-                  <th className="py-2.5 px-3 font-black text-slate-700">المسدد (-)</th>
-                  <th className="py-2.5 px-3 font-black text-slate-700">المتبقي الصافي</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-bold">
-                {loadingSummary ? (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
-                      جارِ تحميل البيانات المالية...
-                    </td>
-                  </tr>
-                ) : (activeSummaryTab === 'daily'
-                    ? summaryData.daily_summary
-                    : summaryData.monthly_summary
-                  )?.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
-                      لا توجد حركات مالية مسجلة
-                    </td>
-                  </tr>
-                ) : (
-                  (activeSummaryTab === 'daily'
-                    ? summaryData.daily_summary
-                    : summaryData.monthly_summary
-                  ).map((row, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3 text-slate-900 font-black">
-                        {activeSummaryTab === 'daily'
-                          ? new Date(row.day).toLocaleDateString('ar-EG-u-nu-latn')
-                          : row.month}
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-700">{formatCurrency(row.basic_salary)}</td>
-                      <td className="py-2.5 px-3 text-emerald-600">{formatCurrency(row.bonuses)}</td>
-                      <td className="py-2.5 px-3 text-amber-600">{formatCurrency(row.advances)}</td>
-                      <td className="py-2.5 px-3 text-rose-600">{formatCurrency(row.deductions)}</td>
-                      <td className="py-2.5 px-3 text-blue-600">{formatCurrency(row.salary_payments)}</td>
-                      <td className="py-2.5 px-3 text-slate-900 font-black">
-                        {formatCurrency(row.remaining_salary)}
-                      </td>
+              {/* Table */}
+              <div className="overflow-x-auto max-h-80 border border-slate-200 rounded-2xl">
+                <table className="w-full text-right border-collapse text-xs">
+                  <thead className="sticky top-0 bg-slate-100 border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-3 font-black text-slate-700">
+                        {activeSummaryTab === 'daily' ? 'اليوم' : 'الشهر'}
+                      </th>
+                      {canDisplaySalaryDetails && (
+                        <th className="py-2.5 px-3 font-black text-slate-700">الراتب الأساسي</th>
+                      )}
+                      <th className="py-2.5 px-3 font-black text-slate-700">
+                        {isAdvanceMode ? 'مبلغ السلفة (-)' : 'السلف (-)'}
+                      </th>
+                      {canDisplayPayrollBreakdown && (
+                        <>
+                          <th className="py-2.5 px-3 font-black text-slate-700">المكافآت (+)</th>
+                          <th className="py-2.5 px-3 font-black text-slate-700">الخصومات (-)</th>
+                          <th className="py-2.5 px-3 font-black text-slate-700">المسدد (-)</th>
+                        </>
+                      )}
+                      {canDisplaySalaryDetails && (
+                        <th className="py-2.5 px-3 font-black text-slate-700">المتبقي الصافي</th>
+                      )}
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </Modal>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-bold">
+                    {loadingSummary ? (
+                      <tr>
+                        <td colSpan={summaryColSpan} className="py-8 text-center text-slate-400">
+                          {isAdvanceMode ? 'جارِ تحميل سجل السلف...' : 'جارِ تحميل البيانات المالية...'}
+                        </td>
+                      </tr>
+                    ) : (activeSummaryTab === 'daily' ? displayedDailySummary : displayedMonthlySummary).length === 0 ? (
+                      <tr>
+                        <td colSpan={summaryColSpan} className="py-8 text-center text-slate-400">
+                          {isAdvanceMode ? 'لا توجد سلف مسجلة لهذا الموظف' : 'لا توجد حركات مالية مسجلة'}
+                        </td>
+                      </tr>
+                    ) : (
+                      (activeSummaryTab === 'daily' ? displayedDailySummary : displayedMonthlySummary).map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="py-2.5 px-3 text-slate-900 font-black">
+                            {activeSummaryTab === 'daily'
+                              ? new Date(row.day).toLocaleDateString('ar-EG-u-nu-latn')
+                              : row.month}
+                          </td>
+                          {canDisplaySalaryDetails && (
+                            <td className="py-2.5 px-3 text-slate-700">
+                              {row.basic_salary != null ? formatCurrency(row.basic_salary) : '••••••'}
+                            </td>
+                          )}
+                          <td className="py-2.5 px-3 text-amber-600 font-bold">{formatCurrency(row.advances)}</td>
+                          {canDisplayPayrollBreakdown && (
+                            <>
+                              <td className="py-2.5 px-3 text-emerald-600">{formatCurrency(row.bonuses)}</td>
+                              <td className="py-2.5 px-3 text-rose-600">{formatCurrency(row.deductions)}</td>
+                              <td className="py-2.5 px-3 text-blue-600">{formatCurrency(row.salary_payments)}</td>
+                            </>
+                          )}
+                          {canDisplaySalaryDetails && (
+                            <td className="py-2.5 px-3 text-slate-900 font-black">
+                              {row.remaining_salary != null ? formatCurrency(row.remaining_salary) : '••••••'}
+                            </td>
+                          )}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Payslip Modal */}
       <Modal

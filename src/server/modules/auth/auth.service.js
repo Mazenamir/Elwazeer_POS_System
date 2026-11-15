@@ -123,13 +123,14 @@ async function getUserFreshData(userId) {
 
   const isBranchMode = Boolean(config.IS_BRANCH_MODE);
   const effectiveBranchId = isBranchMode ? Number(config.BRANCH_ID || user.branch_id || 1) : user.branch_id;
+  const isPrivilegedAllBranches = user.role === 'admin' || user.role === 'accountant' || user.branch_scope === 'all' || /^(acct|hesabat|accountant|حسابات)/i.test(user.username || '');
 
   const fresh = {
     id: user.id,
     username: user.username,
     role: user.role,
     branch_id: effectiveBranchId,
-    branch_scope: user.branch_scope || (user.role === 'admin' ? 'all' : 'single'),
+    branch_scope: isPrivilegedAllBranches ? 'all' : (user.branch_scope || 'single'),
     branch_ids: branchIds,
     permissions: normalizePermissions(user.permissions),
     token_version: Number(user.token_version || 1),
@@ -269,7 +270,8 @@ async function authenticateUser(username, password) {
 
   const permissions = normalizePermissions(user.permissions);
   const displayName = user.full_name || user.username;
-  const branchScope = user.branch_scope || (user.role === 'admin' ? 'all' : 'single');
+  const isPrivilegedAllBranches = user.role === 'admin' || user.role === 'accountant' || user.branch_scope === 'all' || /^(acct|hesabat|accountant|حسابات)/i.test(user.username || '');
+  const branchScope = isPrivilegedAllBranches ? 'all' : (user.branch_scope || 'single');
   let branchIds = [];
   if (Array.isArray(user.branch_ids)) {
     branchIds = user.branch_ids;

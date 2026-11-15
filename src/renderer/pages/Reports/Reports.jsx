@@ -98,10 +98,17 @@ function cleanBranchLabel(rawName) {
 
 export function Reports() {
   const { user, isAdmin, hasPermission } = useAuth();
-  const { branches, isMultiBranch, activeBranchId } = useBranch();
+  const { branches, isMultiBranch, activeBranchId, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
   const { toast } = useToast();
 
-  const isBranchScoped = Boolean(user && user.role !== 'admin' && user.branch_scope !== 'all');
+  const isBranchScoped = Boolean(
+    user &&
+    user.role !== 'admin' &&
+    user.branch_scope !== 'all' &&
+    user.role !== 'accountant' &&
+    !/^(acct|hesabat|accountant|حسابات)/i.test(user.username || '') &&
+    !hasAllBranchesAccess
+  );
 
   // Granular Tab Permissions Gating
   const canAccessDaily = Boolean(isAdmin || hasPermission('reports.daily.view') || hasPermission('reports.sales.view'));
@@ -1220,11 +1227,17 @@ export function Reports() {
         </div>
 
         <div className="flex items-center gap-2">
-          {!isBranchScoped && (
+          {(!isBranchScoped || canSwitchBranches || hasAllBranchesAccess) && (
             <select
               className="h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
               value={selectedBranch}
-              onChange={(e) => setSelectedBranch(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedBranch(val);
+                if (typeof selectBranch === 'function') {
+                  selectBranch(val);
+                }
+              }}
             >
               <option value="all">كل الفروع</option>
               {branches.map((b) => (

@@ -1,6 +1,7 @@
 const db = require('../../database/connection');
 const config = require('../../config/env');
 const syncService = require('../sync/sync.service');
+const { isBranchScopedUser } = require('../../../shared/constants/permissions');
 
 // In-memory branch heartbeat cache: branch_id -> { lastSeen: number (ms), isOnline: boolean, meta: object }
 const branchHeartbeats = new Map();
@@ -257,9 +258,9 @@ async function getNotifications(user = null) {
     `;
     const params = [];
 
-    // Branch scoping: if user belongs to a specific branch and is not admin
+    // Branch scoping: if user belongs to a specific branch and is branch scoped
     const effectiveBranchId = user?.branch_id || (config.IS_BRANCH_MODE ? config.BRANCH_ID : null);
-    if (effectiveBranchId && user?.role !== 'admin' && String(effectiveBranchId) !== 'all') {
+    if (effectiveBranchId && isBranchScopedUser(user) && String(effectiveBranchId) !== 'all') {
       transferQuery += ` WHERE (st.from_branch_id = $1 OR st.to_branch_id = $1) `;
       params.push(effectiveBranchId);
     }
@@ -370,7 +371,7 @@ async function getNotifications(user = null) {
         WHERE ib.stock_level <= COALESCE(i.min_stock_level, 5)
           AND (i.is_deleted IS NULL OR NOT i.is_deleted)
       `;
-      if (user && user.branch_id && user.role !== 'admin' && String(user.branch_id) !== 'all') {
+      if (user && user.branch_id && isBranchScopedUser(user) && String(user.branch_id) !== 'all') {
         lowStockQuery += ` AND ib.branch_id = $1 `;
         lowStockParams.push(user.branch_id);
       }

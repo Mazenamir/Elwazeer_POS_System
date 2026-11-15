@@ -9,7 +9,8 @@ const { queueSyncOperation, logActivity } = require('../../database/sync.helpers
 const { resolveOrderId } = require('./sales.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 const { adjustInventoryStock } = require('../inventory/inventory.helpers');
-const { resolveEffectiveBranchId, validateBranchAccess } = require('../../middleware/branchScope.middleware');
+const { resolveEffectiveBranchId, validateBranchAccess, hasBranchAccess } = require('../../middleware/branchScope.middleware');
+const { isBranchScopedUser } = require('../../../shared/constants/permissions');
 
 async function getInvoiceCounterResetFilter(dbOrTx, branchId) {
   try {
@@ -26,7 +27,7 @@ async function getInvoiceCounterResetFilter(dbOrTx, branchId) {
 
 async function getNextOrderId(branchId, user = null) {
   let b_id = branchId;
-  if (user && user.role !== 'admin') {
+  if (user && isBranchScopedUser(user)) {
     b_id = user.branch_id;
   }
 
@@ -101,7 +102,7 @@ async function listOrders(query = {}, user = null, req = null) {
   const where = [`COALESCE(o.order_source, 'cashier') = 'cashier'`];
 
   if (user && user.role !== 'admin') {
-    if (user.branch_scope === 'all') {
+    if (!isBranchScopedUser(user) || user.branch_scope === 'all' || user.role === 'accountant') {
       if (query.branch_id && query.branch_id !== 'all') {
         params.push(query.branch_id);
         where.push(`o.branch_id = $${params.length}`);
@@ -810,7 +811,7 @@ async function getOrderDetails(id, user) {
   }
 
   const order = orderRows[0];
-  if (user && user.role !== 'admin' && Number(order.branch_id) !== Number(user.branch_id)) {
+  if (user && !hasBranchAccess(user, order.branch_id)) {
     const err = new Error('Unauthorized');
     err.statusCode = 403;
     throw err;
@@ -1743,7 +1744,7 @@ async function listReturns(query = {}, user = null, req = null) {
   const params = [];
   const where = [];
 
-  if (user && user.role === 'branch_user') {
+  if (user && isBranchScopedUser(user)) {
     params.push(user.branch_id);
     where.push(`COALESCE(r.branch_id, o.branch_id) = $${params.length}`);
   } else if (query.branch_id && query.branch_id !== 'all') {

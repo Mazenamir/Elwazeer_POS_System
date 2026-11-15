@@ -6,6 +6,7 @@ const {
   getBranchLogoAsset,
   getBranchCleanName,
   getReportBranchTitle,
+  getReportBranchId,
 } = require('./reports.helpers');
 
 // Global styling palette matching reference workbook exactly
@@ -3138,15 +3139,9 @@ async function generateConsolidatedBranchExcel(query = {}, user = null) {
     month = (await getDatabaseCairoNow(db)).month;
   }
 
-  let branchId = null;
-  if (user && user.role !== 'admin') {
-    branchId = String(user.branch_id);
-  } else if (q.branch_id && q.branch_id !== 'all') {
-    branchId = String(q.branch_id);
-  } else {
-    branchId = 'all';
-  }
-  const isAll = branchId === 'all' || !branchId;
+  const resolvedBranchId = getReportBranchId(user, q);
+  const branchId = resolvedBranchId || 'all';
+  const isAll = branchId === 'all';
   const branding = await getBranchBranding(db, isAll ? 'all' : branchId);
 
   const [yearStr, monthStr] = month.split('-');

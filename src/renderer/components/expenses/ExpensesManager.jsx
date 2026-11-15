@@ -86,7 +86,7 @@ export const PAYMENT_METHODS = [
 
 export function ExpensesManager({ isCashierTab = false }) {
   const { user, isAdmin, hasPermission } = useAuth();
-  const { branches, activeBranchId } = useBranch();
+  const { branches, activeBranchId, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
   const toast = useToast();
 
   // Granular Permissions Gating
@@ -117,7 +117,7 @@ export function ExpensesManager({ isCashierTab = false }) {
 
   // Drawer Settlement State
   const [drawerDate, setDrawerDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [drawerBranch, setDrawerBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : (user?.branch_id ? user.branch_id.toString() : 'all')));
+  const [drawerBranch, setDrawerBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : (user?.branch_id && !isAdmin && user?.branch_scope !== 'all' && user?.role !== 'accountant' ? user.branch_id.toString() : 'all')));
   const [drawerData, setDrawerData] = useState(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
   const [closingDrawer, setClosingDrawer] = useState(false);
@@ -125,10 +125,12 @@ export function ExpensesManager({ isCashierTab = false }) {
   useEffect(() => {
     if (activeBranchId && activeBranchId !== 'all') {
       setDrawerBranch(activeBranchId);
-    } else if (user?.branch_id && !isAdmin && user?.branch_scope !== 'all') {
+    } else if (activeBranchId === 'all') {
+      setDrawerBranch('all');
+    } else if (user?.branch_id && !isAdmin && user?.branch_scope !== 'all' && user?.role !== 'accountant') {
       setDrawerBranch(user.branch_id.toString());
     }
-  }, [activeBranchId, user?.branch_id, isAdmin, user?.branch_scope]);
+  }, [activeBranchId, user?.branch_id, isAdmin, user?.branch_scope, user?.role]);
 
   const [expenses, setExpenses] = useState([]);
   const [summary, setSummary] = useState({
@@ -200,7 +202,15 @@ export function ExpensesManager({ isCashierTab = false }) {
   const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [deletingSubmitting, setDeletingSubmitting] = useState(false);
 
-  const hasMultiBranchAccess = Boolean(isAdmin || user?.branch_scope === 'all' || (user?.branch_scope === 'selected' && branches.length > 1));
+  const hasMultiBranchAccess = Boolean(
+    isAdmin ||
+    user?.branch_scope === 'all' ||
+    user?.role === 'accountant' ||
+    /^(acct|hesabat|accountant|حسابات)/i.test(user?.username || '') ||
+    hasAllBranchesAccess ||
+    canSwitchBranches ||
+    (user?.branch_scope === 'selected' && branches.length > 1)
+  );
   const isBranchScoped = isCashierTab || (!hasMultiBranchAccess && (user?.role === 'branch_user' || user?.role === 'cashier'));
 
   // Load cashiers & employees for selects
@@ -304,8 +314,8 @@ export function ExpensesManager({ isCashierTab = false }) {
       const params = { date: drawerDate };
       const effectiveBranch = (drawerBranch && drawerBranch !== 'all')
         ? drawerBranch
-        : (activeBranchId && activeBranchId !== 'all' ? activeBranchId : user?.branch_id);
-      if (effectiveBranch && effectiveBranch !== 'all') params.branch_id = effectiveBranch;
+        : (activeBranchId && activeBranchId !== 'all' ? activeBranchId : (isBranchScoped ? user?.branch_id : 'all'));
+      if (effectiveBranch) params.branch_id = effectiveBranch;
 
       let res;
       try {
@@ -338,10 +348,43 @@ export function ExpensesManager({ isCashierTab = false }) {
     const physicalCash = sum.physical_cash_in_drawer !== undefined && sum.physical_cash_in_drawer !== null
       ? Number(sum.physical_cash_in_drawer)
       : (cashCollected - cashExpenses - totalAdvances - supplierPayments);
-    const visaCollected = Number(sum.visa_collected || sum.card_collected || 0);
-    const instapayCollected = Number(sum.instapay_collected || sum.bank_collected || 0);
-    const walletCollected = Number(sum.wallet_collected || 0);
-    const totalBank = visaCollected + instapayCollected;
+    let visaCollected = Number(sum.visa_collected || sum.card_collected || 0);
+    let instapayCollected = Number(sum.instapay_collected || sum.bank_collected || 0);
+    let walletCollected = Number(sum.wallet_collected || 0);
+
+    // Fallback extraction from payment_methods array if individual summary fields are 0/empty
+    if (Array.isArray(drawerData?.payment_methods) && drawerData.payment_methods.length > 0) {
+      if (visaCollected === 0) {
+        drawerData.payment_methods.forEach((pm) => {
+          const m = String(pm.method || '').toLowerCase();
+          if (['visa', 'card', 'credit', 'فيزا', 'بطاقة'].some((k) => m.includes(k))) {
+            visaCollected += Number(pm.total || pm.total_amount || 0);
+          }
+        });
+      }
+      if (instapayCollected === 0) {
+        drawerData.payment_methods.forEach((pm) => {
+          const m = String(pm.method || '').toLowerCase();
+          if (['bank', 'instapay', 'انستاباي', 'تحويل'].some((k) => m.includes(k))) {
+            instapayCollected += Number(pm.total || pm.total_amount || 0);
+          }
+        });
+      }
+      if (walletCollected === 0) {
+        drawerData.payment_methods.forEach((pm) => {
+          const m = String(pm.method || '').toLowerCase();
+          if (['wallet', 'mobile_wallet', 'فودافون كاش', 'محفظة', 'محفظه', 'vodafone'].some((k) => m.includes(k))) {
+            walletCollected += Number(pm.total || pm.total_amount || 0);
+          }
+        });
+      }
+    }
+
+    const totalNonCash = (sum.electronic_collections !== undefined && sum.electronic_collections !== null && Number(sum.electronic_collections) > 0)
+      ? Number(sum.electronic_collections)
+      : (visaCollected + instapayCollected + walletCollected);
+    const totalBank = totalNonCash;
+
     return {
       cashCollected,
       cashExpenses,
@@ -350,6 +393,7 @@ export function ExpensesManager({ isCashierTab = false }) {
       visaCollected,
       instapayCollected,
       walletCollected,
+      totalNonCash,
       totalBank,
     };
   }, [drawerData]);
@@ -658,6 +702,20 @@ export function ExpensesManager({ isCashierTab = false }) {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              {hasMultiBranchAccess && (
+                <select
+                  value={drawerBranch}
+                  onChange={(e) => setDrawerBranch(e.target.value)}
+                  className="h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515]"
+                >
+                  <option value="all">كل الفروع</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id.toString()}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <input
                 type="date"
                 value={drawerDate}
@@ -689,7 +747,7 @@ export function ExpensesManager({ isCashierTab = false }) {
               <p className="font-black mb-0.5">قاعدة تقفيل الدرج المعتمدة (Cash Drawer Settlement Invariant):</p>
               <p className="font-semibold text-blue-800">
                 صافي الكاش المتبقي للتوريد بالدرج = إجمالي المدفوعات النقدية - (إجمالي المصروفات النقدية + سلف الموظفين).
-                مدفوعات الفيزا وانستاباي تسجل كإيراد بنكي وتفصل تماماً عن الكاش الفعلي بالدرج.
+                مدفوعات الفيزا وانستاباي والمحافظ الإلكترونية تسجل كإيرادات غير نقدية وتفصل تماماً عن الكاش الفعلي بالدرج.
               </p>
             </div>
           </div>
@@ -731,24 +789,40 @@ export function ExpensesManager({ isCashierTab = false }) {
             />
           </div>
 
-          {/* Separate Bank Revenue Section */}
+          {/* Separate Bank & Electronic Non-Cash Revenue Section */}
           <Card className="!p-5 bg-white border border-[#E6DECD]">
             <CardHeader
-              title="الإيرادات البنكية المنفصلة (فيزا وانستاباي)"
-              subtitle="تسجل مباشرة بالحساب البنكي ولا تدخل ضمن الرصيد النقدي للدرج"
+              title="الإيرادات غير النقدية المنفصلة (فيزا، انستاباي، المحافظ الإلكترونية)"
+              subtitle="تسجل مباشرة بالحساب البنكي أو المحفظة الإلكترونية ولا تدخل ضمن الرصيد النقدي للدرج"
             />
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-3">
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="text-xs font-bold text-slate-500">مدفوعات الفيزا / بطاقة بنكية</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-slate-500">مدفوعات الفيزا / بطاقة بنكية</span>
+                  <CreditCard className="w-4 h-4 text-blue-600" />
+                </div>
                 <p className="text-xl font-black text-blue-700 mt-1">{formatCurrency(drawerSummary.visaCollected)}</p>
               </div>
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="text-xs font-bold text-slate-500">تحويلات InstaPay</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-slate-500">تحويلات InstaPay</span>
+                  <Landmark className="w-4 h-4 text-indigo-600" />
+                </div>
                 <p className="text-xl font-black text-indigo-700 mt-1">{formatCurrency(drawerSummary.instapayCollected)}</p>
               </div>
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="text-xs font-bold text-slate-500">إجمالي الإيراد البنكي</span>
-                <p className="text-xl font-black text-slate-900 mt-1">{formatCurrency(drawerSummary.totalBank)}</p>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-slate-500">مدفوعات المحفظة الإلكترونية</span>
+                  <Smartphone className="w-4 h-4 text-purple-600" />
+                </div>
+                <p className="text-xl font-black text-purple-700 mt-1">{formatCurrency(drawerSummary.walletCollected)}</p>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-slate-500">إجمالي الإيرادات غير النقدية</span>
+                  <Wallet className="w-4 h-4 text-slate-700" />
+                </div>
+                <p className="text-xl font-black text-slate-900 mt-1">{formatCurrency(drawerSummary.totalNonCash)}</p>
               </div>
             </div>
           </Card>
@@ -952,7 +1026,7 @@ export function ExpensesManager({ isCashierTab = false }) {
                 }}
                 className="w-full h-10 px-3 rounded-xl border border-[#E6DECD] bg-[#FFFDF9] font-bold text-xs text-[#24221F] focus:outline-none focus:border-[#151515] transition-colors shadow-sm"
               >
-                {(isAdmin || user?.branch_scope === 'all') && <option value="all">كل الفروع</option>}
+                {(isAdmin || user?.branch_scope === 'all' || user?.role === 'accountant' || hasAllBranchesAccess || canSwitchBranches) && <option value="all">كل الفروع</option>}
                 {branches.map((b) => (
                   <option key={b.id} value={b.id.toString()}>
                     {b.name}

@@ -30,6 +30,8 @@ const DEFAULT_BRANCH_PERMISSIONS = [
   'Suppliers.html',
   'RentalInventory.html',
   'WornProducts.html',
+  'Alterations.html',
+  'Tailoring.html',
 ];
 
 const INVENTORY_ADMIN_PERMISSION = 'inventory_admin';
@@ -226,7 +228,7 @@ const HIERARCHICAL_CATALOG = [
           { id: 'tailoring.view', label: 'عرض طلبات ومقاسات التفصيل' },
           { id: 'tailoring.create', label: 'إدخال طلب تفصيل ومقاسات جديد' },
           { id: 'tailoring.edit', label: 'تعديل الطلب والدفعات ومراحل التنفيذ' },
-          { id: 'tailoring.delete', label: 'حذف طلب تفصيل' },
+          { id: 'tailoring.delete', label: 'إلغاء وحذف طلب تفصيل' },
         ],
       },
     ],
@@ -587,6 +589,24 @@ const PERMISSION_PRESETS = [
     ],
   },
   {
+    id: 'tailoring',
+    label: 'تفصيل وخياطة',
+    permissions: [
+      'Tailoring.html',
+      'tailoring.access',
+      'tailoring.view',
+      'tailoring.create',
+      'tailoring.edit',
+      'tailoring.delete',
+      'Alterations.html',
+      'alterations.access',
+      'alterations.view',
+      'Customers.html',
+      'customers.access',
+      'customers.list.view',
+    ],
+  },
+  {
     id: 'inventory_staff',
     label: 'مسؤول مخزن',
     permissions: [
@@ -659,6 +679,10 @@ function defaultPermissionsForRole(role) {
   if (role === 'admin') {
     return [...ALL_PERMISSIONS, ...EXTRA_PERMISSIONS, ...ALL_GRANULAR_PERMISSIONS];
   }
+  if (role === 'accountant') {
+    const accountantPreset = PERMISSION_PRESETS.find((p) => p.id === 'accountant');
+    return accountantPreset ? [...accountantPreset.permissions] : [...DEFAULT_BRANCH_PERMISSIONS];
+  }
   return [...DEFAULT_BRANCH_PERMISSIONS];
 }
 
@@ -680,7 +704,6 @@ const SENSITIVE_OR_PRIVILEGED_PERMISSIONS = new Set([
   'employees.payroll.execute',
   'rental_inventory.items.delete',
   'rental_inventory.items.edit',
-  'tailoring.delete',
   'alterations.delete',
   'suppliers.access',
   'suppliers.list.view',
@@ -796,11 +819,25 @@ function hasInventoryAdminAccess(user) {
 }
 
 function hasInventoryAllBranchesAccess(user) {
-  return Boolean(user && (user.role === 'admin' || user.branch_scope === 'all' || hasPermission(user, INVENTORY_VIEW_ALL_BRANCHES_PERMISSION)));
+  return Boolean(
+    user && (
+      user.role === 'admin' ||
+      user.branch_scope === 'all' ||
+      user.role === 'accountant' ||
+      /^(acct|hesabat|accountant|حسابات)/i.test(user.username || '') ||
+      hasPermission(user, INVENTORY_VIEW_ALL_BRANCHES_PERMISSION)
+    )
+  );
 }
 
 function isBranchScopedUser(user) {
-  return Boolean(user && user.role !== 'admin' && user.branch_scope !== 'all');
+  return Boolean(
+    user &&
+    user.role !== 'admin' &&
+    user.branch_scope !== 'all' &&
+    user.role !== 'accountant' &&
+    !/^(acct|hesabat|accountant|حسابات)/i.test(user.username || '')
+  );
 }
 
 module.exports = {

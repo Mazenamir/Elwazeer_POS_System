@@ -1,5 +1,6 @@
 const db = require('../../database/connection');
 const { hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
+const { isBranchScopedUser } = require('../../../shared/constants/permissions');
 const { CAIRO_DATE_SQL, CAIRO_NOW_SQL } = require('../../../shared/constants/system');
 const { likePattern, newUuid, getInitialsFromName } = require('../../../shared/utils/string');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
@@ -55,8 +56,11 @@ async function listAlterations(query = {}, user = null, req = null) {
   const params = [];
   const where = [];
 
-  if (user && user.role === 'branch_user') {
+  if (user && isBranchScopedUser(user)) {
     params.push(user.branch_id);
+    where.push(`alt.branch_id = $${params.length}`);
+  } else if (query.branch_id && query.branch_id !== 'all') {
+    params.push(query.branch_id);
     where.push(`alt.branch_id = $${params.length}`);
   }
 
@@ -184,7 +188,7 @@ async function deleteAlteration(id, user) {
       AND status IN ('pending', 'in_progress')
   `;
 
-  if (user && user.role === 'branch_user') {
+  if (user && isBranchScopedUser(user)) {
     params.push(user.branch_id);
     query += ` AND branch_id = $2`;
   }
@@ -221,7 +225,7 @@ async function listTailoringOrders(query = {}, user = null, req = null) {
   const params = [];
   const where = [];
 
-  if (user && user.role === 'branch_user') {
+  if (user && isBranchScopedUser(user)) {
     params.push(user.branch_id);
     where.push(`t.branch_id = $${params.length}`);
   } else if (query.branch_id && query.branch_id !== 'all') {
@@ -339,7 +343,7 @@ async function createTailoringOrder(body, user, req = null) {
   }
 
   const offlineUuid = newUuid(body?.offline_uuid);
-  const rawBranchId = (user && user.role !== 'admin') ? user.branch_id : body?.branch_id;
+  const rawBranchId = (user && isBranchScopedUser(user)) ? user.branch_id : body?.branch_id;
   const branchId = resolveEffectiveBranchId(user, rawBranchId);
 
   if (!sellerId) {
@@ -497,7 +501,7 @@ async function createTailoringOrder(body, user, req = null) {
   return { ...created, offline: false, pending_sync: false };
 }
 
-async function deleteTailoringOrder(id, user) {
+async function deleteTailoringOrder(id, user, req = null) {
   let orderId = null;
 
   if (String(id).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
@@ -513,39 +517,45 @@ async function deleteTailoringOrder(id, user) {
     throw err;
   }
 
-  const { rows: orderRows } = await db.query('SELECT * FROM tailoring_orders WHERE id = $1', [orderId]);
-  if (orderRows.length === 0) {
-    const err = new Error('الفاتورة غير موجودة');
-    err.statusCode = 404;
-    throw err;
-  }
+  return await db.transaction(async (tx) => {
+    const { rows: orderRows } = await tx.query('SELECT * FROM tailoring_orders WHERE id = $1 FOR UPDATE', [orderId]);
+    if (orderRows.length === 0) {
+      const err = new Error('الفاتورة غير موجودة');
+      err.statusCode = 404;
+      throw err;
+    }
 
-  const order = orderRows[0];
-  if (user && !hasBranchAccess(user, order.branch_id)) {
-    const err = new Error('غير مصرح لك بحذف هذه الفاتورة');
-    err.statusCode = 403;
-    throw err;
-  }
+    const order = orderRows[0];
+    if (user && !hasBranchAccess(user, order.branch_id)) {
+      const err = new Error('غير مصرح لك بإلغاء أو حذف هذه الفاتورة');
+      err.statusCode = 403;
+      throw err;
+    }
 
-  await db.query('DELETE FROM tailoring_orders WHERE id = $1', [orderId]);
-  await queueSyncOperation(db, null, 'tailoring_order', 'delete', orderId, order.branch_id, {
-    id: orderId,
-    offline_uuid: order.offline_uuid,
-    branch_id: order.branch_id,
+    // Explicitly delete child tailoring payments first (guarantees integrity across PG & SQLite)
+    await tx.query('DELETE FROM tailoring_payments WHERE tailoring_order_id = $1', [orderId]);
+    await tx.query('DELETE FROM tailoring_orders WHERE id = $1', [orderId]);
+
+    await queueSyncOperation(tx, req, 'tailoring_order', 'delete', orderId, order.branch_id, {
+      id: orderId,
+      offline_uuid: order.offline_uuid,
+      branch_id: order.branch_id,
+    });
+
+    if (user) {
+      const refundedDeposit = Number(order.paid_amount || 0);
+      await logActivity(
+        user.id,
+        user.username,
+        'إلغاء وحذف فاتورة تفصيل',
+        `تم إلغاء وحذف فاتورة التفصيل #${order.invoice_number} للعميل ${order.customer_name}${refundedDeposit > 0 ? ` واسترداد العربون (${refundedDeposit.toLocaleString('ar-EG')} ج.م)` : ''}`,
+        'Tailoring',
+        order.branch_id
+      );
+    }
+
+    return { message: 'تم إلغاء وحذف فاتورة التفصيل بنجاح' };
   });
-
-  if (user) {
-    await logActivity(
-      user.id,
-      user.username,
-      'حذف فاتورة تفصيل',
-      `تم حذف فاتورة التفصيل #${order.invoice_number} للعميل ${order.customer_name}`,
-      'Tailoring',
-      order.branch_id
-    );
-  }
-
-  return { message: 'تم حذف الفاتورة بنجاح' };
 }
 
 async function payRemainingTailoringOrder(id, user, body = {}, req = null) {

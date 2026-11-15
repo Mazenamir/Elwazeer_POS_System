@@ -19,7 +19,8 @@ const {
   getBranchBranding,
   buildDaily20ColumnRows,
 } = require('./reports.helpers');
-const { hasPermission } = require('../../../shared/constants/permissions');
+const { hasPermission, isBranchScopedUser } = require('../../../shared/constants/permissions');
+const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
 const { resolveCategoryQuery } = require('../inventory/inventory.helpers');
 
 async function getDashboard(query = {}, user = null) {
@@ -383,18 +384,18 @@ async function getDashboard(query = {}, user = null) {
 }
 
 async function getTopProductsByBranch(query = {}, user = null) {
-  if (!user || user.role !== 'admin') {
+  if (!user || (user.role !== 'admin' && user.role !== 'accountant' && user.branch_scope !== 'all' && !hasPermission(user, 'dashboard.stats.view') && !hasPermission(user, 'reports.sales.view'))) {
     const err = new Error('Forbidden');
     err.statusCode = 403;
     throw err;
   }
 
-  const branchId = query.branch_id;
+  const reportBranchId = getReportBranchId(user, query);
   const params = [config.TOP_PRODUCTS_LOOKBACK_DAYS];
   const where = [`o.order_date >= ${CAIRO_DATE_SQL} - ($1::int * INTERVAL '1 day')`];
 
-  if (branchId && branchId !== 'all') {
-    params.push(branchId);
+  if (reportBranchId) {
+    params.push(reportBranchId);
     where.push(`o.branch_id = $${params.length}`);
   }
 
@@ -751,6 +752,8 @@ async function getProfitReport(query = {}, user = null) {
       cogs,
       gross_profit,
       expenses,
+      total_expenses: expenses,
+      cash_expenses,
       total_salaries_paid,
       salaries: total_salaries_paid,
       advances,
@@ -1971,6 +1974,7 @@ async function getDailyReport(query = {}, user = null) {
         gross_profit,
         expenses,
         total_expenses: expenses,
+        cash_expenses,
         total_salaries_paid,
         salaries: total_salaries_paid,
         advances,
@@ -2380,7 +2384,7 @@ async function getDailyReport(query = {}, user = null) {
   bankCollected = Math.round(bankCollected * 100) / 100;
   walletCollected = Math.round(walletCollected * 100) / 100;
 
-  const totalCashExpenses = report.reduce((sum, b) => sum + (cashExpensesByBranch.get(Number(b.id)) || 0), 0);
+  const totalCashExpenses = report.reduce((sum, b) => sum + Number(b.cash_expenses || 0), 0);
 
   overallDailySummary.cash_collected = cashCollected;
   overallDailySummary.cash_expenses = totalCashExpenses;
@@ -2879,7 +2883,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
   const branchFilterReturns = reportBranchId ? 'AND ret.branch_id = $3' : '';
   const branchFilterEmp = reportBranchId ? 'AND e.branch_id = $3' : '';
   const branchFilterExp = reportBranchId ? 'AND e.branch_id = $3' : '';
-  const branchFilterSupplierPayment = reportBranchId ? (user && user.role !== 'admin' ? 'AND st.branch_id = $3' : 'AND (st.branch_id = $3 OR st.branch_id IS NULL)') : '';
+  const branchFilterSupplierPayment = reportBranchId ? (user && isBranchScopedUser(user) ? 'AND st.branch_id = $3' : 'AND (st.branch_id = $3 OR st.branch_id IS NULL)') : '';
   const branchFilterOrderPayments = reportBranchId ? 'AND op.branch_id = $3' : '';
   const branchFilterRentalPayments = reportBranchId ? 'AND rp.branch_id = $3' : '';
 
@@ -3002,7 +3006,10 @@ async function getExtendedDailyReport(query = {}, user = null) {
           WHEN r.notes LIKE '%(انستاباي)%' OR r.notes LIKE '%(instapay)%' OR r.notes LIKE '%(bank)%' THEN r.fine_amount
           ELSE 0
         END as bank_transfer_amount,
-        0 as wallet_amount,
+        CASE
+          WHEN r.notes LIKE '%(محفظة)%' OR r.notes LIKE '%(wallet)%' THEN r.fine_amount
+          ELSE 0
+        END as wallet_amount,
         null as payment_splits,
         'rental_fine' as transaction_type,
         'غرامة تأخير' as type_label
@@ -3962,7 +3969,7 @@ async function updateDailyAttendanceQuick(data = {}, user = null) {
     throw err;
   }
   const emp = empRes.rows[0];
-  if (user.role !== 'admin' && String(user.branch_id) !== String(emp.branch_id)) {
+  if (user && !hasBranchAccess(user, emp.branch_id)) {
     const err = new Error('Forbidden: Cannot modify employees from other branches');
     err.statusCode = 403;
     throw err;

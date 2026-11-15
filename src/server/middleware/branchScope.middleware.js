@@ -24,7 +24,7 @@ function isBranchModeActive() {
  */
 function getUserAuthorizedBranchIds(user) {
   if (!user) return [];
-  if (user.role === 'admin' || user.branch_scope === 'all') {
+  if (user.role === 'admin' || user.branch_scope === 'all' || user.role === 'accountant' || /^(acct|hesabat|accountant|حسابات)/i.test(user?.username || '')) {
     return null; // null indicates all branches allowed
   }
 
@@ -84,12 +84,15 @@ function resolveEffectiveBranchId(user, explicitBranchId = null) {
  */
 function hasBranchAccess(user, targetBranchId) {
   if (!user) return false;
-  if (user.role === 'admin' || user.branch_scope === 'all') {
+  if (user.role === 'admin' || user.branch_scope === 'all' || user.role === 'accountant' || /^(acct|hesabat|accountant|حسابات)/i.test(user?.username || '')) {
     return true;
   }
 
   // Requesting all branches or unassigned
   if (targetBranchId === null || targetBranchId === undefined || targetBranchId === '' || targetBranchId === 'all') {
+    if (user.branch_scope === 'selected' && Array.isArray(user.branch_ids) && user.branch_ids.length > 1) {
+      return true; // Multi-branch authorized user can view consolidated
+    }
     return false; // Non-admin without 'all' scope cannot access consolidated 'all'
   }
 

@@ -128,7 +128,15 @@ async function createEmployeeTransaction(req, res, next) {
 
 async function getEmployeeSummary(req, res, next) {
   try {
-    const result = await employeesService.getEmployeeSummary(req.params.id, req.query.month, req.user);
+    const userWithAccess = {
+      ...req.user,
+      salaryAccessVerified: Boolean(req.salaryAccessVerified),
+    };
+    const options = {
+      type: req.query.type,
+      advanceOnly: req.query.type === 'advance' || req.query.advance_only === 'true',
+    };
+    const result = await employeesService.getEmployeeSummary(req.params.id, req.query.month, userWithAccess, options);
     res.json(result);
   } catch (err) {
     next(err);

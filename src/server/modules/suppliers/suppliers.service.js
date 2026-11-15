@@ -505,7 +505,7 @@ async function createSupplierTransaction(payload, user = null) {
   }
 
   let branch_id = payload.branch_id ? Number(payload.branch_id) : (user && user.branch_id ? Number(user.branch_id) : null);
-  if (user && user.role !== 'admin' && user.branch_id) {
+  if (user && isBranchScopedUser(user) && user.branch_id) {
     branch_id = Number(user.branch_id);
   }
   const payment_method = payload.payment_method || 'cash';
@@ -813,7 +813,7 @@ async function getSupplierStatement(id, requestedLimit = null, query = {}, user 
   const supplier = supplierRes.rows[0];
 
   let branchId = null;
-  if (user && user.role !== 'admin') {
+  if (user && isBranchScopedUser(user)) {
     branchId = user.branch_id;
   } else if (query && query.branch_id && query.branch_id !== 'all') {
     branchId = Number(query.branch_id);
@@ -860,7 +860,7 @@ async function getSupplierStatement(id, requestedLimit = null, query = {}, user 
   let stBranchFilter = '';
   if (branchId) {
     stParams.push(branchId);
-    stBranchFilter = user && user.role !== 'admin'
+    stBranchFilter = user && isBranchScopedUser(user)
       ? `AND st.branch_id = $${stParams.length}`
       : `AND (st.branch_id = $${stParams.length} OR st.branch_id IS NULL)`;
   }
@@ -935,7 +935,7 @@ async function getSupplierStatement(id, requestedLimit = null, query = {}, user 
 async function getSuppliersLedger(query = {}, user = null, req = null) {
   // 1. Branch isolation
   let branchId = null;
-  if (user && user.role !== 'admin') {
+  if (user && isBranchScopedUser(user)) {
     branchId = user.branch_id;
   } else if (query.branch_id && query.branch_id !== 'all') {
     branchId = Number(query.branch_id);
@@ -1024,7 +1024,7 @@ async function getSuppliersLedger(query = {}, user = null, req = null) {
   let stBranchFilter = '';
   if (branchId) {
     stParams.push(branchId);
-    stBranchFilter = user && user.role !== 'admin'
+    stBranchFilter = user && isBranchScopedUser(user)
       ? `AND st.branch_id = $${stParams.length}`
       : `AND (st.branch_id = $${stParams.length} OR st.branch_id IS NULL)`;
   }

@@ -64,7 +64,7 @@ const STATUS_MAP = {
 export function Dashboard() {
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
-  const { branches, activeBranchId, selectBranch } = useBranch();
+  const { branches, activeBranchId, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
 
   const [loading, setLoading] = useState(true);
   const [selectedRange, setSelectedRange] = useState('7days');
@@ -366,7 +366,7 @@ export function Dashboard() {
         {/* Filters */}
         <div className="flex items-center gap-3">
           {/* Branch filter if admin or multi-branch */}
-          {(isAdmin || user?.branch_scope === 'all' || (user?.branch_scope === 'selected' && branches.length > 1)) && (
+          {(isAdmin || user?.branch_scope === 'all' || user?.role === 'accountant' || hasAllBranchesAccess || canSwitchBranches || (user?.branch_scope === 'selected' && branches.length > 1)) && (
             <div className="relative flex items-center bg-[#FFFDF9] rounded-full border border-[#E6DECD] shadow-sm hover:border-[#D4CBB9] transition-colors">
               <div className="flex items-center gap-2 px-4 py-2 pointer-events-none">
                 <Building2 className="w-4 h-4 text-[#777266] shrink-0" />
@@ -383,7 +383,7 @@ export function Dashboard() {
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer text-xs"
                 title="تصفية حسب الفرع"
               >
-                {(isAdmin || user?.branch_scope === 'all') && <option value="all">كل الفروع</option>}
+                {(isAdmin || user?.branch_scope === 'all' || user?.role === 'accountant' || hasAllBranchesAccess || canSwitchBranches) && <option value="all">كل الفروع</option>}
                 {branches.map((b) => (
                   <option key={b.id} value={b.id.toString()}>
                     {b.name}

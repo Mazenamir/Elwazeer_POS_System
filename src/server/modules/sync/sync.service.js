@@ -772,8 +772,13 @@ async function applyOperation(operation) {
     if (operation.entity_type === 'tailoring_order') {
       if (operation.action === 'delete') {
         if (payload.offline_uuid) {
+          const ordRes = await tx.query('SELECT id FROM tailoring_orders WHERE offline_uuid = $1', [payload.offline_uuid]);
+          if (ordRes.rows.length > 0) {
+            await tx.query('DELETE FROM tailoring_payments WHERE tailoring_order_id = $1', [ordRes.rows[0].id]);
+          }
           await tx.query('DELETE FROM tailoring_orders WHERE offline_uuid = $1', [payload.offline_uuid]);
         } else if (payload.id) {
+          await tx.query('DELETE FROM tailoring_payments WHERE tailoring_order_id = $1', [payload.id]);
           await tx.query('DELETE FROM tailoring_orders WHERE id = $1', [payload.id]);
         }
         return { success: true, deleted: true };

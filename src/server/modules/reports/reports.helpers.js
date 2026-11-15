@@ -4,25 +4,26 @@ const { hasInventoryAdminAccess } = require('../../../shared/constants/permissio
 const { getCairoDateTimeParts, addDays, getMonthRange } = require('../../../shared/utils/date');
 
 function getReportBranchId(user, query = {}) {
-  // In branch mode or when running on SQLite, the application is strictly dedicated to this branch's local database.
-  // Never throw 403 or "Branch user must have a branch_id" in branch mode.
-  const isBranchMode = Boolean(
-    config.IS_BRANCH_MODE ||
-    (db && (db._isBranchMode || db.sqlite)) ||
-    process.env.APP_MODE === 'branch'
+  // 1. Privileged all-branch users (Admin, Accountant, or any account with branch_scope === 'all')
+  const hasAllBranchAccess = Boolean(
+    user && (
+      user.role === 'admin' ||
+      user.branch_scope === 'all' ||
+      user.role === 'accountant' ||
+      /^(acct|hesabat|accountant|حسابات)/i.test(user.username || '')
+    )
   );
-  if (isBranchMode) {
-    return String(config.BRANCH_ID || user?.branch_id || query.branch_id || 1);
+
+  if (hasAllBranchAccess) {
+    if (query.branch_id && query.branch_id !== 'all') {
+      return String(query.branch_id);
+    }
+    // Consolidate across all branches
+    return null;
   }
 
-  if (user && user.role !== 'admin') {
-    if (user.branch_scope === 'all') {
-      if (query.branch_id && query.branch_id !== 'all') {
-        return String(query.branch_id);
-      }
-      return null;
-    }
-
+  // 2. User-specific branch scoping
+  if (user) {
     if (user.branch_scope === 'selected') {
       const { getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
       const authBranchIds = (getUserAuthorizedBranchIds(user) || []).map(String);
@@ -33,25 +34,39 @@ function getReportBranchId(user, query = {}) {
         }
         return String(query.branch_id);
       }
+      if (query.branch_id === 'all') {
+        return null;
+      }
       return String(user.branch_id || authBranchIds[0] || 1);
     }
 
     // Default 'single' branch scope
-    // Robust fallback: if user.branch_id is not set, resolve from config.BRANCH_ID, query.branch_id, or default to 1.
-    // Never throw "Branch user must have a branch_id" to prevent crashing the report dashboard.
     const assignedBranchId = user.branch_id
       ? String(user.branch_id)
       : (config.BRANCH_ID ? String(config.BRANCH_ID) : (query.branch_id && query.branch_id !== 'all' ? String(query.branch_id) : '1'));
 
-    // If a single branch user queries 'all' or omits branch_id, gracefully scope to their assigned branch
-    if (!query.branch_id || query.branch_id === 'all') {
-      return assignedBranchId;
+    if (query.branch_id && query.branch_id !== 'all') {
+      if (String(query.branch_id) === assignedBranchId) {
+        return assignedBranchId;
+      }
     }
 
     return assignedBranchId;
   }
 
-  // Admin user
+  // 3. Dedicated single-branch local client nodes (without user context)
+  const isDedicatedBranchNode = Boolean(
+    config.IS_BRANCH_MODE ||
+    process.env.APP_MODE === 'branch'
+  );
+  if (isDedicatedBranchNode) {
+    if (query.branch_id && query.branch_id !== 'all') {
+      return String(query.branch_id);
+    }
+    return String(config.BRANCH_ID || 1);
+  }
+
+  // Fallback for unauthenticated requests
   if (query.branch_id && query.branch_id !== 'all') {
     return String(query.branch_id);
   }

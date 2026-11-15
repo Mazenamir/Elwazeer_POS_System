@@ -14,7 +14,7 @@ async function getExpensesSummary(query = {}, user = null) {
   let branchClause = '';
 
   if (user && user.role !== 'admin') {
-    if (user.branch_scope === 'all') {
+    if (user.branch_scope === 'all' || user.role === 'accountant') {
       if (query.branch_id && query.branch_id !== 'all') {
         branchParams.push(query.branch_id);
         branchClause = `AND branch_id = $${branchParams.length}`;
@@ -64,7 +64,7 @@ async function getExpensesSummary(query = {}, user = null) {
   const filterWhere = ['is_deleted IS NOT TRUE'];
 
   if (user && user.role !== 'admin') {
-    if (user.branch_scope === 'all') {
+    if (user.branch_scope === 'all' || user.role === 'accountant') {
       if (query.branch_id && query.branch_id !== 'all') {
         filterParams.push(query.branch_id);
         filterWhere.push(`branch_id = $${filterParams.length}`);
@@ -170,7 +170,7 @@ async function listExpenses(query = {}, user = null) {
   const where = ['e.is_deleted IS NOT TRUE'];
 
   if (user && user.role !== 'admin') {
-    if (user.branch_scope === 'all') {
+    if (user.branch_scope === 'all' || user.role === 'accountant') {
       if (query.branch_id && query.branch_id !== 'all') {
         params.push(query.branch_id);
         where.push(`e.branch_id = $${params.length}`);
@@ -304,7 +304,7 @@ async function listExpenseCashiers(user = null) {
   const params = [];
   let branchFilter = '';
   if (user && user.role !== 'admin') {
-    if (user.branch_scope === 'all') {
+    if (user.branch_scope === 'all' || user.role === 'accountant') {
       // no branch filter
     } else if (user.branch_scope === 'selected') {
       const authIds = getUserAuthorizedBranchIds(user);
