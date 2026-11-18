@@ -160,8 +160,16 @@ export function RentalInventory() {
     const timer = setTimeout(() => {
       fetchItems();
     }, 200);
-    return () => clearTimeout(timer);
-  }, [fetchItems]);
+    const handleSyncCompleted = () => {
+      fetchCategories();
+      fetchItems();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    };
+  }, [fetchItems, fetchCategories]);
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, page: 1 }));

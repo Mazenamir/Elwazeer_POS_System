@@ -157,7 +157,13 @@ export default function BranchStockMatrix({ isAdmin = false }) {
 
   useEffect(() => {
     fetchMatrix();
-  }, [fetchMatrix]);
+    const handleSyncCompleted = () => {
+      fetchCategories(branchFilter);
+      fetchMatrix();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+  }, [fetchMatrix, fetchCategories, branchFilter]);
 
   const toggleExpand = (id) => {
     setExpandedItems((prev) => ({

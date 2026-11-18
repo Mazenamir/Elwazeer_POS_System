@@ -122,7 +122,14 @@ export function Customers() {
     const timer = setTimeout(() => {
       fetchCustomers();
     }, 200);
-    return () => clearTimeout(timer);
+    const handleSyncCompleted = () => {
+      fetchCustomers();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    };
   }, [fetchCustomers]);
 
   useEffect(() => {

@@ -142,6 +142,14 @@ async function createOrGetColor(colorName, tx = db) {
     if (existing) return existing;
     const info = db.sqlite.prepare('INSERT INTO colors (name) VALUES (?)').run(clean);
     invalidateInventoryMetadata();
+    try {
+      await queueSyncOperation(db, null, 'color', 'create', info.lastInsertRowid, null, {
+        id: info.lastInsertRowid,
+        name: clean,
+      });
+    } catch (e) {
+      console.warn('Failed to queue color sync operation:', e.message);
+    }
     return { id: info.lastInsertRowid, name: clean };
   }
 
@@ -186,6 +194,14 @@ async function createOrGetSize(sizeName, tx = db) {
     if (existing) return existing;
     const info = db.sqlite.prepare('INSERT INTO sizes (name) VALUES (?)').run(clean);
     invalidateInventoryMetadata();
+    try {
+      await queueSyncOperation(db, null, 'size', 'create', info.lastInsertRowid, null, {
+        id: info.lastInsertRowid,
+        name: clean,
+      });
+    } catch (e) {
+      console.warn('Failed to queue size sync operation:', e.message);
+    }
     return { id: info.lastInsertRowid, name: clean };
   }
 
@@ -1163,6 +1179,7 @@ async function createProduct(body, user, file = null) {
         } catch {}
       }
 
+      const batchId = purchase_batch_id || crypto.randomUUID();
       try {
         await queueSyncOperation(db, null, 'product', 'create', newId, b_id, {
           id: newId,
@@ -1184,6 +1201,7 @@ async function createProduct(body, user, file = null) {
           wholesale_price: numWholesale,
           semi_wholesale_price: numSemiWholesale,
           branch_id: b_id,
+          purchase_batch_id: batchId,
           sizes: (hasMultiSizes && parsedSizes.length > 0) ? parsedSizes : (sizeName ? [{ size: sizeName, color: colorName, stock: initialStock }] : [])
         });
       } catch (e) {
@@ -1193,7 +1211,6 @@ async function createProduct(body, user, file = null) {
       if (initialStock > 0 && safeSupplierId && numCost > 0) {
         try {
           const total_cost = initialStock * numCost;
-          const batchId = purchase_batch_id || crypto.randomUUID();
           await queueSyncOperation(db, null, 'supplier_transaction', 'create', newId, safeSupplierId, {
             supplier_id: safeSupplierId,
             supplier_ref: supSnapshot ? { id: supSnapshot.id, name: supSnapshot.name, phone: supSnapshot.phone, code: supSnapshot.code } : null,
@@ -1918,10 +1935,28 @@ async function transferStock(body, user) {
 
     const creatorId = user?.id ? Number(user.id) : null;
     const creatorName = user?.full_name || user?.name || user?.username || null;
-    await db.query(
-      'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+    const reqRes = await db.query(
+      'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
       [inventory_id, from_branch_id, to_branch_id, transferQty, 'requested', sizesDataJson, creatorId, creatorName]
     );
+    const reqId = reqRes.rows?.[0]?.id || reqRes.lastInsertRowid || null;
+    if (config.IS_BRANCH_MODE) {
+      try {
+        await queueSyncOperation(db, null, 'stock_transfer', 'request', reqId, to_branch_id, {
+          id: reqId,
+          inventory_id,
+          from_branch_id,
+          to_branch_id,
+          quantity: transferQty,
+          status: 'requested',
+          sizes: sizes || null,
+          created_by: creatorId,
+          created_by_name: creatorName,
+        });
+      } catch (e) {
+        console.warn('Failed to queue stock_transfer request sync:', e.message);
+      }
+    }
     return { success: true, message: 'تم إرسال طلب بضاعة للفرع الآخر بنجاح' };
   }
 
@@ -2045,8 +2080,12 @@ async function transferStock(body, user) {
             is_direct: isDirect,
             status: isDirect ? 'completed' : 'pending',
             sizes: sizes || null,
+            created_by: senderId,
+            created_by_name: senderName,
             sender_id: senderId,
             sender_name: senderName,
+            received_by: isDirect ? senderId : null,
+            received_by_name: isDirect ? senderName : null,
           });
         } catch (e) {
           console.warn('Failed to queue stock_transfer sync:', e.message);
@@ -2190,6 +2229,23 @@ async function approveTransfer(transferId, user) {
     const senderId = user?.id ? Number(user.id) : null;
     const senderName = user?.full_name || user?.name || user?.username || null;
     await tx.query("UPDATE stock_transfers SET status = 'pending', sender_id = $1, sender_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3", [senderId, senderName, transferId]);
+    if (config.IS_BRANCH_MODE) {
+      try {
+        await queueSyncOperation(tx, null, 'stock_transfer', 'approve', transferId, transfer.from_branch_id, {
+          id: transferId,
+          inventory_id: transfer.inventory_id,
+          from_branch_id: transfer.from_branch_id,
+          to_branch_id: transfer.to_branch_id,
+          quantity: transferQty,
+          status: 'pending',
+          sizes: transfer.sizes_data,
+          sender_id: senderId,
+          sender_name: senderName,
+        });
+      } catch (e) {
+        console.warn('Failed to queue stock_transfer approve sync:', e.message);
+      }
+    }
   });
 
   invalidateInventoryMetadata();
@@ -2219,6 +2275,16 @@ async function rejectTransfer(transferId, user) {
     const err = new Error('الطلب غير موجود');
     err.statusCode = 404;
     throw err;
+  }
+  if (config.IS_BRANCH_MODE) {
+    try {
+      await queueSyncOperation(db, null, 'stock_transfer', 'reject', Number(transferId), user?.branch_id || config.BRANCH_ID || 1, {
+        id: Number(transferId),
+        status: 'rejected',
+      });
+    } catch (e) {
+      console.warn('Failed to queue stock_transfer reject sync:', e.message);
+    }
   }
   return { success: true, message: 'تم رفض طلب البضاعة بنجاح' };
 }

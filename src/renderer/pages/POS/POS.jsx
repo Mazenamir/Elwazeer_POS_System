@@ -528,7 +528,20 @@ export function POS() {
     const timer = setTimeout(() => {
       fetchInventory();
     }, 200);
-    return () => clearTimeout(timer);
+    const handleSyncCompleted = () => {
+      try {
+        for (let idx = sessionStorage.length - 1; idx >= 0; idx--) {
+          const k = sessionStorage.key(idx);
+          if (k && k.startsWith('pos_catalog_')) sessionStorage.removeItem(k);
+        }
+      } catch {}
+      fetchInventory();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    };
   }, [fetchInventory]);
 
   // Keep categories list up to date with active categories present in inventory
@@ -1579,9 +1592,13 @@ export function POS() {
   }, [activeBranchId, historyFilters, historyPagination.page, historyPagination.limit]);
 
   useEffect(() => {
-    if (activeTab === 'history') {
+    if (activeTab !== 'history') return;
+    fetchHistory();
+    const handleSyncCompleted = () => {
       fetchHistory();
-    }
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [activeTab, fetchHistory]);
 
   // Load Returns History
@@ -1632,9 +1649,13 @@ export function POS() {
   }, [activeBranchId, returnFilters, returnsPagination.page, returnsPagination.limit]);
 
   useEffect(() => {
-    if (activeTab === 'returns') {
+    if (activeTab !== 'returns') return;
+    fetchReturns();
+    const handleSyncCompleted = () => {
       fetchReturns();
-    }
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [activeTab, fetchReturns]);
 
   // Pay Remaining Logic

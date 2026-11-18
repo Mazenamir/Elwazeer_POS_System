@@ -296,15 +296,25 @@ export function Settings() {
 
   useEffect(() => {
     loadSettings();
+    const handleSyncCompleted = () => {
+      loadSettings();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [loadSettings]);
 
   useEffect(() => {
-    if (activeTab === 'users' && canAccessUsers) {
-      loadBranchUsers();
-    }
-    if (activeTab === 'sensitive' && canAccessSensitive) {
-      loadSensitiveStatus();
-    }
+    const refreshActiveSettingsTab = () => {
+      if (activeTab === 'users' && canAccessUsers) {
+        loadBranchUsers();
+      }
+      if (activeTab === 'sensitive' && canAccessSensitive) {
+        loadSensitiveStatus();
+      }
+    };
+    refreshActiveSettingsTab();
+    window.addEventListener('elwazeer:sync-completed', refreshActiveSettingsTab);
+    return () => window.removeEventListener('elwazeer:sync-completed', refreshActiveSettingsTab);
   }, [activeTab, canAccessUsers, canAccessSensitive, loadBranchUsers, loadSensitiveStatus]);
 
   useEffect(() => {

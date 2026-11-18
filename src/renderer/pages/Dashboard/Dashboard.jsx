@@ -114,6 +114,11 @@ export function Dashboard() {
 
   useEffect(() => {
     fetchDashboard();
+    const handleSyncCompleted = () => {
+      fetchDashboard();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [fetchDashboard]);
 
   const currentRangeOption =

@@ -151,6 +151,11 @@ export function BranchProvider({ children }) {
 
   useEffect(() => {
     fetchBranches();
+    const handleSyncCompleted = () => {
+      fetchBranches();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [fetchBranches]);
 
   const hasAllBranchesAccess = Boolean(

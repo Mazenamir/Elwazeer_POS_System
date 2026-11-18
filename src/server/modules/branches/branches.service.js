@@ -1,6 +1,7 @@
 const db = require('../../database/connection');
 const config = require('../../config/env');
 const { normalizeBranchInvoiceLogoSettings } = require('../../../shared/constants/system');
+const { queueSyncOperation } = require('../../database/sync.helpers');
 
 async function listBranches() {
   if (config.IS_BRANCH_MODE) {
@@ -47,6 +48,11 @@ async function createBranch(data) {
         INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
         SELECT id, ?, 0 FROM inventory
       `).run(newBranch.id);
+      try {
+        await queueSyncOperation(db, null, 'branch', 'create', newBranch.id, newBranch.id, newBranch);
+      } catch (e) {
+        console.warn('Failed to queue branch create sync:', e.message);
+      }
       return newBranch;
     }
 
@@ -238,6 +244,14 @@ async function deleteBranch(id) {
       db.sqlite.prepare('DELETE FROM rental_inventory_branches WHERE branch_id = ?').run(branchId);
       db.sqlite.prepare('DELETE FROM inventory_branches WHERE branch_id = ?').run(branchId);
       db.sqlite.prepare('DELETE FROM branches WHERE id = ?').run(branchId);
+      try {
+        await queueSyncOperation(db, null, 'branch', 'delete', branchId, branchId, {
+          id: branchId,
+          fallback_branch_id: fallbackBranchId,
+        });
+      } catch (e) {
+        console.warn('Failed to queue branch delete sync:', e.message);
+      }
       return { success: true };
     }
 

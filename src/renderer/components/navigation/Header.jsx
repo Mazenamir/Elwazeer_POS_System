@@ -291,7 +291,11 @@ export function Header({ onToggleMobileMenu }) {
     try {
       const data = await api.get('/sync/status');
       setSyncStatus(data);
-      const syncStamp = data?.last_catalog_imported_at || data?.last_synced_at || null;
+      const syncStamp = [
+        data?.last_catalog_imported_at || '',
+        data?.last_server_activity_at || '',
+        data?.last_synced_at || '',
+      ].filter(Boolean).join('|') || null;
       if (syncStamp) {
         if (!suppressEvent && lastSyncStampRef.current !== null && lastSyncStampRef.current !== syncStamp) {
           window.dispatchEvent(new CustomEvent('elwazeer:sync-completed', { detail: { syncStamp, data } }));
@@ -513,7 +517,7 @@ export function Header({ onToggleMobileMenu }) {
 
   useEffect(() => {
     fetchSyncStatus();
-    const statusInterval = setInterval(fetchSyncStatus, 20000);
+    const statusInterval = setInterval(fetchSyncStatus, 10000);
     return () => clearInterval(statusInterval);
   }, []);
 

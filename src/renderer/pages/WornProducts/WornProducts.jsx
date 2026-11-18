@@ -124,6 +124,11 @@ export function WornProducts() {
 
   useEffect(() => {
     loadRecords();
+    const handleSyncCompleted = () => {
+      loadRecords();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [loadRecords]);
 
   // Load products for modal autocomplete

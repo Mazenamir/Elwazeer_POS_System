@@ -528,7 +528,7 @@ async function createSupplierTransaction(payload, user = null) {
 
     const insertRes = await tx.query(
       'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, branch_id, payment_method, paid_from_drawer, transaction_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-      [supplier_id, transaction_type, safeAmount, notes || null, branch_id, payment_method, paid_from_drawer ? 1 : 0, txDate]
+      [supplier_id, transaction_type, safeAmount, notes || null, branch_id, payment_method, config.IS_BRANCH_MODE ? (paid_from_drawer ? 1 : 0) : Boolean(paid_from_drawer), txDate]
     );
     createdTxId = insertRes.rows[0]?.id || insertRes.lastInsertRowid;
 
@@ -623,6 +623,7 @@ async function processSupplierReturn(payload) {
       amount: total_amount,
       notes: notes || 'مرتجع بضاعة',
       purchase_transaction_id,
+      return_items: items,
     });
   });
 

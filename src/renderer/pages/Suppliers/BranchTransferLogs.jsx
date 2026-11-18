@@ -193,6 +193,11 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
 
   useEffect(() => {
     fetchTransferLogs();
+    const handleSyncCompleted = () => {
+      fetchTransferLogs();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [fetchTransferLogs]);
 
   // Quick Action Handlers

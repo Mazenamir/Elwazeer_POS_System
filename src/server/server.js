@@ -327,7 +327,7 @@ async function startServer() {
 
       // Start background auto-sync worker if running in Branch mode
       if (config.IS_BRANCH_MODE) {
-        syncService.startBackgroundSyncWorker(30000);
+        syncService.startBackgroundSyncWorker(12000);
       }
 
       // Notify parent Electron process if running under fork()
