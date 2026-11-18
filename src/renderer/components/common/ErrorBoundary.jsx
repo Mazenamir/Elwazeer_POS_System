@@ -10,12 +10,39 @@ export class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
 
+  componentDidMount() {
+    window.addEventListener('popstate', this.handleRouteReset);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('popstate', this.handleRouteReset);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
   componentDidCatch(error, errorInfo) {
     console.error('App ErrorBoundary caught error:', error, errorInfo);
   }
 
+  handleRouteReset = () => {
+    if (this.state.hasError) {
+      this.setState({ hasError: false, error: null });
+    }
+  };
+
   handleReload = () => {
     window.location.reload();
+  };
+
+  handleGoHome = () => {
+    this.setState({ hasError: false, error: null });
+    if (window.location.pathname !== '/dashboard') {
+      window.location.assign('/dashboard');
+    }
   };
 
   render() {
@@ -38,12 +65,22 @@ export class ErrorBoundary extends React.Component {
                 {this.state.error.message}
               </pre>
             )}
-            <button
-              onClick={this.handleReload}
-              className="w-full py-3.5 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-sm transition-all shadow-lg shadow-indigo-600/30"
-            >
-              إعادة تحميل الصفحة
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <button
+                type="button"
+                onClick={this.handleReload}
+                className="flex-1 py-3.5 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-sm transition-all shadow-lg shadow-indigo-600/30 cursor-pointer"
+              >
+                إعادة تحميل الصفحة
+              </button>
+              <button
+                type="button"
+                onClick={this.handleGoHome}
+                className="py-3.5 px-5 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-200 font-bold text-sm transition-all border border-slate-700 cursor-pointer"
+              >
+                العودة للرئيسية
+              </button>
+            </div>
           </div>
         </div>
       );

@@ -730,6 +730,12 @@ total: 0,
       const data = await api.get(`/inventory?${query.toString()}`);
       const items = Array.isArray(data) ? data : data?.items || [];
       setProducts(items);
+      try {
+        for (let idx = sessionStorage.length - 1; idx >= 0; idx--) {
+          const k = sessionStorage.key(idx);
+          if (k && k.startsWith('pos_catalog_')) sessionStorage.removeItem(k);
+        }
+      } catch {}
 
       if (data?.pagination) {
         setInventoryPagination((prev) => ({

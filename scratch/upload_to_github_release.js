@@ -46,9 +46,12 @@ const RELEASE_BODY = [
   '- فرض `branch_scope = all` تلقائياً لحسابات المحاسبين أثناء الاستيراد والمزامنة، وتحديث باقة صلاحيات المحاسب (`PERMISSION_PRESETS.accountant`).',
   '- تمكين المحاسب من تعديل وحذف المصروفات عبر جميع الفروع، ومزامنة المنتجات التالفة (`worn_products`) تلقائياً.',
   '',
-  '#### 4. 🔒 ضبط عزل نطاق الفروع المختارة ومعالجة أخطاء تهيئة الواجهة (UI TDZ Crash Fix):',
-  '- تصحيح ترتيب استدعاء الدوال داخل `ExpensesManager.jsx` (`loadDrawerSettlement`) و `Rentals.jsx` (`loadLookups`) في خطافات المزامنة المباشرة (`elwazeer:sync-completed`) لمنع خطأ `Cannot access before initialization` في النسخة الإنتاجية.',
-  '- تصحيح `hasBranchAccess` في `branchScope.middleware.js` لمنع تخطي حدود الفروع المختارة عند تمرير `branch_id=all`.',
+  '#### 4. 🔒 إصلاحات شاملة للموظفين والكاشير والمخزن والتعديلات وبوابة الـ `CI`:',
+  '- إصلاح سجل مبيعات الموظف (`getEmployeeSalesReport`) في وضعي `PostgreSQL` و`Branch SQLite` مع ضمان مزامنة `seller_id` عبر `seller_ref`.',
+  '- دعم الدفع الآجل الكامل والمقدم في الكاشير (`POS.jsx`) وتطوير الدفع المجزأ بخياري الحساب التلقائي والكتابة اليدوية الحرة مع إمكانية ترك متبقي آجل.',
+  '- إصلاح تطابق كميات المخزن مع الكاشير (`inventory_id` للمقاسات، تحديث الكاش الفوري، ومصالحة رصيد الفروع عند البيع والتحويل).',
+  '- إصلاح استعلام التعديلات (`listAlterations`) على `PostgreSQL` وإضافة التصفير التلقائي لشاشة `ErrorBoundary` عند التنقل بين المسارات.',
+  '- تفعيل بوابة `CI` واختبارات التزامن و`HTTP E2E` و`Electron UI` الشاملة ومنع أي إصدار قبل نجاح جميع الفحوصات `100%`.',
   '',
   '---',
   '',
@@ -183,11 +186,64 @@ async function uploadAsset(release, filePath, assetName, maxRetries = 3) {
   }
 }
 
+async function enforceCiAndReleaseGates() {
+  const { execSync } = require('child_process');
+  const rootDir = path.resolve(__dirname, '..');
+
+  const statusOut = execSync('git status --porcelain', { cwd: rootDir, encoding: 'utf8' }).trim();
+  if (statusOut) {
+    throw new Error(`Release blocked: working tree is not clean:\n${statusOut}`);
+  }
+
+  const headSha = execSync('git rev-parse HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+  const stampPath = path.resolve(rootDir, 'dist', '.release-gate-stamp.json');
+  if (!fs.existsSync(stampPath)) {
+    throw new Error(`Release blocked: missing local release gate stamp at ${stampPath}. Run "npm run test:release-gate" first.`);
+  }
+  const stamp = JSON.parse(fs.readFileSync(stampPath, 'utf8'));
+  if (!stamp.gatesPassed || stamp.commit !== headSha || !stamp.clean) {
+    throw new Error(`Release blocked: local release gate stamp does not match clean HEAD ${headSha}. Re-run "npm run test:release-gate".`);
+  }
+  console.log(`✅ Verified local Release Gate stamp for HEAD commit ${headSha}`);
+
+  const unpushedCount = Number(execSync('git rev-list --count origin/master..HEAD', { cwd: rootDir, encoding: 'utf8' }).trim() || 0);
+  if (unpushedCount > 0) {
+    throw new Error(`Release blocked: ${unpushedCount} local commit(s) on master are not pushed to origin/master yet.`);
+  }
+
+  console.log(`🔍 Checking GitHub Actions CI status for commit ${headSha}...`);
+  const checksRes = await apiRequest({
+    hostname: 'api.github.com',
+    path: `/repos/${OWNER}/${REPO}/commits/${headSha}/check-runs`,
+    method: 'GET',
+    headers: {
+      'Authorization': `token ${GITHUB_TOKEN}`,
+      'User-Agent': 'NodeJS-Uploader',
+      'Accept': 'application/vnd.github+json',
+    },
+  });
+
+  const checkRuns = Array.isArray(checksRes?.check_runs) ? checksRes.check_runs : [];
+  if (checkRuns.length === 0) {
+    throw new Error(`Release blocked: no GitHub Actions check-runs found yet for commit ${headSha}. Wait for CI to run and succeed first.`);
+  }
+
+  const nonSuccess = checkRuns.filter((cr) => cr.status !== 'completed' || cr.conclusion !== 'success');
+  if (nonSuccess.length > 0) {
+    const details = nonSuccess.map((cr) => `${cr.name}: status=${cr.status}, conclusion=${cr.conclusion}`).join('\n  - ');
+    throw new Error(`Release blocked: GitHub Actions CI is not 100% green for commit ${headSha}:\n  - ${details}`);
+  }
+
+  console.log(`✅ All ${checkRuns.length} GitHub Actions CI check-runs passed 100% on commit ${headSha}!`);
+}
+
 async function main() {
   if (!GITHUB_TOKEN) {
     console.error('❌ GITHUB_TOKEN or GH_TOKEN is required to publish the release.');
     process.exit(1);
   }
+
+  await enforceCiAndReleaseGates();
 
   const deleteExisting = process.argv.includes('--delete-existing') || process.env.DELETE_EXISTING === 'true';
 

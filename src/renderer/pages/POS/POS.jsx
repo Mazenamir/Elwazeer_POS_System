@@ -277,6 +277,7 @@ export function POS() {
   const [paymentMethod, setPaymentMethod] = useState('cash'); // 'cash' | 'bank_transfer' | 'card' | 'wallet' | 'debt'
   const [paidAmount, setPaidAmount] = useState('');
   const [isSplitPayment, setIsSplitPayment] = useState(false);
+  const [splitCalcMode, setSplitCalcMode] = useState('auto'); // 'auto' | 'manual'
   const [splitMethod1, setSplitMethod1] = useState('cash');
   const [splitAmount1, setSplitAmount1] = useState('');
   const [splitMethod2, setSplitMethod2] = useState('bank_transfer');
@@ -525,9 +526,7 @@ export function POS() {
   }, [activeBranchId]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchInventory();
-    }, 200);
+    fetchInventory();
     const handleSyncCompleted = () => {
       try {
         for (let idx = sessionStorage.length - 1; idx >= 0; idx--) {
@@ -539,7 +538,6 @@ export function POS() {
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => {
-      clearTimeout(timer);
       window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
     };
   }, [fetchInventory]);
@@ -706,17 +704,19 @@ export function POS() {
           sizes: itemSizes.length > 1
             ? itemSizes.map((s) => ({
                 id: s.id || item.id,
+                inventory_id: item.id,
                 size_name: s.size_name,
                 stock_level: (!activeBranchId || activeBranchId === 'all') ? Number(s.stock_level ?? 0) : (s.branch_id && s.branch_id.toString() !== activeBranchId.toString() ? 0 : Number(s.stock_level ?? 0)),
                 barcode: s.barcode || item.barcode,
                 color_name: s.color_name || item.color || '',
               }))
             : (baseSizeName ? [{
-                id: item.id,
+                id: itemSizes[0]?.id || item.id,
+                inventory_id: item.id,
                 size_name: baseSizeName,
-                stock_level: Number(item.stock_level ?? 0),
-                barcode: item.barcode,
-                color_name: item.color || '',
+                stock_level: itemSizes[0] && itemSizes[0].stock_level !== undefined ? Number(itemSizes[0].stock_level) : itemBranchStock,
+                barcode: itemSizes[0]?.barcode || item.barcode,
+                color_name: itemSizes[0]?.color_name || item.color || '',
               }] : []),
           total_stock: Number(item.total_stock ?? item.stock_level ?? 0),
           stock_level: itemBranchStock,
@@ -742,20 +742,43 @@ export function POS() {
           }
         }
 
-        // Add size to sizes list if not already present and if a valid size exists
-        const sizeName = itemSizes[0]?.size_name || item.size_cut || item.size;
-        if (sizeName) {
-          const existingSize = grouped.sizes.find((s) => s.size_name === sizeName);
-          if (!existingSize) {
-            grouped.sizes.push({
+        // Add sizes from merged item while preserving exact inventory_id
+        const sizesToMerge = itemSizes.length > 0
+          ? itemSizes.map((s) => ({
+              id: s.id || item.id,
+              inventory_id: item.id,
+              size_name: s.size_name,
+              stock_level: (!activeBranchId || activeBranchId === 'all')
+                ? Number(s.stock_level ?? 0)
+                : (s.branch_id && s.branch_id.toString() !== activeBranchId.toString() ? 0 : Number(s.stock_level ?? 0)),
+              barcode: s.barcode || item.barcode,
+              color_name: s.color_name || item.color || '',
+            }))
+          : (baseSizeName ? [{
               id: item.id,
-              size_name: sizeName,
+              inventory_id: item.id,
+              size_name: baseSizeName,
               stock_level: itemBranchStock,
               barcode: item.barcode,
               color_name: item.color || '',
-            });
+            }] : []);
+
+        for (const sz of sizesToMerge) {
+          if (!sz.size_name) continue;
+          const existingSize = grouped.sizes.find(
+            (s) =>
+              String(s.size_name || '').trim().toLowerCase() === String(sz.size_name || '').trim().toLowerCase() &&
+              String(s.color_name || '').trim().toLowerCase() === String(sz.color_name || '').trim().toLowerCase()
+          );
+          if (!existingSize) {
+            grouped.sizes.push(sz);
           } else {
-            existingSize.stock_level += itemBranchStock;
+            if (Number(existingSize.stock_level || 0) <= 0 && Number(sz.stock_level || 0) > 0) {
+              existingSize.inventory_id = sz.inventory_id;
+              existingSize.id = sz.id;
+              existingSize.barcode = sz.barcode || existingSize.barcode;
+            }
+            existingSize.stock_level += Number(sz.stock_level || 0);
           }
         }
       }
@@ -943,6 +966,14 @@ export function POS() {
           );
           if (matchingSizes.length > 0) {
             const sumStock = matchingSizes.reduce((sum, s) => sum + Number(s.stock_level || 0), 0);
+            if (sumStock > 0) return sumStock;
+            // If branch stock exists on the product itself and no size rows carry stock, use branch stock
+            const isAllB = !activeBranchId || activeBranchId === 'all';
+            const totalSizesStock = product.sizes.reduce((sum, s) => sum + Number(s.stock_level || 0), 0);
+            const fallbackBranch = isAllB
+              ? Number(product.total_stock ?? product.stock_level ?? 0)
+              : Number(product.stock_level ?? 0);
+            if (totalSizesStock === 0 && fallbackBranch > 0) return fallbackBranch;
             return sumStock;
           }
         }
@@ -992,6 +1023,11 @@ export function POS() {
     }
 
     const itemColor = selectedSizeObj?.color_name || product.color || '';
+    let targetInventoryId = Number(selectedSizeObj?.inventory_id || product.id);
+    if (Array.isArray(product.originalItems) && product.originalItems.length > 1 && !selectedSizeObj?.inventory_id) {
+      const firstInStock = product.originalItems.find((orig) => Number(orig.stock_level || 0) > 0);
+      if (firstInStock) targetInventoryId = Number(firstInStock.id);
+    }
     const availableStock = getProductAvailableStock(product, itemSize, itemColor);
     if (availableStock <= 0) {
       playErrorSound();
@@ -1000,7 +1036,7 @@ export function POS() {
       return;
     }
 
-    const cartItemId = `${product.id}_${itemSize || 'default'}_${itemColor}`;
+    const cartItemId = `${targetInventoryId}_${itemSize || 'default'}_${itemColor}`;
 
     setCarts((prev) => {
       const items = prev[activeCartId] || [];
@@ -1027,8 +1063,8 @@ export function POS() {
       } else {
         const newItem = {
           cartItemId,
-          id: product.id,
-          productId: product.id,
+          id: targetInventoryId,
+          productId: targetInventoryId,
           size_row_id: selectedSizeObj?.id || null,
           name: product.name,
           barcode: chosenBarcode || product.barcode,
@@ -1353,8 +1389,9 @@ export function POS() {
     }
     setCheckoutBranchId(targetBranch ? targetBranch.toString() : '1');
 
-    setPaidAmount(grandTotal.toString());
+    setPaidAmount(paymentMethod === 'debt' ? '0' : grandTotal.toString());
     setIsSplitPayment(false);
+    setSplitCalcMode('auto');
     setSplitMethod1('cash');
     setSplitAmount1('');
     setSplitMethod2('bank_transfer');
@@ -1393,23 +1430,16 @@ export function POS() {
     let pWallet = 0;
 
     if (isSplitPayment) {
-      const a1 = Number(splitAmount1) || 0;
-      const a2 = Number(splitAmount2) || 0;
-      if (a1 <= 0 || a2 <= 0) {
-        toast.error('يرجى إدخال مبالغ صحيحة أكبر من صفر لكلتا طريقتي الدفع المجزأ');
+      const a1 = Math.max(0, Number(splitAmount1) || 0);
+      const a2 = Math.max(0, Number(splitAmount2) || 0);
+      if (a1 <= 0 && a2 <= 0) {
+        toast.error('يرجى إدخال مبلغ واحد على الأقل أكبر من صفر في الدفع المجزأ');
         return;
       }
       if (splitMethod1 === splitMethod2) {
         toast.error('لا يمكن اختيار نفس طريقة الدفع مرتين في الدفع المجزأ');
         return;
       }
-      finalPaid = a1 + a2;
-      finalMethod = 'split';
-      const splitsArray = [
-        { method: splitMethod1, amount: a1 },
-        { method: splitMethod2, amount: a2 },
-      ];
-      splitsJson = JSON.stringify(splitsArray);
 
       if (splitMethod1 === 'cash') pCash += a1;
       else if (splitMethod1 === 'bank_transfer') pBank += a1;
@@ -1420,11 +1450,26 @@ export function POS() {
       else if (splitMethod2 === 'bank_transfer') pBank += a2;
       else if (splitMethod2 === 'card') pCard += a2;
       else if (splitMethod2 === 'wallet') pWallet += a2;
+
+      finalPaid = pCash + pBank + pCard + pWallet;
+      const splitsArray = [];
+      if (a1 > 0) splitsArray.push({ method: splitMethod1, amount: a1 });
+      if (a2 > 0) splitsArray.push({ method: splitMethod2, amount: a2 });
+      const remainingAfterSplit = Math.max(0, grandTotal - finalPaid);
+      if (remainingAfterSplit > 0 && splitMethod1 !== 'debt' && splitMethod2 !== 'debt') {
+        splitsArray.push({ method: 'debt', amount: remainingAfterSplit });
+      }
+      finalMethod = splitsArray.length > 1 ? 'split' : (splitsArray[0]?.method || 'debt');
+      splitsJson = splitsArray.length > 0 ? JSON.stringify(splitsArray) : null;
     } else {
       if (paymentMethod === 'cash') pCash = finalPaid;
       else if (paymentMethod === 'bank_transfer') pBank = finalPaid;
       else if (paymentMethod === 'card') pCard = finalPaid;
       else if (paymentMethod === 'wallet') pWallet = finalPaid;
+      else if (paymentMethod === 'debt' && finalPaid > 0) {
+        // Any upfront deposit on a deferred invoice goes into drawer cash
+        pCash = finalPaid;
+      }
     }
 
     const change = Math.max(0, finalPaid - grandTotal);
@@ -1466,7 +1511,7 @@ export function POS() {
         items: currentCart.map((i) => {
           const prod = findProductForCartItem(i);
           return {
-            id: Number(prod?.id || i.productId || i.id),
+            id: Number(i.productId || i.id || prod?.id),
             size: i.size || null,
             color: i.color || null,
             quantity: i.quantity,
@@ -1527,6 +1572,12 @@ export function POS() {
       clearCurrentCart();
 
       const nextIdUrl = `/next-order-id${effectiveBranchId ? `?branch_id=${effectiveBranchId}` : ''}`;
+      try {
+        for (let idx = sessionStorage.length - 1; idx >= 0; idx--) {
+          const k = sessionStorage.key(idx);
+          if (k && k.startsWith('pos_catalog_')) sessionStorage.removeItem(k);
+        }
+      } catch {}
       const nextIdRes = await api.get(nextIdUrl).catch(() => null);
       if (nextIdRes?.next_id) setNextOrderId(nextIdRes.next_id);
       fetchInventory();
@@ -4667,15 +4718,24 @@ export function POS() {
                   { id: 'bank_transfer', label: 'انستاباي / بنكي', icon: Building2 },
                   { id: 'card', label: 'بطاقة (فيزا)', icon: CreditCard },
                   { id: 'wallet', label: 'فودافون كاش', icon: Phone },
-                  { id: 'debt', label: 'آجل / مديونية', icon: Clock },
+                  { id: 'debt', label: 'آجل (مديونية)', icon: Clock },
                 ].map((m) => (
                   <button
                     key={m.id}
                     type="button"
-                    onClick={() => setPaymentMethod(m.id)}
-                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 font-bold text-xs transition-all ${
+                    onClick={() => {
+                      setPaymentMethod(m.id);
+                      if (m.id === 'debt') {
+                        setPaidAmount('0');
+                      } else if (paymentMethod === 'debt' || Number(paidAmount) === 0) {
+                        setPaidAmount(grandTotal.toString());
+                      }
+                    }}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 font-bold text-xs transition-all cursor-pointer ${
                       paymentMethod === m.id
-                        ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 shadow-sm'
+                        ? m.id === 'debt'
+                          ? 'border-amber-600 bg-amber-50 text-amber-800 shadow-sm'
+                          : 'border-indigo-600 bg-indigo-50/50 text-indigo-700 shadow-sm'
                         : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                     }`}
                   >
@@ -4686,8 +4746,32 @@ export function POS() {
               </div>
             ) : (
               <div className="space-y-3 p-3.5 bg-purple-50/50 border border-purple-200 rounded-2xl">
-                <div className="text-xs font-black text-purple-950 flex items-center justify-between">
-                  <span>توزيع الدفع المجزأ بين وسيلتين:</span>
+                <div className="text-xs font-black text-purple-950 flex flex-wrap items-center justify-between gap-2">
+                  <span>توزيع الدفع المجزأ:</span>
+                  <div className="inline-flex items-center rounded-xl bg-white border border-purple-200 p-0.5 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setSplitCalcMode('auto')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer ${
+                        splitCalcMode === 'auto'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      حساب تلقائي للمتبقي
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSplitCalcMode('manual')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer ${
+                        splitCalcMode === 'manual'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      كتابة يدوية حرة
+                    </button>
+                  </div>
                   <span className="text-[11px] font-bold text-slate-500">
                     الإجمالي المطلوب: {grandTotal.toLocaleString()} ج.م
                   </span>
@@ -4695,7 +4779,7 @@ export function POS() {
 
                 {/* Method 1 */}
                 <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <span className="text-xs font-bold text-slate-700">الوسيلة الأولى:</span>
                     <div className="flex flex-wrap gap-1">
                       {[
@@ -4703,6 +4787,7 @@ export function POS() {
                         { id: 'bank_transfer', label: 'انستاباي / بنكي' },
                         { id: 'card', label: 'فيزا' },
                         { id: 'wallet', label: 'فودافون كاش' },
+                        { id: 'debt', label: 'آجل (متبقي)' },
                       ].map((m) => (
                         <button
                           key={m.id}
@@ -4713,9 +4798,11 @@ export function POS() {
                               setSplitMethod2(m.id === 'cash' ? 'bank_transfer' : 'cash');
                             }
                           }}
-                          className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-colors ${
+                          className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                             splitMethod1 === m.id
-                              ? 'bg-purple-600 text-white'
+                              ? m.id === 'debt'
+                                ? 'bg-amber-600 text-white'
+                                : 'bg-purple-600 text-white'
                               : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                           }`}
                         >
@@ -4728,18 +4815,20 @@ export function POS() {
                     <Input
                       type="number"
                       step="any"
+                      min="0"
                       value={splitAmount1}
                       onChange={(e) => {
                         const val = e.target.value;
                         setSplitAmount1(val);
-                        const num = Number(val) || 0;
-                        if (num >= 0 && grandTotal > num) {
-                          setSplitAmount2((grandTotal - num).toString());
+                        if (splitCalcMode === 'auto') {
+                          const num = Number(val) || 0;
+                          if (num >= 0) {
+                            setSplitAmount2(Math.max(0, grandTotal - num).toString());
+                          }
                         }
                       }}
                       placeholder="المبلغ للوسيلة الأولى..."
                       className="font-black text-base"
-                      required
                     />
                     <button
                       type="button"
@@ -4747,7 +4836,7 @@ export function POS() {
                         const cur2 = Number(splitAmount2) || 0;
                         setSplitAmount1(Math.max(0, grandTotal - cur2).toString());
                       }}
-                      className="px-2.5 py-2.5 whitespace-nowrap bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl"
+                      className="px-2.5 py-2.5 whitespace-nowrap bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
                     >
                       تكملة الإجمالي
                     </button>
@@ -4756,7 +4845,7 @@ export function POS() {
 
                 {/* Method 2 */}
                 <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <span className="text-xs font-bold text-slate-700">الوسيلة الثانية:</span>
                     <div className="flex flex-wrap gap-1">
                       {[
@@ -4764,6 +4853,7 @@ export function POS() {
                         { id: 'bank_transfer', label: 'انستاباي / بنكي' },
                         { id: 'card', label: 'فيزا' },
                         { id: 'wallet', label: 'فودافون كاش' },
+                        { id: 'debt', label: 'آجل (متبقي)' },
                       ].map((m) => (
                         <button
                           key={m.id}
@@ -4774,9 +4864,11 @@ export function POS() {
                               setSplitMethod1(m.id === 'cash' ? 'bank_transfer' : 'cash');
                             }
                           }}
-                          className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-colors ${
+                          className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                             splitMethod2 === m.id
-                              ? 'bg-purple-600 text-white'
+                              ? m.id === 'debt'
+                                ? 'bg-amber-600 text-white'
+                                : 'bg-purple-600 text-white'
                               : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                           }`}
                         >
@@ -4789,18 +4881,20 @@ export function POS() {
                     <Input
                       type="number"
                       step="any"
+                      min="0"
                       value={splitAmount2}
                       onChange={(e) => {
                         const val = e.target.value;
                         setSplitAmount2(val);
-                        const num = Number(val) || 0;
-                        if (num >= 0 && grandTotal > num) {
-                          setSplitAmount1((grandTotal - num).toString());
+                        if (splitCalcMode === 'auto') {
+                          const num = Number(val) || 0;
+                          if (num >= 0) {
+                            setSplitAmount1(Math.max(0, grandTotal - num).toString());
+                          }
                         }
                       }}
                       placeholder="المبلغ للوسيلة الثانية..."
                       className="font-black text-base"
-                      required
                     />
                     <button
                       type="button"
@@ -4808,7 +4902,7 @@ export function POS() {
                         const cur1 = Number(splitAmount1) || 0;
                         setSplitAmount2(Math.max(0, grandTotal - cur1).toString());
                       }}
-                      className="px-2.5 py-2.5 whitespace-nowrap bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl"
+                      className="px-2.5 py-2.5 whitespace-nowrap bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
                     >
                       تكملة الإجمالي
                     </button>
@@ -4819,16 +4913,19 @@ export function POS() {
                 {(() => {
                   const a1 = Number(splitAmount1) || 0;
                   const a2 = Number(splitAmount2) || 0;
-                  const totalPaidSplit = a1 + a2;
                   const grossDrawerCash = (splitMethod1 === 'cash' ? a1 : 0) + (splitMethod2 === 'cash' ? a2 : 0);
+                  const electronicTotal =
+                    (['bank_transfer', 'card', 'wallet'].includes(splitMethod1) ? a1 : 0) +
+                    (['bank_transfer', 'card', 'wallet'].includes(splitMethod2) ? a2 : 0);
+                  const totalPaidSplit = grossDrawerCash + electronicTotal;
                   const splitChange = Math.max(0, totalPaidSplit - grandTotal);
                   const netDrawerCash = Math.max(0, grossDrawerCash - splitChange);
-                  const electronicTotal = totalPaidSplit - grossDrawerCash;
+                  const remainingDebt = Math.max(0, grandTotal - totalPaidSplit);
 
                   return (
                     <div className="p-2.5 bg-white rounded-xl border border-purple-200 space-y-1 text-xs">
                       <div className="flex justify-between items-center font-bold">
-                        <span className="text-slate-600">إجمالي المدفوع المجزأ:</span>
+                        <span className="text-slate-600">إجمالي المحصل فعلياً:</span>
                         <span className="font-black text-slate-900">{totalPaidSplit.toLocaleString()} ج.م</span>
                       </div>
                       <div className="flex justify-between items-center font-bold text-emerald-700">
@@ -4848,12 +4945,18 @@ export function POS() {
                           <span className="font-black">{electronicTotal.toLocaleString()} ج.م</span>
                         </div>
                       )}
+                      {remainingDebt > 0 && (
+                        <div className="flex justify-between items-center font-bold text-amber-700">
+                          <span>متبقي آجل على العميل:</span>
+                          <span className="font-black">{remainingDebt.toLocaleString()} ج.م</span>
+                        </div>
+                      )}
                       <div className="flex justify-between items-center font-bold text-slate-500 pt-1 border-t border-slate-100">
                         <span>حالة الفاتورة:</span>
-                        <span className={`font-black ${totalPaidSplit >= grandTotal ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        <span className={`font-black ${totalPaidSplit >= grandTotal ? 'text-emerald-600' : 'text-amber-700'}`}>
                           {totalPaidSplit >= grandTotal
                             ? `خالصة بالكامل ${splitChange > 0 ? `(باقي للعميل: ${splitChange.toLocaleString()} ج.م)` : '✓'}`
-                            : `غير خالصة (متبقي على العميل: ${(grandTotal - totalPaidSplit).toLocaleString()} ج.م)`}
+                            : `آجل / غير خالصة (متبقي: ${remainingDebt.toLocaleString()} ج.م)`}
                         </span>
                       </div>
                     </div>
@@ -4866,33 +4969,46 @@ export function POS() {
           {!isSplitPayment && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-700">المبلغ المدفوع (ج.م)</label>
+                <label className="text-xs font-bold text-slate-700">
+                  {paymentMethod === 'debt' ? 'المبلغ المدفوع مقدماً (اختياري - 0 للآجل بالكامل)' : 'المبلغ المدفوع (ج.م)'}
+                </label>
                 <span className="text-xs font-bold text-slate-500">
-                  المتبقي (الباقي):{' '}
+                  {Number(paidAmount || 0) >= grandTotal ? 'الباقي للعميل:' : 'المتبقي آجل على العميل:'}{' '}
                   <span
                     className={`font-black ${
-                      Number(paidAmount) - grandTotal >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                      Number(paidAmount || 0) - grandTotal >= 0 ? 'text-emerald-600' : 'text-amber-700'
                     }`}
                   >
-                    {Math.abs(Number(paidAmount) - grandTotal).toLocaleString()} ج.م
+                    {Math.abs(Number(paidAmount || 0) - grandTotal).toLocaleString()} ج.م
                   </span>
                 </span>
               </div>
               <Input
                 type="number"
                 step="any"
+                min="0"
                 value={paidAmount}
                 onChange={(e) => setPaidAmount(e.target.value)}
-                placeholder="أدخل المبلغ المدفوع..."
+                placeholder={paymentMethod === 'debt' ? '0 للآجل بالكامل أو أدخل الدفعة المقدمة...' : 'أدخل المبلغ المدفوع...'}
                 className="font-black text-lg text-indigo-600"
               />
               <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentMethod('debt');
+                    setPaidAmount('0');
+                  }}
+                  className="px-3 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl text-xs font-black text-amber-800 transition-colors cursor-pointer"
+                >
+                  آجل بالكامل (0 ج.م)
+                </button>
                 {[grandTotal, 100, 200, 500, 1000].map((amt) => (
                   <button
                     key={amt}
                     type="button"
                     onClick={() => setPaidAmount(amt.toString())}
-                    className="px-3 py-1 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-700 transition-colors"
+                    className="px-3 py-1 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-700 transition-colors cursor-pointer"
                   >
                     {amt === grandTotal ? 'المبلغ بالظبط' : `${amt} ج.م`}
                   </button>

@@ -328,22 +328,51 @@ async function createOrder(body, user, req) {
         throw err;
       }
       const globalRow = globalStockCheck.rows[0];
-      if (Number(globalRow.stock_level) < requiredQty) {
-        const err = new Error(`المخزون العام غير كافٍ للمنتج "${globalRow.name}"`);
-        err.statusCode = 400;
-        throw err;
-      }
       canonicalProducts.set(itemId, globalRow);
 
-      // Lock and validate branch inventory row
+      // Lock and validate branch inventory row (reconciling from branch sizes if branch row drifted)
       const branchStockCheck = await tx.query(
         'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
         [itemId, b_id]
       );
-      if (branchStockCheck.rows.length === 0 || Number(branchStockCheck.rows[0].stock_level) < requiredQty) {
-        const err = new Error(`المخزون غير كافٍ للمنتج "${globalRow.name}" في هذا الفرع`);
+      let branchStock = branchStockCheck.rows.length > 0 ? Number(branchStockCheck.rows[0].stock_level || 0) : 0;
+      if (branchStock < requiredQty) {
+        const branchSizeSumRes = await tx.query(
+          'SELECT COALESCE(SUM(stock_level), 0) AS sz_total FROM inventory_sizes WHERE inventory_id = $1 AND branch_id = $2',
+          [itemId, b_id]
+        );
+        const branchSizeTotal = Number(branchSizeSumRes.rows[0]?.sz_total || 0);
+        if (branchSizeTotal >= requiredQty && branchSizeTotal > branchStock) {
+          await tx.query(
+            `INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = EXCLUDED.stock_level`,
+            [itemId, b_id, branchSizeTotal]
+          );
+          branchStock = branchSizeTotal;
+        }
+      }
+      if (branchStock < requiredQty) {
+        const err = new Error(`المخزون غير كافٍ للمنتج "${globalRow.name}" في هذا الفرع (المتاح: ${branchStock})`);
         err.statusCode = 400;
         throw err;
+      }
+
+      // Reconcile stale global inventory.stock_level if sum across branches has sufficient stock
+      if (Number(globalRow.stock_level) < requiredQty) {
+        const sumBranchesRes = await tx.query(
+          'SELECT COALESCE(SUM(stock_level), 0) AS total_branches FROM inventory_branches WHERE inventory_id = $1',
+          [itemId]
+        );
+        const totalBranches = Number(sumBranchesRes.rows[0]?.total_branches || 0);
+        if (totalBranches >= requiredQty) {
+          await tx.query('UPDATE inventory SET stock_level = $1 WHERE id = $2', [totalBranches, itemId]);
+          globalRow.stock_level = totalBranches;
+        } else {
+          const err = new Error(`المخزون العام غير كافٍ للمنتج "${globalRow.name}"`);
+          err.statusCode = 400;
+          throw err;
+        }
       }
     }
 
@@ -501,6 +530,9 @@ async function createOrder(body, user, req) {
         p_wallet = roundedPaid;
       } else if (normM === 'debt') {
         finalPaymentMethod = 'debt';
+        if (roundedPaid > 0) {
+          p_cash = Math.min(roundedPaid, finalTotalAmount);
+        }
       }
     }
 
@@ -565,12 +597,22 @@ async function createOrder(body, user, req) {
     await queueSyncOperation(tx, req, 'order', 'create', newOrderId, b_id, {
       offline_uuid: orderOfflineUuid,
       customer: { name: normalizedCustomerName, phone: normalizedCustomerPhone, branch_id: b_id },
+      seller_ref: {
+        id: sellerId,
+        name: sellerRes.rows[0]?.name || null,
+        branch_id: sellerRes.rows[0]?.branch_id || b_id,
+      },
       order: {
         total_amount: finalTotalAmount,
         order_date: newOrderDate,
         branch_id: b_id,
         payment_method: finalPaymentMethod,
         seller_id: sellerId,
+        seller_ref: {
+          id: sellerId,
+          name: sellerRes.rows[0]?.name || null,
+          branch_id: sellerRes.rows[0]?.branch_id || b_id,
+        },
         paid_amount: netPaid,
         change_amount: effectiveChange,
         invoice_discount: invDiscountVal,

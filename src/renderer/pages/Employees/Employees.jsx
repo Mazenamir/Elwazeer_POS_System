@@ -706,13 +706,35 @@ export function Employees() {
     setLoadingSalesReport(true);
     try {
       const res = await client.get(`/employees/${emp.id}/sales-report`);
-      setSalesReportData(res.data || { sales: [], total_sales: 0, total_commission: 0 });
+      const payload = res?.sales ? res : (res?.data || {});
+      setSalesReportData({
+        sales: Array.isArray(payload.sales) ? payload.sales : [],
+        total_sales: Number(payload.total_sales || 0),
+        total_commission: Number(payload.total_commission || 0),
+      });
     } catch {
       setSalesReportData({ sales: [], total_sales: 0, total_commission: 0 });
     } finally {
       setLoadingSalesReport(false);
     }
   };
+
+  useEffect(() => {
+    if (!showSalesReportModal || !salesReportEmp?.id) return;
+    const handleSyncCompleted = async () => {
+      try {
+        const res = await client.get(`/employees/${salesReportEmp.id}/sales-report`);
+        const payload = res?.sales ? res : (res?.data || {});
+        setSalesReportData({
+          sales: Array.isArray(payload.sales) ? payload.sales : [],
+          total_sales: Number(payload.total_sales || 0),
+          total_commission: Number(payload.total_commission || 0),
+        });
+      } catch {}
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+  }, [showSalesReportModal, salesReportEmp?.id]);
 
   // Transfer Employee
   const handleTransfer = async () => {

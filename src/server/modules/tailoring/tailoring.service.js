@@ -36,7 +36,9 @@ async function listAlterations(query = {}, user = null, req = null) {
       SELECT oi.order_id, i.id, i.name, i.category, i.barcode, i.image_url, i.color, i.size_cut
       FROM order_items oi
       JOIN inventory i ON oi.inventory_id = i.id
-      GROUP BY oi.order_id
+      WHERE oi.id = (
+        SELECT MIN(oi2.id) FROM order_items oi2 WHERE oi2.order_id = oi.order_id
+      )
     ) first_item ON first_item.order_id = alt.order_id
   `;
 
@@ -49,7 +51,9 @@ async function listAlterations(query = {}, user = null, req = null) {
       SELECT oi.order_id, i.id, i.name, i.category, i.barcode
       FROM order_items oi
       JOIN inventory i ON oi.inventory_id = i.id
-      GROUP BY oi.order_id
+      WHERE oi.id = (
+        SELECT MIN(oi2.id) FROM order_items oi2 WHERE oi2.order_id = oi.order_id
+      )
     ) first_item ON first_item.order_id = alt.order_id
   `;
 
@@ -106,7 +110,13 @@ async function listAlterations(query = {}, user = null, req = null) {
 }
 
 async function createAlteration(body, user) {
-  let { order_id, customer_id, branch_id, description, due_date, inventory_id } = body || {};
+  let { order_id, customer_id, branch_id, description, type, due_date, inventory_id } = body || {};
+  description = String(description || type || '').trim();
+  if (!description) {
+    const err = new Error('وصف التعديل مطلوب');
+    err.statusCode = 400;
+    throw err;
+  }
 
   // Resolve offline order IDs (OFF-xxxx) to real database IDs
   if (order_id) {

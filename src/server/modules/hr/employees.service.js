@@ -1476,18 +1476,27 @@ async function getEmployeePayslip(id, monthParam, user) {
   };
 }
 
-async function getEmployeeSalesReport(id, user) {
+async function getEmployeeSalesReport(id, queryOrUser = {}, maybeUser = null) {
+  let query = {};
+  let user = maybeUser;
+  if (!user && queryOrUser && (queryOrUser.role || queryOrUser.username || queryOrUser.branch_id || queryOrUser.permissions)) {
+    user = queryOrUser;
+  } else {
+    query = queryOrUser || {};
+  }
+
   const isAdmin = user && user.role === 'admin';
   const isPrivileged = isAdmin || user?.branch_scope === 'all' || user?.role === 'accountant' || user?.role === 'supervisor';
-  const isBranchUser = user && user.role === 'branch_user';
+  const isBranchUser = Boolean(user && (user.role === 'branch_user' || user.branch_id));
+  const canViewSalesReport = isPrivileged || isBranchUser || hasPermission(user, 'employees.list.view') || hasPermission(user, 'reports.sales.view');
 
-  if (!isPrivileged && !isBranchUser) {
+  if (!user || !canViewSalesReport) {
     const err = new Error('Unauthorized');
     err.statusCode = 403;
     throw err;
   }
 
-  const empRes = await db.query('SELECT branch_id, name FROM employees WHERE id = $1', [id]);
+  const empRes = await db.query('SELECT * FROM employees WHERE id = $1', [id]);
   if (empRes.rows.length === 0) {
     const err = new Error('Employee not found');
     err.statusCode = 404;
@@ -1500,69 +1509,134 @@ async function getEmployeeSalesReport(id, user) {
     throw err;
   }
 
+  const commissionRate = Number(empRes.rows[0].commission_rate || 0);
+  const daysLimit = Math.max(1, Number(query.days || config.EMPLOYEE_SALES_REPORT_DAYS || 90));
+  const rowLimit = Math.max(1, Number(query.limit || config.EMPLOYEE_SALES_REPORT_LIMIT || 200));
+  const { date: todayDate } = getCairoDateTimeParts();
+  const cutoffDate = addDays(todayDate, -daysLimit);
+
+  // Use portable SQL compatible with both PostgreSQL (Master) and SQLite (Branch)
   const dailyOrdersRes = await db.query(`
     SELECT
       o.id,
       COALESCE(o.branch_invoice_number, o.id) as invoice_number,
+      o.branch_invoice_number,
       o.order_date,
-      TO_CHAR((o.order_date AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Cairo')::date, 'YYYY-MM-DD') as day,
       o.total_amount,
+      o.paid_amount,
       o.status,
       COALESCE(c.name, 'عميل نقدي') as customer_name
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
     WHERE o.seller_id = $1
-      AND o.order_date >= ${CAIRO_DATE_SQL} - ($2::int * INTERVAL '1 day')
-    ORDER BY o.order_date DESC
-    LIMIT $3
-  `, [id, config.EMPLOYEE_SALES_REPORT_DAYS, config.EMPLOYEE_SALES_REPORT_LIMIT]);
+      AND COALESCE(o.status, 'completed') NOT IN ('cancelled', 'canceled', 'ملغاة', 'ملغي')
+    ORDER BY o.order_date DESC, o.id DESC
+    LIMIT $2
+  `, [id, rowLimit]);
+
+  const toCairoDay = (val) => {
+    try {
+      if (!val) return todayDate;
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val.trim())) return val.trim();
+      const d = new Date(val);
+      if (Number.isNaN(d.getTime())) return String(val).slice(0, 10);
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Cairo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(d);
+    } catch {
+      return todayDate;
+    }
+  };
 
   const dailySalesDetailsMap = new Map();
-  dailyOrdersRes.rows.forEach((order) => {
-    if (!dailySalesDetailsMap.has(order.day)) {
-      dailySalesDetailsMap.set(order.day, {
-        day: order.day,
-        order_count: 0,
-        total_sales: 0,
-        orders: [],
+  const monthlySummaryMap = new Map();
+  const sales = [];
+  let totalSales = 0;
+  let totalCommission = 0;
+
+  (dailyOrdersRes.rows || []).forEach((order) => {
+    const day = toCairoDay(order.order_date);
+    const totalAmount = Number(order.total_amount || 0);
+    const isReturned = String(order.status || '').toLowerCase() === 'returned';
+    const effectiveAmount = isReturned ? 0 : totalAmount;
+    const commissionAmount = Math.round(((effectiveAmount * commissionRate) / 100) * 100) / 100;
+
+    sales.push({
+      id: order.id,
+      order_number: order.invoice_number || order.id,
+      invoice_number: order.invoice_number || order.id,
+      order_date: order.order_date,
+      created_at: order.order_date,
+      customer_name: order.customer_name || 'عميل نقدي',
+      total_amount: totalAmount,
+      paid_amount: Number(order.paid_amount ?? totalAmount),
+      status: order.status || 'completed',
+      commission_amount: commissionAmount,
+    });
+
+    totalSales += effectiveAmount;
+    totalCommission += commissionAmount;
+
+    if (day >= cutoffDate) {
+      if (!dailySalesDetailsMap.has(day)) {
+        dailySalesDetailsMap.set(day, {
+          day,
+          order_count: 0,
+          total_sales: 0,
+          orders: [],
+        });
+      }
+      const dayEntry = dailySalesDetailsMap.get(day);
+      dayEntry.order_count += 1;
+      dayEntry.total_sales += effectiveAmount;
+      dayEntry.orders.push({
+        id: order.id,
+        invoice_number: order.invoice_number,
+        order_date: order.order_date,
+        total_amount: totalAmount,
+        status: order.status,
+        customer_name: order.customer_name,
       });
     }
 
-    const dayEntry = dailySalesDetailsMap.get(order.day);
-    const totalAmount = Number(order.total_amount || 0);
-    dayEntry.order_count += 1;
-    dayEntry.total_sales += totalAmount;
-    dayEntry.orders.push({
-      id: order.id,
-      invoice_number: order.invoice_number,
-      order_date: order.order_date,
-      total_amount: totalAmount,
-      status: order.status,
-      customer_name: order.customer_name,
-    });
+    const monthKey = day.slice(0, 7);
+    if (!monthlySummaryMap.has(monthKey)) {
+      monthlySummaryMap.set(monthKey, {
+        month: monthKey,
+        order_count: 0,
+        customer_names: new Set(),
+        total_sales: 0,
+      });
+    }
+    const mEntry = monthlySummaryMap.get(monthKey);
+    mEntry.order_count += 1;
+    if (order.customer_name) mEntry.customer_names.add(order.customer_name);
+    mEntry.total_sales += effectiveAmount;
   });
 
   const dailySalesDetails = Array.from(dailySalesDetailsMap.values());
-
-  const monthlySummary = await db.query(`
-    SELECT
-      TO_CHAR(DATE_TRUNC('month', o.order_date), 'YYYY-MM') as month,
-      COUNT(o.id) as order_count,
-      COUNT(DISTINCT o.customer_id) FILTER (WHERE o.customer_id IS NOT NULL) as customer_count,
-      COALESCE(SUM(o.total_amount), 0) as total_sales,
-      COALESCE(AVG(o.total_amount), 0) as avg_order
-    FROM orders o
-    WHERE o.seller_id = $1
-      AND o.order_date >= DATE_TRUNC('month', ${CAIRO_DATE_SQL}) - INTERVAL '23 months'
-    GROUP BY DATE_TRUNC('month', o.order_date)
-    ORDER BY DATE_TRUNC('month', o.order_date) DESC
-    LIMIT 24
-  `, [id]);
+  const monthlySummary = Array.from(monthlySummaryMap.values())
+    .sort((a, b) => b.month.localeCompare(a.month))
+    .slice(0, 24)
+    .map((m) => ({
+      month: m.month,
+      order_count: m.order_count,
+      customer_count: m.customer_names.size,
+      total_sales: m.total_sales,
+      avg_order: m.order_count > 0 ? Math.round((m.total_sales / m.order_count) * 100) / 100 : 0,
+    }));
 
   return {
     employee_name: empRes.rows[0].name,
+    commission_rate: commissionRate,
+    sales,
+    total_sales: Math.round(totalSales * 100) / 100,
+    total_commission: Math.round(totalCommission * 100) / 100,
     daily_sales_details: dailySalesDetails,
-    monthly_summary: monthlySummary.rows,
+    monthly_summary: monthlySummary,
   };
 }
 

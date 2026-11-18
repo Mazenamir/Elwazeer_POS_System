@@ -12,44 +12,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  client-and-packaging:
-    name: Frontend Build & Packaging Audit (Windows)
-    runs-on: windows-latest
+  static-and-contracts-audit:
+    name: Static Contracts, TDZ & Client Build Audit
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Client Production Build (Vite)
-        run: npm run build
+      - name: Build Production Client (Vite)
+        run: npm run build:client
 
-      - name: Verify Package & Packaging Integrity
-        run: npm run verify:package
-        env:
-          CI: 'true'
-
-      - name: Run Auto-Updater Lifecycle & Concurrency Tests
-        run: npm run test:updater
-        env:
-          NODE_ENV: test
-          CI: 'true'
-
-      - name: Run Auto-Updater Mathematical Invariants
-        run: node scratch/test_auto_updater.js
+      - name: Run Static TDZ, Arity, Route & Cycle Audit
+        run: node scratch/audit_contracts_and_sql.js
 
       - name: Verify Frontend Pages & Navigation Wiring
         run: node scratch/verify_all_pages_and_routes.js
 
-  backend-and-invariants:
-    name: Database Migrations & Invariants Suites (Ubuntu + PostgreSQL)
+  backend-master-and-branch-e2e:
+    name: Dual-Mode Backend, Sync, Concurrency & Invariants (Ubuntu + PG16 + SQLite)
+    needs: static-and-contracts-audit
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -66,59 +56,89 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      NODE_ENV: test
+      CI: 'true'
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres_password
+      DB_NAME: pos_db
+      JWT_SECRET: ci-test-jwt-secret-key-2026
+      SYNC_API_KEY: BebyoonSecretKey2026
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Client Production Build (Vite)
-        run: npm run build
+      - name: Build Production Client (Vite)
+        run: npm run build:client
 
-      - name: Run Database Migrations
+      - name: Run PostgreSQL Migrations
         run: node -e "const { runMigrations } = require('./src/server/database/migrator'); runMigrations().then(() => { console.log('Migrations completed successfully'); process.exit(0); }).catch(e => { console.error('Migration failed:', e); process.exit(1); })"
-        env:
-          NODE_ENV: test
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-          DB_USER: postgres
-          DB_PASSWORD: postgres_password
-          DB_NAME: pos_db
-          SYNC_API_KEY: BebyoonSecretKey2026
+
+      - name: Run Full Master Regression Suites (20 Suites)
+        run: npm test
+
+      - name: Run Consolidated Branch SQLite Suites (6 Suites / 76 Checks)
+        run: npm run test:branch
+
+      - name: Run Two-Way Sync, Accountant Scoping & Tailoring Verification
+        run: node scratch/test_two_way_sync_accountant.js
+
+      - name: Run Inter-Branch <-> Central PG Sync E2E (7 Checks)
+        run: node scratch/test_interbranch_pg_sync.js
+
+      - name: Run Full-System Dual-Mode HTTP E2E Audit (Master PG + Branch SQLite)
+        run: node scratch/test_full_system_http_e2e.js
+
+      - name: Run Concurrency Race, Idempotency & Edge Fuzz Suite
+        run: node scratch/test_concurrency_and_edge_fuzz.js
+
+  windows-electron-ui-and-package:
+    name: Electron Live UI E2E & Windows Packaging Audit
+    needs: static-and-contracts-audit
+    runs-on: windows-latest
+    env:
+      NODE_ENV: test
+      CI: 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Production Client (Vite)
+        run: npm run build:client
+
+      - name: Run Static Bundle TDZ & Contract Audit
+        run: node scratch/audit_contracts_and_sql.js
+
+      - name: Run Live Full-Stack Interactive Electron UI E2E Test
+        run: npx electron scratch/test_live_ui_e2e_electron.js
 
       - name: Run Auto-Updater Lifecycle & Concurrency Tests
         run: npm run test:updater
-        env:
-          NODE_ENV: test
-          CI: 'true'
 
-      - name: Run Cash Drawer & Payroll Invariants Tests
-        run: npm run test:invariants
-        env:
-          NODE_ENV: test
-          CI: 'true'
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-          DB_USER: postgres
-          DB_PASSWORD: postgres_password
-          DB_NAME: pos_db
-          SYNC_API_KEY: BebyoonSecretKey2026
+      - name: Run Auto-Updater Mathematical Invariants
+        run: node scratch/test_auto_updater.js
 
-      - name: Run Full Master Regression Suites
-        run: npm test
-        env:
-          NODE_ENV: test
-          CI: 'true'
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-          DB_USER: postgres
-          DB_PASSWORD: postgres_password
-          DB_NAME: pos_db
-          SYNC_API_KEY: BebyoonSecretKey2026
+      - name: Verify Package & Packaging Integrity
+        run: npm run verify:package

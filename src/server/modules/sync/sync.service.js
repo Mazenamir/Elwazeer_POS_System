@@ -1170,11 +1170,11 @@ async function applyOperation(operation) {
         }
       }
 
-      let sellerId = orderData.seller_id || null;
-      if (sellerId) {
-        const empCheck = await tx.query('SELECT id FROM employees WHERE id = $1', [sellerId]);
-        if (!empCheck.rows.length) sellerId = null;
-      }
+      const sellerId = await resolveEmployeeForSync(
+        tx,
+        orderData.seller_id || payload.seller_id,
+        orderData.seller_ref || payload.seller_ref
+      );
 
       const splitsToSave = orderData.payment_splits
         ? (typeof orderData.payment_splits === 'object' ? JSON.stringify(orderData.payment_splits) : orderData.payment_splits)

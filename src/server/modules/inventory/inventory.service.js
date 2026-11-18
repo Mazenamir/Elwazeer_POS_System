@@ -672,9 +672,6 @@ async function listInventory(req, user) {
     const total = db.sqlite.prepare(`SELECT COUNT(*) as count FROM inventory i ${whereClause}`).get(...params).count;
 
     const mapSqliteRow = (r) => {
-      const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND (branch_id = ? OR branch_id IS NULL) ORDER BY id ASC').all(r.id, bId);
-      const branchStockRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(r.id, bId);
-      const stock = branchStockRow !== undefined && branchStockRow !== null ? Number(branchStockRow.stock_level || 0) : 0;
       const branchStockRows = db.sqlite.prepare(`
         SELECT ib.branch_id, b.name as branch_name, ib.stock_level
         FROM inventory_branches ib
@@ -687,7 +684,31 @@ async function listInventory(req, user) {
         stock_level: Number(bs.stock_level || 0),
       }));
       const totalStock = branchStockRows.reduce((acc, curr) => acc + Number(curr.stock_level || 0), 0);
-      return { ...r, stock_level: stock, total_stock: totalStock, sizes, available_branches };
+
+      let sizes;
+      let stock;
+      if (bId) {
+        sizes = db.sqlite.prepare(
+          'SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND (branch_id = ? OR branch_id IS NULL) ORDER BY id ASC'
+        ).all(r.id, bId);
+        const branchStockRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(r.id, bId);
+        stock = branchStockRow !== undefined && branchStockRow !== null ? Number(branchStockRow.stock_level || 0) : 0;
+        if (stock === 0 && sizes.length > 0) {
+          const szTotal = sizes.reduce((acc, s) => acc + Number(s.stock_level || 0), 0);
+          if (szTotal > 0) stock = szTotal;
+        }
+      } else {
+        sizes = db.sqlite.prepare(`
+          SELECT MIN(id) as id, size_name, color_name, MAX(barcode) as barcode, SUM(COALESCE(stock_level, 0)) as stock_level, MIN(size_id) as size_id
+          FROM inventory_sizes
+          WHERE inventory_id = ?
+          GROUP BY size_name, color_name
+          ORDER BY MIN(id) ASC
+        `).all(r.id);
+        stock = branchStockRows.length > 0 ? totalStock : Number(r.stock_level || 0);
+      }
+
+      return { ...r, stock_level: stock, total_stock: totalStock || Number(r.stock_level || 0), sizes, available_branches };
     };
 
     if (pagination.enabled) {
@@ -2061,6 +2082,11 @@ async function transferStock(body, user) {
         [inventory_id, from_branch_id, to_branch_id, transferQty, 'completed', sizesDataJson, senderId, senderName, senderId, senderName, senderId, senderName]
       );
       transferRecordId = stRes.rows?.[0]?.id || null;
+
+      await tx.query(
+        'UPDATE inventory SET stock_level = (SELECT COALESCE(SUM(stock_level), 0) FROM inventory_branches WHERE inventory_id = $1) WHERE id = $1',
+        [inventory_id]
+      );
     } else {
       const stRes = await tx.query(
         'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, sender_id, sender_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
