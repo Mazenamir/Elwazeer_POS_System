@@ -90,9 +90,6 @@ function hasBranchAccess(user, targetBranchId) {
 
   // Requesting all branches or unassigned
   if (targetBranchId === null || targetBranchId === undefined || targetBranchId === '' || targetBranchId === 'all') {
-    if (user.branch_scope === 'selected' && Array.isArray(user.branch_ids) && user.branch_ids.length > 1) {
-      return true; // Multi-branch authorized user can view consolidated
-    }
     return false; // Non-admin without 'all' scope cannot access consolidated 'all'
   }
 

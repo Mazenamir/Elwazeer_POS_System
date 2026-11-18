@@ -304,7 +304,15 @@ export function ExpensesManager({ isCashierTab = false }) {
 
   useEffect(() => {
     loadExpenses();
-  }, [loadExpenses]);
+    const handleSyncCompleted = () => {
+      loadExpenses();
+      if (activeTab === 'drawer') {
+        loadDrawerSettlement();
+      }
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+  }, [loadExpenses, activeTab, loadDrawerSettlement]);
 
   // Drawer Settlement Fetch & Calculation
   const loadDrawerSettlement = useCallback(async () => {

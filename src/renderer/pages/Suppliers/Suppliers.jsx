@@ -892,27 +892,40 @@ total: 0,
   useEffect(() => {
     if (!accessibleTabs.length) return;
 
-    if (activeTab === 'inventory' && canAccessInventory) {
-      const timer = setTimeout(() => {
+    const refreshCurrentTab = () => {
+      if (activeTab === 'inventory' && canAccessInventory) {
         fetchProducts();
-      lastFetchedSupplierQueryRef.current = '';
-      fetchSuppliers({ force: true });
+        lastFetchedSupplierQueryRef.current = '';
+        fetchSuppliers({ force: true });
         if (canAccessTransfers) {
           fetchRequests();
           fetchIncomingShipments();
         }
-      }, 200);
-      return () => clearTimeout(timer);
-    } else if (activeTab === 'suppliers' && canAccessSuppliers) {
-      const timer = setTimeout(() => {
+      } else if (activeTab === 'suppliers' && canAccessSuppliers) {
         lastFetchedSupplierQueryRef.current = '';
         fetchSuppliers({ force: true });
-      }, 200);
-      return () => clearTimeout(timer);
+      } else if (activeTab === 'transfer_logs' && canAccessTransfers) {
+        fetchRequests();
+        fetchIncomingShipments();
+      }
+    };
+
+    const handleSyncCompleted = () => {
+      refreshCurrentTab();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+
+    let timer = null;
+    if ((activeTab === 'inventory' && canAccessInventory) || (activeTab === 'suppliers' && canAccessSuppliers)) {
+      timer = setTimeout(refreshCurrentTab, 200);
     } else if (activeTab === 'transfer_logs' && canAccessTransfers) {
-      fetchRequests();
-      fetchIncomingShipments();
+      refreshCurrentTab();
     }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    };
   }, [
     activeTab,
     accessibleTabs.length,

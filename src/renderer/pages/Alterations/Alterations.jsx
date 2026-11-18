@@ -86,6 +86,11 @@ export function Alterations() {
 
   useEffect(() => {
     fetchAlterations();
+    const handleSyncCompleted = () => {
+      fetchAlterations();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [fetchAlterations]);
 
   // Create Alteration

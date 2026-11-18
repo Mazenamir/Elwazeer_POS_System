@@ -202,6 +202,11 @@ export function Employees() {
 
   useEffect(() => {
     loadEmployees();
+    const handleSyncCompleted = () => {
+      loadEmployees();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [loadEmployees]);
 
   useEffect(() => {

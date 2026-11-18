@@ -296,15 +296,25 @@ export function Rentals() {
   }, [activeBranchId, ledgerStartDate, ledgerEndDate, ledgerStatusFilter]);
 
   useEffect(() => {
-    if (activeTab === 'preparation') {
-      fetchPreparation();
-    } else if (activeTab === 'ledger') {
-      fetchLedger();
-    } else {
-      fetchRentals();
-      fetchSummary();
-    }
-  }, [activeTab, fetchPreparation, fetchLedger, fetchRentals, fetchSummary]);
+    const refreshActiveView = () => {
+      if (activeTab === 'preparation') {
+        fetchPreparation();
+      } else if (activeTab === 'ledger') {
+        fetchLedger();
+      } else {
+        fetchRentals();
+        fetchSummary();
+      }
+    };
+    refreshActiveView();
+
+    const handleSyncCompleted = () => {
+      refreshActiveView();
+      loadLookups();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+  }, [activeTab, fetchPreparation, fetchLedger, fetchRentals, fetchSummary, loadLookups]);
 
   // Load Lookups (Rental Inventory and Employees)
   const loadLookups = useCallback(async () => {

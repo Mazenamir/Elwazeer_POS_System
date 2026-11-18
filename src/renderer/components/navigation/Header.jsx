@@ -244,6 +244,7 @@ export function Header({ onToggleMobileMenu }) {
   const [syncMsg, setSyncMsg] = useState('');
   const [syncError, setSyncError] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
+  const lastSyncStampRef = useRef(null);
 
   // Notification Center state
   const { toast } = useToast();
@@ -286,10 +287,17 @@ export function Header({ onToggleMobileMenu }) {
     }
   }, []);
 
-  const fetchSyncStatus = async () => {
+  const fetchSyncStatus = async (suppressEvent = false) => {
     try {
       const data = await api.get('/sync/status');
       setSyncStatus(data);
+      const syncStamp = data?.last_catalog_imported_at || data?.last_synced_at || null;
+      if (syncStamp) {
+        if (!suppressEvent && lastSyncStampRef.current !== null && lastSyncStampRef.current !== syncStamp) {
+          window.dispatchEvent(new CustomEvent('elwazeer:sync-completed', { detail: { syncStamp, data } }));
+        }
+        lastSyncStampRef.current = syncStamp;
+      }
     } catch {}
   };
 
@@ -324,6 +332,7 @@ export function Header({ onToggleMobileMenu }) {
       if (res?.ok) {
         setSyncMsg(res.message || 'تمت المزامنة بنجاح!');
         setSyncError(false);
+        window.dispatchEvent(new CustomEvent('elwazeer:sync-completed', { detail: { manual: true, res } }));
       } else {
         setSyncMsg(res?.message || 'تعذر إتمام المزامنة');
         setSyncError(!res?.partial);
@@ -334,7 +343,7 @@ export function Header({ onToggleMobileMenu }) {
       setSyncError(true);
     } finally {
       setSyncing(false);
-      fetchSyncStatus();
+      await fetchSyncStatus(true);
       if (showSyncModal) loadDiagnostics();
       setTimeout(() => {
         setSyncMsg('');
@@ -379,13 +388,14 @@ export function Header({ onToggleMobileMenu }) {
           success: true,
           message: `تم تحديث البيانات بنجاح (${res.counts?.inventory || 0} صنف، ${res.counts?.users || 0} مستخدم)`,
         });
+        window.dispatchEvent(new CustomEvent('elwazeer:sync-completed', { detail: { pull: true, res } }));
       } else {
         setCatalogFeedback({
           success: false,
           message: res?.error || 'تعذر سحب البيانات من السيرفر',
         });
       }
-      fetchSyncStatus();
+      await fetchSyncStatus(true);
       loadDiagnostics();
     } catch (err) {
       setCatalogFeedback({
@@ -1047,45 +1057,57 @@ export function Header({ onToggleMobileMenu }) {
           </button>
         )}
 
-        {/* Online / Sync Status Pill (Clickable for diagnostics) - Only visible in Branch Mode */}
+        {/* Online / Sync Status Pill + Quick Manual Sync Button - Only visible in Branch Mode */}
         {syncStatus?.is_branch_mode && (
-          <button
-            type="button"
-            onClick={handleOpenModal}
-            title="حالة المزامنة والاتصال - انقر لفتح التشخيص والإعدادات"
-            className={`hidden md:inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer shadow-sm ${
-              syncError
-                ? 'bg-[#FCEBF4] border-[#F1B6D8] text-[#931D4E] hover:bg-[#FADCEB]'
-                : syncing
-                ? 'bg-[#FFF9EC] border-[#F4D95B] text-[#7A5B04] hover:bg-[#FDF3CD]'
-                : !isOnline
-                ? 'bg-[#FDF5D2] border-[#F4D95B] text-[#7A5B04] hover:bg-[#FDEBB5]'
-                : 'bg-[#EEF4E3] border-[#AFC77A] text-[#3D5618] hover:bg-[#E3EDD4]'
-            }`}
-          >
-            {syncing ? (
-              <>
-                <RefreshCw className="w-3 h-3 animate-spin text-[#7A5B04]" />
-                <span>جاري المزامنة...</span>
-              </>
-            ) : syncError ? (
-              <>
-                <AlertTriangle className="w-3.5 h-3.5 text-[#931D4E]" />
-                <span>فشل الاتصال</span>
-              </>
-            ) : !isOnline ? (
-              <>
-                <WifiOff className="w-3.5 h-3.5 text-[#7A5B04]" />
-                <span>غير متصل</span>
-              </>
-            ) : (
-              <>
-                <span className="w-2 h-2 rounded-full bg-[#AFC77A] animate-ping"></span>
-                <span className="w-2 h-2 rounded-full bg-[#AFC77A] -mr-4"></span>
-                <span>متصل</span>
-              </>
-            )}
-          </button>
+          <div className="hidden md:inline-flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleOpenModal}
+              title="حالة المزامنة والاتصال - انقر لفتح التشخيص والإعدادات"
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer shadow-sm ${
+                syncError
+                  ? 'bg-[#FCEBF4] border-[#F1B6D8] text-[#931D4E] hover:bg-[#FADCEB]'
+                  : syncing
+                  ? 'bg-[#FFF9EC] border-[#F4D95B] text-[#7A5B04] hover:bg-[#FDF3CD]'
+                  : !isOnline
+                  ? 'bg-[#FDF5D2] border-[#F4D95B] text-[#7A5B04] hover:bg-[#FDEBB5]'
+                  : 'bg-[#EEF4E3] border-[#AFC77A] text-[#3D5618] hover:bg-[#E3EDD4]'
+              }`}
+            >
+              {syncing ? (
+                <>
+                  <RefreshCw className="w-3 h-3 animate-spin text-[#7A5B04]" />
+                  <span>جاري المزامنة...</span>
+                </>
+              ) : syncError ? (
+                <>
+                  <AlertTriangle className="w-3.5 h-3.5 text-[#931D4E]" />
+                  <span>فشل الاتصال</span>
+                </>
+              ) : !isOnline ? (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-[#7A5B04]" />
+                  <span>غير متصل</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-[#AFC77A] animate-ping"></span>
+                  <span className="w-2 h-2 rounded-full bg-[#AFC77A] -mr-4"></span>
+                  <span>متصل</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={handleManualSync}
+              disabled={syncing}
+              title="مزامنة وتحديث البيانات الآن"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold border border-stone-200 bg-white text-stone-700 hover:bg-stone-100 disabled:opacity-50 cursor-pointer shadow-sm transition-all"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin text-amber-600' : 'text-stone-600'}`} />
+              <span>تحديث</span>
+            </button>
+          </div>
         )}
 
         {/* Dark Circular Control Icons (Matches Reference Header) */}

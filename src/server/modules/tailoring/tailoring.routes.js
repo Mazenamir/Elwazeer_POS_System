@@ -13,8 +13,8 @@ router.delete('/alterations/:id', requirePermission('alterations.delete'), contr
 // Tailoring Orders
 router.get('/tailoring-orders', requirePermission('Tailoring.html', 'Alterations.html'), controller.listTailoringOrders);
 router.post('/tailoring-orders', requirePermission('Tailoring.html', 'Alterations.html'), controller.createTailoringOrder);
-router.delete('/tailoring-orders/:id', requirePermission('tailoring.delete'), controller.deleteTailoringOrder);
-router.put('/tailoring-orders/:id/cancel', requirePermission('tailoring.delete'), controller.deleteTailoringOrder);
+router.delete('/tailoring-orders/:id', requirePermission('tailoring.delete', 'tailoring.edit', 'tailoring.create'), controller.deleteTailoringOrder);
+router.put('/tailoring-orders/:id/cancel', requirePermission('tailoring.delete', 'tailoring.edit', 'tailoring.create'), controller.deleteTailoringOrder);
 router.put('/tailoring-orders/:id/pay-remaining', requirePermission('Tailoring.html', 'Alterations.html'), controller.payRemainingTailoringOrder);
 
 module.exports = router;

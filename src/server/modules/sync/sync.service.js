@@ -3010,6 +3010,7 @@ async function getSyncStatus() {
     pending: Number(counts.pending || 0) + Number(local.pending || 0),
     failed: Number(counts.failed || 0) + Number(local.failed || 0),
     last_synced_at: lastSyncedRes.rows[0]?.last_synced_at || local.last_synced_at,
+    last_catalog_imported_at: lastCatalogImportedAt,
     local_store_path: local.path,
   };
 }
@@ -3082,10 +3083,24 @@ async function runSync(requestedLimit = 50) {
       const text = await response.text();
       if (!response.ok) throw new Error(text.slice(0, 500));
       await db.query("UPDATE sync_queue SET status = 'synced', synced_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = $1", [op.id]);
-      if (op.entity_type === 'customer' && op.entity_id) {
-        try {
-          await db.query('UPDATE customers SET pending_sync = 0 WHERE id = $1', [op.entity_id]);
-        } catch {}
+      if (op.entity_id) {
+        const pendingTableMap = {
+          customer: 'customers',
+          expense: 'expenses',
+          employee_transaction: 'employee_transactions',
+          tailoring_order: 'tailoring_orders',
+          order: 'orders',
+          sale: 'orders',
+          return: 'returns',
+          rental: 'rentals',
+          worn_product: 'worn_products',
+        };
+        const targetTbl = pendingTableMap[op.entity_type];
+        if (targetTbl) {
+          try {
+            await db.query(`UPDATE ${targetTbl} SET pending_sync = 0 WHERE id = $1`, [op.entity_id]);
+          } catch {}
+        }
       }
       result.synced += 1;
     } catch (err) {
@@ -3179,27 +3194,17 @@ async function runSync(requestedLimit = 50) {
 }
 
 async function exportCatalogForBranch(branchId = null) {
-  const targetBranch = (branchId && branchId !== 'all') ? Number(branchId) : null;
-
-  const usersPromise = targetBranch
-    ? db.query(
-        `SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids 
-         FROM users 
-         WHERE role = 'admin' OR branch_scope = 'all' OR branch_id = $1 OR branch_id IS NULL OR (branch_scope = 'selected' AND branch_ids IS NOT NULL AND branch_ids::text ILIKE '%' || $1::text || '%')`,
-        [targetBranch]
-      )
-    : db.query('SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users');
-
-  const employeesPromise = db.query(
-    "SELECT id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end FROM employees WHERE status = 'active'"
+  const usersPromise = db.query(
+    'SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users'
   );
 
-  const customersPromise = targetBranch
-    ? db.query(
-        'SELECT id, name, initials, email, phone, national_id, join_date, total_spent, COALESCE(wallet_balance, 0) AS wallet_balance, status, branch_id, offline_uuid FROM customers WHERE branch_id = $1 OR branch_id IS NULL',
-        [targetBranch]
-      )
-    : db.query('SELECT id, name, initials, email, phone, national_id, join_date, total_spent, COALESCE(wallet_balance, 0) AS wallet_balance, status, branch_id, offline_uuid FROM customers');
+  const employeesPromise = db.query(
+    'SELECT id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid FROM employees'
+  );
+
+  const customersPromise = db.query(
+    'SELECT id, name, initials, email, phone, national_id, join_date, total_spent, COALESCE(wallet_balance, 0) AS wallet_balance, status, branch_id, offline_uuid FROM customers'
+  );
 
   const suppliersPromise = db.query(`
     SELECT id, name, initials, category, contact_person, phone, supply_type, balance, status, created_at, code,
@@ -3229,6 +3234,23 @@ async function exportCatalogForBranch(branchId = null) {
     deletedInvRes,
     deletedRentalRes,
     deletedSuppliersRes,
+    expensesRes,
+    attendanceRes,
+    empTransRes,
+    tailoringOrdersRes,
+    tailoringPaymentsRes,
+    alterationsRes,
+    ordersRes,
+    orderItemsRes,
+    orderPaymentsRes,
+    returnsRes,
+    returnItemsRes,
+    rentalsRes,
+    rentalPaymentsRes,
+    supplierTxRes,
+    supplyRecordsRes,
+    wornProductsRes,
+    stockTransfersRes,
   ] = await Promise.all([
     usersPromise,
     db.query('SELECT id, name, location, type, is_main_warehouse, phone, logo_url, invoice_logo_height, invoice_logo_spacing, invoice_logo_filter, invoice_logo_bg_enabled, invoice_logo_bg_start, invoice_logo_bg_end, allowed_gender, rentals_enabled, cashier_footer, rental_footer FROM branches'),
@@ -3246,6 +3268,116 @@ async function exportCatalogForBranch(branchId = null) {
     db.query('SELECT id FROM inventory WHERE is_deleted = TRUE'),
     db.query('SELECT id FROM rental_inventory WHERE is_deleted = TRUE'),
     deletedSuppliersPromise,
+    db.query(`
+      SELECT id, branch_id, category, amount, TO_CHAR(expense_date, 'YYYY-MM-DD') AS expense_date, notes, offline_uuid,
+             COALESCE(payment_method, 'cash') AS payment_method, created_by, updated_by, created_at, updated_at,
+             COALESCE(is_deleted, FALSE) AS is_deleted, deleted_by, deleted_at
+      FROM expenses
+    `),
+    db.query(`
+      SELECT id, employee_id, TO_CHAR(date, 'YYYY-MM-DD') AS date, check_in::text AS check_in, check_out::text AS check_out,
+             status, notes, COALESCE(total_hours, 0) AS total_hours, COALESCE(late_minutes, 0) AS late_minutes,
+             COALESCE(early_departure_minutes, 0) AS early_departure_minutes, COALESCE(overtime_minutes, 0) AS overtime_minutes
+      FROM attendance
+    `),
+    db.query(`
+      SELECT id, employee_id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') AS transaction_date, notes, offline_uuid
+      FROM employee_transactions
+    `),
+    db.query(`
+      SELECT id, invoice_number, customer_name, customer_phone, product_description, measurements,
+             total_amount, paid_amount, remaining_amount, COALESCE(payment_method, 'cash') AS payment_method,
+             COALESCE(status, 'pending') AS status, TO_CHAR(created_at, 'YYYY-MM-DD') AS order_date,
+             TO_CHAR(due_date, 'YYYY-MM-DD') AS due_date, seller_id, branch_id, created_by, offline_uuid, created_at
+      FROM tailoring_orders
+    `),
+    db.query(`
+      SELECT id, tailoring_order_id, amount, branch_id, payment_date,
+             COALESCE(is_remainder, FALSE) AS is_remainder, COALESCE(payment_method, 'cash') AS payment_method, offline_uuid
+      FROM tailoring_payments
+    `),
+    db.query(`
+      SELECT id, order_id, customer_id, branch_id, description, COALESCE(status, 'pending') AS status,
+             TO_CHAR(due_date, 'YYYY-MM-DD') AS due_date, created_at, inventory_id
+      FROM alterations
+    `),
+    db.query(`
+      SELECT id, customer_id, seller_id, order_date, total_amount, COALESCE(paid_amount, 0) AS paid_amount,
+             COALESCE(change_amount, 0) AS change_amount, COALESCE(status, 'completed') AS status, branch_id,
+             COALESCE(payment_method, 'cash') AS payment_method, COALESCE(total_cost_price, 0) AS total_cost_price,
+             COALESCE(profit, 0) AS profit, COALESCE(invoice_discount, 0) AS invoice_discount,
+             COALESCE(invoice_discount_type, 'amount') AS invoice_discount_type, branch_invoice_number,
+             COALESCE(cash_amount, 0) AS cash_amount, COALESCE(card_amount, 0) AS card_amount,
+             COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(bank_transfer_amount, 0) AS bank_transfer_amount,
+             payment_splits, offline_uuid, COALESCE(order_source, 'pos') AS order_source
+      FROM orders
+    `),
+    db.query(`
+      SELECT id, order_id, inventory_id, quantity, price_at_time,
+             COALESCE(discount, 0) AS discount, COALESCE(discount_type, 'amount') AS discount_type, size
+      FROM order_items
+    `),
+    db.query(`
+      SELECT id, order_id, amount, COALESCE(payment_method, 'cash') AS payment_method, payment_date, branch_id, seller_id, notes, offline_uuid
+      FROM order_payments
+    `),
+    db.query(`
+      SELECT id, order_id, return_date, total_return_amount, reason, seller_id, branch_id,
+             COALESCE(refund_method, 'cash') AS refund_method, offline_uuid
+      FROM returns
+    `),
+    db.query(`
+      SELECT id, return_id, inventory_id, quantity, price_at_time, size,
+             COALESCE(discount, 0) AS discount, COALESCE(discount_type, 'amount') AS discount_type
+      FROM return_items
+    `),
+    db.query(`
+      SELECT id, customer_id, inventory_id, rental_inventory_id, seller_id, branch_id,
+             TO_CHAR(booking_date, 'YYYY-MM-DD') AS booking_date,
+             TO_CHAR(pickup_date, 'YYYY-MM-DD') AS pickup_date,
+             TO_CHAR(return_date, 'YYYY-MM-DD') AS return_date,
+             TO_CHAR(actual_return_date, 'YYYY-MM-DD') AS actual_return_date,
+             actual_pickup_date,
+             total_price,
+             COALESCE(deposit, 0) AS deposit,
+             COALESCE(paid_amount, 0) AS paid_amount,
+             COALESCE(remaining, 0) AS remaining,
+             COALESCE(status, 'booked') AS status, notes,
+             COALESCE(daily_fine, 50) AS daily_fine, COALESCE(fine_amount, 0) AS fine_amount,
+             COALESCE(payment_method, 'cash') AS payment_method, national_id,
+             COALESCE(id_card_guarantee, FALSE) AS id_card_guarantee, sale_order_id, offline_uuid, rental_group_uuid,
+             COALESCE(is_prepared, FALSE) AS is_prepared, prepared_at, prepared_by, prep_notes,
+             COALESCE(cash_amount, 0) AS cash_amount, COALESCE(card_amount, 0) AS card_amount,
+             COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(bank_transfer_amount, 0) AS bank_transfer_amount,
+             payment_splits, custom_items
+      FROM rentals
+    `),
+    db.query(`
+      SELECT id, rental_id, amount, COALESCE(payment_method, 'cash') AS payment_method, payment_date, branch_id, seller_id, notes, offline_uuid
+      FROM rental_payments
+    `),
+    db.query(`
+      SELECT id, supplier_id, branch_id, transaction_type, amount, COALESCE(payment_method, 'cash') AS payment_method,
+             COALESCE(paid_from_drawer, TRUE) AS paid_from_drawer, transaction_date, notes, purchase_batch_id
+      FROM supplier_transactions
+    `),
+    db.query(`
+      SELECT id, supplier_id, inventory_id, branch_id, quantity, TO_CHAR(supply_date, 'YYYY-MM-DD') AS supply_date,
+             cost_price, notes, purchase_batch_id, supplier_transaction_id
+      FROM supply_records
+    `),
+    db.query(`
+      SELECT id, product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason,
+             COALESCE(estimated_loss, 0) AS estimated_loss, notes, reported_by,
+             TO_CHAR(occurred_at, 'YYYY-MM-DD') AS occurred_at, COALESCE(status, 'recorded') AS status,
+             created_at, offline_uuid
+      FROM worn_products
+    `),
+    db.query(`
+      SELECT id, inventory_id, from_branch_id, to_branch_id, quantity, transfer_date, status, updated_at,
+             sizes_data, created_by, sender_id, received_by, sender_name, received_by_name, created_by_name
+      FROM stock_transfers
+    `),
   ]);
 
   const resetTokenRow = (settingsRes?.rows || []).find((s) => s.key === 'system_reset_token');
@@ -3270,6 +3402,23 @@ async function exportCatalogForBranch(branchId = null) {
     customers: customersRes.rows,
     employees: employeesRes.rows,
     suppliers: suppliersRes.rows,
+    expenses: expensesRes.rows,
+    attendance: attendanceRes.rows,
+    employee_transactions: empTransRes.rows,
+    tailoring_orders: tailoringOrdersRes.rows,
+    tailoring_payments: tailoringPaymentsRes.rows,
+    alterations: alterationsRes.rows,
+    orders: ordersRes.rows,
+    order_items: orderItemsRes.rows,
+    order_payments: orderPaymentsRes.rows,
+    returns: returnsRes.rows,
+    return_items: returnItemsRes.rows,
+    rentals: rentalsRes.rows,
+    rental_payments: rentalPaymentsRes.rows,
+    supplier_transactions: supplierTxRes.rows,
+    supply_records: supplyRecordsRes.rows,
+    worn_products: wornProductsRes.rows,
+    stock_transfers: stockTransfersRes.rows,
   };
 }
 
@@ -3312,12 +3461,45 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       }
     }
 
+    const getPendingSyncTracker = (entityTypes) => {
+      const ids = new Set();
+      const uuids = new Set();
+      try {
+        const typesList = Array.isArray(entityTypes) ? entityTypes : [entityTypes];
+        const placeholders = typesList.map(() => '?').join(', ');
+        const rows = sqlite.prepare(
+          `SELECT entity_id, payload FROM sync_queue WHERE entity_type IN (${placeholders}) AND status IN ('pending', 'processing', 'retry', 'failed')`
+        ).all(...typesList);
+        for (const r of rows) {
+          if (r.entity_id) ids.add(Number(r.entity_id));
+          try {
+            const p = typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload;
+            if (p?.id) ids.add(Number(p.id));
+            if (p?.offline_uuid) uuids.add(String(p.offline_uuid));
+            if (p?.order?.offline_uuid) uuids.add(String(p.order.offline_uuid));
+            if (p?.rental?.offline_uuid) uuids.add(String(p.rental.offline_uuid));
+            if (p?.operation_uuid) uuids.add(String(p.operation_uuid));
+          } catch {}
+        }
+      } catch {}
+      return { ids, uuids };
+    };
+
+    const ensureCol = (table, column, typeDef) => {
+      try {
+        const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name.toLowerCase());
+        if (!cols.includes(column.toLowerCase())) {
+          sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeDef}`);
+        }
+      } catch {}
+    };
+
     // 1. Users
     if (Array.isArray(catalog.users)) {
       let pendingUserIds = new Set();
       let pendingUsernames = new Set();
       try {
-        const pendingRows = sqlite.prepare("SELECT entity_id, payload FROM sync_queue WHERE entity_type = 'user' AND status IN ('pending', 'processing', 'retry')").all();
+        const pendingRows = sqlite.prepare("SELECT entity_id, payload FROM sync_queue WHERE entity_type = 'user' AND status IN ('pending', 'processing', 'retry', 'failed')").all();
         for (const r of pendingRows) {
           if (r.entity_id) pendingUserIds.add(Number(r.entity_id));
           try {
@@ -3356,7 +3538,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           perms = [];
         }
 
-        let bScope = u.branch_scope || 'single';
+        const isAllScopeRole = u.role === 'admin' || u.role === 'accountant' || /^(acct|hesabat|accountant|حسابات)/i.test(u.username || '');
+        let bScope = isAllScopeRole ? 'all' : (u.branch_scope || 'single');
         let bIds = typeof u.branch_ids === 'object' ? JSON.stringify(u.branch_ids) : (u.branch_ids || '[]');
         if (u.username === 'دمنهور' && (!u.branch_scope || u.branch_scope === 'single')) {
           bScope = 'selected';
@@ -3393,6 +3576,12 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       } catch (userReconcileErr) {
         console.warn('[Sync] User reconcile warning:', userReconcileErr.message);
       }
+      try {
+        const authService = require('../auth/auth.service');
+        if (typeof authService.invalidateUserCache === 'function') {
+          authService.invalidateUserCache();
+        }
+      } catch {}
     }
 
     // 2. Branches
@@ -3685,17 +3874,21 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       if (val instanceof Date) return val.toISOString().slice(0, 10);
       return String(val);
     };
+    const toSqliteTimestamp = (val) => {
+      if (val === null || val === undefined || val === '') return null;
+      if (val instanceof Date) return val.toISOString();
+      return String(val);
+    };
+    const toSqliteJson = (val) => {
+      if (val === null || val === undefined) return null;
+      if (typeof val === 'string') return val;
+      try { return JSON.stringify(val); } catch { return null; }
+    };
 
     // 9. Customers
     if (Array.isArray(catalog.customers)) {
-      let pendingCustomerIds = new Set();
-      try {
-        const pendingCustRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'customer' AND status IN ('pending', 'processing', 'retry')").all();
-        for (const r of pendingCustRows) {
-          if (r.entity_id) pendingCustomerIds.add(Number(r.entity_id));
-        }
-      } catch {}
-
+      const pendingCustomers = getPendingSyncTracker('customer');
+      const findCustByUuidStmt = sqlite.prepare('SELECT id FROM customers WHERE offline_uuid = ? AND id != ?');
       const custStmt = sqlite.prepare(`
         INSERT INTO customers (id, name, initials, email, phone, national_id, join_date, total_spent, wallet_balance, status, branch_id, offline_uuid, pending_sync)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
@@ -3708,11 +3901,21 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           total_spent = excluded.total_spent,
           wallet_balance = COALESCE(excluded.wallet_balance, customers.wallet_balance),
           status = excluded.status,
-          branch_id = excluded.branch_id
-        WHERE COALESCE(customers.pending_sync, 0) = 0
+          branch_id = excluded.branch_id,
+          offline_uuid = COALESCE(excluded.offline_uuid, customers.offline_uuid),
+          pending_sync = 0
       `);
       for (const cust of catalog.customers) {
-        if (pendingCustomerIds.has(Number(cust.id))) continue;
+        if (pendingCustomers.ids.has(Number(cust.id)) || (cust.offline_uuid && pendingCustomers.uuids.has(String(cust.offline_uuid)))) continue;
+        if (cust.offline_uuid) {
+          const dupCust = findCustByUuidStmt.get(cust.offline_uuid, cust.id);
+          if (dupCust) {
+            try { sqlite.prepare('UPDATE orders SET customer_id = ? WHERE customer_id = ?').run(cust.id, dupCust.id); } catch {}
+            try { sqlite.prepare('UPDATE rentals SET customer_id = ? WHERE customer_id = ?').run(cust.id, dupCust.id); } catch {}
+            try { sqlite.prepare('UPDATE alterations SET customer_id = ? WHERE customer_id = ?').run(cust.id, dupCust.id); } catch {}
+            sqlite.prepare('DELETE FROM customers WHERE id = ?').run(dupCust.id);
+          }
+        }
         custStmt.run(
           cust.id, cust.name, cust.initials || null, cust.email || null, cust.phone || null,
           cust.national_id || null, toSqliteDate(cust.join_date), Number(cust.total_spent || 0),
@@ -3724,18 +3927,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       // Reconcile customers omitted from server catalog
       try {
         const incomingCustIds = new Set(catalog.customers.map((c) => Number(c.id)));
-        let pendingCustIds = new Set();
-        try {
-          const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'customer' AND status IN ('pending', 'processing', 'retry')").all();
-          for (const r of pendingRows) {
-            if (r.entity_id) pendingCustIds.add(Number(r.entity_id));
-          }
-        } catch {}
-
-        const allLocalCusts = sqlite.prepare("SELECT id, pending_sync FROM customers WHERE status != 'غير نشط'").all();
+        const allLocalCusts = sqlite.prepare("SELECT id, offline_uuid FROM customers WHERE status != 'غير نشط'").all();
         const markCustInactiveStmt = sqlite.prepare("UPDATE customers SET status = 'غير نشط' WHERE id = ?");
         for (const c of allLocalCusts) {
-          if (c.pending_sync !== 1 && !incomingCustIds.has(Number(c.id)) && !pendingCustIds.has(Number(c.id))) {
+          const isPending = pendingCustomers.ids.has(Number(c.id)) || (c.offline_uuid && pendingCustomers.uuids.has(String(c.offline_uuid)));
+          if (!isPending && !incomingCustIds.has(Number(c.id))) {
             const hasOrders = sqlite.prepare("SELECT (SELECT COUNT(*) FROM orders WHERE customer_id = ?) + (SELECT COUNT(*) FROM rentals WHERE customer_id = ?) as cnt").get(c.id, c.id)?.cnt || 0;
             if (hasOrders === 0) {
               sqlite.prepare("DELETE FROM customers WHERE id = ?").run(c.id);
@@ -3751,17 +3947,14 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
     // 10. Employees
     if (Array.isArray(catalog.employees)) {
-      let pendingEmpIds = new Set();
-      try {
-        const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'employee' AND status IN ('pending', 'processing', 'retry')").all();
-        for (const r of pendingRows) {
-          if (r.entity_id) pendingEmpIds.add(Number(r.entity_id));
-        }
-      } catch {}
+      ensureCol('employees', 'offline_uuid', 'TEXT');
+      try { sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_offline_uuid ON employees (offline_uuid) WHERE offline_uuid IS NOT NULL'); } catch {}
+      const pendingEmps = getPendingSyncTracker('employee');
+      const findEmpByUuidStmt = sqlite.prepare('SELECT id FROM employees WHERE offline_uuid = ? AND id != ?');
 
       const empStmt = sqlite.prepare(`
-        INSERT INTO employees (id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           position = COALESCE(excluded.position, employees.position),
@@ -3771,10 +3964,30 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           join_date = COALESCE(excluded.join_date, employees.join_date),
           status = excluded.status,
           shift_start = excluded.shift_start,
-          shift_end = excluded.shift_end
+          shift_end = excluded.shift_end,
+          offline_uuid = COALESCE(excluded.offline_uuid, employees.offline_uuid)
       `);
       for (const emp of catalog.employees) {
-        if (pendingEmpIds.has(Number(emp.id))) continue;
+        if (pendingEmps.ids.has(Number(emp.id)) || (emp.offline_uuid && pendingEmps.uuids.has(String(emp.offline_uuid)))) continue;
+        if (emp.offline_uuid) {
+          const dupEmp = findEmpByUuidStmt.get(emp.offline_uuid, emp.id);
+          if (dupEmp) {
+            try {
+              sqlite.prepare('DELETE FROM attendance WHERE employee_id = ? AND date IN (SELECT date FROM attendance WHERE employee_id = ?)').run(dupEmp.id, emp.id);
+              sqlite.prepare('UPDATE attendance SET employee_id = ? WHERE employee_id = ?').run(emp.id, dupEmp.id);
+            } catch {}
+            try { sqlite.prepare('UPDATE employee_transactions SET employee_id = ? WHERE employee_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE orders SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE returns SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE rentals SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE rentals SET prepared_by = ? WHERE prepared_by = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE tailoring_orders SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE order_payments SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE rental_payments SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE users SET employee_id = ? WHERE employee_id = ?').run(emp.id, dupEmp.id); } catch {}
+            sqlite.prepare('DELETE FROM employees WHERE id = ?').run(dupEmp.id);
+          }
+        }
         empStmt.run(
           emp.id,
           emp.name,
@@ -3785,17 +3998,19 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           toSqliteDate(emp.join_date),
           emp.status || 'active',
           emp.shift_start || null,
-          emp.shift_end || null
+          emp.shift_end || null,
+          emp.offline_uuid || null
         );
       }
 
       // Reconcile employees removed/deleted from server catalog
       try {
         const incomingEmpIds = new Set(catalog.employees.map((e) => Number(e.id)));
-        const allLocalEmps = sqlite.prepare("SELECT id FROM employees WHERE status = 'active'").all();
+        const allLocalEmps = sqlite.prepare("SELECT id, offline_uuid FROM employees WHERE status = 'active'").all();
         const markEmpInactiveStmt = sqlite.prepare("UPDATE employees SET status = 'inactive' WHERE id = ?");
         for (const e of allLocalEmps) {
-          if (!incomingEmpIds.has(Number(e.id)) && !pendingEmpIds.has(Number(e.id))) {
+          const isPending = pendingEmps.ids.has(Number(e.id)) || (e.offline_uuid && pendingEmps.uuids.has(String(e.offline_uuid)));
+          if (!incomingEmpIds.has(Number(e.id)) && !isPending) {
             markEmpInactiveStmt.run(e.id);
           }
         }
@@ -3875,7 +4090,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         const incomingPhones = new Set(catalog.suppliers.map((s) => String(s.phone || '').trim()).filter(Boolean));
         let pendingCreationIds = new Set();
         try {
-          const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'supplier' AND action = 'create' AND status IN ('pending', 'processing', 'retry')").all();
+          const pendingRows = sqlite.prepare("SELECT entity_id FROM sync_queue WHERE entity_type = 'supplier' AND action = 'create' AND status IN ('pending', 'processing', 'retry', 'failed')").all();
           for (const r of pendingRows) {
             if (r.entity_id) pendingCreationIds.add(Number(r.entity_id));
           }
@@ -3894,14 +4109,1079 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       }
     }
 
+    // 12. Expenses
+    if (Array.isArray(catalog.expenses)) {
+      ensureCol('expenses', 'payment_method', "TEXT DEFAULT 'cash'");
+      ensureCol('expenses', 'created_by', 'INTEGER');
+      ensureCol('expenses', 'updated_by', 'INTEGER');
+      ensureCol('expenses', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+      ensureCol('expenses', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+      ensureCol('expenses', 'is_deleted', 'INTEGER DEFAULT 0');
+      ensureCol('expenses', 'deleted_by', 'INTEGER');
+      ensureCol('expenses', 'deleted_at', 'TEXT');
+      ensureCol('expenses', 'pending_sync', 'INTEGER DEFAULT 1');
+
+      const pendingExp = getPendingSyncTracker('expense');
+      const cleanStaleExpStmt = sqlite.prepare('DELETE FROM expenses WHERE offline_uuid = ? AND id != ?');
+      const expStmt = sqlite.prepare(`
+        INSERT INTO expenses (
+          id, branch_id, category, amount, expense_date, notes, offline_uuid,
+          payment_method, created_by, updated_by, created_at, updated_at, is_deleted, deleted_by, deleted_at, pending_sync
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          branch_id = excluded.branch_id,
+          category = excluded.category,
+          amount = excluded.amount,
+          expense_date = excluded.expense_date,
+          notes = excluded.notes,
+          offline_uuid = COALESCE(excluded.offline_uuid, expenses.offline_uuid),
+          payment_method = excluded.payment_method,
+          created_by = COALESCE(excluded.created_by, expenses.created_by),
+          updated_by = excluded.updated_by,
+          updated_at = COALESCE(excluded.updated_at, expenses.updated_at),
+          is_deleted = excluded.is_deleted,
+          deleted_by = excluded.deleted_by,
+          deleted_at = excluded.deleted_at,
+          pending_sync = 0
+      `);
+
+      const incomingExpIds = new Set();
+      for (const exp of catalog.expenses) {
+        incomingExpIds.add(Number(exp.id));
+        if (pendingExp.ids.has(Number(exp.id)) || (exp.offline_uuid && pendingExp.uuids.has(String(exp.offline_uuid)))) continue;
+        if (exp.offline_uuid) {
+          cleanStaleExpStmt.run(exp.offline_uuid, exp.id);
+        }
+        expStmt.run(
+          exp.id,
+          exp.branch_id || null,
+          exp.category || 'other',
+          Number(exp.amount || 0),
+          toSqliteDate(exp.expense_date),
+          exp.notes || null,
+          exp.offline_uuid || null,
+          exp.payment_method || 'cash',
+          exp.created_by || null,
+          exp.updated_by || null,
+          toSqliteTimestamp(exp.created_at),
+          toSqliteTimestamp(exp.updated_at),
+          exp.is_deleted ? 1 : 0,
+          exp.deleted_by || null,
+          toSqliteTimestamp(exp.deleted_at)
+        );
+      }
+
+      try {
+        const localExps = sqlite.prepare('SELECT id, offline_uuid FROM expenses').all();
+        const delExpStmt = sqlite.prepare('DELETE FROM expenses WHERE id = ?');
+        for (const le of localExps) {
+          const isPending = pendingExp.ids.has(Number(le.id)) || (le.offline_uuid && pendingExp.uuids.has(String(le.offline_uuid)));
+          if (!isPending && !incomingExpIds.has(Number(le.id))) {
+            delExpStmt.run(le.id);
+          }
+        }
+      } catch {}
+    }
+
+    // 13. Attendance
+    if (Array.isArray(catalog.attendance)) {
+      const pendingAttKeys = new Set();
+      try {
+        const pendingAttRows = sqlite.prepare("SELECT payload FROM sync_queue WHERE entity_type = 'attendance' AND status IN ('pending', 'processing', 'retry', 'failed')").all();
+        for (const r of pendingAttRows) {
+          try {
+            const p = typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload;
+            if (p?.employee_id && p?.date) {
+              pendingAttKeys.add(`${Number(p.employee_id)}::${String(p.date).slice(0, 10)}`);
+            }
+          } catch {}
+        }
+      } catch {}
+
+      const attStmt = sqlite.prepare(`
+        INSERT INTO attendance (
+          employee_id, date, check_in, check_out, status, notes,
+          total_hours, late_minutes, early_departure_minutes, overtime_minutes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(employee_id, date) DO UPDATE SET
+          check_in = excluded.check_in,
+          check_out = excluded.check_out,
+          status = excluded.status,
+          notes = excluded.notes,
+          total_hours = excluded.total_hours,
+          late_minutes = excluded.late_minutes,
+          early_departure_minutes = excluded.early_departure_minutes,
+          overtime_minutes = excluded.overtime_minutes
+      `);
+
+      for (const att of catalog.attendance) {
+        const attDate = toSqliteDate(att.date);
+        if (!att.employee_id || !attDate) continue;
+        if (pendingAttKeys.has(`${Number(att.employee_id)}::${attDate}`)) continue;
+        attStmt.run(
+          att.employee_id,
+          attDate,
+          att.check_in ? String(att.check_in) : null,
+          att.check_out ? String(att.check_out) : null,
+          att.status || 'present',
+          att.notes || null,
+          Number(att.total_hours || 0),
+          Math.round(Number(att.late_minutes || 0)),
+          Math.round(Number(att.early_departure_minutes || 0)),
+          Math.round(Number(att.overtime_minutes || 0))
+        );
+      }
+    }
+
+    // 14. Employee Transactions
+    if (Array.isArray(catalog.employee_transactions)) {
+      ensureCol('employee_transactions', 'pending_sync', 'INTEGER DEFAULT 1');
+      const pendingEmpTx = getPendingSyncTracker('employee_transaction');
+      const pendingBonusExps = getPendingSyncTracker('expense');
+      const cleanStaleEtStmt = sqlite.prepare('DELETE FROM employee_transactions WHERE offline_uuid = ? AND id != ?');
+      const etStmt = sqlite.prepare(`
+        INSERT INTO employee_transactions (id, employee_id, type, amount, transaction_date, notes, offline_uuid, pending_sync)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          employee_id = excluded.employee_id,
+          type = excluded.type,
+          amount = excluded.amount,
+          transaction_date = excluded.transaction_date,
+          notes = excluded.notes,
+          offline_uuid = COALESCE(excluded.offline_uuid, employee_transactions.offline_uuid),
+          pending_sync = 0
+      `);
+
+      const incomingEtIds = new Set();
+      for (const et of catalog.employee_transactions) {
+        incomingEtIds.add(Number(et.id));
+        if (pendingEmpTx.ids.has(Number(et.id)) || (et.offline_uuid && pendingEmpTx.uuids.has(String(et.offline_uuid)))) continue;
+        if (et.offline_uuid && pendingBonusExps.uuids.has(String(et.offline_uuid))) continue;
+        if (et.offline_uuid) {
+          cleanStaleEtStmt.run(et.offline_uuid, et.id);
+        }
+        etStmt.run(
+          et.id,
+          et.employee_id,
+          et.type,
+          Number(et.amount || 0),
+          toSqliteDate(et.transaction_date),
+          et.notes || null,
+          et.offline_uuid || null
+        );
+      }
+
+      try {
+        const localEts = sqlite.prepare('SELECT id, offline_uuid FROM employee_transactions').all();
+        const delEtStmt = sqlite.prepare('DELETE FROM employee_transactions WHERE id = ?');
+        for (const letRow of localEts) {
+          const isPending = pendingEmpTx.ids.has(Number(letRow.id))
+            || (letRow.offline_uuid && (pendingEmpTx.uuids.has(String(letRow.offline_uuid)) || pendingBonusExps.uuids.has(String(letRow.offline_uuid))));
+          if (!isPending && !incomingEtIds.has(Number(letRow.id))) {
+            delEtStmt.run(letRow.id);
+          }
+        }
+      } catch {}
+    }
+
+    // 15. Tailoring Orders & Tailoring Payments
+    if (Array.isArray(catalog.tailoring_orders)) {
+      ensureCol('tailoring_orders', 'due_date', 'TEXT');
+      ensureCol('tailoring_orders', 'pending_sync', 'INTEGER DEFAULT 1');
+      ensureCol('tailoring_payments', 'payment_method', "TEXT DEFAULT 'cash'");
+      ensureCol('tailoring_payments', 'offline_uuid', 'TEXT');
+      ensureCol('tailoring_payments', 'pending_sync', 'INTEGER DEFAULT 1');
+
+      try {
+        const tailTableDef = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tailoring_orders'").get();
+        if (tailTableDef && tailTableDef.sql && /invoice_number\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(tailTableDef.sql)) {
+          sqlite.exec(`
+            CREATE TABLE tailoring_orders_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              invoice_number TEXT NOT NULL,
+              customer_name TEXT NOT NULL,
+              customer_phone TEXT NOT NULL,
+              product_description TEXT NOT NULL,
+              measurements TEXT NOT NULL,
+              total_amount REAL NOT NULL DEFAULT 0,
+              paid_amount REAL NOT NULL DEFAULT 0,
+              remaining_amount REAL NOT NULL DEFAULT 0,
+              payment_method TEXT NOT NULL DEFAULT 'cash',
+              status TEXT NOT NULL DEFAULT 'pending',
+              order_date TEXT DEFAULT CURRENT_TIMESTAMP,
+              delivery_date TEXT,
+              due_date TEXT,
+              notes TEXT,
+              seller_id INTEGER,
+              branch_id INTEGER,
+              created_by INTEGER,
+              offline_uuid TEXT UNIQUE,
+              pending_sync INTEGER DEFAULT 1,
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT OR IGNORE INTO tailoring_orders_new SELECT
+              id, invoice_number, customer_name, customer_phone, product_description, measurements,
+              total_amount, paid_amount, remaining_amount, payment_method, status, order_date,
+              delivery_date, due_date, notes, seller_id, branch_id, created_by, offline_uuid, pending_sync, created_at
+            FROM tailoring_orders;
+            DROP TABLE tailoring_orders;
+            ALTER TABLE tailoring_orders_new RENAME TO tailoring_orders;
+            CREATE INDEX IF NOT EXISTS idx_tailoring_orders_branch_inv ON tailoring_orders(branch_id, invoice_number);
+          `);
+        }
+      } catch {}
+
+      const pendingTailoring = getPendingSyncTracker('tailoring_order');
+      const findTailByUuidStmt = sqlite.prepare('SELECT id FROM tailoring_orders WHERE offline_uuid = ? AND id != ?');
+      const tailStmt = sqlite.prepare(`
+        INSERT INTO tailoring_orders (
+          id, invoice_number, customer_name, customer_phone, product_description, measurements,
+          total_amount, paid_amount, remaining_amount, payment_method, status, order_date,
+          delivery_date, due_date, notes, seller_id, branch_id, created_by, offline_uuid, pending_sync, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, 0, COALESCE(?, CURRENT_TIMESTAMP))
+        ON CONFLICT(id) DO UPDATE SET
+          invoice_number = excluded.invoice_number,
+          customer_name = excluded.customer_name,
+          customer_phone = excluded.customer_phone,
+          product_description = excluded.product_description,
+          measurements = excluded.measurements,
+          total_amount = excluded.total_amount,
+          paid_amount = excluded.paid_amount,
+          remaining_amount = excluded.remaining_amount,
+          payment_method = excluded.payment_method,
+          status = excluded.status,
+          order_date = COALESCE(excluded.order_date, tailoring_orders.order_date),
+          delivery_date = excluded.delivery_date,
+          due_date = excluded.due_date,
+          notes = excluded.notes,
+          seller_id = excluded.seller_id,
+          branch_id = excluded.branch_id,
+          created_by = excluded.created_by,
+          offline_uuid = COALESCE(excluded.offline_uuid, tailoring_orders.offline_uuid),
+          pending_sync = 0,
+          created_at = COALESCE(excluded.created_at, tailoring_orders.created_at)
+      `);
+
+      const incomingTailIds = new Set();
+      for (const to of catalog.tailoring_orders) {
+        incomingTailIds.add(Number(to.id));
+        if (pendingTailoring.ids.has(Number(to.id)) || (to.offline_uuid && pendingTailoring.uuids.has(String(to.offline_uuid)))) continue;
+        if (to.offline_uuid) {
+          const dupTail = findTailByUuidStmt.get(to.offline_uuid, to.id);
+          if (dupTail) {
+            sqlite.prepare('DELETE FROM tailoring_payments WHERE tailoring_order_id = ?').run(dupTail.id);
+            sqlite.prepare('DELETE FROM tailoring_orders WHERE id = ?').run(dupTail.id);
+          }
+        }
+        tailStmt.run(
+          to.id,
+          String(to.invoice_number || to.id),
+          to.customer_name,
+          to.customer_phone,
+          to.product_description,
+          toSqliteJson(to.measurements),
+          Number(to.total_amount || 0),
+          Number(to.paid_amount || 0),
+          Number(to.remaining_amount || 0),
+          to.payment_method || 'cash',
+          to.status || 'pending',
+          toSqliteTimestamp(to.order_date),
+          toSqliteDate(to.delivery_date),
+          toSqliteDate(to.due_date),
+          to.notes || null,
+          to.seller_id || null,
+          to.branch_id || 1,
+          to.created_by || null,
+          to.offline_uuid || null,
+          toSqliteTimestamp(to.created_at)
+        );
+      }
+
+      // Remove tailoring orders deleted/cancelled on Central Server
+      try {
+        const localTails = sqlite.prepare('SELECT id, offline_uuid FROM tailoring_orders').all();
+        const delTpStmt = sqlite.prepare('DELETE FROM tailoring_payments WHERE tailoring_order_id = ?');
+        const delTailStmt = sqlite.prepare('DELETE FROM tailoring_orders WHERE id = ?');
+        for (const lt of localTails) {
+          const isPending = pendingTailoring.ids.has(Number(lt.id)) || (lt.offline_uuid && pendingTailoring.uuids.has(String(lt.offline_uuid)));
+          if (!isPending && !incomingTailIds.has(Number(lt.id))) {
+            delTpStmt.run(lt.id);
+            delTailStmt.run(lt.id);
+          }
+        }
+      } catch {}
+
+      if (Array.isArray(catalog.tailoring_payments)) {
+        const pmsByOrder = new Map();
+        for (const pm of catalog.tailoring_payments) {
+          const oid = Number(pm.tailoring_order_id);
+          if (!pmsByOrder.has(oid)) pmsByOrder.set(oid, []);
+          pmsByOrder.get(oid).push(pm);
+        }
+        const delTpByOrderStmt = sqlite.prepare('DELETE FROM tailoring_payments WHERE tailoring_order_id = ?');
+        const cleanStaleTpUuidStmt = sqlite.prepare('DELETE FROM tailoring_payments WHERE offline_uuid = ? AND id != ?');
+        const tpStmt = sqlite.prepare(`
+          INSERT INTO tailoring_payments (id, tailoring_order_id, amount, branch_id, payment_date, is_remainder, payment_method, offline_uuid, pending_sync)
+          VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, 0)
+          ON CONFLICT(id) DO UPDATE SET
+            tailoring_order_id = excluded.tailoring_order_id,
+            amount = excluded.amount,
+            branch_id = excluded.branch_id,
+            payment_date = COALESCE(excluded.payment_date, tailoring_payments.payment_date),
+            is_remainder = excluded.is_remainder,
+            payment_method = excluded.payment_method,
+            offline_uuid = COALESCE(excluded.offline_uuid, tailoring_payments.offline_uuid),
+            pending_sync = 0
+        `);
+
+        for (const to of catalog.tailoring_orders) {
+          const oid = Number(to.id);
+          if (pendingTailoring.ids.has(oid) || (to.offline_uuid && pendingTailoring.uuids.has(String(to.offline_uuid)))) continue;
+          delTpByOrderStmt.run(oid);
+          const list = pmsByOrder.get(oid) || [];
+          for (const pm of list) {
+            if (pm.offline_uuid) cleanStaleTpUuidStmt.run(pm.offline_uuid, pm.id);
+            tpStmt.run(
+              pm.id,
+              oid,
+              Number(pm.amount || 0),
+              pm.branch_id || 1,
+              toSqliteTimestamp(pm.payment_date),
+              pm.is_remainder ? 1 : 0,
+              pm.payment_method || 'cash',
+              pm.offline_uuid || null
+            );
+          }
+        }
+      }
+    }
+
+    // 16. Alterations
+    if (Array.isArray(catalog.alterations)) {
+      const pendingAlts = getPendingSyncTracker('alteration');
+      const altStmt = sqlite.prepare(`
+        INSERT INTO alterations (id, order_id, customer_id, branch_id, description, status, due_date, created_at, inventory_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)
+        ON CONFLICT(id) DO UPDATE SET
+          order_id = excluded.order_id,
+          customer_id = excluded.customer_id,
+          branch_id = excluded.branch_id,
+          description = excluded.description,
+          status = excluded.status,
+          due_date = excluded.due_date,
+          inventory_id = excluded.inventory_id
+      `);
+      const incomingAltIds = new Set();
+      for (const alt of catalog.alterations) {
+        incomingAltIds.add(Number(alt.id));
+        if (pendingAlts.ids.has(Number(alt.id))) continue;
+        altStmt.run(
+          alt.id,
+          alt.order_id || null,
+          alt.customer_id || null,
+          alt.branch_id || 1,
+          alt.description || '',
+          alt.status || 'pending',
+          toSqliteDate(alt.due_date),
+          toSqliteTimestamp(alt.created_at),
+          alt.inventory_id || null
+        );
+      }
+      try {
+        const localAlts = sqlite.prepare('SELECT id FROM alterations').all();
+        const delAltStmt = sqlite.prepare('DELETE FROM alterations WHERE id = ?');
+        for (const la of localAlts) {
+          if (!pendingAlts.ids.has(Number(la.id)) && !incomingAltIds.has(Number(la.id))) {
+            delAltStmt.run(la.id);
+          }
+        }
+      } catch {}
+    }
+
+    // 17. Orders, Order Items, Order Payments
+    if (Array.isArray(catalog.orders)) {
+      ensureCol('orders', 'branch_invoice_number', 'TEXT');
+      ensureCol('orders', 'invoice_discount', 'REAL DEFAULT 0');
+      ensureCol('orders', 'invoice_discount_type', "TEXT DEFAULT 'amount'");
+      ensureCol('orders', 'cash_amount', 'REAL DEFAULT 0');
+      ensureCol('orders', 'card_amount', 'REAL DEFAULT 0');
+      ensureCol('orders', 'wallet_amount', 'REAL DEFAULT 0');
+      ensureCol('orders', 'bank_transfer_amount', 'REAL DEFAULT 0');
+      ensureCol('orders', 'payment_splits', 'TEXT');
+      ensureCol('orders', 'pending_sync', 'INTEGER DEFAULT 1');
+      ensureCol('order_items', 'size', 'TEXT');
+      ensureCol('order_payments', 'offline_uuid', 'TEXT');
+      ensureCol('order_payments', 'pending_sync', 'INTEGER DEFAULT 1');
+
+      const pendingOrders = getPendingSyncTracker(['order', 'sale']);
+      const findOrdByUuidStmt = sqlite.prepare('SELECT id FROM orders WHERE offline_uuid = ? AND id != ?');
+      const ordStmt = sqlite.prepare(`
+        INSERT INTO orders (
+          id, customer_id, seller_id, order_date, total_amount, paid_amount, change_amount,
+          status, branch_id, payment_method, total_cost_price, profit,
+          invoice_discount, invoice_discount_type, branch_invoice_number,
+          cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits,
+          offline_uuid, order_source, pending_sync
+        )
+        VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          customer_id = excluded.customer_id,
+          seller_id = excluded.seller_id,
+          order_date = COALESCE(excluded.order_date, orders.order_date),
+          total_amount = excluded.total_amount,
+          paid_amount = excluded.paid_amount,
+          change_amount = excluded.change_amount,
+          status = excluded.status,
+          branch_id = excluded.branch_id,
+          payment_method = excluded.payment_method,
+          total_cost_price = excluded.total_cost_price,
+          profit = excluded.profit,
+          invoice_discount = excluded.invoice_discount,
+          invoice_discount_type = excluded.invoice_discount_type,
+          branch_invoice_number = excluded.branch_invoice_number,
+          cash_amount = excluded.cash_amount,
+          card_amount = excluded.card_amount,
+          wallet_amount = excluded.wallet_amount,
+          bank_transfer_amount = excluded.bank_transfer_amount,
+          payment_splits = excluded.payment_splits,
+          offline_uuid = COALESCE(excluded.offline_uuid, orders.offline_uuid),
+          order_source = excluded.order_source,
+          pending_sync = 0
+      `);
+
+      for (const ord of catalog.orders) {
+        if (pendingOrders.ids.has(Number(ord.id)) || (ord.offline_uuid && pendingOrders.uuids.has(String(ord.offline_uuid)))) continue;
+        if (ord.offline_uuid) {
+          const dupOrd = findOrdByUuidStmt.get(ord.offline_uuid, ord.id);
+          if (dupOrd) {
+            try { sqlite.prepare('DELETE FROM order_items WHERE order_id = ?').run(dupOrd.id); } catch {}
+            try { sqlite.prepare('DELETE FROM order_payments WHERE order_id = ?').run(dupOrd.id); } catch {}
+            try { sqlite.prepare('UPDATE returns SET order_id = ? WHERE order_id = ?').run(ord.id, dupOrd.id); } catch {}
+            try { sqlite.prepare('UPDATE alterations SET order_id = ? WHERE order_id = ?').run(ord.id, dupOrd.id); } catch {}
+            sqlite.prepare('DELETE FROM orders WHERE id = ?').run(dupOrd.id);
+          }
+        }
+        ordStmt.run(
+          ord.id,
+          ord.customer_id || null,
+          ord.seller_id || null,
+          toSqliteTimestamp(ord.order_date),
+          Number(ord.total_amount || 0),
+          Number(ord.paid_amount || 0),
+          Number(ord.change_amount || 0),
+          ord.status || 'completed',
+          ord.branch_id || 1,
+          ord.payment_method || 'cash',
+          Number(ord.total_cost_price || 0),
+          Number(ord.profit || 0),
+          Number(ord.invoice_discount || 0),
+          ord.invoice_discount_type || 'amount',
+          ord.branch_invoice_number !== null && ord.branch_invoice_number !== undefined ? String(ord.branch_invoice_number) : null,
+          Number(ord.cash_amount || 0),
+          Number(ord.card_amount || 0),
+          Number(ord.wallet_amount || 0),
+          Number(ord.bank_transfer_amount || 0),
+          toSqliteJson(ord.payment_splits),
+          ord.offline_uuid || null,
+          ord.order_source || 'pos'
+        );
+      }
+
+      if (Array.isArray(catalog.order_items)) {
+        const itemsByOrder = new Map();
+        for (const oi of catalog.order_items) {
+          const oid = Number(oi.order_id);
+          if (!itemsByOrder.has(oid)) itemsByOrder.set(oid, []);
+          itemsByOrder.get(oid).push(oi);
+        }
+        const delOiStmt = sqlite.prepare('DELETE FROM order_items WHERE order_id = ?');
+        const oiStmt = sqlite.prepare(`
+          INSERT INTO order_items (id, order_id, inventory_id, quantity, price_at_time, discount, discount_type, size)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            order_id = excluded.order_id,
+            inventory_id = excluded.inventory_id,
+            quantity = excluded.quantity,
+            price_at_time = excluded.price_at_time,
+            discount = excluded.discount,
+            discount_type = excluded.discount_type,
+            size = excluded.size
+        `);
+        for (const ord of catalog.orders) {
+          const oid = Number(ord.id);
+          if (pendingOrders.ids.has(oid) || (ord.offline_uuid && pendingOrders.uuids.has(String(ord.offline_uuid)))) continue;
+          delOiStmt.run(oid);
+          const list = itemsByOrder.get(oid) || [];
+          for (const oi of list) {
+            oiStmt.run(
+              oi.id,
+              oid,
+              oi.inventory_id || null,
+              Number(oi.quantity || 1),
+              Number(oi.price_at_time || 0),
+              Number(oi.discount || 0),
+              oi.discount_type || 'amount',
+              oi.size || null
+            );
+          }
+        }
+      }
+
+      if (Array.isArray(catalog.order_payments)) {
+        const pmsByOrder = new Map();
+        for (const op of catalog.order_payments) {
+          const oid = Number(op.order_id);
+          if (!pmsByOrder.has(oid)) pmsByOrder.set(oid, []);
+          pmsByOrder.get(oid).push(op);
+        }
+        const delOpStmt = sqlite.prepare('DELETE FROM order_payments WHERE order_id = ?');
+        const cleanStaleOpUuidStmt = sqlite.prepare('DELETE FROM order_payments WHERE offline_uuid = ? AND id != ?');
+        const opStmt = sqlite.prepare(`
+          INSERT INTO order_payments (id, order_id, amount, payment_method, payment_date, branch_id, seller_id, notes, offline_uuid, pending_sync)
+          VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, 0)
+          ON CONFLICT(id) DO UPDATE SET
+            order_id = excluded.order_id,
+            amount = excluded.amount,
+            payment_method = excluded.payment_method,
+            payment_date = COALESCE(excluded.payment_date, order_payments.payment_date),
+            branch_id = excluded.branch_id,
+            seller_id = excluded.seller_id,
+            notes = excluded.notes,
+            offline_uuid = COALESCE(excluded.offline_uuid, order_payments.offline_uuid),
+            pending_sync = 0
+        `);
+        for (const ord of catalog.orders) {
+          const oid = Number(ord.id);
+          if (pendingOrders.ids.has(oid) || (ord.offline_uuid && pendingOrders.uuids.has(String(ord.offline_uuid)))) continue;
+          delOpStmt.run(oid);
+          const list = pmsByOrder.get(oid) || [];
+          for (const op of list) {
+            if (op.offline_uuid) cleanStaleOpUuidStmt.run(op.offline_uuid, op.id);
+            opStmt.run(
+              op.id,
+              oid,
+              Number(op.amount || 0),
+              op.payment_method || 'cash',
+              toSqliteTimestamp(op.payment_date),
+              op.branch_id || 1,
+              op.seller_id || null,
+              op.notes || null,
+              op.offline_uuid || null
+            );
+          }
+        }
+      }
+    }
+
+    // 18. Returns & Return Items
+    if (Array.isArray(catalog.returns)) {
+      ensureCol('returns', 'refund_method', "TEXT DEFAULT 'cash'");
+      ensureCol('returns', 'pending_sync', 'INTEGER DEFAULT 1');
+      ensureCol('return_items', 'size', 'TEXT');
+      ensureCol('return_items', 'discount', 'REAL DEFAULT 0');
+      ensureCol('return_items', 'discount_type', "TEXT DEFAULT 'amount'");
+
+      const pendingReturns = getPendingSyncTracker('return');
+      const findRetByUuidStmt = sqlite.prepare('SELECT id FROM returns WHERE offline_uuid = ? AND id != ?');
+      const retStmt = sqlite.prepare(`
+        INSERT INTO returns (id, order_id, return_date, total_return_amount, reason, seller_id, branch_id, refund_method, offline_uuid, pending_sync)
+        VALUES (?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          order_id = excluded.order_id,
+          return_date = COALESCE(excluded.return_date, returns.return_date),
+          total_return_amount = excluded.total_return_amount,
+          reason = excluded.reason,
+          seller_id = excluded.seller_id,
+          branch_id = excluded.branch_id,
+          refund_method = excluded.refund_method,
+          offline_uuid = COALESCE(excluded.offline_uuid, returns.offline_uuid),
+          pending_sync = 0
+      `);
+
+      for (const ret of catalog.returns) {
+        if (pendingReturns.ids.has(Number(ret.id)) || (ret.offline_uuid && pendingReturns.uuids.has(String(ret.offline_uuid)))) continue;
+        if (ret.offline_uuid) {
+          const dupRet = findRetByUuidStmt.get(ret.offline_uuid, ret.id);
+          if (dupRet) {
+            try { sqlite.prepare('DELETE FROM return_items WHERE return_id = ?').run(dupRet.id); } catch {}
+            sqlite.prepare('DELETE FROM returns WHERE id = ?').run(dupRet.id);
+          }
+        }
+        retStmt.run(
+          ret.id,
+          ret.order_id || null,
+          toSqliteTimestamp(ret.return_date),
+          Number(ret.total_return_amount || 0),
+          ret.reason || null,
+          ret.seller_id || null,
+          ret.branch_id || 1,
+          ret.refund_method || 'cash',
+          ret.offline_uuid || null
+        );
+      }
+
+      if (Array.isArray(catalog.return_items)) {
+        const riByRet = new Map();
+        for (const ri of catalog.return_items) {
+          const rid = Number(ri.return_id);
+          if (!riByRet.has(rid)) riByRet.set(rid, []);
+          riByRet.get(rid).push(ri);
+        }
+        const delRiStmt = sqlite.prepare('DELETE FROM return_items WHERE return_id = ?');
+        const riStmt = sqlite.prepare(`
+          INSERT INTO return_items (id, return_id, inventory_id, quantity, price_at_time, size, discount, discount_type)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            return_id = excluded.return_id,
+            inventory_id = excluded.inventory_id,
+            quantity = excluded.quantity,
+            price_at_time = excluded.price_at_time,
+            size = excluded.size,
+            discount = excluded.discount,
+            discount_type = excluded.discount_type
+        `);
+        for (const ret of catalog.returns) {
+          const rid = Number(ret.id);
+          if (pendingReturns.ids.has(rid) || (ret.offline_uuid && pendingReturns.uuids.has(String(ret.offline_uuid)))) continue;
+          delRiStmt.run(rid);
+          const list = riByRet.get(rid) || [];
+          for (const ri of list) {
+            riStmt.run(
+              ri.id,
+              rid,
+              ri.inventory_id || null,
+              Number(ri.quantity || 1),
+              Number(ri.price_at_time || 0),
+              ri.size || null,
+              Number(ri.discount || 0),
+              ri.discount_type || 'amount'
+            );
+          }
+        }
+      }
+    }
+
+    // 19. Rentals & Rental Payments
+    if (Array.isArray(catalog.rentals)) {
+      ensureCol('rentals', 'deposit', 'REAL DEFAULT 0');
+      ensureCol('rentals', 'remaining', 'REAL DEFAULT 0');
+      ensureCol('rentals', 'national_id', 'TEXT');
+      ensureCol('rentals', 'id_card_guarantee', 'INTEGER DEFAULT 0');
+      ensureCol('rentals', 'sale_order_id', 'INTEGER');
+      ensureCol('rentals', 'actual_pickup_date', 'TEXT');
+      ensureCol('rentals', 'is_prepared', 'INTEGER DEFAULT 0');
+      ensureCol('rentals', 'prepared_at', 'TEXT');
+      ensureCol('rentals', 'prepared_by', 'INTEGER');
+      ensureCol('rentals', 'prep_notes', 'TEXT');
+      ensureCol('rentals', 'cash_amount', 'REAL DEFAULT 0');
+      ensureCol('rentals', 'card_amount', 'REAL DEFAULT 0');
+      ensureCol('rentals', 'wallet_amount', 'REAL DEFAULT 0');
+      ensureCol('rentals', 'bank_transfer_amount', 'REAL DEFAULT 0');
+      ensureCol('rentals', 'payment_splits', 'TEXT');
+      ensureCol('rentals', 'custom_items', 'TEXT');
+      ensureCol('rentals', 'pending_sync', 'INTEGER DEFAULT 1');
+      ensureCol('rental_payments', 'offline_uuid', 'TEXT');
+      ensureCol('rental_payments', 'pending_sync', 'INTEGER DEFAULT 1');
+
+      const pendingRentals = getPendingSyncTracker(['rental', 'rental_status']);
+      const findRentByUuidStmt = sqlite.prepare('SELECT id FROM rentals WHERE offline_uuid = ? AND id != ?');
+      const rentStmt = sqlite.prepare(`
+        INSERT INTO rentals (
+          id, customer_id, inventory_id, rental_inventory_id, seller_id, branch_id,
+          booking_date, pickup_date, return_date, actual_return_date, actual_pickup_date,
+          total_price, deposit_amount, deposit, paid_amount, remaining_amount, remaining,
+          status, notes, daily_fine, fine_amount, payment_method, national_id, id_card_guarantee,
+          sale_order_id, offline_uuid, rental_group_uuid, is_prepared, prepared_at, prepared_by, prep_notes,
+          cash_amount, card_amount, wallet_amount, bank_transfer_amount, payment_splits, custom_items, pending_sync
+        )
+        VALUES (
+          ?, ?, ?, ?, ?, ?,
+          COALESCE(?, CURRENT_DATE), ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, 0
+        )
+        ON CONFLICT(id) DO UPDATE SET
+          customer_id = excluded.customer_id,
+          inventory_id = excluded.inventory_id,
+          rental_inventory_id = excluded.rental_inventory_id,
+          seller_id = excluded.seller_id,
+          branch_id = excluded.branch_id,
+          booking_date = COALESCE(excluded.booking_date, rentals.booking_date),
+          pickup_date = excluded.pickup_date,
+          return_date = excluded.return_date,
+          actual_return_date = excluded.actual_return_date,
+          actual_pickup_date = excluded.actual_pickup_date,
+          total_price = excluded.total_price,
+          deposit_amount = excluded.deposit_amount,
+          deposit = excluded.deposit,
+          paid_amount = excluded.paid_amount,
+          remaining_amount = excluded.remaining_amount,
+          remaining = excluded.remaining,
+          status = excluded.status,
+          notes = excluded.notes,
+          daily_fine = excluded.daily_fine,
+          fine_amount = excluded.fine_amount,
+          payment_method = excluded.payment_method,
+          national_id = excluded.national_id,
+          id_card_guarantee = excluded.id_card_guarantee,
+          sale_order_id = excluded.sale_order_id,
+          offline_uuid = COALESCE(excluded.offline_uuid, rentals.offline_uuid),
+          rental_group_uuid = excluded.rental_group_uuid,
+          is_prepared = excluded.is_prepared,
+          prepared_at = excluded.prepared_at,
+          prepared_by = excluded.prepared_by,
+          prep_notes = excluded.prep_notes,
+          cash_amount = excluded.cash_amount,
+          card_amount = excluded.card_amount,
+          wallet_amount = excluded.wallet_amount,
+          bank_transfer_amount = excluded.bank_transfer_amount,
+          payment_splits = excluded.payment_splits,
+          custom_items = excluded.custom_items,
+          pending_sync = 0
+      `);
+
+      for (const r of catalog.rentals) {
+        if (pendingRentals.ids.has(Number(r.id)) || (r.offline_uuid && pendingRentals.uuids.has(String(r.offline_uuid)))) continue;
+        if (r.offline_uuid) {
+          const dupR = findRentByUuidStmt.get(r.offline_uuid, r.id);
+          if (dupR) {
+            try { sqlite.prepare('DELETE FROM rental_payments WHERE rental_id = ?').run(dupR.id); } catch {}
+            sqlite.prepare('DELETE FROM rentals WHERE id = ?').run(dupR.id);
+          }
+        }
+        const depVal = Number(r.deposit ?? r.deposit_amount ?? 0);
+        const remVal = Number(r.remaining ?? r.remaining_amount ?? 0);
+        rentStmt.run(
+          r.id,
+          r.customer_id || null,
+          r.inventory_id || null,
+          r.rental_inventory_id || null,
+          r.seller_id || null,
+          r.branch_id || 1,
+          toSqliteDate(r.booking_date),
+          toSqliteDate(r.pickup_date) || toSqliteDate(new Date()),
+          toSqliteDate(r.return_date) || toSqliteDate(new Date()),
+          toSqliteDate(r.actual_return_date),
+          toSqliteTimestamp(r.actual_pickup_date),
+          Number(r.total_price || 0),
+          depVal,
+          depVal,
+          Number(r.paid_amount || 0),
+          remVal,
+          remVal,
+          r.status || 'booked',
+          r.notes || null,
+          Number(r.daily_fine ?? 50),
+          Number(r.fine_amount || 0),
+          r.payment_method || 'cash',
+          r.national_id || null,
+          r.id_card_guarantee ? 1 : 0,
+          r.sale_order_id || null,
+          r.offline_uuid || null,
+          r.rental_group_uuid || null,
+          r.is_prepared ? 1 : 0,
+          toSqliteTimestamp(r.prepared_at),
+          r.prepared_by || null,
+          r.prep_notes || null,
+          Number(r.cash_amount || 0),
+          Number(r.card_amount || 0),
+          Number(r.wallet_amount || 0),
+          Number(r.bank_transfer_amount || 0),
+          toSqliteJson(r.payment_splits),
+          toSqliteJson(r.custom_items)
+        );
+      }
+
+      if (Array.isArray(catalog.rental_payments)) {
+        const pmsByRental = new Map();
+        for (const rp of catalog.rental_payments) {
+          const rid = Number(rp.rental_id);
+          if (!pmsByRental.has(rid)) pmsByRental.set(rid, []);
+          pmsByRental.get(rid).push(rp);
+        }
+        const delRpStmt = sqlite.prepare('DELETE FROM rental_payments WHERE rental_id = ?');
+        const cleanStaleRpUuidStmt = sqlite.prepare('DELETE FROM rental_payments WHERE offline_uuid = ? AND id != ?');
+        const rpStmt = sqlite.prepare(`
+          INSERT INTO rental_payments (id, rental_id, amount, payment_method, payment_date, branch_id, seller_id, notes, offline_uuid, pending_sync)
+          VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, 0)
+          ON CONFLICT(id) DO UPDATE SET
+            rental_id = excluded.rental_id,
+            amount = excluded.amount,
+            payment_method = excluded.payment_method,
+            payment_date = COALESCE(excluded.payment_date, rental_payments.payment_date),
+            branch_id = excluded.branch_id,
+            seller_id = excluded.seller_id,
+            notes = excluded.notes,
+            offline_uuid = COALESCE(excluded.offline_uuid, rental_payments.offline_uuid),
+            pending_sync = 0
+        `);
+        for (const r of catalog.rentals) {
+          const rid = Number(r.id);
+          if (pendingRentals.ids.has(rid) || (r.offline_uuid && pendingRentals.uuids.has(String(r.offline_uuid)))) continue;
+          delRpStmt.run(rid);
+          const list = pmsByRental.get(rid) || [];
+          for (const rp of list) {
+            if (rp.offline_uuid) cleanStaleRpUuidStmt.run(rp.offline_uuid, rp.id);
+            rpStmt.run(
+              rp.id,
+              rid,
+              Number(rp.amount || 0),
+              rp.payment_method || 'cash',
+              toSqliteTimestamp(rp.payment_date),
+              rp.branch_id || 1,
+              rp.seller_id || null,
+              rp.notes || null,
+              rp.offline_uuid || null
+            );
+          }
+        }
+      }
+    }
+
+    // 20. Supplier Transactions & Supply Records
+    const pendingSupOps = getPendingSyncTracker(['supplier_transaction', 'product', 'inventory']);
+    const hasPendingSupOps = pendingSupOps.ids.size > 0 || pendingSupOps.uuids.size > 0;
+
+    if (Array.isArray(catalog.supplier_transactions) && !hasPendingSupOps) {
+      ensureCol('supplier_transactions', 'payment_method', "TEXT DEFAULT 'cash'");
+      ensureCol('supplier_transactions', 'paid_from_drawer', 'INTEGER DEFAULT 1');
+      ensureCol('supplier_transactions', 'branch_id', 'INTEGER');
+
+      const stStmt = sqlite.prepare(`
+        INSERT INTO supplier_transactions (id, supplier_id, branch_id, transaction_type, amount, payment_method, paid_from_drawer, transaction_date, notes, purchase_batch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          supplier_id = excluded.supplier_id,
+          branch_id = excluded.branch_id,
+          transaction_type = excluded.transaction_type,
+          amount = excluded.amount,
+          payment_method = excluded.payment_method,
+          paid_from_drawer = excluded.paid_from_drawer,
+          transaction_date = COALESCE(excluded.transaction_date, supplier_transactions.transaction_date),
+          notes = excluded.notes,
+          purchase_batch_id = excluded.purchase_batch_id
+      `);
+      const incomingStIds = new Set();
+      for (const st of catalog.supplier_transactions) {
+        incomingStIds.add(Number(st.id));
+        const syncMatch = String(st.notes || '').match(/\[SYNC-([^\]]+)\]/);
+        if (syncMatch) {
+          try {
+            sqlite.prepare('DELETE FROM supplier_transactions WHERE notes LIKE ? AND id != ?').run(`%${syncMatch[0]}%`, st.id);
+          } catch {}
+        }
+        stStmt.run(
+          st.id,
+          st.supplier_id || null,
+          st.branch_id || null,
+          st.transaction_type || 'payment',
+          Number(st.amount || 0),
+          st.payment_method || 'cash',
+          st.paid_from_drawer === false || st.paid_from_drawer === 0 ? 0 : 1,
+          toSqliteTimestamp(st.transaction_date),
+          st.notes || null,
+          st.purchase_batch_id || null
+        );
+      }
+      try {
+        const localSts = sqlite.prepare('SELECT id FROM supplier_transactions').all();
+        const delStStmt = sqlite.prepare('DELETE FROM supplier_transactions WHERE id = ?');
+        for (const lst of localSts) {
+          if (!incomingStIds.has(Number(lst.id))) {
+            delStStmt.run(lst.id);
+          }
+        }
+      } catch {}
+    }
+
+    if (Array.isArray(catalog.supply_records) && !hasPendingSupOps) {
+      ensureCol('supply_records', 'supplier_transaction_id', 'INTEGER');
+      const srStmt = sqlite.prepare(`
+        INSERT INTO supply_records (id, supplier_id, inventory_id, branch_id, quantity, supply_date, cost_price, notes, purchase_batch_id, supplier_transaction_id)
+        VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_DATE), ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          supplier_id = excluded.supplier_id,
+          inventory_id = excluded.inventory_id,
+          branch_id = excluded.branch_id,
+          quantity = excluded.quantity,
+          supply_date = COALESCE(excluded.supply_date, supply_records.supply_date),
+          cost_price = excluded.cost_price,
+          notes = excluded.notes,
+          purchase_batch_id = excluded.purchase_batch_id,
+          supplier_transaction_id = excluded.supplier_transaction_id
+      `);
+      const incomingSrIds = new Set();
+      for (const sr of catalog.supply_records) {
+        incomingSrIds.add(Number(sr.id));
+        srStmt.run(
+          sr.id,
+          sr.supplier_id || null,
+          sr.inventory_id || null,
+          sr.branch_id || 1,
+          Number(sr.quantity || 0),
+          toSqliteDate(sr.supply_date),
+          Number(sr.cost_price || 0),
+          sr.notes || null,
+          sr.purchase_batch_id || null,
+          sr.supplier_transaction_id || null
+        );
+      }
+      try {
+        const localSrs = sqlite.prepare('SELECT id FROM supply_records').all();
+        const delSrStmt = sqlite.prepare('DELETE FROM supply_records WHERE id = ?');
+        for (const lsr of localSrs) {
+          if (!incomingSrIds.has(Number(lsr.id))) {
+            delSrStmt.run(lsr.id);
+          }
+        }
+      } catch {}
+    }
+
+    // 21. Worn Products
+    if (Array.isArray(catalog.worn_products)) {
+      ensureCol('worn_products', 'occurred_at', 'TEXT');
+      ensureCol('worn_products', 'reported_by', 'INTEGER');
+      ensureCol('worn_products', 'status', "TEXT DEFAULT 'reported'");
+      ensureCol('worn_products', 'pending_sync', 'INTEGER DEFAULT 1');
+
+      const pendingWorn = getPendingSyncTracker('worn_product');
+      const cleanStaleWpStmt = sqlite.prepare('DELETE FROM worn_products WHERE offline_uuid = ? AND id != ?');
+      const wpStmt = sqlite.prepare(`
+        INSERT INTO worn_products (
+          id, product_type, inventory_id, rental_inventory_id, branch_id, quantity,
+          condition, reason, estimated_loss, notes, reported_by, occurred_at, status,
+          created_by, created_at, offline_uuid, pending_sync
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_DATE), ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          product_type = excluded.product_type,
+          inventory_id = excluded.inventory_id,
+          rental_inventory_id = excluded.rental_inventory_id,
+          branch_id = excluded.branch_id,
+          quantity = excluded.quantity,
+          condition = excluded.condition,
+          reason = excluded.reason,
+          estimated_loss = excluded.estimated_loss,
+          notes = excluded.notes,
+          reported_by = excluded.reported_by,
+          occurred_at = COALESCE(excluded.occurred_at, worn_products.occurred_at),
+          status = excluded.status,
+          offline_uuid = COALESCE(excluded.offline_uuid, worn_products.offline_uuid),
+          pending_sync = 0
+      `);
+      for (const wp of catalog.worn_products) {
+        if (pendingWorn.ids.has(Number(wp.id)) || (wp.offline_uuid && pendingWorn.uuids.has(String(wp.offline_uuid)))) continue;
+        if (wp.offline_uuid) cleanStaleWpStmt.run(wp.offline_uuid, wp.id);
+        wpStmt.run(
+          wp.id,
+          wp.product_type || 'sales',
+          wp.inventory_id || null,
+          wp.rental_inventory_id || null,
+          wp.branch_id || 1,
+          Number(wp.quantity || 1),
+          wp.condition || 'worn',
+          wp.reason || null,
+          Number(wp.estimated_loss || 0),
+          wp.notes || null,
+          wp.reported_by || null,
+          toSqliteDate(wp.occurred_at),
+          wp.status || 'recorded',
+          wp.created_by ?? wp.reported_by ?? null,
+          toSqliteTimestamp(wp.created_at),
+          wp.offline_uuid || null
+        );
+      }
+    }
+
+    // 22. Stock Transfers
+    if (Array.isArray(catalog.stock_transfers)) {
+      ensureCol('stock_transfers', 'updated_at', 'TEXT');
+      ensureCol('stock_transfers', 'sizes_data', 'TEXT');
+      ensureCol('stock_transfers', 'created_by', 'INTEGER');
+      ensureCol('stock_transfers', 'sender_id', 'INTEGER');
+      ensureCol('stock_transfers', 'received_by', 'INTEGER');
+      ensureCol('stock_transfers', 'sender_name', 'TEXT');
+      ensureCol('stock_transfers', 'received_by_name', 'TEXT');
+      ensureCol('stock_transfers', 'created_by_name', 'TEXT');
+
+      const pendingTransfers = getPendingSyncTracker('stock_transfer');
+      if (pendingTransfers.ids.size === 0 && pendingTransfers.uuids.size === 0) {
+        const trStmt = sqlite.prepare(`
+          INSERT INTO stock_transfers (
+            id, inventory_id, from_branch_id, to_branch_id, quantity, transfer_date,
+            status, updated_at, sizes_data, created_by, sender_id, received_by,
+            sender_name, received_by_name, created_by_name
+          )
+          VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            inventory_id = excluded.inventory_id,
+            from_branch_id = excluded.from_branch_id,
+            to_branch_id = excluded.to_branch_id,
+            quantity = excluded.quantity,
+            transfer_date = COALESCE(excluded.transfer_date, stock_transfers.transfer_date),
+            status = excluded.status,
+            updated_at = excluded.updated_at,
+            sizes_data = excluded.sizes_data,
+            created_by = excluded.created_by,
+            sender_id = excluded.sender_id,
+            received_by = excluded.received_by,
+            sender_name = excluded.sender_name,
+            received_by_name = excluded.received_by_name,
+            created_by_name = excluded.created_by_name
+        `);
+        const incomingTrIds = new Set();
+        for (const tr of catalog.stock_transfers) {
+          incomingTrIds.add(Number(tr.id));
+          trStmt.run(
+            tr.id,
+            tr.inventory_id || null,
+            tr.from_branch_id || null,
+            tr.to_branch_id || null,
+            Number(tr.quantity || 0),
+            toSqliteTimestamp(tr.transfer_date),
+            tr.status || 'completed',
+            toSqliteTimestamp(tr.updated_at),
+            toSqliteJson(tr.sizes_data),
+            tr.created_by || null,
+            tr.sender_id || null,
+            tr.received_by || null,
+            tr.sender_name || null,
+            tr.received_by_name || null,
+            tr.created_by_name || null
+          );
+        }
+        try {
+          const localTrs = sqlite.prepare('SELECT id FROM stock_transfers').all();
+          const delTrStmt = sqlite.prepare('DELETE FROM stock_transfers WHERE id = ?');
+          for (const ltr of localTrs) {
+            if (!incomingTrIds.has(Number(ltr.id))) {
+              delTrStmt.run(ltr.id);
+            }
+          }
+        } catch {}
+      }
+    }
+
+    const importedAt = new Date().toISOString();
+    lastCatalogImportedAt = importedAt;
+
     return {
       ok: true,
-      imported_at: new Date().toISOString(),
+      imported_at: importedAt,
       counts: {
         users: catalog.users?.length || 0,
         inventory: catalog.inventory?.length || 0,
         customers: catalog.customers?.length || 0,
         branches: catalog.branches?.length || 0,
+        expenses: catalog.expenses?.length || 0,
+        orders: catalog.orders?.length || 0,
+        rentals: catalog.rentals?.length || 0,
+        tailoring_orders: catalog.tailoring_orders?.length || 0,
       }
     };
   };
@@ -3954,6 +5234,7 @@ async function pullCatalogFromCentral() {
 let syncIntervalHandle = null;
 let isSyncCycleActive = false;
 let lastCatalogPull = 0;
+let lastCatalogImportedAt = null;
 
 async function checkCentralConnectivity(timeoutMs = 5000) {
   const targetUrl = config.SYNC_SERVER_URL || process.env.SYNC_SERVER_URL;
@@ -4193,7 +5474,7 @@ async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
     // 3. Pull catalog from central
     let pullResult = null;
     let pullError = null;
-    const shouldPull = isManual || (Date.now() - lastCatalogPull > 5 * 60 * 1000);
+    const shouldPull = isManual || (Date.now() - lastCatalogPull > 15 * 1000);
 
     if (shouldPull) {
       try {
@@ -4268,7 +5549,7 @@ async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
   }
 }
 
-function startBackgroundSyncWorker(intervalMs = 30000) {
+function startBackgroundSyncWorker(intervalMs = 20000) {
   if (!config.IS_BRANCH_MODE || !config.SYNC_SERVER_URL) {
     console.log(`[Sync Worker] Background sync disabled (Mode: ${config.IS_BRANCH_MODE ? 'Branch' : 'Master'}, Server: ${config.SYNC_SERVER_URL || 'None'})`);
     return;

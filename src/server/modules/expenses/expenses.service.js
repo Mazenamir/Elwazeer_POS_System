@@ -492,7 +492,15 @@ async function updateExpense(id, body, user, req) {
   const existing = existingRes.rows[0];
 
   // Role and ownership permissions
-  if (user && user.role !== 'admin') {
+  const isPrivilegedAccountant = Boolean(
+    user && (
+      user.role === 'admin' ||
+      user.role === 'accountant' ||
+      user.branch_scope === 'all' ||
+      /^(acct|hesabat|accountant|حسابات)/i.test(user.username || '')
+    )
+  );
+  if (user && !isPrivilegedAccountant) {
     if (!hasBranchAccess(user, existing.branch_id)) {
       const err = new Error('غير مصرح لك بتعديل مصروف في فرع آخر');
       err.statusCode = 403;
@@ -584,7 +592,15 @@ async function deleteExpense(id, user, req) {
   const existing = existingRes.rows[0];
 
   // Role and ownership permissions
-  if (user && user.role !== 'admin') {
+  const isPrivilegedAccountant = Boolean(
+    user && (
+      user.role === 'admin' ||
+      user.role === 'accountant' ||
+      user.branch_scope === 'all' ||
+      /^(acct|hesabat|accountant|حسابات)/i.test(user.username || '')
+    )
+  );
+  if (user && !isPrivilegedAccountant) {
     if (!hasBranchAccess(user, existing.branch_id)) {
       const err = new Error('غير مصرح لك بحذف مصروف في فرع آخر');
       err.statusCode = 403;
@@ -776,6 +792,7 @@ async function createWornProduct(body, user) {
   const finalInventoryId = product_type === 'sales' ? productId : null;
   const finalRentalInventoryId = product_type === 'rental' ? productId : null;
   const shouldDeductStock = deduct_stock !== false;
+  const offlineUuid = newUuid(body?.offline_uuid);
 
   const wornProduct = await db.transaction(async (tx) => {
     if (shouldDeductStock) {
@@ -802,8 +819,8 @@ async function createWornProduct(body, user) {
 
     const result = await tx.query(
       `INSERT INTO worn_products
-        (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, reported_by, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, ${CAIRO_DATE_SQL}))
+        (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, reported_by, occurred_at, offline_uuid)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, ${CAIRO_DATE_SQL}), $12)
        RETURNING *`,
       [
         product_type,
@@ -817,8 +834,13 @@ async function createWornProduct(body, user) {
         notes || null,
         user ? user.id : null,
         occurred_at || null,
+        offlineUuid,
       ]
     );
+    await queueSyncOperation(tx, null, 'worn_product', 'create', result.rows[0].id, finalBranchId, {
+      ...result.rows[0],
+      deduct_stock: shouldDeductStock,
+    });
     return result.rows[0];
   });
 
@@ -847,6 +869,8 @@ async function updateWornProduct(id, body, user) {
     err.statusCode = 404;
     throw err;
   }
+
+  await queueSyncOperation(db, null, 'worn_product', 'update', rows[0].id, rows[0].branch_id, rows[0]);
 
   return rows[0];
 }

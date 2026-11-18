@@ -102,6 +102,12 @@ async function runPostgresMigrations() {
     `);
   } catch {}
 
+  // Allow per-branch tailoring invoice numbers without global UNIQUE collision across branches
+  try {
+    await db.query('ALTER TABLE tailoring_orders DROP CONSTRAINT IF EXISTS tailoring_orders_invoice_number_key');
+    await db.query('CREATE INDEX IF NOT EXISTS idx_tailoring_orders_branch_invoice ON tailoring_orders(branch_id, invoice_number)');
+  } catch {}
+
   console.log('✨ All PostgreSQL migrations are up to date.');
 }
 
@@ -356,7 +362,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
 
     CREATE TABLE IF NOT EXISTS tailoring_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      invoice_number TEXT NOT NULL UNIQUE,
+      invoice_number TEXT NOT NULL,
       customer_name TEXT NOT NULL,
       customer_phone TEXT NOT NULL,
       product_description TEXT NOT NULL,
@@ -649,6 +655,57 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try {
     sqlite.exec("UPDATE tailoring_orders SET due_date = delivery_date WHERE due_date IS NULL AND delivery_date IS NOT NULL");
   } catch {}
+
+  // Migrate legacy tailoring_orders if invoice_number has single-column UNIQUE constraint
+  try {
+    const tailTableDef = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tailoring_orders'").get();
+    if (tailTableDef && tailTableDef.sql && /invoice_number\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(tailTableDef.sql)) {
+      sqlite.exec(`
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE tailoring_orders_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          invoice_number TEXT NOT NULL,
+          customer_name TEXT NOT NULL,
+          customer_phone TEXT NOT NULL,
+          product_description TEXT NOT NULL,
+          measurements TEXT NOT NULL,
+          total_amount REAL NOT NULL DEFAULT 0,
+          paid_amount REAL NOT NULL DEFAULT 0,
+          remaining_amount REAL NOT NULL DEFAULT 0,
+          payment_method TEXT NOT NULL DEFAULT 'cash',
+          status TEXT NOT NULL DEFAULT 'pending',
+          order_date TEXT DEFAULT CURRENT_TIMESTAMP,
+          delivery_date TEXT,
+          due_date TEXT,
+          notes TEXT,
+          seller_id INTEGER,
+          branch_id INTEGER,
+          created_by INTEGER,
+          offline_uuid TEXT UNIQUE,
+          pending_sync INTEGER DEFAULT 1,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT OR IGNORE INTO tailoring_orders_new (
+          id, invoice_number, customer_name, customer_phone, product_description, measurements,
+          total_amount, paid_amount, remaining_amount, payment_method, status, order_date,
+          delivery_date, due_date, notes, seller_id, branch_id, created_by, offline_uuid, pending_sync, created_at
+        )
+        SELECT
+          id, invoice_number, customer_name, customer_phone, product_description, measurements,
+          total_amount, paid_amount, remaining_amount, payment_method, status, order_date,
+          delivery_date, due_date, notes, seller_id, branch_id, created_by, offline_uuid, pending_sync, created_at
+        FROM tailoring_orders;
+        DROP TABLE tailoring_orders;
+        ALTER TABLE tailoring_orders_new RENAME TO tailoring_orders;
+        CREATE INDEX IF NOT EXISTS idx_tailoring_orders_branch_inv ON tailoring_orders(branch_id, invoice_number);
+        PRAGMA foreign_keys = ON;
+      `);
+    } else {
+      sqlite.exec("CREATE INDEX IF NOT EXISTS idx_tailoring_orders_branch_inv ON tailoring_orders(branch_id, invoice_number)");
+    }
+  } catch (err) {
+    console.warn('Error migrating tailoring_orders unique index in SQLite:', err.message);
+  }
 
   try {
     sqlite.exec("ALTER TABLE suppliers ADD COLUMN code TEXT");

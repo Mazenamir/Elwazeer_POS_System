@@ -51,10 +51,10 @@ function requireAdminOrSyncKey(req, res, next) {
 router.get('/sync/ping', syncController.ping);
 router.post('/sync/apply', syncController.apply);
 router.get('/sync/catalog', syncController.getCatalog);
-router.post('/sync/pull', requireAdminOrSyncKey, syncController.pull);
+router.post('/sync/pull', requireSyncAuthOrKey, syncController.pull);
 router.get('/sync/status', requireSyncAuthOrKey, syncController.getStatus);
-router.post('/sync/run', requireAdminOrSyncKey, syncLimiter, syncController.run);
-router.post('/sync/cycle', requireAdminOrSyncKey, syncLimiter, syncController.runCycle);
+router.post('/sync/run', requireSyncAuthOrKey, syncLimiter, syncController.run);
+router.post('/sync/cycle', requireSyncAuthOrKey, syncLimiter, syncController.runCycle);
 router.get('/sync/diagnostics', requireSyncAuthOrKey, syncController.getDiagnostics);
 router.post('/sync/configure', requireAdminOrSyncKey, syncController.configure);
 router.get('/sync/dead-letter', requireAdminOrSyncKey, syncController.getDeadLetter);

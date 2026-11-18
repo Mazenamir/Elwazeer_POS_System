@@ -1,6 +1,29 @@
 const config = require('../config/env');
 const { newUuid } = require('../../shared/utils/string');
 
+let immediateSyncTimer = null;
+
+function scheduleImmediateSyncPush() {
+  if (!config.IS_BRANCH_MODE || !config.SYNC_SERVER_URL || process.env.NODE_ENV === 'test') {
+    return;
+  }
+  if (immediateSyncTimer) {
+    clearTimeout(immediateSyncTimer);
+  }
+  immediateSyncTimer = setTimeout(() => {
+    immediateSyncTimer = null;
+    try {
+      const syncService = require('../modules/sync/sync.service');
+      if (typeof syncService.runSyncCycle === 'function') {
+        syncService.runSyncCycle({ isManual: false, limit: 50 }).catch(() => {});
+      }
+    } catch {}
+  }, 600);
+  if (typeof immediateSyncTimer.unref === 'function') {
+    immediateSyncTimer.unref();
+  }
+}
+
 function shouldQueueSync(req) {
   return !config.IS_SYNC_TARGET && req?.headers?.['x-sync-apply'] !== '1';
 }
@@ -15,6 +38,7 @@ async function queueSyncOperation(tx, req, entityType, action, entityId, branchI
      ON CONFLICT (operation_uuid) DO NOTHING`,
     [operationUuid, entityType, action, entityId || null, branchId || null, data]
   );
+  scheduleImmediateSyncPush();
   return operationUuid;
 }
 

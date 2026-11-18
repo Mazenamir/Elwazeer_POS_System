@@ -107,7 +107,10 @@ export function Tailoring() {
   // Permission check for cancelling tailoring orders
   const canCancelTailoring = Boolean(
     isAdmin ||
-    hasPermission('tailoring.delete')
+    hasPermission('tailoring.delete') ||
+    hasPermission('tailoring.edit') ||
+    hasPermission('tailoring.create') ||
+    hasPermission('Tailoring.html')
   );
 
   // Robust Load Employees
@@ -224,6 +227,14 @@ export function Tailoring() {
     fetchOrders();
   }, [fetchOrders]);
 
+  useEffect(() => {
+    const handleSyncRefresh = () => {
+      fetchOrders();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncRefresh);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncRefresh);
+  }, [fetchOrders]);
+
   // Handle Create
   const handleCreateSubmit = async (e) => {
     e.preventDefault();
@@ -269,6 +280,7 @@ export function Tailoring() {
 
     setSubmitting(true);
     try {
+      const selectedEmp = employees.find((emp) => emp.id?.toString() === sellerId?.toString());
       const payload = {
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
@@ -280,7 +292,9 @@ export function Tailoring() {
         payment_method: finalMethod,
         payment_splits: splitsArray,
         seller_id: Number(sellerId),
-        branch_id: (activeBranchId && activeBranchId !== 'all') ? Number(activeBranchId) : (branches[0]?.id || 1),
+        branch_id: (activeBranchId && activeBranchId !== 'all')
+          ? Number(activeBranchId)
+          : (selectedEmp?.branch_id || branches[0]?.id || 1),
       };
 
       const res = await api.post('/tailoring-orders', payload);
@@ -492,6 +506,11 @@ export function Tailoring() {
                       <div className="text-xs text-slate-400 font-mono" dir="ltr">
                         {order.customer_phone}
                       </div>
+                      {order.seller_name && (
+                        <div className="text-[10px] text-indigo-700 font-bold mt-0.5">
+                          المسؤول: {order.seller_name}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3.5 text-slate-800 font-bold max-w-xs truncate">
                       {order.product_description}
@@ -537,23 +556,27 @@ export function Tailoring() {
                     <td className="py-3.5 pl-2">
                       <div className="flex items-center gap-1.5">
                         <button
+                          type="button"
                           onClick={() => {
                             setSelectedReceiptOrder(order);
                             setShowReceiptModal(true);
                           }}
-                          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                          className="px-2 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors flex items-center gap-1 text-xs font-bold cursor-pointer shrink-0"
                           title="طباعة إيصال"
                         >
-                          <Printer className="w-4 h-4" />
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>طباعة</span>
                         </button>
                         {canCancelTailoring && (
                           <button
+                            type="button"
                             onClick={() => handleOpenCancelModal(order)}
-                            className="p-1.5 rounded-lg border border-rose-200 text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors"
-                            title="إلغاء أمر التفصيل"
+                            className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:text-rose-800 hover:bg-rose-100 transition-colors flex items-center gap-1 text-xs font-bold cursor-pointer shrink-0"
+                            title="إلغاء أمر التفصيل واسترداد العربون"
                             aria-label="إلغاء أمر التفصيل"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>إلغاء التفصيل</span>
                           </button>
                         )}
                       </div>

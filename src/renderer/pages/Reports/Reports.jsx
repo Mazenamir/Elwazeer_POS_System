@@ -668,35 +668,46 @@ export function Reports() {
   // Initial and reactive fetch
   useEffect(() => {
     if (!accessibleTabs.length) return;
-    if (canViewProfits) {
-      loadProfitSummary();
-    }
-    if (activeTab === 'daily') {
-      loadDailyHistory();
-    } else if (activeTab === 'master') {
-      loadMasterReport();
-    } else if (activeTab === 'ohda') {
-      loadOhdaReport();
-    } else if (activeTab === 'salary') {
-      loadSalaryReport();
-    } else if (activeTab === 'kpi') {
-      loadKpiReport();
-    } else if (activeTab === 'suppliers_ledger') {
-      loadSuppliersLedger();
-    } else if (activeTab === 'monthly') {
-      loadMonthlyHistory();
-    } else if (activeTab === 'sales') {
-      loadSalesReport();
-    } else if (activeTab === 'rentals') {
-      loadRentalsReport();
-    } else if (activeTab === 'expenses') {
-      loadExpensesReport();
-    } else if (activeTab === 'inventory') {
-      loadInventoryReport();
-    } else if (activeTab === 'top_products') {
-      loadTopProducts();
-    }
+    const refreshCurrentReport = () => {
+      if (canViewProfits) {
+        loadProfitSummary();
+      }
+      if (activeTab === 'daily') {
+        loadDailyHistory();
+      } else if (activeTab === 'master') {
+        loadMasterReport();
+      } else if (activeTab === 'ohda') {
+        loadOhdaReport();
+      } else if (activeTab === 'salary') {
+        loadSalaryReport();
+      } else if (activeTab === 'kpi') {
+        loadKpiReport();
+      } else if (activeTab === 'suppliers_ledger') {
+        loadSuppliersLedger();
+      } else if (activeTab === 'monthly') {
+        loadMonthlyHistory();
+      } else if (activeTab === 'sales') {
+        loadSalesReport();
+      } else if (activeTab === 'rentals') {
+        loadRentalsReport();
+      } else if (activeTab === 'expenses') {
+        loadExpensesReport();
+      } else if (activeTab === 'inventory') {
+        loadInventoryReport();
+      } else if (activeTab === 'top_products') {
+        loadTopProducts();
+      }
+    };
+    refreshCurrentReport();
+
+    const handleSyncCompleted = () => {
+      refreshCurrentReport();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [
+    accessibleTabs.length,
+    canViewProfits,
     activeTab,
     selectedBranch,
     selectedMonth,
