@@ -310,11 +310,10 @@ export function Rentals() {
 
     const handleSyncCompleted = () => {
       refreshActiveView();
-      loadLookups();
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
-  }, [activeTab, fetchPreparation, fetchLedger, fetchRentals, fetchSummary, loadLookups]);
+  }, [activeTab, fetchPreparation, fetchLedger, fetchRentals, fetchSummary]);
 
   // Load Lookups (Rental Inventory and Employees)
   const loadLookups = useCallback(async () => {
@@ -350,6 +349,11 @@ export function Rentals() {
 
   useEffect(() => {
     loadLookups();
+    const handleSyncCompleted = () => {
+      loadLookups();
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [loadLookups]);
 
   // When new booking modal opens, ensure lookups are loaded

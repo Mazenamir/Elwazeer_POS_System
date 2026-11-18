@@ -306,13 +306,10 @@ export function ExpensesManager({ isCashierTab = false }) {
     loadExpenses();
     const handleSyncCompleted = () => {
       loadExpenses();
-      if (activeTab === 'drawer') {
-        loadDrawerSettlement();
-      }
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
-  }, [loadExpenses, activeTab, loadDrawerSettlement]);
+  }, [loadExpenses]);
 
   // Drawer Settlement Fetch & Calculation
   const loadDrawerSettlement = useCallback(async () => {
@@ -342,9 +339,13 @@ export function ExpensesManager({ isCashierTab = false }) {
   }, [canAccessDrawer, drawerDate, drawerBranch, activeBranchId, user?.branch_id, toast]);
 
   useEffect(() => {
-    if (activeTab === 'drawer') {
+    if (activeTab !== 'drawer') return;
+    loadDrawerSettlement();
+    const handleSyncCompleted = () => {
       loadDrawerSettlement();
-    }
+    };
+    window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [activeTab, loadDrawerSettlement]);
 
   const drawerSummary = useMemo(() => {
