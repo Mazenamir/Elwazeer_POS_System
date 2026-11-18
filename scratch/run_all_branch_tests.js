@@ -23,8 +23,11 @@ process.env.NODE_ENV = 'test';
 const { spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
+const TEMP_BRANCH_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'elwazeer-branch-suites-'));
+const TEMP_BRANCH_SQLITE = path.join(TEMP_BRANCH_DIR, 'branch.sqlite');
 
 // Helper: Safely unlink file with retry loop to handle Windows file locks cleanly
 function safeUnlink(filePath, maxRetries = 5, delayMs = 150) {
@@ -136,6 +139,7 @@ for (let i = 0; i < suites.length; i++) {
   const childEnv = {
     ...process.env,
     APP_MODE: suite.script === 'scripts/test_sync_integrity_suite.js' ? '' : 'branch',
+    BRANCH_SQLITE_PATH: process.env.BRANCH_SQLITE_PATH || TEMP_BRANCH_SQLITE,
     NODE_ENV: 'test',
   };
 
@@ -233,6 +237,9 @@ console.log(`TOTAL DURATION     : ${totalMasterDurationSec}s`);
 console.log('========================================================================================================');
 
 // Clean up temporary test sqlite files
+try {
+  fs.rmSync(TEMP_BRANCH_DIR, { recursive: true, force: true });
+} catch {}
 const dataDir = path.join(ROOT_DIR, 'data');
 if (fs.existsSync(dataDir)) {
   try {

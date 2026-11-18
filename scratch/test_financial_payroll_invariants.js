@@ -15,6 +15,7 @@ const ExcelJS = require('exceljs');
 
 // Database connection & application modules
 const db = require('../src/server/database/connection');
+const { runMigrations } = require('../src/server/database/migrator');
 const reportsExcel = require('../src/server/modules/reports/reports.excel');
 const reportsService = require('../src/server/modules/reports/reports.service');
 const employeesService = require('../src/server/modules/hr/employees.service');
@@ -136,6 +137,8 @@ async function runAllTests() {
   console.log('================================================================');
   console.log('ELWAZEER POS INVARIANT REGRESSION SUITE (FINANCIAL & PAYROLL)');
   console.log('================================================================\n');
+
+  await runMigrations();
 
   // --------------------------------------------------------------------------
   // SECTION 1: Cash Drawer Settlement Formula Invariants (Tier 1 & Tier 2)
