@@ -194,7 +194,7 @@ export function Reports() {
   const [profitAuthError, setProfitAuthError] = useState('');
   const [profitAuthLoading, setProfitAuthLoading] = useState(false);
 
-  const handleToggleProfitVisibility = () => {
+  const handleToggleProfitVisibility = async () => {
     if (profitVisible) {
       setProfitVisible(false);
       setProfitAuthInput('');
@@ -204,6 +204,16 @@ export function Reports() {
         variant: 'info',
       });
     } else {
+      try {
+        const statusRes = await client.get('/sensitive-passwords/status');
+        const status = statusRes?.data || statusRes || {};
+        if (status?.profit && status.profit.configured === false) {
+          setProfitVisible(true);
+          return;
+        }
+      } catch {
+        // Fallback to modal
+      }
       setProfitAuthInput('');
       setProfitAuthError('');
       setShowProfitAuthModal(true);

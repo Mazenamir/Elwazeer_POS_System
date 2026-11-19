@@ -489,10 +489,21 @@ async function reqJson(baseUrl, method, urlPath, token, body = null) {
           await db.query('DELETE FROM returns WHERE id = ANY($1::int[])', [cleanup.returnIds]);
         }
         if (cleanup.orderIds.length) {
+          await db.query('DELETE FROM return_items WHERE return_id IN (SELECT id FROM returns WHERE order_id = ANY($1::int[]))', [cleanup.orderIds]).catch(() => {});
+          await db.query('DELETE FROM returns WHERE order_id = ANY($1::int[])', [cleanup.orderIds]).catch(() => {});
+          await db.query('DELETE FROM alterations WHERE order_id = ANY($1::int[])', [cleanup.orderIds]).catch(() => {});
           await db.query('DELETE FROM order_payments WHERE order_id = ANY($1::int[])', [cleanup.orderIds]);
           await db.query('DELETE FROM order_items WHERE order_id = ANY($1::int[])', [cleanup.orderIds]);
           await db.query('DELETE FROM orders WHERE id = ANY($1::int[])', [cleanup.orderIds]);
         }
+        // Also remove any orphaned E2E orders/customers from prior aborted runs
+        await db.query("DELETE FROM return_items WHERE return_id IN (SELECT r.id FROM returns r JOIN orders o ON r.order_id = o.id JOIN customers c ON o.customer_id = c.id WHERE c.name = 'عميل E2E')").catch(() => {});
+        await db.query("DELETE FROM returns WHERE order_id IN (SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.name = 'عميل E2E')").catch(() => {});
+        await db.query("DELETE FROM alterations WHERE order_id IN (SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.name = 'عميل E2E')").catch(() => {});
+        await db.query("DELETE FROM order_payments WHERE order_id IN (SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.name = 'عميل E2E')").catch(() => {});
+        await db.query("DELETE FROM order_items WHERE order_id IN (SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.name = 'عميل E2E')").catch(() => {});
+        await db.query("DELETE FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE name = 'عميل E2E')").catch(() => {});
+        await db.query("DELETE FROM customers WHERE name = 'عميل E2E'").catch(() => {});
         if (cleanup.rentalIds.length) {
           await db.query('DELETE FROM rental_payments WHERE rental_id = ANY($1::int[])', [cleanup.rentalIds]);
           await db.query('DELETE FROM rentals WHERE id = ANY($1::int[])', [cleanup.rentalIds]);

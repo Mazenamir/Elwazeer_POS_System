@@ -1745,10 +1745,87 @@ export function POS() {
   };
 
   // Edit Invoice Logic
-  const openEditInvoicePasswordPrompt = (order) => {
+  const loadOrderIntoEditModal = async (order, verifiedPassword = '') => {
+    const details = await api.get(`/orders/${order.id}/details`);
+    const fullOrder = details?.order || details?.data || details || order;
+    let rawItems = details?.items || details?.data?.items || fullOrder?.items || order?.items || [];
+    if (typeof rawItems === 'string') {
+      try { rawItems = JSON.parse(rawItems); } catch { rawItems = []; }
+    }
+    const orderItems = Array.isArray(rawItems) ? rawItems : [];
+
+    // Parse existing payment_splits or synthesize from breakdown columns for split orders
+    let parsedSplits = [];
+    const rawSplits = fullOrder.payment_splits ?? order?.payment_splits;
+    if (Array.isArray(rawSplits)) {
+      parsedSplits = rawSplits;
+    } else if (typeof rawSplits === 'string' && rawSplits.trim()) {
+      try {
+        const tmp = JSON.parse(rawSplits);
+        if (Array.isArray(tmp)) parsedSplits = tmp;
+      } catch {}
+    }
+    parsedSplits = parsedSplits
+      .map((s) => ({
+        method: s.method === 'visa' ? 'card' : (s.method === 'instapay' ? 'bank_transfer' : (s.method || 'cash')),
+        amount: Number(s.amount || 0),
+      }))
+      .filter((s) => s.amount > 0);
+
+    const methodVal = fullOrder.payment_method || 'cash';
+    if (methodVal === 'split' && parsedSplits.length === 0) {
+      const synthesized = [];
+      if (Number(fullOrder.cash_amount || 0) > 0) synthesized.push({ method: 'cash', amount: Number(fullOrder.cash_amount) });
+      if (Number(fullOrder.card_amount || 0) > 0) synthesized.push({ method: 'card', amount: Number(fullOrder.card_amount) });
+      if (Number(fullOrder.bank_transfer_amount || 0) > 0) synthesized.push({ method: 'bank_transfer', amount: Number(fullOrder.bank_transfer_amount) });
+      if (Number(fullOrder.wallet_amount || 0) > 0) synthesized.push({ method: 'wallet', amount: Number(fullOrder.wallet_amount) });
+      const remDebt = Math.max(0, Number(fullOrder.total_amount || 0) - Number(fullOrder.paid_amount || 0));
+      if (remDebt > 0) synthesized.push({ method: 'debt', amount: remDebt });
+      parsedSplits = synthesized.length > 0
+        ? synthesized
+        : [{ method: 'cash', amount: Number(fullOrder.paid_amount ?? fullOrder.total_amount ?? 0) }];
+    }
+
+    setEditOrderData({
+      invoice_edit_password: verifiedPassword,
+      customer_name: fullOrder.customer_name || '',
+      customer_phone: fullOrder.customer_phone || '',
+      seller_id: (fullOrder.seller_id ?? '').toString(),
+      payment_method: methodVal,
+      paid_amount: Number(fullOrder.paid_amount ?? fullOrder.total_amount ?? 0),
+      payment_splits: parsedSplits,
+      invoice_discount: Number(fullOrder.invoice_discount ?? fullOrder.discount ?? 0),
+      invoice_discount_type: fullOrder.invoice_discount_type || 'amount',
+      items: orderItems.map((item) => ({
+        inventory_id: item.inventory_id || item.id,
+        name: item.name || item.product_name || `صنف #${item.inventory_id || item.id}`,
+        color: item.color || '',
+        size: item.size || item.size_cut || '',
+        size_cut: item.size_cut || item.size || '',
+        quantity: Number(item.quantity || 1),
+        price_at_time: Number(item.price_at_time || item.price || 0),
+        discount: Number(item.discount || 0),
+        discount_type: item.discount_type || 'amount',
+      })),
+    });
+
+    setShowEditInvoiceModal(true);
+  };
+
+  const openEditInvoicePasswordPrompt = async (order) => {
     setSelectedOrderForEdit(order);
     setEditPasswordInput('');
     setEditPasswordError('');
+    try {
+      const statusRes = await api.get('/sensitive-passwords/status');
+      const status = statusRes?.data || statusRes || {};
+      if (status?.invoice_edit && status.invoice_edit.configured === false) {
+        await loadOrderIntoEditModal(order, '');
+        return;
+      }
+    } catch {
+      // Fallback to password modal if status check fails
+    }
     setShowEditPasswordModal(true);
   };
 
@@ -1765,32 +1842,7 @@ export function POS() {
 
       // Password valid -> load order details and open edit invoice modal
       setShowEditPasswordModal(false);
-      const details = await api.get(`/orders/${selectedOrderForEdit.id}/details`);
-      const fullOrder = details?.order || details || selectedOrderForEdit;
-      const orderItems = details?.items || fullOrder.items || [];
-
-      setEditOrderData({
-        invoice_edit_password: editPasswordInput,
-        customer_name: fullOrder.customer_name || '',
-        customer_phone: fullOrder.customer_phone || '',
-        seller_id: (fullOrder.seller_id || '').toString(),
-        payment_method: fullOrder.payment_method || 'cash',
-        paid_amount: fullOrder.paid_amount || fullOrder.total_amount || 0,
-        invoice_discount: fullOrder.invoice_discount || 0,
-        invoice_discount_type: fullOrder.invoice_discount_type || 'amount',
-        items: orderItems.map((item) => ({
-          inventory_id: item.inventory_id || item.id,
-          name: item.name,
-          color: item.color,
-          size_cut: item.size_cut || item.size,
-          quantity: Number(item.quantity || 1),
-          price_at_time: Number(item.price_at_time || item.price || 0),
-          discount: Number(item.discount || 0),
-          discount_type: item.discount_type || 'amount',
-        })),
-      });
-
-      setShowEditInvoiceModal(true);
+      await loadOrderIntoEditModal(selectedOrderForEdit, editPasswordInput);
     } catch (err) {
       setEditPasswordError(err.message || 'كلمة المرور غير صحيحة');
     } finally {
@@ -1809,6 +1861,14 @@ export function POS() {
     });
   };
 
+  const updateEditItemField = (index, field, value) => {
+    setEditOrderData((prev) => {
+      const items = [...prev.items];
+      items[index] = { ...items[index], [field]: value };
+      return { ...prev, items };
+    });
+  };
+
   const removeEditItem = (index) => {
     setEditOrderData((prev) => ({
       ...prev,
@@ -1817,8 +1877,11 @@ export function POS() {
   };
 
   const addEditItemFromSearch = (product) => {
+    const prodSize = product.size || product.size_cut || '';
     setEditOrderData((prev) => {
-      const existsIndex = prev.items.findIndex((i) => i.inventory_id === product.id);
+      const existsIndex = prev.items.findIndex(
+        (i) => Number(i.inventory_id) === Number(product.id) && (i.size || '') === prodSize
+      );
       if (existsIndex > -1) {
         const copy = [...prev.items];
         copy[existsIndex] = { ...copy[existsIndex], quantity: copy[existsIndex].quantity + 1 };
@@ -1832,7 +1895,8 @@ export function POS() {
             inventory_id: product.id,
             name: product.name,
             color: product.color || '',
-            size_cut: product.size_cut || product.size || '',
+            size: prodSize,
+            size_cut: prodSize,
             quantity: 1,
             price_at_time: Number(product.price || 0),
             discount: 0,
@@ -1845,18 +1909,75 @@ export function POS() {
     setEditItemSearchResults([]);
   };
 
-  // Calculate totals in edit modal
+  // Calculate totals in edit modal (mirrors backend sales.service.js)
   const editSubtotal = useMemo(() => {
-    return editOrderData.items.reduce((sum, item) => sum + item.price_at_time * item.quantity, 0);
+    return editOrderData.items.reduce((sum, item) => {
+      const gross = Number(item.price_at_time || 0) * Number(item.quantity || 1);
+      const discVal = Math.max(0, Number(item.discount || 0));
+      const lineDisc = item.discount_type === 'percent'
+        ? (gross * discVal) / 100
+        : Math.min(gross, discVal);
+      return sum + Math.max(0, gross - lineDisc);
+    }, 0);
   }, [editOrderData.items]);
 
   const editTotal = useMemo(() => {
-    const disc = Number(editOrderData.invoice_discount || 0);
+    const disc = Math.max(0, Number(editOrderData.invoice_discount || 0));
     if (editOrderData.invoice_discount_type === 'percent') {
       return Math.max(0, editSubtotal - (editSubtotal * disc) / 100);
     }
-    return Math.max(0, editSubtotal - disc);
+    return Math.max(0, editSubtotal - Math.min(editSubtotal, disc));
   }, [editSubtotal, editOrderData.invoice_discount, editOrderData.invoice_discount_type]);
+
+  // Edit invoice split payment helpers
+  const computeEditSplitsPaid = (splits) => {
+    return (splits || []).reduce((sum, s) => {
+      if (s.method === 'debt') return sum;
+      return sum + Math.max(0, Number(s.amount || 0));
+    }, 0);
+  };
+
+  const updateEditSplitRow = (index, field, value) => {
+    setEditOrderData((prev) => {
+      const nextSplits = [...(prev.payment_splits || [])];
+      nextSplits[index] = {
+        ...nextSplits[index],
+        [field]: field === 'amount' ? (value === '' ? '' : Math.max(0, Number(value))) : value,
+      };
+      return {
+        ...prev,
+        payment_splits: nextSplits,
+        paid_amount: computeEditSplitsPaid(nextSplits),
+      };
+    });
+  };
+
+  const addEditSplitRow = () => {
+    setEditOrderData((prev) => {
+      const currentSplits = prev.payment_splits || [];
+      const currentAssigned = currentSplits.reduce((sum, s) => sum + Math.max(0, Number(s.amount || 0)), 0);
+      const remaining = Math.max(0, editTotal - currentAssigned);
+      const usedMethods = new Set(currentSplits.map((s) => s.method));
+      const fallbackMethod = ['card', 'bank_transfer', 'cash', 'wallet', 'debt'].find((m) => !usedMethods.has(m)) || 'cash';
+      const nextSplits = [...currentSplits, { method: fallbackMethod, amount: remaining }];
+      return {
+        ...prev,
+        payment_splits: nextSplits,
+        paid_amount: computeEditSplitsPaid(nextSplits),
+      };
+    });
+  };
+
+  const removeEditSplitRow = (index) => {
+    setEditOrderData((prev) => {
+      const nextSplits = (prev.payment_splits || []).filter((_, i) => i !== index);
+      return {
+        ...prev,
+        payment_splits: nextSplits,
+        paid_amount: computeEditSplitsPaid(nextSplits),
+      };
+    });
+  };
 
   const handleSaveEditInvoice = async (e) => {
     e.preventDefault();
@@ -1864,30 +1985,55 @@ export function POS() {
       toast.warning('يجب أن تحتوي الفاتورة على صنف واحد على الأقل');
       return;
     }
+
+    let validSplits = [];
+    if (editOrderData.payment_method === 'split') {
+      validSplits = (editOrderData.payment_splits || [])
+        .map((s) => ({ method: s.method || 'cash', amount: Math.max(0, Number(s.amount || 0)) }))
+        .filter((s) => s.amount > 0);
+      if (validSplits.length === 0) {
+        toast.warning('يرجى إدخال دفعة واحدة على الأقل بقيمة أكبر من صفر في الدفع المجزأ');
+        return;
+      }
+    }
+
     try {
       setEditSubmitting(true);
+      const paidVal = editOrderData.payment_method === 'split'
+        ? computeEditSplitsPaid(validSplits)
+        : Math.max(0, Number(editOrderData.paid_amount || 0));
       await api.put(`/orders/${selectedOrderForEdit.id}`, {
         invoice_edit_password: editOrderData.invoice_edit_password || editPasswordInput,
         items: editOrderData.items.map((it) => ({
           inventory_id: it.inventory_id,
           quantity: it.quantity,
           price_at_time: it.price_at_time,
-          discount: it.discount,
-          discount_type: it.discount_type,
+          discount: Number(it.discount || 0),
+          discount_type: it.discount_type || 'amount',
+          size: it.size || it.size_cut || null,
+          color: it.color || null,
         })),
         customer_name: editOrderData.customer_name,
         customer_phone: editOrderData.customer_phone,
         seller_id: editOrderData.seller_id ? Number(editOrderData.seller_id) : null,
         payment_method: editOrderData.payment_method,
-        paid_amount: editOrderData.paid_amount,
-        change_amount: Math.max(0, editOrderData.paid_amount - editTotal),
-        invoice_discount: editOrderData.invoice_discount,
-        invoice_discount_type: editOrderData.invoice_discount_type,
+        payment_splits: editOrderData.payment_method === 'split' ? validSplits : [],
+        paid_amount: paidVal,
+        change_amount: Math.max(0, paidVal - editTotal),
+        invoice_discount: Number(editOrderData.invoice_discount || 0),
+        invoice_discount_type: editOrderData.invoice_discount_type || 'amount',
         total_amount: editTotal,
       });
 
       toast.success('تم تحديث الفاتورة والمخزون بنجاح! ✏️');
       setShowEditInvoiceModal(false);
+      try {
+        for (let i = sessionStorage.length - 1; i >= 0; i--) {
+          const k = sessionStorage.key(i);
+          if (k && k.startsWith('pos_catalog_')) sessionStorage.removeItem(k);
+        }
+      } catch {}
+      fetchInventory();
       fetchHistory();
     } catch (err) {
       toast.error(err.message || 'فشل تحديث الفاتورة');
@@ -4174,6 +4320,7 @@ export function POS() {
         maxWidth="max-w-4xl"
       >
         <form onSubmit={handleSaveEditInvoice} className="space-y-5">
+          {/* Customer Info */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="اسم العميل"
@@ -4185,6 +4332,188 @@ export function POS() {
               value={editOrderData.customer_phone}
               onChange={(e) => setEditOrderData({ ...editOrderData, customer_phone: e.target.value })}
             />
+          </div>
+
+          {/* Seller, Payment Method & Paid Amount */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">البائع</label>
+              <select
+                value={editOrderData.seller_id}
+                onChange={(e) => setEditOrderData({ ...editOrderData, seller_id: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              >
+                <option value="">-- بدون بائع --</option>
+                {checkoutEmployees.map((emp) => (
+                  <option key={emp.id} value={emp.id.toString()}>
+                    {emp.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
+              <select
+                value={editOrderData.payment_method}
+                onChange={(e) => {
+                  const method = e.target.value;
+                  setEditOrderData((prev) => {
+                    if (method === 'split') {
+                      const existingSplits = Array.isArray(prev.payment_splits) && prev.payment_splits.length > 0
+                        ? prev.payment_splits
+                        : [
+                            { method: 'cash', amount: Math.max(0, Number(prev.paid_amount ?? editTotal)) },
+                            { method: 'card', amount: 0 },
+                          ];
+                      return {
+                        ...prev,
+                        payment_method: 'split',
+                        payment_splits: existingSplits,
+                        paid_amount: computeEditSplitsPaid(existingSplits),
+                      };
+                    }
+                    return {
+                      ...prev,
+                      payment_method: method,
+                      paid_amount: method === 'debt' ? 0 : prev.paid_amount,
+                    };
+                  });
+                }}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              >
+                <option value="cash">نقدي (كاش)</option>
+                <option value="card">فيزا / بطاقة</option>
+                <option value="bank_transfer">إنستاباي / تحويل بنكي</option>
+                <option value="wallet">محفظة إلكترونية</option>
+                <option value="debt">آجل</option>
+                <option value="split">دفع مجزأ</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700">المبلغ المدفوع (ج.م)</label>
+                {editOrderData.payment_method !== 'split' && (
+                  <button
+                    type="button"
+                    onClick={() => setEditOrderData((prev) => ({ ...prev, paid_amount: editTotal }))}
+                    className="text-[11px] font-bold text-indigo-600 hover:underline"
+                  >
+                    تعبئة الإجمالي
+                  </button>
+                )}
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                disabled={editOrderData.payment_method === 'split'}
+                value={editOrderData.paid_amount}
+                onChange={(e) => setEditOrderData({ ...editOrderData, paid_amount: e.target.value === '' ? '' : Number(e.target.value) })}
+                className={`w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold font-mono outline-none focus:border-indigo-500 ${editOrderData.payment_method === 'split' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'bg-slate-50'}`}
+              />
+            </div>
+          </div>
+
+          {/* Split Payment Breakdown Editor */}
+          {editOrderData.payment_method === 'split' && (
+            <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-black text-indigo-900">
+                  تفاصيل الدفع المجزأ (تعديل الدفعات)
+                </div>
+                <button
+                  type="button"
+                  onClick={addEditSplitRow}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-700 transition-colors"
+                >
+                  + إضافة دفعة
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {(editOrderData.payment_splits || []).map((split, sIdx) => (
+                  <div key={sIdx} className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-6">
+                      <select
+                        value={split.method || 'cash'}
+                        onChange={(e) => updateEditSplitRow(sIdx, 'method', e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+                      >
+                        <option value="cash">نقدي (كاش)</option>
+                        <option value="card">فيزا / بطاقة</option>
+                        <option value="bank_transfer">إنستاباي / تحويل بنكي</option>
+                        <option value="wallet">محفظة إلكترونية</option>
+                        <option value="debt">آجل (متبقي)</option>
+                      </select>
+                    </div>
+                    <div className="col-span-5">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="المبلغ (ج.م)"
+                        value={split.amount}
+                        onChange={(e) => updateEditSplitRow(sIdx, 'amount', e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold font-mono outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div className="col-span-1 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => removeEditSplitRow(sIdx)}
+                        className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg"
+                        title="حذف الدفعة"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-indigo-200/70 text-[11px] font-bold text-slate-700">
+                <span>
+                  إجمالي المدفوع فعلياً:{' '}
+                  <span className="font-mono font-black text-emerald-700">
+                    {computeEditSplitsPaid(editOrderData.payment_splits).toLocaleString()} ج.م
+                  </span>
+                </span>
+                <span>
+                  الباقي غير المسدد:{' '}
+                  <span className="font-mono font-black text-amber-700">
+                    {Math.max(0, editTotal - computeEditSplitsPaid(editOrderData.payment_splits)).toLocaleString()} ج.م
+                  </span>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Invoice Discount */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">خصم الفاتورة</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={editOrderData.invoice_discount}
+                onChange={(e) => setEditOrderData({ ...editOrderData, invoice_discount: e.target.value === '' ? 0 : Number(e.target.value) })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold font-mono outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">نوع خصم الفاتورة</label>
+              <select
+                value={editOrderData.invoice_discount_type}
+                onChange={(e) => setEditOrderData({ ...editOrderData, invoice_discount_type: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              >
+                <option value="amount">مبلغ ثابت (ج.م)</option>
+                <option value="percent">نسبة مئوية (%)</option>
+              </select>
+            </div>
           </div>
 
           {/* Add Item to Edited Order */}
@@ -4237,55 +4566,97 @@ export function POS() {
                 <tr>
                   <th className="p-3">الصنف</th>
                   <th className="p-3">السعر</th>
+                  <th className="p-3">خصم الصنف</th>
                   <th className="p-3 text-center">الكمية</th>
                   <th className="p-3">الإجمالي</th>
                   <th className="p-3 text-center">حذف</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-bold">
-                {editOrderData.items.map((it, idx) => (
-                  <tr key={idx}>
-                    <td className="p-3">{it.name}</td>
-                    <td className="p-3">{it.price_at_time.toLocaleString()} ج.م</td>
-                    <td className="p-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => updateEditItemQty(idx, -1)}
-                          className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 flex items-center justify-center font-bold"
-                        >
-                          -
-                        </button>
-                        <span className="w-6 text-center font-mono">{it.quantity}</span>
-                        <button
-                          type="button"
-                          onClick={() => updateEditItemQty(idx, 1)}
-                          className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 flex items-center justify-center font-bold"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </td>
-                    <td className="p-3 font-black text-indigo-600">
-                      {(it.price_at_time * it.quantity).toLocaleString()} ج.م
-                    </td>
-                    <td className="p-3 text-center">
-                      <button
-                        type="button"
-                        onClick={() => removeEditItem(idx)}
-                        className="text-rose-500 hover:text-rose-700"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                {editOrderData.items.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-5 text-center text-slate-400 font-bold">
+                      لا توجد أصناف مسجلة في هذه الفاتورة — يمكنك إضافة أصناف من خانة البحث أعلاه.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  editOrderData.items.map((it, idx) => {
+                    const gross = Number(it.price_at_time || 0) * Number(it.quantity || 1);
+                    const discVal = Math.max(0, Number(it.discount || 0));
+                    const lineDisc = it.discount_type === 'percent' ? (gross * discVal) / 100 : Math.min(gross, discVal);
+                    const lineNet = Math.max(0, gross - lineDisc);
+                    return (
+                      <tr key={`${it.inventory_id}-${it.size || ''}-${idx}`}>
+                        <td className="p-3">
+                          <div>{it.name}</div>
+                          {(it.size || it.size_cut || it.color) && (
+                            <div className="text-[11px] text-slate-500 font-normal mt-0.5">
+                              {[it.size || it.size_cut ? `مقاس: ${it.size || it.size_cut}` : '', it.color ? `لون: ${it.color}` : ''].filter(Boolean).join(' • ')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 font-mono">{Number(it.price_at_time || 0).toLocaleString()} ج.م</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={it.discount || 0}
+                              onChange={(e) => updateEditItemField(idx, 'discount', Math.max(0, Number(e.target.value || 0)))}
+                              className="w-16 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-mono outline-none"
+                            />
+                            <select
+                              value={it.discount_type || 'amount'}
+                              onChange={(e) => updateEditItemField(idx, 'discount_type', e.target.value)}
+                              className="bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[11px] font-bold outline-none"
+                            >
+                              <option value="amount">ج.م</option>
+                              <option value="percent">%</option>
+                            </select>
+                          </div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => updateEditItemQty(idx, -1)}
+                              className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 flex items-center justify-center font-bold"
+                            >
+                              -
+                            </button>
+                            <span className="w-6 text-center font-mono">{it.quantity}</span>
+                            <button
+                              type="button"
+                              onClick={() => updateEditItemQty(idx, 1)}
+                              className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 flex items-center justify-center font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </td>
+                        <td className="p-3 font-black text-indigo-600 font-mono">
+                          {lineNet.toLocaleString()} ج.م
+                        </td>
+                        <td className="p-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => removeEditItem(idx)}
+                            className="text-rose-500 hover:text-rose-700"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
 
           {/* Edit Totals */}
-          <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200 font-bold text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200 font-bold text-xs">
             <div>
               <span>المجموع الفرعي: </span>
               <span className="font-mono">{editSubtotal.toLocaleString()} ج.م</span>
@@ -4294,6 +4665,12 @@ export function POS() {
               <span>الإجمالي بعد الخصم: </span>
               <span className="font-mono text-base font-black text-indigo-600">
                 {editTotal.toLocaleString()} ج.م
+              </span>
+            </div>
+            <div>
+              <span>المتبقي: </span>
+              <span className={`font-mono font-black ${Math.max(0, editTotal - Number(editOrderData.paid_amount || 0)) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                {Math.max(0, editTotal - Number(editOrderData.paid_amount || 0)).toLocaleString()} ج.م
               </span>
             </div>
           </div>

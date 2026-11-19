@@ -902,18 +902,32 @@ async function updateOrder(id, body, user, req = null) {
     invoice_edit_password,
   } = body || {};
 
-  // SEC-02: Enforce invoice edit password verification or single-use approval token on backend
+  // SEC-02: Enforce invoice edit password verification or single-use approval token on backend (unless disabled)
   const authService = require('../auth/auth.service');
   const sensitiveService = require('../auth/sensitivePassword.service');
-  if (!user || user.role !== 'admin') {
-    const approvalToken = body?.approval_token;
-    if (approvalToken) {
-      sensitiveService.consumeApprovalToken(approvalToken, {
-        op: 'invoice_edit',
-        user,
-        resourceId: id,
-        branchId: user?.branch_id,
-      });
+  const invoiceEditDisabled = await sensitiveService.isPasswordDisabled('invoice_edit');
+  if (!invoiceEditDisabled) {
+    if (!user || user.role !== 'admin') {
+      const approvalToken = body?.approval_token;
+      if (approvalToken) {
+        sensitiveService.consumeApprovalToken(approvalToken, {
+          op: 'invoice_edit',
+          user,
+          resourceId: id,
+          branchId: user?.branch_id,
+        });
+      } else if (invoice_edit_password) {
+        const isValidPassword = await authService.verifyInvoiceEditPassword(invoice_edit_password);
+        if (!isValidPassword) {
+          const err = new Error('كلمة مرور تعديل الفاتورة غير صحيحة');
+          err.statusCode = 403;
+          throw err;
+        }
+      } else {
+        const err = new Error('كلمة مرور تعديل الفاتورة مطلوبة أو رمز الموافقة مطلوب');
+        err.statusCode = 403;
+        throw err;
+      }
     } else if (invoice_edit_password) {
       const isValidPassword = await authService.verifyInvoiceEditPassword(invoice_edit_password);
       if (!isValidPassword) {
@@ -921,17 +935,6 @@ async function updateOrder(id, body, user, req = null) {
         err.statusCode = 403;
         throw err;
       }
-    } else {
-      const err = new Error('كلمة مرور تعديل الفاتورة مطلوبة أو رمز الموافقة مطلوب');
-      err.statusCode = 403;
-      throw err;
-    }
-  } else if (invoice_edit_password) {
-    const isValidPassword = await authService.verifyInvoiceEditPassword(invoice_edit_password);
-    if (!isValidPassword) {
-      const err = new Error('كلمة مرور تعديل الفاتورة غير صحيحة');
-      err.statusCode = 403;
-      throw err;
     }
   }
 
@@ -949,6 +952,7 @@ async function updateOrder(id, body, user, req = null) {
   }
 
   let currentOrder = null;
+  let editAuditDetails = null;
   await db.transaction(async (tx) => {
     // 1. Read & lock order inside transaction
     const { rows: orderRows } = await tx.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [resolvedId]);
@@ -1181,13 +1185,14 @@ async function updateOrder(id, body, user, req = null) {
     const rawPaid = Math.max(0, roundCurrency(Number(paid_amount !== undefined ? paid_amount : (currentOrder.paid_amount || 0))));
 
     if (Array.isArray(cleanSplits) && cleanSplits.length > 0) {
+      cleanSplits = cleanSplits
+        .map((s) => ({ method: normalizePaymentMethod(s.method), amount: roundCurrency(Math.max(0, Number(s.amount || 0))) }))
+        .filter((s) => s.amount > 0);
       for (const s of cleanSplits) {
-        const normM = normalizePaymentMethod(s.method);
-        const amt = roundCurrency(Math.max(0, Number(s.amount || 0)));
-        if (normM === 'cash') p_cash = roundCurrency(p_cash + amt);
-        else if (normM === 'card') p_card = roundCurrency(p_card + amt);
-        else if (normM === 'bank_transfer') p_bank = roundCurrency(p_bank + amt);
-        else if (normM === 'wallet') p_wallet = roundCurrency(p_wallet + amt);
+        if (s.method === 'cash') p_cash = roundCurrency(p_cash + s.amount);
+        else if (s.method === 'card') p_card = roundCurrency(p_card + s.amount);
+        else if (s.method === 'bank_transfer') p_bank = roundCurrency(p_bank + s.amount);
+        else if (s.method === 'wallet') p_wallet = roundCurrency(p_wallet + s.amount);
       }
       if (cleanSplits.length > 1) finalPaymentMethod = 'split';
       else if (cleanSplits.length === 1) finalPaymentMethod = cleanSplits[0].method;
@@ -1198,7 +1203,10 @@ async function updateOrder(id, body, user, req = null) {
       else if (normM === 'card') { p_card = rawPaid; }
       else if (normM === 'bank_transfer') { p_bank = rawPaid; }
       else if (normM === 'wallet') { p_wallet = rawPaid; }
-      else if (normM === 'debt') { finalPaymentMethod = 'debt'; }
+      else if (normM === 'debt') {
+        finalPaymentMethod = 'debt';
+        p_cash = roundCurrency(Math.min(rawPaid, recalculatedTotal));
+      }
     }
 
     const effectivePaid = cleanSplits && cleanSplits.length > 0
@@ -1287,6 +1295,18 @@ async function updateOrder(id, body, user, req = null) {
       payment_splits: cleanSplits && cleanSplits.length > 1 ? cleanSplits : null,
       items: processedNewItems,
     });
+
+    editAuditDetails = {
+      old_total: Number(currentOrder.total_amount || 0),
+      new_total: recalculatedTotal,
+      old_paid: Number(currentOrder.paid_amount || 0),
+      new_paid: netPaid,
+      old_payment_method: currentOrder.payment_method || null,
+      new_payment_method: finalPaymentMethod,
+      old_seller_id: currentOrder.seller_id || null,
+      new_seller_id: seller_id || currentOrder.seller_id || null,
+      items_count: processedNewItems.length,
+    };
   });
 
   const auditService = require('../audit/audit.service');
@@ -1298,6 +1318,7 @@ async function updateOrder(id, body, user, req = null) {
     resourceId: resolvedId,
     branchId: currentOrder.branch_id,
     outcome: 'success',
+    details: editAuditDetails,
   });
 
   return { message: 'تم تحديث الفاتورة بنجاح' };

@@ -250,7 +250,7 @@ export function Employees() {
   }, [filteredEmployees, page]);
 
   // Salary Visibility & Authentication Handlers
-  const handleToggleSalaryVisibility = () => {
+  const handleToggleSalaryVisibility = async () => {
     if (salaryVisible) {
       setSalaryVisible(false);
       setSalaryPassword('');
@@ -265,6 +265,17 @@ export function Employees() {
     if (salaryPassword) {
       setSalaryVisible(true);
       return;
+    }
+
+    try {
+      const statusRes = await client.get('/sensitive-passwords/status');
+      const status = statusRes?.data || statusRes || {};
+      if (status?.salary && status.salary.configured === false) {
+        setSalaryVisible(true);
+        return;
+      }
+    } catch {
+      // Fallback to modal
     }
 
     setPendingAuthAction(() => () => {

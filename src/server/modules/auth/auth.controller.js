@@ -155,7 +155,8 @@ async function verifySalaryPassword(req, res, next) {
     }
 
     const { password } = req.body;
-    if (password === null || password === undefined || password === '') {
+    const isDisabled = await sensitiveService.isPasswordDisabled('salary');
+    if (!isDisabled && (password === null || password === undefined || password === '')) {
       return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
     }
 
@@ -192,7 +193,8 @@ async function verifyInvoiceEditPassword(req, res, next) {
     }
 
     const { password, order_id } = req.body;
-    if (password === null || password === undefined || password === '') {
+    const isDisabled = await sensitiveService.isPasswordDisabled('invoice_edit');
+    if (!isDisabled && (password === null || password === undefined || password === '')) {
       return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
     }
 
@@ -236,7 +238,8 @@ async function verifyProfitPassword(req, res, next) {
     }
 
     const { password } = req.body;
-    if (password === null || password === undefined || password === '') {
+    const isDisabled = await sensitiveService.isPasswordDisabled('profit');
+    if (!isDisabled && (password === null || password === undefined || password === '')) {
       return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
     }
 
@@ -273,7 +276,8 @@ async function verifyReturnPassword(req, res, next) {
     }
 
     const { password, order_id } = req.body;
-    if (password === null || password === undefined || password === '') {
+    const isDisabled = await sensitiveService.isPasswordDisabled('return');
+    if (!isDisabled && (password === null || password === undefined || password === '')) {
       return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
     }
 
@@ -333,7 +337,8 @@ async function verifyInventoryPassword(req, res, next) {
         return res.status(403).json({ ok: false, error: 'غير مصرح لك بإدارة وتعديل المخزون' });
       }
     }
-    if (password === null || password === undefined || password === '') {
+    const isDisabled = await sensitiveService.isPasswordDisabled('inventory');
+    if (!isDisabled && (password === null || password === undefined || password === '')) {
       return res.status(400).json({ ok: false, error: 'كلمة المرور مطلوبة' });
     }
 
@@ -369,6 +374,9 @@ async function verifyInventoryPassword(req, res, next) {
 
 async function getSensitivePasswordStatus(req, res, next) {
   try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'يجب تسجيل الدخول أولاً' });
+    }
     const status = await sensitiveService.getSensitivePasswordStatus({ req, user: req.user });
     res.json(status);
   } catch (err) {

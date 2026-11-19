@@ -282,7 +282,7 @@ export function Settings() {
 
   // Load Sensitive Passwords Status
   const loadSensitiveStatus = useCallback(async () => {
-    if (!isAdmin) return;
+    if (!canAccessSensitive) return;
     try {
       setLoadingSensitive(true);
       const res = await client.get('/sensitive-passwords/status');
@@ -292,7 +292,7 @@ export function Settings() {
     } finally {
       setLoadingSensitive(false);
     }
-  }, [isAdmin]);
+  }, [canAccessSensitive]);
 
   useEffect(() => {
     loadSettings();

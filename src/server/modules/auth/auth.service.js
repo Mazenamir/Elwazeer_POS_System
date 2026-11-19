@@ -350,26 +350,31 @@ async function authenticateUser(username, password) {
 
 // Sensitive Operations Password Verifications
 async function verifySalaryPassword(password) {
+  if (await sensitiveService.isPasswordDisabled('salary')) return true;
   if (password === null || password === undefined || password === '') return false;
   return sensitiveService.verifyPassword('salary', password);
 }
 
 async function verifyInvoiceEditPassword(password) {
+  if (await sensitiveService.isPasswordDisabled('invoice_edit')) return true;
   if (password === null || password === undefined || password === '') return false;
   return sensitiveService.verifyPassword('invoice_edit', password);
 }
 
 async function verifyProfitPassword(password) {
+  if (await sensitiveService.isPasswordDisabled('profit')) return true;
   if (password === null || password === undefined || password === '') return false;
   return sensitiveService.verifyPassword('profit', password);
 }
 
 async function verifyReturnPassword(password) {
+  if (await sensitiveService.isPasswordDisabled('return')) return true;
   if (password === null || password === undefined || password === '') return false;
   return sensitiveService.verifyPassword('return', password);
 }
 
 async function verifyInventoryPassword(password) {
+  if (await sensitiveService.isPasswordDisabled('inventory')) return true;
   if (password === null || password === undefined || password === '') return false;
   return sensitiveService.verifyPassword('inventory', password);
 }

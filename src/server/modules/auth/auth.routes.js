@@ -1,7 +1,7 @@
 const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const controller = require('./auth.controller');
-const { requireAdmin } = require('../../middleware/rbac.middleware');
+const { requireAdmin, requirePermission } = require('../../middleware/rbac.middleware');
 
 const router = express.Router();
 
@@ -31,10 +31,10 @@ router.post('/verify-return-password', controller.verifyReturnPassword);
 router.post('/verify-inventory-password', controller.verifyInventoryPassword);
 router.put('/users/me', controller.updateOwnAccount);
 
-// Admin-managed protected operation passwords
-router.get('/sensitive-passwords/status', requireAdmin, controller.getSensitivePasswordStatus);
-router.post('/sensitive-passwords', requireAdmin, controller.updateSensitivePassword);
-router.delete('/sensitive-passwords/:type', requireAdmin, controller.deleteSensitivePassword);
+// Protected operation passwords (status readable by authenticated users to know if prompt is required)
+router.get('/sensitive-passwords/status', controller.getSensitivePasswordStatus);
+router.post('/sensitive-passwords', requirePermission('settings.passwords.manage'), controller.updateSensitivePassword);
+router.delete('/sensitive-passwords/:type', requirePermission('settings.passwords.manage'), controller.deleteSensitivePassword);
 
 // Admin-managed branch users
 router.post('/users/branch', requireAdmin, controller.createBranchUser);

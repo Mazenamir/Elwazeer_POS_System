@@ -20,7 +20,10 @@ const db = require('../../database/connection');
 const config = require('../../config/env');
 const auditService = require('../audit/audit.service');
 const { DEFAULT_SETTINGS } = require('../../../shared/constants/system');
+const { hasPermission } = require('../../../shared/constants/permissions');
 const { queueSyncOperation } = require('../../database/sync.helpers');
+
+const DISABLED_SENTINEL = '__DISABLED__';
 
 // In-memory lockout tracker: key -> { count, lockedUntil }
 const sensitiveAttempts = new Map();
@@ -120,9 +123,32 @@ function recordAttempt(type, ip, userId, success) {
   }
 }
 
+async function isPasswordDisabled(type) {
+  const baseKey = PASSWORD_KEY_MAP[type] || `${type}_password`;
+  const hashKey = `${baseKey}_hash`;
+  try {
+    if (isBranchMode()) {
+      if (!db.sqlite) return false;
+      const hashRow = db.sqlite.prepare('SELECT value FROM settings WHERE key = ?').get(hashKey);
+      if (hashRow?.value === DISABLED_SENTINEL) return true;
+      const legacyRow = db.sqlite.prepare('SELECT value FROM settings WHERE key = ?').get(baseKey);
+      if (legacyRow?.value === DISABLED_SENTINEL) return true;
+      return false;
+    }
+    const { rows } = await db.query(
+      'SELECT key, value FROM settings WHERE key IN ($1, $2)',
+      [hashKey, baseKey]
+    );
+    return rows.some((r) => r.value === DISABLED_SENTINEL);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Retrieves the stored bcrypt hash for a given password type.
  * Also checks legacy plain setting, upgrading it to bcrypt if found.
+ * Returns null without re-seeding defaults if explicitly disabled (__DISABLED__).
  */
 async function getStoredPasswordHash(type) {
   const baseKey = PASSWORD_KEY_MAP[type] || `${type}_password`;
@@ -146,6 +172,11 @@ async function getStoredPasswordHash(type) {
       if (r.key === hashKey) hashVal = r.value;
       if (r.key === baseKey) legacyVal = r.value;
     }
+  }
+
+  // Explicitly disabled by admin: never fall back to DEFAULT_SETTINGS
+  if (hashVal === DISABLED_SENTINEL || legacyVal === DISABLED_SENTINEL) {
+    return null;
   }
 
   if (hashVal && (hashVal.startsWith('$2a$') || hashVal.startsWith('$2b$'))) {
@@ -202,6 +233,11 @@ async function verifyPassword(type, inputPassword, context = {}) {
   const ip = req?.ip || req?.socket?.remoteAddress || null;
   const userId = user?.id || null;
   const username = user?.username || 'system';
+
+  // If protection was explicitly disabled by admin, allow immediately without password
+  if (await isPasswordDisabled(type)) {
+    return true;
+  }
 
   if (!inputPassword && inputPassword !== 0) {
     return false;
@@ -404,8 +440,8 @@ function consumeApprovalToken(tokenInput, context = {}) {
  * Admin updates a sensitive password
  */
 async function updateSensitivePassword(type, passwordsInput, adminUser = null) {
-  if (adminUser && adminUser.role !== 'admin') {
-    const err = new Error('تعديل كلمات المرور متاح للمدير فقط');
+  if (adminUser && adminUser.role !== 'admin' && !hasPermission(adminUser, 'settings.passwords.manage')) {
+    const err = new Error('تعديل كلمات المرور متاح للمدير أو من لديه الصلاحية فقط');
     err.statusCode = 403;
     throw err;
   }
@@ -461,6 +497,13 @@ async function updateSensitivePassword(type, passwordsInput, adminUser = null) {
     await db.query('DELETE FROM settings WHERE key = $1', [baseKey]);
   }
 
+  // Clear any lockout records for this type after password update
+  for (const key of sensitiveAttempts.keys()) {
+    if (key.startsWith(`${type}:`)) {
+      sensitiveAttempts.delete(key);
+    }
+  }
+
   await auditService.log({
     userId: adminUser?.id || null,
     username: adminUser?.username || 'admin',
@@ -479,8 +522,10 @@ async function updateSensitivePassword(type, passwordsInput, adminUser = null) {
 async function getSensitivePasswordStatus(context = {}) {
   const operations = ['profit', 'invoice_edit', 'return', 'inventory', 'salary'];
   const configuredMap = {};
+  const disabledMap = {};
   for (const op of operations) {
     configuredMap[op] = false;
+    disabledMap[op] = false;
   }
 
   const keys = operations.flatMap((t) => [
@@ -492,10 +537,14 @@ async function getSensitivePasswordStatus(context = {}) {
     if (db.sqlite) {
       const rows = db.sqlite.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
       for (const r of rows) {
-        if (r.value && r.value.trim() !== '') {
-          for (const t of operations) {
-            const base = PASSWORD_KEY_MAP[t];
-            if (r.key === base || r.key === `${base}_hash`) configuredMap[t] = true;
+        for (const t of operations) {
+          const base = PASSWORD_KEY_MAP[t];
+          if (r.key === base || r.key === `${base}_hash`) {
+            if (r.value === DISABLED_SENTINEL) {
+              disabledMap[t] = true;
+            } else if (r.value && r.value.trim() !== '') {
+              configuredMap[t] = true;
+            }
           }
         }
       }
@@ -506,12 +555,21 @@ async function getSensitivePasswordStatus(context = {}) {
       [keys]
     );
     for (const r of rows) {
-      if (r.value && r.value.trim() !== '') {
-        for (const t of operations) {
-          if (r.key.startsWith(PASSWORD_KEY_MAP[t])) configuredMap[t] = true;
+      for (const t of operations) {
+        const base = PASSWORD_KEY_MAP[t];
+        if (r.key === base || r.key === `${base}_hash`) {
+          if (r.value === DISABLED_SENTINEL) {
+            disabledMap[t] = true;
+          } else if (r.value && r.value.trim() !== '') {
+            configuredMap[t] = true;
+          }
         }
       }
     }
+  }
+
+  for (const op of operations) {
+    if (disabledMap[op]) configuredMap[op] = false;
   }
 
   const status = {};
@@ -522,6 +580,7 @@ async function getSensitivePasswordStatus(context = {}) {
     const lockout = getLockoutStatus(op, ip, userId);
     status[op] = {
       configured: configuredMap[op],
+      disabled: disabledMap[op],
       locked: lockout.locked,
       remaining_seconds: lockout.remaining_seconds,
       failed_attempts: lockout.failed_attempts,
@@ -532,8 +591,8 @@ async function getSensitivePasswordStatus(context = {}) {
 }
 
 async function removeSensitivePassword(type, adminUser = null) {
-  if (adminUser && adminUser.role !== 'admin') {
-    const err = new Error('تعديل كلمات المرور متاح للمدير فقط');
+  if (adminUser && adminUser.role !== 'admin' && !hasPermission(adminUser, 'settings.passwords.manage')) {
+    const err = new Error('تعديل كلمات المرور متاح للمدير أو من لديه الصلاحية فقط');
     err.statusCode = 403;
     throw err;
   }
@@ -543,15 +602,20 @@ async function removeSensitivePassword(type, adminUser = null) {
 
   if (isBranchMode()) {
     if (db.sqlite) {
-      db.sqlite.prepare('DELETE FROM settings WHERE key IN (?, ?)').run(hashKey, baseKey);
+      db.sqlite.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(hashKey, DISABLED_SENTINEL);
+      db.sqlite.prepare('DELETE FROM settings WHERE key = ?').run(baseKey);
     }
     try {
-      await queueSyncOperation(db, null, 'settings', 'delete', null, null, { key: hashKey, base_key: baseKey });
+      await queueSyncOperation(db, null, 'settings', 'update', null, null, { key: hashKey, value: DISABLED_SENTINEL });
     } catch (syncErr) {
-      console.warn('[SensitivePassword] Failed to queue settings delete mutation:', syncErr.message);
+      console.warn('[SensitivePassword] Failed to queue settings disable mutation:', syncErr.message);
     }
   } else {
-    await db.query('DELETE FROM settings WHERE key IN ($1, $2)', [hashKey, baseKey]);
+    await db.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+      [hashKey, DISABLED_SENTINEL]
+    );
+    await db.query('DELETE FROM settings WHERE key = $1', [baseKey]);
   }
 
   // Clear any lockout records for this type
@@ -615,6 +679,8 @@ function getOperationStatus(type, ip = null, userId = null) {
 }
 
 module.exports = {
+  DISABLED_SENTINEL,
+  isPasswordDisabled,
   verifyPassword,
   verifySensitivePassword,
   generateApprovalToken,
