@@ -53,6 +53,7 @@ import { Card, CardHeader } from '../../components/ui/Card';
 import { printElement } from '../../utils/print';
 import { ThermalReceipt } from '../../components/receipts';
 import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
+import SmartStockRequestModal from '../../components/inventory/SmartStockRequestModal';
 
 
 function playBeep() {
@@ -292,6 +293,30 @@ export function POS() {
   // Size selection modal state for products with multiple sizes
   const [showSizeModal, setShowSizeModal] = useState(false);
   const [pendingProduct, setPendingProduct] = useState(null);
+  const [sizeBranchAvail, setSizeBranchAvail] = useState(null);
+  const [sizeBranchLoading, setSizeBranchLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showSizeModal || !pendingProduct?.id) {
+      setSizeBranchAvail(null);
+      return;
+    }
+    let cancelled = false;
+    setSizeBranchLoading(true);
+    api.get(`/inventory/${pendingProduct.id}/branch-availability`)
+      .then((res) => {
+        if (!cancelled) setSizeBranchAvail(res?.data || res || null);
+      })
+      .catch(() => {
+        if (!cancelled) setSizeBranchAvail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSizeBranchLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showSizeModal, pendingProduct?.id]);
 
   // Customer suggestions
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
@@ -405,9 +430,7 @@ export function POS() {
   // Inter-branch Stock Request Modal
   const [showStockRequestModal, setShowStockRequestModal] = useState(false);
   const [requestProduct, setRequestProduct] = useState(null);
-  const [requestSourceBranchId, setRequestSourceBranchId] = useState('');
-  const [requestQuantity, setRequestQuantity] = useState('1');
-  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestPreselectedSize, setRequestPreselectedSize] = useState(null);
 
   // Refs
   const searchInputRef = useRef(null);
@@ -2302,40 +2325,10 @@ export function POS() {
   };
 
   // Stock Transfer Request
-  const openStockRequestModal = (product) => {
+  const openStockRequestModal = (product, preselectedSize = null) => {
     setRequestProduct(product);
-    const otherBranches = branches.filter((b) => b.id.toString() !== activeBranchId?.toString());
-    if (otherBranches.length > 0) {
-      setRequestSourceBranchId(otherBranches[0].id.toString());
-    }
-    setRequestQuantity('1');
+    setRequestPreselectedSize(preselectedSize);
     setShowStockRequestModal(true);
-  };
-
-  const handleStockRequestSubmit = async (e) => {
-    e.preventDefault();
-    if (!requestProduct || !requestSourceBranchId) return;
-
-    try {
-      setRequestSubmitting(true);
-      const targetBranch = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : branches[0]?.id || 1;
-
-      await api.post('/inventory/transfer', {
-        inventory_id: requestProduct.id,
-        from_branch_id: Number(requestSourceBranchId),
-        to_branch_id: targetBranch,
-        quantity: Number(requestQuantity),
-        notes: `طلب بضاعة من الفرع الآخر (${branches.find((b) => b.id.toString() === requestSourceBranchId)?.name})`,
-        is_request: true,
-      });
-
-      toast.success('تم إرسال طلب نقل البضاعة بنجاح! 🚚');
-      setShowStockRequestModal(false);
-    } catch (err) {
-      toast.error(err.message || 'فشل إرسال طلب نقل البضاعة');
-    } finally {
-      setRequestSubmitting(false);
-    }
   };
 
   return (
@@ -4698,69 +4691,17 @@ export function POS() {
       </Modal>
 
       {/* INTER-BRANCH STOCK REQUEST MODAL */}
-      <Modal
+      <SmartStockRequestModal
         isOpen={showStockRequestModal}
-        onClose={() => setShowStockRequestModal(false)}
-        title="طلب بضاعة من الفروع الأخرى 🚚"
-        subtitle={`طلب تحويل للصنف: ${requestProduct?.name}`}
-        maxWidth="max-w-md"
-      >
-        <form onSubmit={handleStockRequestSubmit} className="space-y-4">
-          <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900">
-            <div>الصنف: {requestProduct?.name}</div>
-            <div className="text-[11px] text-indigo-700 mt-1">
-              المتوفر بالفرع الحالي: {requestProduct?.stock_level ?? 0}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700">الفرع المطلوب منه البضاعة *</label>
-            <select
-              value={requestSourceBranchId}
-              onChange={(e) => setRequestSourceBranchId(e.target.value)}
-              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
-              required
-            >
-              {branches
-                .filter((b) => b.id.toString() !== activeBranchId?.toString())
-                .map((b) => (
-                  <option key={b.id} value={b.id.toString()}>
-                    {b.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-
-          <Input
-            label="الكمية المطلوبة *"
-            type="number"
-            min="1"
-            required
-            value={requestQuantity}
-            onChange={(e) => setRequestQuantity(e.target.value)}
-          />
-
-          <div className="flex items-center gap-2 pt-3">
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              isLoading={requestSubmitting}
-              className="flex-1 !rounded-2xl"
-            >
-              إرسال طلب التحويل
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              onClick={() => setShowStockRequestModal(false)}
-            >
-              إلغاء
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        onClose={() => {
+          setShowStockRequestModal(false);
+          setRequestPreselectedSize(null);
+        }}
+        product={requestProduct}
+        preselectedSize={requestPreselectedSize}
+        activeBranchId={activeBranchId}
+        branches={branches}
+      />
 
       {/* RETURN DETAILS MODAL */}
       <Modal
@@ -4872,7 +4813,7 @@ export function POS() {
         }}
         title="اختيار اللون والمقاس 🎨📏"
         subtitle="اختر اللون والمقاس المطلوب لإضافته للفاتورة"
-        maxWidth="max-w-md"
+        maxWidth="max-w-xl"
       >
         {pendingProduct && (
           <div className="space-y-4">
@@ -4912,43 +4853,113 @@ export function POS() {
               <label className="text-xs font-black text-slate-700 block">
                 اختر اللون والمقاس المطلوب لإضافته للفاتورة:
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto p-1">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-96 overflow-y-auto p-1">
                 {(pendingProduct.sizes || []).map((s, idx) => {
                   const qty = Number(s.stock_level ?? 0);
                   const isOutOfStock = qty <= 0;
+                  const sNameLower = String(s.size_name || '').trim().toLowerCase();
+                  const sColorLower = String(s.color_name || '').trim().toLowerCase();
+
+                  const otherBranchesForSize = (sizeBranchAvail?.branches || [])
+                    .filter((b) => {
+                      if (activeBranchId && activeBranchId !== 'all' && Number(b.branch_id) === Number(activeBranchId)) {
+                        return false;
+                      }
+                      return true;
+                    })
+                    .map((b) => {
+                      const matches = (b.sizes || []).filter((bsz) => {
+                        const bSizeLower = String(bsz.size_name || '').trim().toLowerCase();
+                        if (bSizeLower !== sNameLower) return false;
+                        if (!sColorLower) return true;
+                        const bColorLower = String(bsz.color_name || '').trim().toLowerCase();
+                        return !bColorLower || bColorLower === sColorLower;
+                      });
+                      const availQty = matches.reduce((sum, m) => sum + Number(m.stock_level || 0), 0);
+                      return { branch_id: b.branch_id, branch_name: b.branch_name, availQty };
+                    })
+                    .filter((b) => b.availQty > 0);
+
+                  const totalOtherBranchQty = otherBranchesForSize.reduce((sum, b) => sum + b.availQty, 0);
 
                   return (
-                    <button
+                    <div
                       key={idx}
-                      type="button"
-                      disabled={isOutOfStock}
+                      className={`p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-between gap-1.5 ${
+                        isOutOfStock
+                          ? otherBranchesForSize.length > 0
+                            ? 'bg-amber-50/40 border-amber-200'
+                            : 'bg-slate-50 border-slate-200'
+                          : 'bg-white border-slate-200 hover:border-indigo-600 hover:bg-indigo-50/50 hover:shadow-sm cursor-pointer'
+                      }`}
                       onClick={() => {
+                        if (isOutOfStock) return;
                         addToCart(pendingProduct, s.size_name, s);
                         setShowSizeModal(false);
                         setPendingProduct(null);
                       }}
-                      className={`p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                        isOutOfStock
-                          ? 'bg-slate-50 border-slate-200 opacity-50 cursor-not-allowed'
-                          : 'bg-white border-slate-200 hover:border-indigo-600 hover:bg-indigo-50/50 hover:shadow-sm'
-                      }`}
                     >
-                      {s.color_name && (
-                        <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          {s.color_name}
+                      <div className="flex flex-col items-center gap-1 w-full">
+                        {s.color_name && (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {s.color_name}
+                          </span>
+                        )}
+                        <span className="text-base font-black text-slate-900">{s.size_name}</span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isOutOfStock
+                              ? 'bg-rose-50 text-rose-600 border border-rose-200'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}
+                        >
+                          {isOutOfStock ? 'نفذت الكمية (0)' : `${qty} متوفر`}
                         </span>
+
+                        {/* Other branches availability for this exact size/color */}
+                        {branches.length > 1 && (
+                          sizeBranchLoading ? (
+                            <span className="text-[9px] font-bold text-slate-400">فحص الفروع...</span>
+                          ) : otherBranchesForSize.length > 0 ? (
+                            <div className="flex flex-wrap items-center justify-center gap-1 mt-0.5 w-full">
+                              {otherBranchesForSize.slice(0, 2).map((ob) => (
+                                <span
+                                  key={ob.branch_id}
+                                  className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                >
+                                  {ob.branch_name}: <span className="font-mono">{ob.availQty}</span>
+                                </span>
+                              ))}
+                              {otherBranchesForSize.length > 2 && (
+                                <span className="text-[9px] font-bold text-indigo-700">
+                                  +{otherBranchesForSize.length - 2} فروع ({totalOtherBranchQty})
+                                </span>
+                              )}
+                            </div>
+                          ) : isOutOfStock ? (
+                            <span className="text-[9px] font-bold text-slate-400 mt-0.5">
+                              غير متوفر بأي فرع آخر
+                            </span>
+                          ) : null
+                        )}
+                      </div>
+
+                      {isOutOfStock && branches.length > 1 && otherBranchesForSize.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            const targetProd = pendingProduct;
+                            setShowSizeModal(false);
+                            setPendingProduct(null);
+                            openStockRequestModal(targetProd, s);
+                          }}
+                          className="mt-0.5 w-full px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black transition-colors cursor-pointer"
+                        >
+                          طلب من فرع ({totalOtherBranchQty}) 🚚
+                        </button>
                       )}
-                      <span className="text-base font-black text-slate-900">{s.size_name}</span>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          isOutOfStock
-                            ? 'bg-rose-50 text-rose-600 border border-rose-200'
-                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        }`}
-                      >
-                        {isOutOfStock ? 'نفذت الكمية (0)' : `${qty} متوفر`}
-                      </span>
-                    </button>
+                    </div>
                   );
                 })}
               </div>

@@ -40,6 +40,7 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
+  Flame,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
@@ -56,6 +57,8 @@ import ProductBarcodePrintModal from '../../components/modals/ProductBarcodePrin
 import MatrixVariantGenerator, { generate12DigitBarcode } from '../../components/forms/MatrixVariantGenerator';
 import BranchStockMatrix from './BranchStockMatrix';
 import BranchTransferLogs from './BranchTransferLogs';
+import SmartStockRequestModal from '../../components/inventory/SmartStockRequestModal';
+import SupplierReturnModal from '../../components/suppliers/SupplierReturnModal';
 
 const CATEGORY_DISPLAY_MAP = {
   'الكل': 'كل التصنيفات',
@@ -518,6 +521,10 @@ total: 0,
   const [transferSizes, setTransferSizes] = useState([]);
   const [transferVariantQtys, setTransferVariantQtys] = useState({});
 
+  // Smart Inter-Branch Stock Request Modal
+  const [showSmartRequestModal, setShowSmartRequestModal] = useState(false);
+  const [smartRequestProduct, setSmartRequestProduct] = useState(null);
+
   // Incoming Shipments (Pending receiving)
   const [incomingShipments, setIncomingShipments] = useState([]);
   const [loadingShipments, setLoadingShipments] = useState(false);
@@ -627,11 +634,6 @@ total: 0,
   // Purchase Return to Supplier Modal
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnSupplierId, setReturnSupplierId] = useState('');
-  const [returnProductName, setReturnProductName] = useState('');
-  const [returnQuantity, setReturnQuantity] = useState('1');
-  const [returnUnitPrice, setReturnUnitPrice] = useState('');
-  const [returnNotes, setReturnNotes] = useState('');
-  const [returnSubmitting, setReturnSubmitting] = useState(false);
 
   // Supply Batch / Restock Modal
   const [showSupplyModal, setShowSupplyModal] = useState(false);
@@ -650,18 +652,17 @@ total: 0,
   // Fetch all products for supply restock modal when opened
   useEffect(() => {
     if (showSupplyModal) {
-      if (supplyProductsList.length === 0) {
-        setLoadingSupplyProducts(true);
-        api.get('/inventory?all=true')
-          .then((res) => {
-            const list = Array.isArray(res) ? res : res?.items || res?.data || [];
-            setSupplyProductsList(list);
-          })
-          .catch(() => {})
-          .finally(() => setLoadingSupplyProducts(false));
-      }
+      const branchQuery = activeBranchId && activeBranchId !== 'all' ? `&branch_id=${activeBranchId}` : '';
+      setLoadingSupplyProducts(true);
+      api.get(`/inventory?all=true${branchQuery}`)
+        .then((res) => {
+          const list = Array.isArray(res) ? res : res?.items || res?.data || [];
+          setSupplyProductsList(list);
+        })
+        .catch(() => {})
+        .finally(() => setLoadingSupplyProducts(false));
     }
-  }, [showSupplyModal, supplyProductsList.length]);
+  }, [showSupplyModal, activeBranchId]);
 
   const activeSupplyProducts = useMemo(() => {
     let base = supplyProductsList.length > 0 ? supplyProductsList : products;
@@ -2123,45 +2124,6 @@ total: 0,
     }
   };
 
-  // Purchase Return to Supplier Submit
-  const handlePurchaseReturnSubmit = async (e) => {
-    e.preventDefault();
-    if (!returnSupplierId) {
-      toast.warning('يرجى اختيار المورد');
-      return;
-    }
-    const qty = Number(returnQuantity);
-    const unitPrice = Number(returnUnitPrice);
-    if (!qty || qty <= 0 || !unitPrice || unitPrice <= 0) {
-      toast.warning('يرجى إدخال كمية وسعر صالحين');
-      return;
-    }
-
-    try {
-      setReturnSubmitting(true);
-      await api.post('/suppliers/returns', {
-        supplier_id: Number(returnSupplierId),
-        product_name: returnProductName.trim(),
-        quantity: qty,
-        unit_price: unitPrice,
-        notes: returnNotes.trim(),
-      });
-
-      toast.success('تم تسجيل مرتجع المشتريات للمورد بنجاح! 🔄');
-      setShowReturnModal(false);
-      setReturnProductName('');
-      setReturnQuantity('1');
-      setReturnUnitPrice('');
-      setReturnNotes('');
-      lastFetchedSupplierQueryRef.current = '';
-      fetchSuppliers({ force: true });
-    } catch (err) {
-      toast.error(err.message || 'فشل تسجيل مرتجع المشتريات');
-    } finally {
-      setReturnSubmitting(false);
-    }
-  };
-
   // Supply Batch (Restock) Submit
   const handleSupplySubmit = async (e) => {
     e.preventDefault();
@@ -2383,7 +2345,7 @@ total: 0,
                   <thead className="bg-amber-100/70 font-black text-amber-900">
                     <tr>
                       <th className="p-2.5">رقم الطلب</th>
-                      <th className="p-2.5">الصنف</th>
+                      <th className="p-2.5">الصنف والمقاسات</th>
                       <th className="p-2.5">الفرع الطالب</th>
                       <th className="p-2.5">الكمية</th>
                       <th className="p-2.5">التاريخ</th>
@@ -2391,31 +2353,66 @@ total: 0,
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-amber-200/50 font-bold">
-                    {incomingRequests.map((req) => (
-                      <tr key={req.id}>
-                        <td className="p-2.5">#{req.id}</td>
-                        <td className="p-2.5">{req.product_name || req.inventory_name}</td>
-                        <td className="p-2.5">{req.from_branch_name || req.target_branch_name}</td>
-                        <td className="p-2.5 font-mono text-sm">{req.quantity}</td>
-                        <td className="p-2.5" dir="ltr">{new Date(req.created_at).toLocaleDateString('ar-EG')}</td>
-                        <td className="p-2.5 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={() => handleApproveRequest(req.id)}
-                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-black text-xs"
-                            >
-                              موافقة وإرسال
-                            </button>
-                            <button
-                              onClick={() => handleRejectRequest(req.id)}
-                              className="px-3 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg font-black text-xs"
-                            >
-                              رفض
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {incomingRequests.map((req) => {
+                      let reqSizes = [];
+                      if (req.sizes_data) {
+                        try {
+                          reqSizes = typeof req.sizes_data === 'string' ? JSON.parse(req.sizes_data) : req.sizes_data;
+                        } catch {}
+                      }
+                      const isUrgent = req.priority === 'urgent';
+                      return (
+                        <tr key={req.id} className={isUrgent ? 'bg-rose-50/70' : ''}>
+                          <td className="p-2.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono">#{req.id}</span>
+                              {isUrgent && (
+                                <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black inline-flex items-center gap-0.5">
+                                  <Flame className="w-3 h-3" />
+                                  عاجل
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-2.5">
+                            <div className="font-black text-slate-900">{req.product_name || req.inventory_name}</div>
+                            {Array.isArray(reqSizes) && reqSizes.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {reqSizes.map((sz, i) => (
+                                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200 font-bold">
+                                    مقاس {sz.size_name}: {sz.quantity}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {req.notes && (
+                              <div className="text-[11px] text-amber-800 font-bold mt-1">
+                                📝 {req.notes}
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-2.5">{req.to_branch_name || req.target_branch_name || req.from_branch_name}</td>
+                          <td className="p-2.5 font-mono text-sm">{req.quantity}</td>
+                          <td className="p-2.5" dir="ltr">{new Date(req.transfer_date || req.created_at).toLocaleDateString('ar-EG')}</td>
+                          <td className="p-2.5 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => handleApproveRequest(req.id)}
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-black text-xs"
+                              >
+                                موافقة وإرسال
+                              </button>
+                              <button
+                                onClick={() => handleRejectRequest(req.id)}
+                                className="px-3 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg font-black text-xs"
+                              >
+                                رفض
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -3102,13 +3099,25 @@ total: 0,
 
                               {/* Transfer Between Branches */}
                               {branches.length > 1 && (isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.request')) && (
-                                <button
-                                  onClick={() => openTransferModal(p)}
-                                  className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                  title="تحويل مخزون لفرع آخر"
-                                >
-                                  <ArrowRightLeft className="w-4 h-4" />
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setSmartRequestProduct(p);
+                                      setShowSmartRequestModal(true);
+                                    }}
+                                    className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                    title="طلب بضاعة ذكي من الفروع الأخرى"
+                                  >
+                                    <Truck className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => openTransferModal(p)}
+                                    className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                    title="تحويل مخزون لفرع آخر"
+                                  >
+                                    <ArrowRightLeft className="w-4 h-4" />
+                                  </button>
+                                </>
                               )}
 
                               {/* Print Barcode Button */}
@@ -5013,85 +5022,22 @@ total: 0,
       </Modal>
 
       {/* PURCHASE RETURN TO SUPPLIER MODAL */}
-      <Modal
+      <SupplierReturnModal
         isOpen={showReturnModal}
         onClose={() => setShowReturnModal(false)}
-        title="مرتجع مشتريات لمورد 🔄"
-        subtitle="إرجاع بضاعة لمورد وتخفيض رصيده المسجل"
-        maxWidth="max-w-md"
-      >
-        <form onSubmit={handlePurchaseReturnSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700">المورد *</label>
-            <select
-              value={returnSupplierId}
-              onChange={(e) => setReturnSupplierId(e.target.value)}
-              className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600"
-              required
-            >
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id.toString()}>
-                  {s.name} ({s.company || 'مورد'})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <Input
-            label="اسم الصنف المرتجع *"
-            required
-            value={returnProductName}
-            onChange={(e) => setReturnProductName(e.target.value)}
-            placeholder="اسم الصنف المرتجع..."
-          />
-
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="الكمية المرتجعة *"
-              type="number"
-              min="1"
-              required
-              value={returnQuantity}
-              onChange={(e) => setReturnQuantity(e.target.value)}
-            />
-
-            <Input
-              label="سعر التكلفة للقطعة (ج.م) *"
-              type="number"
-              required
-              value={returnUnitPrice}
-              onChange={(e) => setReturnUnitPrice(e.target.value)}
-            />
-          </div>
-
-          <Input
-            label="ملاحظات وسبب الإرجاع"
-            value={returnNotes}
-            onChange={(e) => setReturnNotes(e.target.value)}
-            placeholder="تلف، عيب صناعة، غير مطابق..."
-          />
-
-          <div className="flex items-center gap-2 pt-3">
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              isLoading={returnSubmitting}
-              className="flex-1 !rounded-2xl !bg-rose-600 hover:!bg-rose-700 text-white"
-            >
-              تأكيد المرتجع للمورد
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              onClick={() => setShowReturnModal(false)}
-            >
-              إلغاء
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        suppliers={suppliers}
+        initialSupplierId={returnSupplierId}
+        branches={branches}
+        activeBranchId={activeBranchId}
+        isBranchScoped={!canSwitchBranchInInventory}
+        userBranchId={user?.branch_id}
+        fallbackProducts={products}
+        onSuccess={() => {
+          lastFetchedSupplierQueryRef.current = '';
+          fetchSuppliers({ force: true });
+          fetchProducts();
+        }}
+      />
 
       {/* SUPPLY BATCH / RESTOCK MODAL */}
       <Modal
@@ -5438,6 +5384,22 @@ total: 0,
           </div>
         )}
       </Modal>
+
+      {/* SMART INTER-BRANCH STOCK REQUEST MODAL */}
+      <SmartStockRequestModal
+        isOpen={showSmartRequestModal}
+        onClose={() => {
+          setShowSmartRequestModal(false);
+          setSmartRequestProduct(null);
+        }}
+        product={smartRequestProduct}
+        activeBranchId={activeBranchId}
+        branches={branches}
+        onSuccess={() => {
+          fetchRequests();
+          fetchProducts();
+        }}
+      />
 
       {/* PRODUCT BARCODE PRINT MODAL */}
       <ProductBarcodePrintModal

@@ -36,9 +36,19 @@ async function updateWornProduct(req, res, next) {
   }
 }
 
+async function deleteWornProduct(req, res, next) {
+  try {
+    const result = await service.deleteWornProduct(req.params.id, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getSummary,
   listWornProducts,
   createWornProduct,
   updateWornProduct,
+  deleteWornProduct,
 };

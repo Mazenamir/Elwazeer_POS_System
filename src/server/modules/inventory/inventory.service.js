@@ -1902,7 +1902,7 @@ async function duplicateProduct(id, body = {}, user) {
 }
 
 async function transferStock(body, user) {
-  let { inventory_id, from_branch_id, to_branch_id, from_branch, to_branch, quantity, is_request, sizes, direct_transfer } = body;
+  let { inventory_id, from_branch_id, to_branch_id, from_branch, to_branch, quantity, is_request, sizes, direct_transfer, notes, priority } = body;
   if (!from_branch_id && from_branch) from_branch_id = from_branch;
   if (!to_branch_id && to_branch) to_branch_id = to_branch;
 
@@ -1956,9 +1956,11 @@ async function transferStock(body, user) {
 
     const creatorId = user?.id ? Number(user.id) : null;
     const creatorName = user?.full_name || user?.name || user?.username || null;
+    const reqPriority = priority === 'urgent' ? 'urgent' : 'normal';
+    const reqNotes = notes && String(notes).trim() ? String(notes).trim() : null;
     const reqRes = await db.query(
-      'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-      [inventory_id, from_branch_id, to_branch_id, transferQty, 'requested', sizesDataJson, creatorId, creatorName]
+      'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, notes, priority) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      [inventory_id, from_branch_id, to_branch_id, transferQty, 'requested', sizesDataJson, creatorId, creatorName, reqNotes, reqPriority]
     );
     const reqId = reqRes.rows?.[0]?.id || reqRes.lastInsertRowid || null;
     if (config.IS_BRANCH_MODE) {
@@ -1973,6 +1975,8 @@ async function transferStock(body, user) {
           sizes: sizes || null,
           created_by: creatorId,
           created_by_name: creatorName,
+          notes: reqNotes,
+          priority: reqPriority,
         });
       } catch (e) {
         console.warn('Failed to queue stock_transfer request sync:', e.message);
@@ -2168,7 +2172,7 @@ async function listTransferRequests(user, branchIdParam) {
   }
 
   params.push(TRANSFER_LIST_LIMIT);
-  query += ` ORDER BY st.transfer_date DESC LIMIT $${params.length}`;
+  query += ` ORDER BY CASE WHEN COALESCE(st.priority, 'normal') = 'urgent' THEN 0 ELSE 1 END ASC, st.transfer_date DESC LIMIT $${params.length}`;
   const { rows } = await db.query(query, params);
   return rows;
 }
@@ -2350,7 +2354,7 @@ async function listIncomingTransfers(user, branchIdParam) {
   }
 
   params.push(TRANSFER_LIST_LIMIT);
-  query += ` ORDER BY st.transfer_date DESC LIMIT $${params.length}`;
+  query += ` ORDER BY CASE WHEN COALESCE(st.priority, 'normal') = 'urgent' THEN 0 ELSE 1 END ASC, st.transfer_date DESC LIMIT $${params.length}`;
   const { rows } = await db.query(query, params);
   return rows;
 }
@@ -3250,6 +3254,168 @@ async function getBranchMatrix(query = {}, user = null) {
   };
 }
 
+async function getBranchAvailability(inventoryId) {
+  const numericId = Number(inventoryId);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    const err = new Error('معرّف الصنف غير صالح');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const notDeletedSql = config.IS_BRANCH_MODE
+    ? 'COALESCE(is_deleted, 0) = 0'
+    : 'COALESCE(is_deleted, FALSE) = FALSE';
+
+  const prodRes = await db.query(
+    'SELECT id, name, category, barcode, price, color, size_cut, image_url FROM inventory WHERE id = $1',
+    [numericId]
+  );
+
+  if (!prodRes.rows.length) {
+    const err = new Error('الصنف غير موجود');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const primaryProduct = prodRes.rows[0];
+  const cleanName = String(primaryProduct.name || '').trim();
+
+  // Discover all active sibling variant rows sharing the same model name (covers split size/color records too)
+  let variantRows = [primaryProduct];
+  if (cleanName) {
+    const siblingRes = await db.query(
+      `SELECT id, name, category, barcode, price, color, size_cut, image_url
+       FROM inventory
+       WHERE ${notDeletedSql} AND LOWER(TRIM(name)) = LOWER(TRIM($1))
+       ORDER BY id ASC`,
+      [cleanName]
+    );
+    if (siblingRes.rows && siblingRes.rows.length > 0) {
+      const seen = new Set(siblingRes.rows.map((r) => Number(r.id)));
+      variantRows = siblingRes.rows;
+      if (!seen.has(numericId)) variantRows.unshift(primaryProduct);
+    }
+  }
+
+  const variantIds = Array.from(new Set(variantRows.map((v) => Number(v.id))));
+  const variantById = new Map(variantRows.map((v) => [Number(v.id), v]));
+  const inPlaceholders = variantIds.map((_, idx) => `$${idx + 1}`).join(', ');
+
+  const [branchesRes, invBranchesRes, sizesRes, pendingRes] = await Promise.all([
+    db.query('SELECT id, name, type, is_main_warehouse FROM branches ORDER BY is_main_warehouse DESC, id ASC'),
+    db.query(`SELECT inventory_id, branch_id, stock_level FROM inventory_branches WHERE inventory_id IN (${inPlaceholders})`, variantIds),
+    db.query(
+      `SELECT inventory_id, branch_id, size_name, color_name, stock_level, barcode
+       FROM inventory_sizes
+       WHERE inventory_id IN (${inPlaceholders})
+       ORDER BY stock_level DESC, size_name ASC`,
+      variantIds
+    ),
+    db.query(
+      `SELECT st.id, st.inventory_id, st.from_branch_id, st.to_branch_id, st.quantity, st.status,
+              COALESCE(st.priority, 'normal') AS priority, st.notes, st.sizes_data,
+              st.transfer_date, b_from.name AS from_branch_name, b_to.name AS to_branch_name
+       FROM stock_transfers st
+       LEFT JOIN branches b_from ON st.from_branch_id = b_from.id
+       LEFT JOIN branches b_to ON st.to_branch_id = b_to.id
+       WHERE st.inventory_id IN (${inPlaceholders}) AND st.status IN ('requested', 'pending')
+       ORDER BY st.transfer_date DESC`,
+      variantIds
+    ),
+  ]);
+
+  // Map (branch_id -> inventory_id -> branch stock)
+  const branchTotalStockMap = new Map();
+  const branchInvStockMap = new Map();
+  for (const r of invBranchesRes.rows || []) {
+    const bId = Number(r.branch_id);
+    const iId = Number(r.inventory_id);
+    const lvl = Number(r.stock_level || 0);
+    branchTotalStockMap.set(bId, (branchTotalStockMap.get(bId) || 0) + lvl);
+    if (!branchInvStockMap.has(bId)) branchInvStockMap.set(bId, new Map());
+    branchInvStockMap.get(bId).set(iId, lvl);
+  }
+
+  // Group sizes by branch (across all sibling variants) & track which (branch_id, inventory_id) already have size rows
+  const sizesByBranch = new Map();
+  const hasSizeRowKeys = new Set();
+
+  for (const s of sizesRes.rows || []) {
+    const bId = Number(s.branch_id);
+    const iId = Number(s.inventory_id);
+    const vProd = variantById.get(iId) || primaryProduct;
+    hasSizeRowKeys.add(`${bId}::${iId}`);
+
+    if (!sizesByBranch.has(bId)) sizesByBranch.set(bId, []);
+    sizesByBranch.get(bId).push({
+      inventory_id: iId,
+      size_name: String(s.size_name || vProd.size_cut || 'موحد').trim(),
+      color_name: String(s.color_name || vProd.color || '').trim(),
+      stock_level: Number(s.stock_level || 0),
+      barcode: s.barcode || vProd.barcode || null,
+    });
+  }
+
+  // Fallback for variant inventory rows that have branch stock but no inventory_sizes rows
+  for (const [bId, invMap] of branchInvStockMap.entries()) {
+    for (const [iId, lvl] of invMap.entries()) {
+      if (lvl <= 0 || hasSizeRowKeys.has(`${bId}::${iId}`)) continue;
+      const vProd = variantById.get(iId) || primaryProduct;
+      if (!sizesByBranch.has(bId)) sizesByBranch.set(bId, []);
+      sizesByBranch.get(bId).push({
+        inventory_id: iId,
+        size_name: String(vProd.size_cut || 'موحد').trim(),
+        color_name: String(vProd.color || '').trim(),
+        stock_level: lvl,
+        barcode: vProd.barcode || null,
+      });
+    }
+  }
+
+  const branchList = (branchesRes.rows || []).map((b) => {
+    const bId = Number(b.id);
+    const branchSizes = sizesByBranch.get(bId) || [];
+    const branchStock = branchTotalStockMap.has(bId)
+      ? branchTotalStockMap.get(bId)
+      : branchSizes.reduce((sum, sz) => sum + Number(sz.stock_level || 0), 0);
+
+    // Distinct colors with stock > 0 in this branch
+    const colorTotalsMap = new Map();
+    for (const sz of branchSizes) {
+      if (Number(sz.stock_level || 0) <= 0) continue;
+      const cLabel = sz.color_name || 'بدون لون';
+      colorTotalsMap.set(cLabel, (colorTotalsMap.get(cLabel) || 0) + Number(sz.stock_level || 0));
+    }
+    const available_colors = Array.from(colorTotalsMap.entries()).map(([color_name, stock_level]) => ({
+      color_name,
+      stock_level,
+    }));
+
+    return {
+      branch_id: bId,
+      branch_name: b.name,
+      is_main_warehouse: Boolean(b.is_main_warehouse),
+      type: b.type || null,
+      stock_level: branchStock,
+      sizes: branchSizes,
+      available_colors,
+    };
+  });
+
+  // Sort by highest stock first, with main warehouse tiebreaker
+  branchList.sort((a, b) => {
+    if (b.stock_level !== a.stock_level) return b.stock_level - a.stock_level;
+    if (a.is_main_warehouse !== b.is_main_warehouse) return a.is_main_warehouse ? -1 : 1;
+    return a.branch_id - b.branch_id;
+  });
+
+  return {
+    product: primaryProduct,
+    branches: branchList,
+    pending_requests: pendingRes.rows || [],
+  };
+}
+
 module.exports = {
   getMetadata,
   getModels,
@@ -3277,4 +3443,5 @@ module.exports = {
   listProductNames,
   getBranchMatrix,
   listTransferLogs,
+  getBranchAvailability,
 };

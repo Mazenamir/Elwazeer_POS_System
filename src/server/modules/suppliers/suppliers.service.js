@@ -562,43 +562,159 @@ async function createSupplierTransaction(payload, user = null) {
 }
 
 async function processSupplierReturn(payload) {
-  const { supplier_id, purchase_transaction_id, items, total_amount, notes } = payload;
+  const {
+    supplier_id,
+    purchase_transaction_id = null,
+    items,
+    total_amount,
+    notes,
+    product_name,
+    inventory_id,
+    branch_id,
+    quantity,
+    unit_price,
+    cost_price,
+    size,
+    color,
+  } = payload || {};
 
-  if (!supplier_id || !items || items.length === 0 || !total_amount) {
+  // Build normalized items list supporting both array payload and single-item payload
+  let normalizedItems = [];
+  if (Array.isArray(items) && items.length > 0) {
+    normalizedItems = items
+      .map((it) => ({
+        inventory_id: Number(it.inventory_id || it.id),
+        branch_id: Number(it.branch_id || branch_id || 1),
+        quantity: Number(it.quantity || 0),
+        cost_price: Number(it.cost_price ?? it.unit_price ?? 0),
+        size: it.size || null,
+        color: it.color || null,
+      }))
+      .filter((it) => it.inventory_id > 0 && it.quantity > 0);
+  } else if (inventory_id && Number(quantity) > 0) {
+    normalizedItems = [
+      {
+        inventory_id: Number(inventory_id),
+        branch_id: Number(branch_id || 1),
+        quantity: Number(quantity),
+        cost_price: Number(cost_price ?? unit_price ?? 0),
+        size: size || null,
+        color: color || null,
+      },
+    ];
+  }
+
+  const parsedUnitPrice = Number(cost_price ?? unit_price ?? 0);
+  const parsedQty = Number(quantity || 0);
+  let finalTotal = Number(total_amount || 0);
+  if (!finalTotal || finalTotal <= 0) {
+    if (normalizedItems.length > 0) {
+      finalTotal = normalizedItems.reduce((sum, it) => sum + it.quantity * it.cost_price, 0);
+    } else if (parsedQty > 0 && parsedUnitPrice > 0) {
+      finalTotal = parsedQty * parsedUnitPrice;
+    }
+  }
+  finalTotal = Math.round(finalTotal * 100) / 100;
+
+  const cleanProductName = typeof product_name === 'string' ? product_name.trim() : '';
+  if (!supplier_id || !finalTotal || finalTotal <= 0 || (normalizedItems.length === 0 && !cleanProductName)) {
     const err = new Error('بيانات غير كاملة');
     err.statusCode = 400;
     throw err;
   }
 
+  const baseNote = notes && String(notes).trim() ? String(notes).trim() : '';
+  const finalNotes = cleanProductName
+    ? (baseNote ? `مرتجع (${cleanProductName}) - ${baseNote}` : `مرتجع بضاعة (${cleanProductName})`)
+    : (baseNote || 'مرتجع بضاعة');
+  const safePurchaseTxId = purchase_transaction_id ? Number(purchase_transaction_id) : null;
+  const nowIso = new Date().toISOString();
+
   await db.transaction(async (tx) => {
     // 1. Record return transaction in supplier_transactions
     const returnTransactionRes = await tx.query(
       'INSERT INTO supplier_transactions (supplier_id, transaction_type, amount, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, (SELECT purchase_batch_id FROM supplier_transactions WHERE id = $5)) RETURNING id',
-      [supplier_id, 'return', total_amount, notes || 'مرتجع بضاعة', purchase_transaction_id]
+      [Number(supplier_id), 'return', finalTotal, finalNotes, safePurchaseTxId]
     );
     const returnTransactionId = returnTransactionRes.rows[0].id;
 
     // 2. Update supplier ledger (return deducts purchases and increases balance)
     await tx.query(
       'UPDATE suppliers SET total_purchases = total_purchases - $1, balance = balance + $1 WHERE id = $2',
-      [total_amount, supplier_id]
+      [finalTotal, Number(supplier_id)]
     );
 
-    // 3. Deduct stock for each item
-    for (const item of items) {
-      // Deduct from inventory_branches
+    // 3. Validate aggregate branch & per-size/color availability before deducting
+    const branchBranchTotals = new Map();
+    for (const item of normalizedItems) {
+      const k = `${item.inventory_id}::${item.branch_id}`;
+      branchBranchTotals.set(k, {
+        inventory_id: item.inventory_id,
+        branch_id: item.branch_id,
+        totalQty: (branchBranchTotals.get(k)?.totalQty || 0) + item.quantity,
+      });
+    }
+
+    const sortedBranchChecks = Array.from(branchBranchTotals.values()).sort(
+      (a, b) => (a.inventory_id - b.inventory_id) || (a.branch_id - b.branch_id)
+    );
+    const invMetaMap = new Map();
+
+    for (const check of sortedBranchChecks) {
+      const invMetaRes = await tx.query(
+        'SELECT id, name, barcode FROM inventory WHERE id = $1',
+        [check.inventory_id]
+      );
+      if (invMetaRes.rows.length > 0) {
+        invMetaMap.set(check.inventory_id, invMetaRes.rows[0]);
+      }
+
       const checkRes = await tx.query(
         'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
-        [item.inventory_id, item.branch_id]
+        [check.inventory_id, check.branch_id]
       );
-      const currentStock = checkRes.rows[0]?.stock_level || 0;
-      if (currentStock < item.quantity) {
-        const err = new Error(`المخزون الحالي للمنتج غير كافي. المتاح: ${currentStock} قطعة، المطلوب: ${item.quantity} قطعة`);
+      const currentStock = Number(checkRes.rows[0]?.stock_level || 0);
+      if (currentStock < check.totalQty) {
+        const err = new Error(`المخزون الحالي للمنتج غير كافي. المتاح: ${currentStock} قطعة، المطلوب: ${check.totalQty} قطعة`);
         err.statusCode = 400;
         throw err;
       }
+    }
 
-      // Deduct from branch, sizes, and global inventory
+    for (const item of normalizedItems) {
+      if (item.size) {
+        const hasSizesInBranch = await tx.query(
+          'SELECT 1 FROM inventory_sizes WHERE inventory_id = $1 AND branch_id = $2 LIMIT 1',
+          [item.inventory_id, item.branch_id]
+        );
+        if (hasSizesInBranch.rows.length > 0) {
+          const szParams = [item.inventory_id, item.branch_id, item.size];
+          let szSql = `
+            SELECT COALESCE(SUM(stock_level), 0) AS avail
+            FROM inventory_sizes
+            WHERE inventory_id = $1 AND branch_id = $2
+              AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
+          `;
+          if (item.color) {
+            szParams.push(item.color);
+            szSql += ` AND (color_name IS NULL OR TRIM(color_name) = '' OR LOWER(TRIM(color_name)) = LOWER(TRIM($4)))`;
+          }
+          const szRes = await tx.query(szSql, szParams);
+          const availSz = Number(szRes.rows[0]?.avail || 0);
+          if (availSz < item.quantity) {
+            const err = new Error(
+              `المخزون المتاح للمقاس "${item.size}"${item.color ? ` (${item.color})` : ''} في الفرع (${availSz} قطعة) أقل من الكمية المرتجعة (${item.quantity} قطعة)`
+            );
+            err.statusCode = 400;
+            throw err;
+          }
+        }
+      }
+    }
+
+    // 4. Deduct from branch, sizes, global inventory & record supply_records
+    const syncReturnItems = [];
+    for (const item of normalizedItems) {
       await adjustInventoryStock(tx, {
         inventoryId: item.inventory_id,
         branchId: item.branch_id,
@@ -607,23 +723,32 @@ async function processSupplierReturn(payload) {
         color: item.color || null,
       });
 
-      // 4. Record negative quantity in supply_records with unique return transaction tag
-      const uniqueNote = `مرتجع [RTN-${returnTransactionId}] - ${notes || ''}`;
+      const invMeta = invMetaMap.get(item.inventory_id);
+      syncReturnItems.push({
+        ...item,
+        name: invMeta?.name || cleanProductName || null,
+        barcode: invMeta?.barcode || null,
+      });
+
+      const variantTag = item.size || item.color
+        ? ` [${[item.size ? `مقاس: ${item.size}` : '', item.color ? `لون: ${item.color}` : ''].filter(Boolean).join(' - ')}]`
+        : '';
+      const uniqueNote = `مرتجع [RTN-${returnTransactionId}]${variantTag} - ${finalNotes}`;
       await tx.query(
         'INSERT INTO supply_records (supplier_id, inventory_id, branch_id, quantity, cost_price, supply_date, notes, purchase_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT purchase_batch_id FROM supplier_transactions WHERE id = $8))',
-        [supplier_id, item.inventory_id, item.branch_id, -item.quantity, item.cost_price, new Date(), uniqueNote, purchase_transaction_id]
+        [Number(supplier_id), item.inventory_id, item.branch_id, -item.quantity, item.cost_price, nowIso, uniqueNote, safePurchaseTxId]
       );
     }
-    const supplierRef = await getSupplierSyncRef(tx, supplier_id);
-    await queueSyncOperation(tx, null, 'supplier_transaction', 'create', returnTransactionId, supplier_id, {
+    const supplierRef = await getSupplierSyncRef(tx, Number(supplier_id));
+    await queueSyncOperation(tx, null, 'supplier_transaction', 'create', returnTransactionId, Number(supplier_id), {
       id: returnTransactionId,
-      supplier_id,
+      supplier_id: Number(supplier_id),
       supplier_ref: supplierRef,
       transaction_type: 'return',
-      amount: total_amount,
-      notes: notes || 'مرتجع بضاعة',
-      purchase_transaction_id,
-      return_items: items,
+      amount: finalTotal,
+      notes: finalNotes,
+      purchase_transaction_id: safePurchaseTxId,
+      return_items: syncReturnItems,
     });
   });
 

@@ -8,5 +8,6 @@ router.get('/worn-products/summary', requirePermission('WornProducts.html'), con
 router.get('/worn-products', requirePermission('WornProducts.html'), controller.listWornProducts);
 router.post('/worn-products', requirePermission('WornProducts.html'), controller.createWornProduct);
 router.patch('/worn-products/:id', requirePermission('WornProducts.html'), controller.updateWornProduct);
+router.delete('/worn-products/:id', requirePermission('WornProducts.html'), controller.deleteWornProduct);
 
 module.exports = router;

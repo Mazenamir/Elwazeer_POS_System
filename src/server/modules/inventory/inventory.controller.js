@@ -263,6 +263,15 @@ async function duplicateProduct(req, res, next) {
   }
 }
 
+async function getBranchAvailability(req, res, next) {
+  try {
+    const result = await inventoryService.getBranchAvailability(req.params.id);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMetadata,
   getCategories,
@@ -291,4 +300,5 @@ module.exports = {
   listProductNames,
   getBranchMatrix,
   listTransferLogs,
+  getBranchAvailability,
 };

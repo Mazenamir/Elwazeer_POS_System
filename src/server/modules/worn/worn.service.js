@@ -81,8 +81,8 @@ async function listWornProducts(query = {}, user = null, req = null) {
            COALESCE(i.name, ri.name) as product_name,
            COALESCE(i.barcode, ri.barcode) as product_barcode,
            COALESCE(i.category, ri.category) as product_category,
-           COALESCE(i.color, ri.color) as product_color,
-           COALESCE(i.size_cut, ri.size_cut) as product_size
+           COALESCE(NULLIF(TRIM(wp.color_name), ''), i.color, ri.color) as product_color,
+           COALESCE(NULLIF(TRIM(wp.size_name), ''), i.size_cut, ri.size_cut) as product_size
     FROM worn_products wp
     LEFT JOIN branches b ON wp.branch_id = b.id
     LEFT JOIN users u ON wp.reported_by = u.id
@@ -118,6 +118,8 @@ async function createWornProduct(body, user) {
   const {
     product_type,
     product_id,
+    inventory_id,
+    rental_inventory_id,
     branch_id,
     quantity,
     condition,
@@ -126,72 +128,160 @@ async function createWornProduct(body, user) {
     notes,
     occurred_at,
     deduct_stock,
+    color_name,
+    size_name,
+    sizes,
+    sizes_data,
   } = body || {};
 
-  const qty = Number(quantity);
-  if (!product_type || !product_id || !qty || qty <= 0) {
+  const resolvedInputId = product_id ?? (product_type === 'rental' ? rental_inventory_id : inventory_id);
+
+  // Normalize optional multi-variant selection list
+  let rawVariants = Array.isArray(sizes) ? sizes : (Array.isArray(sizes_data) ? sizes_data : []);
+  if (!rawVariants.length && typeof sizes_data === 'string' && sizes_data.trim()) {
+    try {
+      const parsed = JSON.parse(sizes_data);
+      if (Array.isArray(parsed)) rawVariants = parsed;
+    } catch {}
+  }
+
+  const normalizedVariants = rawVariants
+    .map((v) => ({
+      inventory_id: Number(v.inventory_id || resolvedInputId),
+      size_name: v.size_name ? String(v.size_name).trim() : '',
+      color_name: v.color_name ? String(v.color_name).trim() : '',
+      quantity: Math.floor(Number(v.quantity || 0)),
+    }))
+    .filter((v) => v.quantity > 0 && v.inventory_id > 0);
+
+  const qty = normalizedVariants.length > 0
+    ? normalizedVariants.reduce((sum, v) => sum + v.quantity, 0)
+    : Number(quantity);
+
+  const primaryId = Number(normalizedVariants[0]?.inventory_id || resolvedInputId);
+
+  if (!product_type || !primaryId || !qty || qty <= 0) {
     const err = new Error('الرجاء اختيار المنتج وتحديد كمية صحيحة');
     err.statusCode = 400;
     throw err;
   }
 
   const finalBranchId = resolveEffectiveBranchId(user, branch_id);
-  const productId = Number(product_id);
-  const finalInventoryId = product_type === 'sales' ? productId : null;
-  const finalRentalInventoryId = product_type === 'rental' ? productId : null;
+  const finalInventoryId = product_type === 'sales' ? primaryId : null;
+  const finalRentalInventoryId = product_type === 'rental' ? primaryId : null;
   const shouldDeductStock = deduct_stock !== false;
   const roundedLoss = Math.max(0, roundCurrency(Number(estimated_loss || 0)));
   const offlineUuid = newUuid(body?.offline_uuid);
 
+  const finalColorName = normalizedVariants.length > 0
+    ? Array.from(new Set(normalizedVariants.map((v) => v.color_name).filter(Boolean))).join('، ') || (color_name ? String(color_name).trim() : null)
+    : (color_name ? String(color_name).trim() : null);
+
+  const finalSizeName = normalizedVariants.length > 0
+    ? normalizedVariants.map((v) => `${v.size_name || 'موحد'}${v.quantity > 1 ? ` (${v.quantity})` : ''}`).join('، ')
+    : (size_name ? String(size_name).trim() : null);
+
+  const finalSizesJson = normalizedVariants.length > 0 ? JSON.stringify(normalizedVariants) : null;
+
   return await db.transaction(async (tx) => {
     if (shouldDeductStock) {
       if (product_type === 'sales') {
-        // 1. Lock global inventory row first in consistent order
-        const invRes = await tx.query(
-          'SELECT id, name, stock_level FROM inventory WHERE id = $1 FOR UPDATE',
-          [productId]
-        );
-        if (invRes.rows.length === 0) {
-          const err = new Error('المنتج غير موجود');
-          err.statusCode = 404;
-          throw err;
+        const itemsToDeduct = normalizedVariants.length > 0
+          ? normalizedVariants
+          : [{
+              inventory_id: primaryId,
+              size_name: size_name ? String(size_name).trim() : '',
+              color_name: color_name ? String(color_name).trim() : '',
+              quantity: qty,
+            }];
+
+        // Aggregate required quantities per inventory_id in sorted order to lock without deadlocks
+        const requiredByInvId = new Map();
+        for (const item of itemsToDeduct) {
+          requiredByInvId.set(item.inventory_id, (requiredByInvId.get(item.inventory_id) || 0) + item.quantity);
         }
-        if (Number(invRes.rows[0].stock_level) < qty) {
-          const err = new Error('الكمية المطلوبة أكبر من المخزون الإجمالي المتاح');
-          err.statusCode = 400;
-          throw err;
+        const sortedInvIds = Array.from(requiredByInvId.keys()).sort((a, b) => a - b);
+
+        for (const invId of sortedInvIds) {
+          const reqQty = requiredByInvId.get(invId);
+          const invRes = await tx.query(
+            'SELECT id, name, stock_level FROM inventory WHERE id = $1 FOR UPDATE',
+            [invId]
+          );
+          if (invRes.rows.length === 0) {
+            const err = new Error('المنتج غير موجود');
+            err.statusCode = 404;
+            throw err;
+          }
+          if (Number(invRes.rows[0].stock_level) < reqQty) {
+            const err = new Error('الكمية المطلوبة أكبر من المخزون الإجمالي المتاح');
+            err.statusCode = 400;
+            throw err;
+          }
+
+          const branchStockRes = await tx.query(
+            'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+            [invId, finalBranchId]
+          );
+          const available = branchStockRes.rows.length ? Number(branchStockRes.rows[0].stock_level || 0) : 0;
+          if (available < reqQty) {
+            const err = new Error('الكمية المطلوبة أكبر من المتاح في هذا الفرع');
+            err.statusCode = 400;
+            throw err;
+          }
         }
 
-        // 2. Lock branch inventory row
-        const branchStockRes = await tx.query(
-          'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
-          [productId, finalBranchId]
-        );
-        const available = branchStockRes.rows.length ? Number(branchStockRes.rows[0].stock_level || 0) : 0;
-        if (available < qty) {
-          const err = new Error('الكمية المطلوبة أكبر من المتاح في هذا الفرع');
-          err.statusCode = 400;
-          throw err;
+        // Validate specific size+color rows if size rows exist in this branch
+        for (const item of itemsToDeduct) {
+          if (item.size_name) {
+            const hasSizesInBranch = await tx.query(
+              'SELECT 1 FROM inventory_sizes WHERE inventory_id = $1 AND branch_id = $2 LIMIT 1',
+              [item.inventory_id, finalBranchId]
+            );
+            if (hasSizesInBranch.rows.length > 0) {
+              const szParams = [item.inventory_id, finalBranchId, item.size_name];
+              let szSql = `
+                SELECT COALESCE(SUM(stock_level), 0) AS avail
+                FROM inventory_sizes
+                WHERE inventory_id = $1 AND branch_id = $2
+                  AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
+              `;
+              if (item.color_name) {
+                szParams.push(item.color_name);
+                szSql += ` AND (color_name IS NULL OR TRIM(color_name) = '' OR LOWER(TRIM(color_name)) = LOWER(TRIM($4)))`;
+              }
+              const szRes = await tx.query(szSql, szParams);
+              const availSz = Number(szRes.rows[0]?.avail || 0);
+              if (availSz < item.quantity) {
+                const err = new Error(`الكمية التالفة المطلوبة للمقاس "${item.size_name}"${item.color_name ? ` (${item.color_name})` : ''} تتجاوز المتاح بالفرع (${availSz} قطعة)`);
+                err.statusCode = 400;
+                throw err;
+              }
+            }
+          }
         }
 
-        // 3. Atomic stock decrement across sizes, branch, and global levels
-        await adjustInventoryStock(tx, {
-          inventoryId: productId,
-          branchId: finalBranchId,
-          quantityDelta: -qty,
-        });
+        // Apply atomic deductions per variant
+        for (const item of itemsToDeduct) {
+          await adjustInventoryStock(tx, {
+            inventoryId: item.inventory_id,
+            branchId: finalBranchId,
+            quantityDelta: -item.quantity,
+            size: item.size_name || null,
+            color: item.color_name || null,
+          });
+        }
       } else {
-        const riRes = await tx.query('SELECT id, name FROM rental_inventory WHERE id = $1', [productId]);
+        const riRes = await tx.query('SELECT id, name FROM rental_inventory WHERE id = $1', [primaryId]);
         if (riRes.rows.length === 0) {
           const err = new Error('المنتج غير موجود');
           err.statusCode = 404;
           throw err;
         }
 
-        // Rental inventory deduction with row lock
         const stockRes = await tx.query(
           'SELECT stock_level FROM rental_inventory_branches WHERE rental_inventory_id = $1 AND branch_id = $2 FOR UPDATE',
-          [productId, finalBranchId]
+          [primaryId, finalBranchId]
         );
         const available = stockRes.rows.length ? Number(stockRes.rows[0].stock_level || 0) : 0;
         if (available < qty) {
@@ -201,19 +291,19 @@ async function createWornProduct(body, user) {
         }
         await tx.query(
           'UPDATE rental_inventory_branches SET stock_level = stock_level - $1 WHERE rental_inventory_id = $2 AND branch_id = $3',
-          [qty, productId, finalBranchId]
+          [qty, primaryId, finalBranchId]
         );
       }
     } else {
       if (product_type === 'sales') {
-        const invCheck = await tx.query('SELECT id FROM inventory WHERE id = $1', [productId]);
+        const invCheck = await tx.query('SELECT id FROM inventory WHERE id = $1', [primaryId]);
         if (!invCheck.rows.length) {
           const err = new Error('المنتج غير موجود');
           err.statusCode = 404;
           throw err;
         }
       } else {
-        const rCheck = await tx.query('SELECT id FROM rental_inventory WHERE id = $1', [productId]);
+        const rCheck = await tx.query('SELECT id FROM rental_inventory WHERE id = $1', [primaryId]);
         if (!rCheck.rows.length) {
           const err = new Error('المنتج غير موجود');
           err.statusCode = 404;
@@ -224,8 +314,8 @@ async function createWornProduct(body, user) {
 
     const result = await tx.query(
       `INSERT INTO worn_products
-        (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, reported_by, occurred_at, offline_uuid)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, ${CAIRO_DATE_SQL}), $12)
+        (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, reported_by, occurred_at, offline_uuid, color_name, size_name, sizes_data, deduct_stock)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, ${CAIRO_DATE_SQL}), $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         product_type,
@@ -240,6 +330,10 @@ async function createWornProduct(body, user) {
         user ? user.id : null,
         occurred_at || null,
         offlineUuid,
+        finalColorName,
+        finalSizeName,
+        finalSizesJson,
+        shouldDeductStock,
       ]
     );
 
@@ -287,9 +381,88 @@ async function updateWornProduct(id, body, user) {
   return updated;
 }
 
+async function deleteWornProduct(id, user) {
+  const numericId = Number(id);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    const err = new Error('معرّف السجل غير صالح');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return await db.transaction(async (tx) => {
+    const params = [numericId];
+    let branchFilter = '';
+    if (isBranchScopedUser(user)) {
+      params.push(user.branch_id);
+      branchFilter = ' AND branch_id = $2';
+    }
+
+    const res = await tx.query(
+      `SELECT * FROM worn_products WHERE id = $1${branchFilter} FOR UPDATE`,
+      params
+    );
+    if (!res.rows.length) {
+      const err = new Error('سجل التالف غير موجود أو غير مصرح بحذفه');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const row = res.rows[0];
+    const shouldRestore = row.deduct_stock !== false && row.deduct_stock !== 0;
+
+    if (shouldRestore) {
+      if (row.product_type === 'rental' && row.rental_inventory_id) {
+        await tx.query(
+          `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (rental_inventory_id, branch_id) DO UPDATE SET stock_level = rental_inventory_branches.stock_level + EXCLUDED.stock_level`,
+          [row.rental_inventory_id, row.branch_id, Number(row.quantity || 0)]
+        );
+      } else if (row.inventory_id) {
+        let parsedVariants = null;
+        if (row.sizes_data) {
+          try { parsedVariants = JSON.parse(row.sizes_data); } catch {}
+        }
+        if (Array.isArray(parsedVariants) && parsedVariants.length > 0) {
+          for (const v of parsedVariants) {
+            const vQty = Number(v.quantity || 0);
+            if (vQty <= 0) continue;
+            await adjustInventoryStock(tx, {
+              inventoryId: Number(v.inventory_id || row.inventory_id),
+              branchId: row.branch_id,
+              quantityDelta: vQty,
+              size: v.size_name || null,
+              color: v.color_name || null,
+            });
+          }
+        } else {
+          await adjustInventoryStock(tx, {
+            inventoryId: row.inventory_id,
+            branchId: row.branch_id,
+            quantityDelta: Number(row.quantity || 0),
+            size: row.size_name || null,
+            color: row.color_name || null,
+          });
+        }
+      }
+    }
+
+    await tx.query('DELETE FROM worn_products WHERE id = $1', [numericId]);
+
+    await queueSyncOperation(tx, null, 'worn_product', 'delete', row.id, row.branch_id, {
+      id: row.id,
+      offline_uuid: row.offline_uuid,
+      branch_id: row.branch_id,
+    });
+
+    return { success: true, restored_stock: shouldRestore };
+  });
+}
+
 module.exports = {
   getSummary,
   listWornProducts,
   createWornProduct,
   updateWornProduct,
+  deleteWornProduct,
 };

@@ -689,6 +689,53 @@ async function applyOperation(operation) {
     }
 
     if (operation.entity_type === 'worn_product') {
+      if (operation.action === 'delete') {
+        const lookupRes = payload.offline_uuid
+          ? await tx.query('SELECT * FROM worn_products WHERE offline_uuid = $1', [payload.offline_uuid])
+          : (payload.id ? await tx.query('SELECT * FROM worn_products WHERE id = $1', [payload.id]) : { rows: [] });
+        if (!lookupRes.rows.length) return;
+        const wpRow = lookupRes.rows[0];
+        if (wpRow.deduct_stock !== false) {
+          if (wpRow.product_type === 'rental' && wpRow.rental_inventory_id) {
+            await tx.query(
+              `INSERT INTO rental_inventory_branches (rental_inventory_id, branch_id, stock_level)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (rental_inventory_id, branch_id) DO UPDATE SET stock_level = rental_inventory_branches.stock_level + EXCLUDED.stock_level`,
+              [wpRow.rental_inventory_id, wpRow.branch_id, Number(wpRow.quantity || 0)]
+            );
+          } else if (wpRow.inventory_id) {
+            const { adjustInventoryStock } = require('../inventory/inventory.helpers');
+            let parsedVariants = null;
+            if (wpRow.sizes_data) {
+              try { parsedVariants = JSON.parse(wpRow.sizes_data); } catch {}
+            }
+            if (Array.isArray(parsedVariants) && parsedVariants.length > 0) {
+              for (const v of parsedVariants) {
+                const vQty = Number(v.quantity || 0);
+                if (vQty <= 0) continue;
+                await adjustInventoryStock(tx, {
+                  inventoryId: Number(v.inventory_id || wpRow.inventory_id),
+                  branchId: wpRow.branch_id,
+                  quantityDelta: vQty,
+                  size: v.size_name || null,
+                  color: v.color_name || null,
+                });
+              }
+            } else {
+              await adjustInventoryStock(tx, {
+                inventoryId: wpRow.inventory_id,
+                branchId: wpRow.branch_id,
+                quantityDelta: Number(wpRow.quantity || 0),
+                size: wpRow.size_name || null,
+                color: wpRow.color_name || null,
+              });
+            }
+          }
+        }
+        await tx.query('DELETE FROM worn_products WHERE id = $1', [wpRow.id]);
+        return;
+      }
+
       if (operation.action === 'update') {
         if (!payload.offline_uuid) {
           throw new Error('Missing worn product offline_uuid');
@@ -720,53 +767,63 @@ async function applyOperation(operation) {
       if (productType === 'sales' && !inventoryId) throw new Error('Missing inventory_id');
       if (productType === 'rental' && !rentalInventoryId) throw new Error('Missing rental_inventory_id');
 
+      let parsedSizes = null;
+      if (Array.isArray(payload.sizes_data)) parsedSizes = payload.sizes_data;
+      else if (typeof payload.sizes_data === 'string' && payload.sizes_data.trim()) {
+        try { parsedSizes = JSON.parse(payload.sizes_data); } catch {}
+      }
+
       if (payload.deduct_stock !== false) {
         if (productType === 'sales') {
-          // Lock global inventory and branch stock rows in order
-          const globalStockRes = await tx.query(
-            'SELECT stock_level FROM inventory WHERE id = $1 FOR UPDATE',
-            [inventoryId]
-          );
-          const currentGlobalStock = Number(globalStockRes.rows[0]?.stock_level || 0);
-          if (currentGlobalStock < qty) {
-            const deficit = qty - currentGlobalStock;
-            console.warn(`[Sync Conflict] Deficit detected during offline worn product replay for global inventory #${inventoryId}: required ${qty}, available ${currentGlobalStock}, deficit ${deficit}`);
-            await logActivity(
-              null,
-              'SyncService',
-              'تعارض مزامنة مخزون عام',
-              `عجز في المخزون العام للمنتج التالف #${inventoryId} (المطلوب: ${qty}، المتاح: ${currentGlobalStock}، العجز: ${deficit})`,
-              'Sync',
-              branchId
+          const { adjustInventoryStock } = require('../inventory/inventory.helpers');
+          if (Array.isArray(parsedSizes) && parsedSizes.length > 0) {
+            for (const v of parsedSizes) {
+              const vQty = Number(v.quantity || 0);
+              if (vQty <= 0) continue;
+              const vInvId = Number(v.inventory_id || inventoryId);
+              const branchStockRes = await tx.query(
+                'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+                [vInvId, branchId]
+              );
+              const currentBranchStock = Number(branchStockRes.rows[0]?.stock_level || 0);
+              if (currentBranchStock < vQty) {
+                await logActivity(null, 'SyncService', 'تعارض مزامنة مخزون فرع', `عجز في مخزون الفرع #${branchId} للمنتج التالف #${vInvId}`, 'Sync', branchId);
+              }
+              await adjustInventoryStock(tx, {
+                inventoryId: vInvId,
+                branchId,
+                quantityDelta: -vQty,
+                size: v.size_name || null,
+                color: v.color_name || null,
+              });
+            }
+          } else {
+            const globalStockRes = await tx.query(
+              'SELECT stock_level FROM inventory WHERE id = $1 FOR UPDATE',
+              [inventoryId]
             );
-          }
-
-          const branchStockRes = await tx.query(
-            'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
-            [inventoryId, branchId]
-          );
-          const currentBranchStock = Number(branchStockRes.rows[0]?.stock_level || 0);
-          if (currentBranchStock < qty) {
-            const deficit = qty - currentBranchStock;
-            console.warn(`[Sync Conflict] Deficit detected during offline worn product replay for inventory #${inventoryId} at branch #${branchId}: required ${qty}, available ${currentBranchStock}, deficit ${deficit}`);
-            await logActivity(
-              null,
-              'SyncService',
-              'تعارض مزامنة مخزون فرع',
-              `عجز في مخزون الفرع #${branchId} للمنتج التالف #${inventoryId} (المطلوب: ${qty}، المتاح: ${currentBranchStock}، العجز: ${deficit})`,
-              'Sync',
-              branchId
+            const currentGlobalStock = Number(globalStockRes.rows[0]?.stock_level || 0);
+            if (currentGlobalStock < qty) {
+              const deficit = qty - currentGlobalStock;
+              await logActivity(null, 'SyncService', 'تعارض مزامنة مخزون عام', `عجز في المخزون العام للمنتج التالف #${inventoryId} (المطلوب: ${qty}، المتاح: ${currentGlobalStock}، العجز: ${deficit})`, 'Sync', branchId);
+            }
+            const branchStockRes = await tx.query(
+              'SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE',
+              [inventoryId, branchId]
             );
+            const currentBranchStock = Number(branchStockRes.rows[0]?.stock_level || 0);
+            if (currentBranchStock < qty) {
+              const deficit = qty - currentBranchStock;
+              await logActivity(null, 'SyncService', 'تعارض مزامنة مخزون فرع', `عجز في مخزون الفرع #${branchId} للمنتج التالف #${inventoryId} (المطلوب: ${qty}، المتاح: ${currentBranchStock}، العجز: ${deficit})`, 'Sync', branchId);
+            }
+            await adjustInventoryStock(tx, {
+              inventoryId,
+              branchId,
+              quantityDelta: -qty,
+              size: payload.size_name || null,
+              color: payload.color_name || null,
+            });
           }
-
-          await tx.query(
-            'UPDATE inventory_branches SET stock_level = GREATEST(stock_level - $1, 0) WHERE inventory_id = $2 AND branch_id = $3',
-            [qty, inventoryId, branchId]
-          );
-          await tx.query(
-            'UPDATE inventory SET stock_level = GREATEST(stock_level - $1, 0) WHERE id = $2',
-            [qty, inventoryId]
-          );
         } else {
           const rentalStockRes = await tx.query(
             'SELECT stock_level FROM rental_inventory_branches WHERE rental_inventory_id = $1 AND branch_id = $2 FOR UPDATE',
@@ -775,15 +832,7 @@ async function applyOperation(operation) {
           const currentRentalStock = Number(rentalStockRes.rows[0]?.stock_level || 0);
           if (currentRentalStock < qty) {
             const deficit = qty - currentRentalStock;
-            console.warn(`[Sync Conflict] Deficit detected during offline worn rental product replay for rental inventory #${rentalInventoryId} at branch #${branchId}: required ${qty}, available ${currentRentalStock}, deficit ${deficit}`);
-            await logActivity(
-              null,
-              'SyncService',
-              'تعارض مزامنة مخزون إيجار',
-              `عجز في مخزون إيجار الفرع #${branchId} للمنتج التالف #${rentalInventoryId} (المطلوب: ${qty}، المتاح: ${currentRentalStock}، العجز: ${deficit})`,
-              'Sync',
-              branchId
-            );
+            await logActivity(null, 'SyncService', 'تعارض مزامنة مخزون إيجار', `عجز في مخزون إيجار الفرع #${branchId} للمنتج التالف #${rentalInventoryId} (المطلوب: ${qty}، المتاح: ${currentRentalStock}، العجز: ${deficit})`, 'Sync', branchId);
           }
 
           await tx.query(
@@ -793,11 +842,12 @@ async function applyOperation(operation) {
         }
       }
 
+      const sizesDataStr = Array.isArray(parsedSizes) && parsedSizes.length > 0 ? JSON.stringify(parsedSizes) : (typeof payload.sizes_data === 'string' ? payload.sizes_data : null);
       const reportedBy = await resolveUserId(tx, payload.reported_by);
       await tx.query(
         `INSERT INTO worn_products
-          (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, status, reported_by, occurred_at, offline_uuid)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 0), $9, COALESCE($10, 'recorded'), $11, COALESCE($12::date, CURRENT_DATE), $13)
+          (product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason, estimated_loss, notes, status, reported_by, occurred_at, offline_uuid, color_name, size_name, sizes_data, deduct_stock)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 0), $9, COALESCE($10, 'recorded'), $11, COALESCE($12::date, CURRENT_DATE), $13, $14, $15, $16, COALESCE($17, TRUE))
          ON CONFLICT (offline_uuid) DO NOTHING`,
         [
           productType,
@@ -813,6 +863,10 @@ async function applyOperation(operation) {
           reportedBy,
           payload.occurred_at || null,
           payload.offline_uuid || null,
+          payload.color_name || null,
+          payload.size_name || null,
+          sizesDataStr,
+          payload.deduct_stock !== false,
         ]
       );
       return;
@@ -2727,7 +2781,10 @@ async function applyOperation(operation) {
               size: rItem.size || null,
               color: rItem.color || null,
             });
-            const retNote = `مرتجع [RTN-${createdTxId}]${notes ? ` - ${notes}` : ''}`;
+            const variantTag = rItem.size || rItem.color
+              ? ` [${[rItem.size ? `مقاس: ${rItem.size}` : '', rItem.color ? `لون: ${rItem.color}` : ''].filter(Boolean).join(' - ')}]`
+              : '';
+            const retNote = `مرتجع [RTN-${createdTxId}]${variantTag}${notes ? ` - ${notes}` : ''}`;
             await tx.query(
               'INSERT INTO supply_records (supplier_id, inventory_id, branch_id, quantity, cost_price, notes, purchase_batch_id, supplier_transaction_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
               [supplierId, resolvedInvId, rBranchId, -rQty, Number(rItem.cost_price || 0), retNote, payload.purchase_batch_id || null, createdTxId]
@@ -2973,11 +3030,13 @@ async function applyOperation(operation) {
       if (isRequest && invId && fromBranch && toBranch && qty > 0) {
         const sizesJson = parsedSizes ? JSON.stringify(parsedSizes) : null;
         const createdBy = await resolveUserId(tx, payload.created_by);
+        const reqPriority = payload.priority === 'urgent' ? 'urgent' : 'normal';
+        const reqNotes = payload.notes ? String(payload.notes) : null;
         const insReq = await tx.query(
-          `INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name)
-           VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7)
+          `INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, notes, priority)
+           VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, $8, $9)
            RETURNING id`,
-          [invId, fromBranch, toBranch, qty, sizesJson, createdBy, payload.created_by_name || null]
+          [invId, fromBranch, toBranch, qty, sizesJson, createdBy, payload.created_by_name || null, reqNotes, reqPriority]
         );
         return { success: true, id: insReq.rows[0]?.id };
       }
@@ -3681,12 +3740,14 @@ async function exportCatalogForBranch(branchId = null) {
       SELECT id, product_type, inventory_id, rental_inventory_id, branch_id, quantity, condition, reason,
              COALESCE(estimated_loss, 0) AS estimated_loss, notes, reported_by,
              TO_CHAR(occurred_at, 'YYYY-MM-DD') AS occurred_at, COALESCE(status, 'recorded') AS status,
-             created_at, offline_uuid
+             created_at, offline_uuid, color_name, size_name, sizes_data,
+             COALESCE(deduct_stock, TRUE) AS deduct_stock
       FROM worn_products
     `),
     db.query(`
       SELECT id, inventory_id, from_branch_id, to_branch_id, quantity, transfer_date, status, updated_at,
-             sizes_data, created_by, sender_id, received_by, sender_name, received_by_name, created_by_name
+             sizes_data, created_by, sender_id, received_by, sender_name, received_by_name, created_by_name,
+             notes, COALESCE(priority, 'normal') AS priority
       FROM stock_transfers
     `),
   ]);
@@ -5418,6 +5479,10 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       ensureCol('worn_products', 'reported_by', 'INTEGER');
       ensureCol('worn_products', 'status', "TEXT DEFAULT 'reported'");
       ensureCol('worn_products', 'pending_sync', 'INTEGER DEFAULT 1');
+      ensureCol('worn_products', 'color_name', 'TEXT');
+      ensureCol('worn_products', 'size_name', 'TEXT');
+      ensureCol('worn_products', 'sizes_data', 'TEXT');
+      ensureCol('worn_products', 'deduct_stock', 'INTEGER DEFAULT 1');
 
       const pendingWorn = getPendingSyncTracker('worn_product');
       const cleanStaleWpStmt = sqlite.prepare('DELETE FROM worn_products WHERE offline_uuid = ? AND id != ?');
@@ -5425,9 +5490,9 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         INSERT INTO worn_products (
           id, product_type, inventory_id, rental_inventory_id, branch_id, quantity,
           condition, reason, estimated_loss, notes, reported_by, occurred_at, status,
-          created_by, created_at, offline_uuid, pending_sync
+          created_by, created_at, offline_uuid, pending_sync, color_name, size_name, sizes_data, deduct_stock
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_DATE), ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_DATE), ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, 0, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           product_type = excluded.product_type,
           inventory_id = excluded.inventory_id,
@@ -5442,6 +5507,10 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           occurred_at = COALESCE(excluded.occurred_at, worn_products.occurred_at),
           status = excluded.status,
           offline_uuid = COALESCE(excluded.offline_uuid, worn_products.offline_uuid),
+          color_name = excluded.color_name,
+          size_name = excluded.size_name,
+          sizes_data = excluded.sizes_data,
+          deduct_stock = excluded.deduct_stock,
           pending_sync = 0
       `);
       for (const wp of catalog.worn_products) {
@@ -5463,7 +5532,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           wp.status || 'recorded',
           wp.created_by ?? wp.reported_by ?? null,
           toSqliteTimestamp(wp.created_at),
-          wp.offline_uuid || null
+          wp.offline_uuid || null,
+          wp.color_name || null,
+          wp.size_name || null,
+          toSqliteJson(wp.sizes_data),
+          wp.deduct_stock === false || wp.deduct_stock === 0 ? 0 : 1
         );
       }
     }
@@ -5478,15 +5551,17 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       ensureCol('stock_transfers', 'sender_name', 'TEXT');
       ensureCol('stock_transfers', 'received_by_name', 'TEXT');
       ensureCol('stock_transfers', 'created_by_name', 'TEXT');
+      ensureCol('stock_transfers', 'notes', 'TEXT');
+      ensureCol('stock_transfers', 'priority', "TEXT DEFAULT 'normal'");
 
       const pendingTransfers = getPendingSyncTracker('stock_transfer');
       const trStmt = sqlite.prepare(`
         INSERT INTO stock_transfers (
           id, inventory_id, from_branch_id, to_branch_id, quantity, transfer_date,
           status, updated_at, sizes_data, created_by, sender_id, received_by,
-          sender_name, received_by_name, created_by_name
+          sender_name, received_by_name, created_by_name, notes, priority
         )
-        VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           inventory_id = excluded.inventory_id,
           from_branch_id = excluded.from_branch_id,
@@ -5501,7 +5576,9 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           received_by = excluded.received_by,
           sender_name = excluded.sender_name,
           received_by_name = excluded.received_by_name,
-          created_by_name = excluded.created_by_name
+          created_by_name = excluded.created_by_name,
+          notes = excluded.notes,
+          priority = excluded.priority
       `);
       const incomingTrIds = new Set();
       for (const tr of catalog.stock_transfers) {
@@ -5522,7 +5599,9 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           tr.received_by || null,
           tr.sender_name || null,
           tr.received_by_name || null,
-          tr.created_by_name || null
+          tr.created_by_name || null,
+          tr.notes || null,
+          tr.priority || 'normal'
         );
       }
       try {

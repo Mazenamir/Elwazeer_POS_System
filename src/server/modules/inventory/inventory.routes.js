@@ -47,6 +47,7 @@ router.get('/inventory/duplicate-check', controller.checkDuplicateSingle);
 router.get('/inventory/search', requirePermission('inventory_admin', 'inventory.products.view', 'pos.sales.view'), controller.searchInventory);
 router.get('/inventory', requirePermission('inventory_admin', 'inventory.products.view', 'pos.sales.view'), controller.listInventory);
 router.get('/products', requirePermission('inventory_admin', 'inventory.products.view', 'pos.sales.view'), controller.listInventory);
+router.get('/inventory/:id/branch-availability', requirePermission('inventory_admin', 'inventory.products.view', 'pos.sales.view', 'inventory.transfers.request'), controller.getBranchAvailability);
 router.get('/inventory/:id', requirePermission('inventory_admin', 'inventory.products.view', 'pos.sales.view'), controller.getInventoryById);
 router.post('/inventory', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), productUploadMiddleware, controller.createProduct);
 router.put('/inventory/:id', requirePermission('inventory_admin', 'inventory.products.edit'), requireInventoryPassword, productUploadMiddleware, controller.updateProduct);

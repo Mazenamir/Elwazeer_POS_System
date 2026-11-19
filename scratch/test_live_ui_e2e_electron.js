@@ -161,11 +161,20 @@ if (process.argv.includes('--server-only')) {
       const sizeModalReady = await waitForSelector(win, `return document.body.innerText.includes('اختر اللون والمقاس') && document.body.innerText.includes('50')`);
       assert.ok(sizeModalReady, 'Size selection modal did not open with size 50');
 
-      await win.webContents.executeJavaScript(`(() => {
-        const btn50 = [...document.querySelectorAll('button')].find(b => (b.innerText || '').includes('50') && (b.innerText || '').includes('متوفر'));
-        if (btn50) btn50.click();
+      const clicked = await win.webContents.executeJavaScript(`(() => {
+        const divs = [...document.querySelectorAll('div')].filter(d => (d.innerText || '').includes('50') && (d.innerText || '').includes('متوفر'));
+        const target = divs.sort((a,b) => a.innerText.length - b.innerText.length)[0];
+        if (target) {
+          target.click();
+          return true;
+        }
+        return false;
       })()`);
-      await sleep(300);
+      console.log('Size 50 card clicked:', clicked);
+      await sleep(500);
+
+      const cartHasItem = await waitForSelector(win, `return document.body.innerText.includes('بدلة اختبار UI') && document.body.innerText.includes('1,000')`);
+      console.log('Cart has item:', Boolean(cartHasItem));
 
       await win.webContents.executeJavaScript(`(() => {
         const checkoutBtn = [...document.querySelectorAll('button')].find(b => (b.innerText || '').includes('إتمام البيع') || (b.innerText || '').includes('الدفع والحفظ') || (b.innerText || '').includes('دفع'));

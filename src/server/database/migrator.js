@@ -439,7 +439,11 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       created_by INTEGER,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       offline_uuid TEXT UNIQUE,
-      pending_sync INTEGER DEFAULT 1
+      pending_sync INTEGER DEFAULT 1,
+      color_name TEXT,
+      size_name TEXT,
+      sizes_data TEXT,
+      deduct_stock INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS inventory_branches (
@@ -471,7 +475,9 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       received_by INTEGER,
       sender_name TEXT,
       received_by_name TEXT,
-      created_by_name TEXT
+      created_by_name TEXT,
+      notes TEXT,
+      priority TEXT DEFAULT 'normal'
     );
 
     CREATE TABLE IF NOT EXISTS notification_reads (
@@ -764,6 +770,10 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN occurred_at TEXT"); } catch {}
   try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN reported_by INTEGER"); } catch {}
   try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN status TEXT DEFAULT 'pending'"); } catch {}
+  try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN color_name TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN size_name TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN sizes_data TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE worn_products ADD COLUMN deduct_stock INTEGER DEFAULT 1"); } catch {}
 
   try { sqlite.exec("ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1"); } catch {}
   try { sqlite.exec("ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0"); } catch {}
@@ -1084,6 +1094,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN sender_name TEXT'); } catch {}
   try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN received_by_name TEXT'); } catch {}
   try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN created_by_name TEXT'); } catch {}
+  try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN notes TEXT'); } catch {}
+  try { sqlite.exec("ALTER TABLE stock_transfers ADD COLUMN priority TEXT DEFAULT 'normal'"); } catch {}
   try { sqlite.exec("ALTER TABLE returns ADD COLUMN refund_method TEXT DEFAULT 'cash'"); } catch {}
   try { sqlite.exec('ALTER TABLE rentals ADD COLUMN actual_pickup_date TEXT'); } catch {}
   try { sqlite.exec('ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0'); } catch {}
