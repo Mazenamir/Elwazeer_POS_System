@@ -728,6 +728,9 @@ function defaultPermissionsForRole(role) {
 function getUserPermissions(user) {
   if (!user) return [];
   if (user.role === 'admin') return [...ALL_PERMISSIONS, ...EXTRA_PERMISSIONS, ...ALL_GRANULAR_PERMISSIONS];
+  if (user.permissions === undefined && user.role) {
+    return defaultPermissionsForRole(user.role);
+  }
   return normalizePermissions(user.permissions);
 }
 

@@ -99,7 +99,7 @@ const formatCairoDateTime = (dateVal) => {
 };
 
 export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }) {
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const { branches, activeBranchId, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
   const toast = useToast();
 
@@ -794,7 +794,8 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
                   const StatusIcon = statusObj.icon;
                   const isOut = tr.is_outgoing;
                   const isIn = tr.is_incoming;
-                  const canReceive = tr.can_receive ?? ((isAdmin || Number(user?.branch_id) === Number(tr.to_branch_id)) && tr.status === 'pending');
+                  const hasReceivePerm = Boolean(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.receive'));
+                  const canReceive = tr.can_receive ?? (hasReceivePerm && Number(user?.branch_id) === Number(tr.to_branch_id) && tr.status === 'pending');
 
                   return (
                     <tr
@@ -1200,7 +1201,7 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
               </Button>
 
               <div className="flex items-center gap-2">
-                {(selectedTransferForModal.can_receive ?? ((isAdmin || Number(user?.branch_id) === Number(selectedTransferForModal.to_branch_id)) && selectedTransferForModal.status === 'pending')) && (
+                {(selectedTransferForModal.can_receive ?? (Boolean(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.receive')) && Number(user?.branch_id) === Number(selectedTransferForModal.to_branch_id) && selectedTransferForModal.status === 'pending')) && (
                   <Button
                     variant="primary"
                     size="sm"

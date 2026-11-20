@@ -27,7 +27,7 @@ router.get('/inventory/sizes', controller.listSizes);
 router.post('/inventory/sizes', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), controller.createSize);
 
 // Stock Transfers
-router.post('/inventory/transfer', requirePermission('inventory_admin', 'inventory.transfers.request'), controller.transferStock);
+router.post('/inventory/transfer', requirePermission('inventory_admin', 'inventory.transfers.request', 'pos.sales.create'), controller.transferStock);
 router.get('/inventory/transfers/requests', requirePermission('inventory_admin', 'inventory.transfers.request', 'inventory.transfers.approve', 'inventory.transfers.view'), controller.listTransferRequests);
 router.post('/inventory/transfers/:id/approve', requirePermission('inventory_admin', 'inventory.transfers.approve'), controller.approveTransfer);
 router.post('/inventory/transfers/:id/reject', requirePermission('inventory_admin', 'inventory.transfers.approve'), controller.rejectTransfer);

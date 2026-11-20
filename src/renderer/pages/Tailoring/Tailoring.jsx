@@ -435,15 +435,17 @@ export function Tailoring() {
             إدارة طلبات التفصيل الخاصة، المقاسات، العربون، ومتابعة السداد
           </p>
         </div>
-        <Button
-          variant="primary"
-          size="lg"
-          icon={Plus}
-          onClick={() => setShowCreateModal(true)}
-          className="!bg-[#151515] hover:!bg-[#24221F] text-white shadow-sm"
-        >
-          أمر تفصيل جديد
-        </Button>
+        {(isAdmin || hasPermission('tailoring.create')) && (
+          <Button
+            variant="primary"
+            size="lg"
+            icon={Plus}
+            onClick={() => setShowCreateModal(true)}
+            className="!bg-[#151515] hover:!bg-[#24221F] text-white shadow-sm"
+          >
+            أمر تفصيل جديد
+          </Button>
+        )}
       </div>
 
       {/* Main Table Card */}
@@ -535,16 +537,18 @@ export function Tailoring() {
                           <span className="text-rose-600 font-black text-xs">
                             {Number(order.remaining_amount).toLocaleString()} ج.م
                           </span>
-                          <button
-                            onClick={() => {
-                              setSelectedOrderForPay(order);
-                              setPayAmount(order.remaining_amount.toString());
-                              setShowPayModal(true);
-                            }}
-                            className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 text-[10px] font-bold border border-rose-200 transition-colors"
-                          >
-                            سداد
-                          </button>
+                          {(isAdmin || hasPermission('tailoring.edit') || hasPermission('tailoring.create')) && (
+                            <button
+                              onClick={() => {
+                                setSelectedOrderForPay(order);
+                                setPayAmount(order.remaining_amount.toString());
+                                setShowPayModal(true);
+                              }}
+                              className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 text-[10px] font-bold border border-rose-200 transition-colors"
+                            >
+                              سداد
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <span className="text-emerald-600 font-bold text-xs">خالص</span>

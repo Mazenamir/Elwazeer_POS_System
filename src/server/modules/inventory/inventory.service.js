@@ -1906,9 +1906,26 @@ async function transferStock(body, user) {
   if (!from_branch_id && from_branch) from_branch_id = from_branch;
   if (!to_branch_id && to_branch) to_branch_id = to_branch;
 
-  if (user && (!hasInventoryAdminAccess(user) || (is_request && !hasInventoryAllBranchesAccess(user)))) {
-    if (is_request) to_branch_id = user.branch_id;
-    else from_branch_id = user.branch_id;
+  if (user) {
+    const hasAdmin = user.role === 'admin' || hasInventoryAdminAccess(user);
+    const hasRequestPerm = hasAdmin || hasPermission(user, 'inventory.transfers.request');
+    const canDirectTransfer = hasAdmin || hasPermission(user, 'inventory.transfers.approve');
+
+    if (!hasRequestPerm && !is_request) {
+      const err = new Error('غير مصرح لك بتنفيذ تحويل مخزون؛ يمكنك فقط إرسال طلب بضاعة لفرعك');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (!is_request && direct_transfer !== false && !canDirectTransfer) {
+      const err = new Error('غير مصرح لك بالتحويل المباشر الفوري؛ يمكنك إرسال شحنة بانتظار استلام الفرع');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    if (!hasAdmin || (is_request && !hasInventoryAllBranchesAccess(user))) {
+      if (is_request) to_branch_id = user.branch_id;
+      else from_branch_id = user.branch_id;
+    }
   }
 
   if (!inventory_id || !from_branch_id || !to_branch_id || !quantity) {
@@ -2730,11 +2747,14 @@ async function listTransferLogs(query = {}, user = {}) {
     const isOutgoing = refBranch ? fromBranchId === refBranch : false;
     const isIncoming = refBranch ? toBranchId === refBranch : false;
 
-    // Permissions / action flags
-    const hasAdmin = hasInventoryAdminAccess(user);
-    const canApprove = (hasAdmin || fromBranchId === userBranchNum) && row.status === 'requested';
-    const canReject = (hasAdmin || fromBranchId === userBranchNum) && row.status === 'requested';
-    const canReceive = (hasAdmin || toBranchId === userBranchNum) && row.status === 'pending';
+    // Permissions / action flags (aligned with route RBAC + branch scope)
+    const hasAdmin = user?.role === 'admin' || hasInventoryAdminAccess(user);
+    const hasApprovePerm = hasAdmin || hasPermission(user, 'inventory.transfers.approve');
+    const hasReceivePerm = hasAdmin || hasPermission(user, 'inventory.transfers.receive');
+    const isScoped = isBranchScopedUser(user);
+    const canApprove = hasApprovePerm && (!isScoped || hasBranchAccess(user, fromBranchId)) && row.status === 'requested';
+    const canReject = canApprove;
+    const canReceive = hasReceivePerm && (!isScoped || hasBranchAccess(user, toBranchId)) && row.status === 'pending';
 
     return {
       ...row,

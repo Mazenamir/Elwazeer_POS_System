@@ -107,7 +107,8 @@ const CATEGORY_DISPLAY_MAP = {
 
 export function POS() {
   const { user, isAdmin, hasPermission } = useAuth();
-  const { activeBranchId, branches, activeBranch } = useBranch();
+  const { activeBranchId, branches, allBranches, activeBranch } = useBranch();
+  const transferBranches = Array.isArray(allBranches) && allBranches.length > 0 ? allBranches : branches;
   const toast = useToast();
   const [searchParams] = useSearchParams();
 
@@ -116,6 +117,12 @@ export function POS() {
   const canAccessHistory = Boolean(isAdmin || hasPermission('pos.invoices.view'));
   const canAccessReturns = Boolean(isAdmin || hasPermission('pos.returns.view'));
   const canAccessExpenses = Boolean(isAdmin || hasPermission('expenses.list.view') || hasPermission('expenses.create'));
+  const canRequestBranchStock = Boolean(
+    isAdmin ||
+    hasPermission('inventory_admin') ||
+    hasPermission('inventory.transfers.request') ||
+    hasPermission('pos.sales.create')
+  );
 
   const accessibleTabs = useMemo(() => {
     const list = [];
@@ -685,7 +692,8 @@ export function POS() {
         const sizeMatch = (item.size_cut || item.size || '').toLowerCase().includes(queryTerm);
         const sizesMatch = Array.isArray(item.sizes) && item.sizes.some((s) =>
           (s.size_name || '').toLowerCase().includes(queryTerm) ||
-          (s.color_name || '').toLowerCase().includes(queryTerm)
+          (s.color_name || '').toLowerCase().includes(queryTerm) ||
+          (s.barcode || '').toLowerCase().includes(queryTerm)
         );
 
         if (!nameMatch && !barcodeMatch && !idMatch && !colorMatch && !catMatch && !sizeMatch && !sizesMatch) {
@@ -853,10 +861,14 @@ export function POS() {
           const targetSize = selectedSize.trim().toLowerCase();
           const targetSizeObj = prod.sizes?.find((s) => String(s.size_name || '').trim().toLowerCase() === targetSize);
           if (targetSizeObj) {
-            return Number(targetSizeObj.stock_level ?? 0) > 0;
+            if (Number(targetSizeObj.stock_level ?? 0) > 0) return true;
+            if (queryTerm && Number(prod.total_stock ?? 0) > 0) return true;
+            return false;
           }
         }
-        return branchStock > 0;
+        if (branchStock > 0) return true;
+        if (queryTerm && Number(prod.total_stock ?? 0) > 0) return true;
+        return false;
       }
 
       if (stockFilter === 'in_any_branch') {
@@ -1124,30 +1136,42 @@ export function POS() {
 
       if (!matched) {
         try {
-          const directRes = await api.get(`/inventory?barcode=${encodeURIComponent(code)}&branch_id=${activeBranchId || 'all'}`);
+          const directRes = await api.get(`/inventory?barcode=${encodeURIComponent(code)}&branch_id=${activeBranchId || 'all'}&include_zero=true`);
           const found = Array.isArray(directRes) ? directRes[0] : directRes?.items?.[0];
           if (found) matched = found;
         } catch {}
       }
 
       if (matched) {
-        const availableStock = getProductAvailableStock(matched);
-        if (availableStock <= 0) {
-          playErrorSound();
-          const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
-          toast.error(`عفواً، الصنف "${matched.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
-          return;
-        }
-
         // Check if barcode specifically matched an individual size/variant
         const specificSize = Array.isArray(matched.sizes)
           ? matched.sizes.find((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase())
           : null;
 
+        const availableStock = getProductAvailableStock(matched);
+        if (availableStock <= 0) {
+          playErrorSound();
+          const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
+          if (transferBranches.length > 1 && canRequestBranchStock) {
+            toast.info(`غير متوفر في ${branchName} (0) — تم فتح نافذة طلبه من الفروع الأخرى 🚚`);
+            openStockRequestModal(matched, specificSize || null);
+            setSearchQuery('');
+            return;
+          }
+          toast.error(`عفواً، الصنف "${matched.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
+          return;
+        }
+
         if (specificSize) {
           const sizeStock = Number(specificSize.stock_level ?? 0);
           if (sizeStock <= 0) {
             playErrorSound();
+            if (transferBranches.length > 1 && canRequestBranchStock) {
+              toast.info(`المقاس "${specificSize.size_name}" غير متوفر بفرعك — تم فتح نافذة طلبه من الفروع الأخرى 🚚`);
+              openStockRequestModal(matched, specificSize);
+              setSearchQuery('');
+              return;
+            }
             toast.error(`عفواً، المقاس "${specificSize.size_name}" (${specificSize.color_name || ''}) نفد من المخزون.`);
             return;
           }
@@ -1160,6 +1184,12 @@ export function POS() {
           const hasAnyInStock = matched.sizes.some((s) => Number(s.stock_level || 0) > 0);
           if (!hasAnyInStock) {
             playErrorSound();
+            if (transferBranches.length > 1 && canRequestBranchStock) {
+              toast.info(`جميع مقاسات "${matched.name}" نفدت بفرعك — تم فتح نافذة طلبها من الفروع الأخرى 🚚`);
+              openStockRequestModal(matched, null);
+              setSearchQuery('');
+              return;
+            }
             toast.error(`عفواً، جميع مقاسات الصنف "${matched.name}" نفدت من المخزون.`);
             return;
           }
@@ -1180,7 +1210,14 @@ export function POS() {
   // Handler when clicking a product card in POS
   const handleProductCardClick = (product) => {
     const availableStock = getProductAvailableStock(product);
+    const hasInOtherBranch = Array.isArray(product.available_branches) && product.available_branches.some(
+      (b) => b.branch_id.toString() !== activeBranchId?.toString() && Number(b.stock_level || 0) > 0
+    );
     if (availableStock <= 0) {
+      if (transferBranches.length > 1 && canRequestBranchStock && hasInOtherBranch) {
+        openStockRequestModal(product);
+        return;
+      }
       playErrorSound();
       const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
       toast.error(`عفواً، الصنف "${product.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
@@ -1190,6 +1227,10 @@ export function POS() {
     if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 1) {
       const hasAnyInStock = product.sizes.some((s) => Number(s.stock_level || 0) > 0);
       if (!hasAnyInStock) {
+        if (transferBranches.length > 1 && canRequestBranchStock && hasInOtherBranch) {
+          openStockRequestModal(product);
+          return;
+        }
         playErrorSound();
         toast.error(`عفواً، جميع مقاسات الصنف "${product.name}" نفدت من المخزون ولا يمكن ضربه بالفاتورة.`);
         return;
@@ -2875,7 +2916,7 @@ export function POS() {
                               {isAll ? `المتوفر: ${currentBranchStock}` : `متوفر بـ ${activeBranchName}: ${currentBranchStock}`}
                             </span>
                           )}
-                          {branches.length > 1 && (
+                          {transferBranches.length > 1 && canRequestBranchStock && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -4700,7 +4741,7 @@ export function POS() {
         product={requestProduct}
         preselectedSize={requestPreselectedSize}
         activeBranchId={activeBranchId}
-        branches={branches}
+        branches={transferBranches}
       />
 
       {/* RETURN DETAILS MODAL */}
@@ -4917,7 +4958,7 @@ export function POS() {
                         </span>
 
                         {/* Other branches availability for this exact size/color */}
-                        {branches.length > 1 && (
+                        {transferBranches.length > 1 && (
                           sizeBranchLoading ? (
                             <span className="text-[9px] font-bold text-slate-400">فحص الفروع...</span>
                           ) : otherBranchesForSize.length > 0 ? (
@@ -4944,7 +4985,7 @@ export function POS() {
                         )}
                       </div>
 
-                      {isOutOfStock && branches.length > 1 && otherBranchesForSize.length > 0 && (
+                      {isOutOfStock && canRequestBranchStock && transferBranches.length > 1 && otherBranchesForSize.length > 0 && (
                         <button
                           type="button"
                           onClick={(ev) => {

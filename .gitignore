@@ -61,4 +61,5 @@ manual_screenshots/
 !scratch/audit_schema_parity_pg_vs_sqlite.js
 !scratch/run_all_branch_tests.js
 !scratch/test_updater_api_fallback.js
+!scratch/test_transfer_and_rbac_parity.js
 update-policy*.json

@@ -276,14 +276,16 @@ export function Customers() {
           <Button variant="outline" icon={Download} onClick={exportToCSV}>
             تصدير CSV
           </Button>
-          <Button
-            variant="primary"
-            size="lg"
-            icon={UserPlus}
-            onClick={openCreateModal}
-          >
-            إضافة عميل جديد
-          </Button>
+          {(isAdmin || hasPermission('customers.create')) && (
+            <Button
+              variant="primary"
+              size="lg"
+              icon={UserPlus}
+              onClick={openCreateModal}
+            >
+              إضافة عميل جديد
+            </Button>
+          )}
         </div>
       </div>
 
@@ -386,13 +388,15 @@ export function Customers() {
                         >
                           <History className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => openEditModal(c)}
-                          className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
-                          title="تعديل بيانات العميل"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
+                        {(isAdmin || hasPermission('customers.edit')) && (
+                          <button
+                            onClick={() => openEditModal(c)}
+                            className="p-1.5 text-[#777266] hover:text-[#151515] hover:bg-[#FAF6ED] rounded-lg transition-colors"
+                            title="تعديل بيانات العميل"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        )}
                         {(isAdmin || hasPermission('customers.delete')) && (
                           <button
                             onClick={() => handleDelete(c.id)}

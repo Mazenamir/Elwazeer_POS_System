@@ -51,9 +51,14 @@ const STATUS_MAP = {
 };
 
 export function Rentals() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { activeBranchId, branches } = useBranch();
   const toast = useToast();
+
+  const canCreateRental = Boolean(isAdmin || hasPermission('rentals.contracts.create'));
+  const canEditRental = Boolean(isAdmin || hasPermission('rentals.contracts.edit') || hasPermission('rentals.contracts.create'));
+  const canReturnRental = Boolean(isAdmin || hasPermission('rentals.contracts.return') || hasPermission('rentals.contracts.edit'));
+  const canCancelRental = Boolean(isAdmin || hasPermission('rentals.contracts.cancel'));
 
   // Data State
   const [rentals, setRentals] = useState([]);
@@ -1024,14 +1029,16 @@ export function Rentals() {
             متابعة حجوزات البدل والسموكنج، تواريخ الاستلام والتسليم والتأمين
           </p>
         </div>
-        <Button
-          variant="primary"
-          size="lg"
-          icon={Plus}
-          onClick={() => setShowCreateModal(true)}
-        >
-          حجز إيجار جديد
-        </Button>
+        {canCreateRental && (
+          <Button
+            variant="primary"
+            size="lg"
+            icon={Plus}
+            onClick={() => setShowCreateModal(true)}
+          >
+            حجز إيجار جديد
+          </Button>
+        )}
       </div>
 
       {/* KPI Stats Grid */}
@@ -1762,7 +1769,7 @@ export function Rentals() {
                             تأخير {r.delay_days} يوم!
                           </div>
                         )}
-                        {r.status === 'booked' && (
+                        {canEditRental && r.status === 'booked' && (
                           <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black mt-1 ${
                             r.is_prepared
                               ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
@@ -1819,7 +1826,7 @@ export function Rentals() {
                       <td className="py-3.5 pl-2">
                         <div className="flex items-center gap-1.5">
                           {/* Pickup button if booked */}
-                          {r.status === 'booked' && (
+                          {canEditRental && r.status === 'booked' && (
                             <Button
                               variant="success"
                               size="sm"
@@ -1830,7 +1837,7 @@ export function Rentals() {
                           )}
 
                           {/* Return button if active */}
-                          {r.status === 'active' && (
+                          {canReturnRental && r.status === 'active' && (
                             <Button
                               variant="primary"
                               size="sm"
@@ -1841,7 +1848,7 @@ export function Rentals() {
                           )}
 
                           {/* Cancel if booked */}
-                          {r.status === 'booked' && (
+                          {canCancelRental && r.status === 'booked' && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1853,7 +1860,7 @@ export function Rentals() {
                           )}
 
                           {/* Convert to Sale if booked or active */}
-                          {['booked', 'active'].includes(r.status) && (
+                          {canEditRental && ['booked', 'active'].includes(r.status) && (
                             <button
                               onClick={() => openSaleConversionModal(r)}
                               className="p-1.5 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 transition-colors"
@@ -1864,7 +1871,7 @@ export function Rentals() {
                           )}
 
                           {/* Add Items / Accessories Button */}
-                          {['booked', 'active'].includes(r.status) && (
+                          {canEditRental && ['booked', 'active'].includes(r.status) && (
                             <button
                               type="button"
                               onClick={() => openAddItemsModal(r)}
@@ -1877,7 +1884,7 @@ export function Rentals() {
                           )}
 
                           {/* Settle Remaining Payment if remaining > 0 (for returned or active) */}
-                          {Number(r.remaining || 0) > 0 && r.status !== 'cancelled' && (
+                          {canEditRental && Number(r.remaining || 0) > 0 && r.status !== 'cancelled' && (
                             <Button
                               variant="warning"
                               size="sm"
@@ -1889,16 +1896,18 @@ export function Rentals() {
                             </Button>
                           )}
 
-                          {/* Change Status Button - Always available on EVERY row */}
-                          <button
-                            type="button"
-                            onClick={() => openStatusModal(r)}
+                          {/* Change Status Button */}
+                          {canEditRental && (
+                            <button
+                              type="button"
+                              onClick={() => openStatusModal(r)}
                             className="px-2 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors flex items-center gap-1 shrink-0 shadow-2xs"
                             title="تعديل وتغيير حالة الحجز"
                           >
                             <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
                             <span>تغيير الحالة</span>
-                          </button>
+                            </button>
+                          )}
 
                           {/* Print Receipt */}
                           <button

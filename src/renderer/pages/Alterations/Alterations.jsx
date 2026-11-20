@@ -165,15 +165,17 @@ export function Alterations() {
             متابعة أوامر تقصير وتضييق وتعديل البدل والجاكيت والبنطلون وتجهيز الحجوزات
           </p>
         </div>
-        <Button
-          variant="primary"
-          size="lg"
-          icon={Plus}
-          onClick={() => setShowCreateModal(true)}
-          className="!bg-[#151515] hover:!bg-[#24221F] text-white shadow-sm"
-        >
-          طلب تعديل جديد
-        </Button>
+        {(isAdmin || hasPermission('alterations.create')) && (
+          <Button
+            variant="primary"
+            size="lg"
+            icon={Plus}
+            onClick={() => setShowCreateModal(true)}
+            className="!bg-[#151515] hover:!bg-[#24221F] text-white shadow-sm"
+          >
+            طلب تعديل جديد
+          </Button>
+        )}
       </div>
 
       {/* Main Table Card */}
@@ -296,17 +298,19 @@ export function Alterations() {
                           >
                             <Printer className="w-4 h-4" />
                           </button>
-                          <button
-                            onClick={() => {
-                              setSelectedAlteration(alt);
-                              setNewStatus(alt.status || 'ready');
-                              setShowStatusModal(true);
-                            }}
-                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="تغيير الحالة"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
+                          {(isAdmin || hasPermission('alterations.edit')) && (
+                            <button
+                              onClick={() => {
+                                setSelectedAlteration(alt);
+                                setNewStatus(alt.status || 'ready');
+                                setShowStatusModal(true);
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                              title="تغيير الحالة"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                          )}
                           {(isAdmin || hasPermission('alterations.delete')) && ['pending', 'in_progress'].includes(alt.status) && (
                             <button
                               onClick={() => handleDelete(alt.id)}

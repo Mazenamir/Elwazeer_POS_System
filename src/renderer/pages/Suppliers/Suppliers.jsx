@@ -144,7 +144,8 @@ const getPaginationItems = (current, total) => {
 
 export function Suppliers() {
   const { user, isAdmin, hasPermission } = useAuth();
-  const { activeBranchId, branches, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
+  const { activeBranchId, branches, allBranches, selectBranch, hasAllBranchesAccess, canSwitchBranches } = useBranch();
+  const transferBranches = Array.isArray(allBranches) && allBranches.length > 0 ? allBranches : branches;
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -1475,14 +1476,15 @@ total: 0,
 
     setFromBranchId(srcBranch);
 
-    const otherBranches = branches.filter((b) => b.id.toString() !== srcBranch);
+    const otherBranches = transferBranches.filter((b) => b.id.toString() !== srcBranch);
     if (otherBranches.length > 0) {
       setToBranchId(otherBranches[0].id.toString());
     } else {
       setToBranchId('');
     }
 
-    setTransferDirect(true);
+    const canDirectTransfer = Boolean(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.approve'));
+    setTransferDirect(canDirectTransfer);
     setTransferVariantQtys({});
     setTransferQty('1');
     setShowTransferModal(true);
@@ -1492,7 +1494,7 @@ total: 0,
   const handleSourceBranchChange = (newSrcId) => {
     setFromBranchId(newSrcId);
     if (toBranchId === newSrcId) {
-      const other = branches.find((b) => b.id.toString() !== newSrcId);
+      const other = transferBranches.find((b) => b.id.toString() !== newSrcId);
       if (other) setToBranchId(other.id.toString());
     }
     if (transferProduct?.id) {
@@ -2981,46 +2983,64 @@ total: 0,
                             </div>
                           </td>
                           <td className="py-3">
-                            <div className="flex flex-col gap-1.5">
-                              {p.color && (
-                                <div className="flex items-center gap-1">
-                                  <span className="px-2 py-0.5 rounded-md bg-[#FAF6ED] text-[#24221F] text-xs font-bold border border-[#E6DECD]">
-                                    {p.color}
-                                  </span>
-                                </div>
-                              )}
+                            <div className="flex flex-col gap-1.5 max-w-sm">
                               {Array.isArray(p.sizes) && p.sizes.length > 0 ? (
-                                <div className="flex flex-wrap items-center gap-1.5 max-w-xs">
-                                  {p.sizes.map((s, sIdx) => {
-                                    const qty = Number(s.stock_level ?? 0);
-                                    return (
-                                      <span
-                                        key={sIdx}
-                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border transition-colors ${
-                                          qty > 0
-                                            ? 'bg-[#FAF6ED] text-[#24221F] border-[#E6DECD]'
-                                            : 'bg-rose-50/70 text-rose-600 border-rose-200'
-                                        }`}
-                                        title={`المقاس: ${s.size_name} | الرصيد: ${qty} قطعة`}
-                                      >
-                                        <span className="font-extrabold">{s.size_name}</span>
-                                        <span
-                                          className={`px-1.5 py-0.5 rounded text-[11px] font-black ${
-                                            qty > 0 ? 'bg-[#FFFDF9] text-[#24221F] border border-[#E6DECD]' : 'bg-rose-100 text-rose-700'
-                                          }`}
-                                        >
-                                          {qty}
+                                (() => {
+                                  const colorGroups = new Map();
+                                  for (const s of p.sizes) {
+                                    const cName = String(s.color_name || p.color || '').trim();
+                                    if (!colorGroups.has(cName)) colorGroups.set(cName, []);
+                                    colorGroups.get(cName).push(s);
+                                  }
+                                  return Array.from(colorGroups.entries()).map(([cName, groupSizes], gIdx) => (
+                                    <div key={gIdx} className="flex flex-wrap items-center gap-1.5">
+                                      {cName && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 text-[11px] font-black border border-indigo-200 shrink-0">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                          {cName}
                                         </span>
-                                      </span>
-                                    );
-                                  })}
-                                </div>
+                                      )}
+                                      {groupSizes.map((s, sIdx) => {
+                                        const qty = Number(s.stock_level ?? 0);
+                                        return (
+                                          <span
+                                            key={sIdx}
+                                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border transition-colors ${
+                                              qty > 0
+                                                ? 'bg-[#FAF6ED] text-[#24221F] border-[#E6DECD]'
+                                                : 'bg-rose-50/70 text-rose-600 border-rose-200'
+                                            }`}
+                                            title={`${cName ? `اللون: ${cName} | ` : ''}المقاس: ${s.size_name} | الرصيد: ${qty} قطعة`}
+                                          >
+                                            <span className="font-extrabold">{s.size_name}</span>
+                                            <span
+                                              className={`px-1.5 py-0.2 rounded text-[11px] font-black ${
+                                                qty > 0 ? 'bg-[#FFFDF9] text-[#24221F] border border-[#E6DECD]' : 'bg-rose-100 text-rose-700'
+                                              }`}
+                                            >
+                                              {qty}
+                                            </span>
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  ));
+                                })()
                               ) : (
-                                (p.size_cut || p.size) && (
-                                  <span className="text-xs text-[#777266] font-bold">
-                                    {p.size_cut || p.size}
-                                  </span>
-                                )
+                                <>
+                                  {p.color && (
+                                    <div className="flex items-center gap-1">
+                                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 text-xs font-bold border border-indigo-200">
+                                        {p.color}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {(p.size_cut || p.size) && (
+                                    <span className="text-xs text-[#777266] font-bold">
+                                      {p.size_cut || p.size}
+                                    </span>
+                                  )}
+                                </>
                               )}
                             </div>
                           </td>
@@ -3098,7 +3118,7 @@ total: 0,
                               )}
 
                               {/* Transfer Between Branches */}
-                              {branches.length > 1 && (isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.request')) && (
+                              {transferBranches.length > 1 && (isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.request')) && (
                                 <>
                                   <button
                                     onClick={() => {
@@ -4556,7 +4576,7 @@ total: 0,
                 className="w-full bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 shadow-2xs"
                 required
               >
-                {branches
+                {transferBranches
                   .filter((b) => b.id.toString() !== fromBranchId)
                   .map((b) => (
                     <option key={b.id} value={b.id.toString()}>
@@ -4752,7 +4772,7 @@ total: 0,
                 <div>
                   <span className="text-xs font-black text-indigo-950 block">ملخص عملية التحويل</span>
                   <span className="text-[11px] text-slate-500 font-bold">
-                    سيتم خصمها من {branches.find((b) => b.id.toString() === fromBranchId)?.name} وإضافتها إلى {branches.find((b) => b.id.toString() === toBranchId)?.name}
+                    سيتم خصمها من {transferBranches.find((b) => b.id.toString() === fromBranchId)?.name} وإضافتها إلى {transferBranches.find((b) => b.id.toString() === toBranchId)?.name}
                   </span>
                 </div>
                 <div className="flex items-center gap-4">
@@ -4773,16 +4793,18 @@ total: 0,
 
               {/* TRANSFER DIRECT/PENDING OPTION */}
               <div className="flex items-center gap-4 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="transfer_type"
-                    checked={transferDirect}
-                    onChange={() => setTransferDirect(true)}
-                    className="accent-indigo-600"
-                  />
-                  <span>تحويل مباشر وفوري (مكتمل) ⚡</span>
-                </label>
+                {(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.transfers.approve')) && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="transfer_type"
+                      checked={transferDirect}
+                      onChange={() => setTransferDirect(true)}
+                      className="accent-indigo-600"
+                    />
+                    <span>تحويل مباشر وفوري (مكتمل) ⚡</span>
+                  </label>
+                )}
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
@@ -5394,7 +5416,7 @@ total: 0,
         }}
         product={smartRequestProduct}
         activeBranchId={activeBranchId}
-        branches={branches}
+        branches={transferBranches}
         onSuccess={() => {
           fetchRequests();
           fetchProducts();

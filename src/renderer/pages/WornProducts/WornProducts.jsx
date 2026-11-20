@@ -90,9 +90,13 @@ const groupSalesCatalog = (items) => {
 };
 
 export function WornProducts() {
-  const { user } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const { branches, currentBranchId, activeBranchId, hasAllBranchesAccess, canSwitchBranches } = useBranch();
   const { toast } = useToast();
+
+  const canCreateWorn = Boolean(isAdmin || hasPermission('worn_products.create'));
+  const canEditWorn = Boolean(isAdmin || hasPermission('worn_products.edit'));
+  const canDeleteWorn = Boolean(isAdmin || hasPermission('worn_products.delete'));
 
   const [records, setRecords] = useState([]);
   const [summary, setSummary] = useState({
@@ -712,9 +716,11 @@ export function WornProducts() {
             </div>
           </div>
         </div>
-        <Button variant="danger" icon={Plus} onClick={openAddModal}>
-          تسجيل قطعة تالفة
-        </Button>
+        {canCreateWorn && (
+          <Button variant="danger" icon={Plus} onClick={openAddModal}>
+            تسجيل قطعة تالفة
+          </Button>
+        )}
       </div>
 
       {/* KPI Stats */}
@@ -932,9 +938,10 @@ export function WornProducts() {
                     </td>
                     <td className="py-3.5 px-4">
                       <select
-                        className="text-xs font-black py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-slate-900"
+                        className="text-xs font-black py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 disabled:opacity-60 disabled:cursor-not-allowed"
                         value={r.status || 'recorded'}
                         onChange={(e) => handleStatusChange(r.id, e.target.value)}
+                        disabled={!canEditWorn}
                       >
                         <option value="recorded">مسجل</option>
                         <option value="reviewed">تمت المراجعة</option>
@@ -942,16 +949,18 @@ export function WornProducts() {
                       </select>
                     </td>
                     <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteRecord(r)}
-                        disabled={deletingId === r.id}
-                        title={noDeduct ? 'حذف السجل' : 'استرجاع الكمية للمخزون وحذف السجل'}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors disabled:opacity-50"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span>{deletingId === r.id ? 'جارِ...' : 'استرجاع وحذف'}</span>
-                      </button>
+                      {canDeleteWorn && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRecord(r)}
+                          disabled={deletingId === r.id}
+                          title={noDeduct ? 'حذف السجل' : 'استرجاع الكمية للمخزون وحذف السجل'}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors disabled:opacity-50"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>{deletingId === r.id ? 'جارِ...' : 'استرجاع وحذف'}</span>
+                        </button>
+                      )}
                     </td>
                   </tr>
                   );

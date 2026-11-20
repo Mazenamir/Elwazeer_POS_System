@@ -333,14 +333,16 @@ export function RentalInventory() {
             سجل بدل الزفاف (عريس)، السموكنج، البدل الرسمية، ومتابعة توفرها والباركود
           </p>
         </div>
-        <Button
-          variant="primary"
-          size="lg"
-          icon={Plus}
-          onClick={openCreateModal}
-        >
-          إضافة بدلة جديدة للمخزون
-        </Button>
+        {(isAdmin || hasPermission('rental_inventory.items.create') || hasPermission('inventory_admin')) && (
+          <Button
+            variant="primary"
+            size="lg"
+            icon={Plus}
+            onClick={openCreateModal}
+          >
+            إضافة بدلة جديدة للمخزون
+          </Button>
+        )}
       </div>
 
       {/* Categories Bar */}
@@ -535,13 +537,15 @@ export function RentalInventory() {
                         >
                           <Barcode className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => openEditModal(item)}
-                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                          title="تعديل"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
+                        {(isAdmin || hasPermission('rental_inventory.items.edit') || hasPermission('inventory_admin')) && (
+                          <button
+                            onClick={() => openEditModal(item)}
+                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="تعديل"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        )}
                         {(isAdmin || hasPermission('rental_inventory.items.delete')) && (
                           <button
                             onClick={() => handleDelete(item.id)}
