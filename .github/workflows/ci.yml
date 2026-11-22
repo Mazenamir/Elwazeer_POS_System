@@ -66,6 +66,7 @@ jobs:
       DB_NAME: pos_db
       JWT_SECRET: ci-test-jwt-secret-key-2026
       SYNC_API_KEY: BebyoonSecretKey2026
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
