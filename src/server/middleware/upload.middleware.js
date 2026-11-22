@@ -76,7 +76,32 @@ function removeUploadedFile(filePath) {
   }
 }
 
+function saveBase64ImageIfPresent(imageInput) {
+  if (!imageInput || typeof imageInput !== 'string' || !imageInput.startsWith('data:image/')) {
+    return imageInput;
+  }
+  try {
+    const matches = imageInput.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/s);
+    if (!matches) return imageInput;
+    let ext = matches[1].toLowerCase();
+    if (ext === 'jpeg') ext = 'jpg';
+    const safeExt = ALLOWED_EXTENSIONS.has(`.${ext}`) ? `.${ext}` : '.jpg';
+    const buffer = Buffer.from(matches[2], 'base64');
+    const filename = `product_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${safeExt}`;
+    fs.mkdirSync(config.PRODUCT_UPLOADS_DIR, { recursive: true });
+    const filepath = path.join(config.PRODUCT_UPLOADS_DIR, filename);
+    fs.writeFileSync(filepath, buffer);
+    return `/uploads/products/${filename}`;
+  } catch (err) {
+    console.error('Failed to save base64 image to disk:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
+  ALLOWED_EXTENSIONS,
+  MAX_FILE_SIZE,
   productUploadMiddleware,
   removeUploadedFile,
+  saveBase64ImageIfPresent,
 };

@@ -495,7 +495,9 @@ async function updateOwnAccount(userId, { current_password, password, new_passwo
           branch_ids: syncedRow.branch_ids,
           token_version: syncedRow.token_version,
         });
-      } catch {}
+      } catch (syncErr) {
+        console.warn('[Auth] Failed to queue user update sync in updateBranchUser:', syncErr.message);
+      }
     }
   } else {
     await db.query(`
@@ -992,7 +994,9 @@ async function updateBranchUser(id, {
           branch_ids: syncedRow.branch_ids,
           token_version: syncedRow.token_version,
         });
-      } catch {}
+      } catch (syncErr) {
+        console.warn('[Auth] Failed to queue user update sync in updateBranchUser:', syncErr.message);
+      }
     }
 
     await auditService.log({
@@ -1146,7 +1150,9 @@ async function deleteBranchUser(id) {
           id: existing.id,
           username: existing.username,
         });
-      } catch {}
+      } catch (syncErr) {
+        console.warn('[Auth] Failed to queue user delete sync in deleteBranchUser:', syncErr.message);
+      }
     }
   } else {
     await db.query("DELETE FROM users WHERE id = $1 AND role != 'admin'", [id]);

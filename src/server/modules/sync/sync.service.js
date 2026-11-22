@@ -8,6 +8,7 @@ const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
 const { parsePositiveInt } = require('../../../shared/utils/numbers');
 const { logActivity, queueSyncOperation, getSupplierSyncRef } = require('../../database/sync.helpers');
 const offlineStore = require('./offline.store');
+const uploadSyncHelpers = require('./upload-sync.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 const { adjustInventoryStock, generateUniqueBarcode, normalizeBarcodeInput } = require('../inventory/inventory.helpers');
 
@@ -2533,6 +2534,10 @@ async function applyOperation(operation) {
               targetId,
             ]
           );
+          try {
+            const { invalidateUserCache } = require('../auth/auth.service');
+            if (typeof invalidateUserCache === 'function') invalidateUserCache(targetId);
+          } catch {}
         }
       } else if (operation.action === 'delete') {
         if (payload.username) {
@@ -3580,8 +3585,10 @@ async function runSync(requestedLimit = 50) {
 }
 
 async function exportCatalogForBranch(branchId = null) {
+  await uploadSyncHelpers.repairLegacyImagePaths(db);
+
   const usersPromise = db.query(
-    'SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids FROM users'
+    'SELECT id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids, token_version FROM users'
   );
 
   const employeesPromise = db.query(
@@ -3884,10 +3891,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
     // 1. Users
     if (Array.isArray(catalog.users)) {
+      ensureCol('users', 'token_version', 'INTEGER DEFAULT 1');
       let pendingUserIds = new Set();
       let pendingUsernames = new Set();
       try {
-        const pendingRows = sqlite.prepare("SELECT entity_id, payload FROM sync_queue WHERE entity_type = 'user' AND status IN ('pending', 'processing', 'retry', 'failed')").all();
+        const pendingRows = sqlite.prepare("SELECT entity_id, payload FROM sync_queue WHERE entity_type = 'user' AND status IN ('pending', 'processing')").all();
         for (const r of pendingRows) {
           if (r.entity_id) pendingUserIds.add(Number(r.entity_id));
           try {
@@ -3900,8 +3908,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
 
       const cleanStaleUserStmt = sqlite.prepare("DELETE FROM users WHERE username = ? AND id != ?");
       const uStmt = sqlite.prepare(`
-        INSERT INTO users (id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO users (id, username, password_hash, role, branch_id, permissions, employee_id, full_name, branch_scope, branch_ids, token_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           username = excluded.username,
           password_hash = CASE
@@ -3914,7 +3922,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           employee_id = excluded.employee_id,
           full_name = COALESCE(excluded.full_name, users.full_name),
           branch_scope = COALESCE(excluded.branch_scope, users.branch_scope),
-          branch_ids = COALESCE(excluded.branch_ids, users.branch_ids)
+          branch_ids = COALESCE(excluded.branch_ids, users.branch_ids),
+          token_version = COALESCE(excluded.token_version, users.token_version)
       `);
       for (const u of catalog.users) {
         if (pendingUserIds.has(Number(u.id)) || pendingUsernames.has(String(u.username))) continue;
@@ -3942,7 +3951,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           pwdHash = existingUser?.password_hash || '$2b$10$temporarySanitizedUserPasswordHashFallback00000000000000000';
         }
 
-        uStmt.run(u.id, u.username, pwdHash, u.role, (u.branch_id !== undefined && u.branch_id !== null) ? u.branch_id : null, JSON.stringify(perms), u.employee_id || null, u.full_name || null, bScope, bIds);
+        uStmt.run(u.id, u.username, pwdHash, u.role, (u.branch_id !== undefined && u.branch_id !== null) ? u.branch_id : null, JSON.stringify(perms), u.employee_id || null, u.full_name || null, bScope, bIds, Number(u.token_version || 1));
+        try {
+          const { invalidateUserCache } = require('../auth/auth.service');
+          if (typeof invalidateUserCache === 'function') invalidateUserCache(u.id);
+        } catch {}
       }
 
       // Reconcile and purge deleted users from SQLite
@@ -5697,13 +5710,28 @@ async function pullCatalogFromCentral() {
   const catalog = await response.json();
   const importResult = await importCatalogIntoBranch(catalog);
   console.log(`[Sync] Successfully imported catalog at ${importResult.imported_at}:`, importResult.counts);
-  return importResult;
+
+  let imageSync = null;
+  try {
+    imageSync = await uploadSyncHelpers.syncImagesWithCentral({
+      db,
+      fetchFn: (u, o) => fetchWithTimeout(u, o, Math.max(config.SYNC_FETCH_TIMEOUT_MS, 30000)),
+      serverUrl: config.SYNC_SERVER_URL,
+      apiKey: config.SYNC_API_KEY,
+      pullOnly: true,
+    });
+  } catch (imgErr) {
+    console.warn('[Sync] Image pull after catalog import failed:', imgErr.message);
+  }
+
+  return { ...importResult, images: imageSync };
 }
 
 let syncIntervalHandle = null;
 let isSyncCycleActive = false;
 let pendingFollowUpSync = false;
 let lastCatalogPull = 0;
+let lastImageSync = 0;
 let lastCatalogImportedAt = null;
 
 async function checkCentralConnectivity(timeoutMs = 5000) {
@@ -5956,6 +5984,24 @@ async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
       }
     }
 
+    // 3.5. Bidirectional image sync (push local branch images + pull any missing server images)
+    let imageSyncResult = null;
+    const shouldSyncImages = isManual || pushResult.synced > 0 || (Date.now() - lastImageSync > 30 * 1000);
+    if (shouldSyncImages) {
+      try {
+        imageSyncResult = await uploadSyncHelpers.syncImagesWithCentral({
+          db,
+          fetchFn: (u, o) => fetchWithTimeout(u, o, Math.max(config.SYNC_FETCH_TIMEOUT_MS, 30000)),
+          serverUrl: config.SYNC_SERVER_URL,
+          apiKey: config.SYNC_API_KEY,
+          pullOnly: false,
+        });
+        lastImageSync = Date.now();
+      } catch (imgErr) {
+        console.warn('[Sync] Bidirectional image sync warning:', imgErr.message);
+      }
+    }
+
     // Determine pending remaining operations
     let pendingRemaining = 0;
     try {
@@ -6012,6 +6058,7 @@ async function runSyncCycle({ isManual = false, limit = 50 } = {}) {
       ok: true,
       pushed: { ...pushResult, pending: pendingRemaining },
       pulled: pullResult,
+      images: imageSyncResult,
       message: summaryMessage,
       synced_at: new Date().toISOString(),
     };

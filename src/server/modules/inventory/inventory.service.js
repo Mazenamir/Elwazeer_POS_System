@@ -24,32 +24,11 @@ const {
 
 const { hasPermission, getUserPermissions } = require('../../../shared/constants/permissions');
 const { hasBranchAccess, getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
-const { removeUploadedFile } = require('../../middleware/upload.middleware');
+const { removeUploadedFile, saveBase64ImageIfPresent } = require('../../middleware/upload.middleware');
 const { queueSyncOperation } = require('../../database/sync.helpers');
 const auditService = require('../audit/audit.service');
 
 const TRANSFER_LIST_LIMIT = 200;
-
-function saveBase64ImageIfPresent(imageInput) {
-  if (!imageInput || typeof imageInput !== 'string' || !imageInput.startsWith('data:image/')) {
-    return imageInput;
-  }
-  try {
-    const matches = imageInput.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/s);
-    if (!matches) return imageInput;
-    let ext = matches[1].toLowerCase();
-    if (ext === 'jpeg') ext = 'jpg';
-    const buffer = Buffer.from(matches[2], 'base64');
-    const filename = `product_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
-    fs.mkdirSync(config.PRODUCT_UPLOADS_DIR, { recursive: true });
-    const filepath = path.join(config.PRODUCT_UPLOADS_DIR, filename);
-    fs.writeFileSync(filepath, buffer);
-    return `/uploads/products/${filename}`;
-  } catch (err) {
-    console.error('Failed to save base64 image to disk:', err.message);
-    return null;
-  }
-}
 
 // 12-digit numeric barcode used when a size row is saved without an explicit barcode.
 function generateNumericBarcode() {

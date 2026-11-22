@@ -48,9 +48,23 @@ function requireAdminOrSyncKey(req, res, next) {
   return res.status(403).json({ error: 'Forbidden: Admin privilege or sync key required' });
 }
 
+function requireSyncKeyOnly(req, res, next) {
+  const expectedKey = process.env.SYNC_API_KEY || config.SYNC_API_KEY;
+  if (!expectedKey) {
+    return res.status(403).json({ error: 'Sync endpoint is disabled: SYNC_API_KEY not configured' });
+  }
+  if (!checkSyncKey(req)) {
+    return res.status(401).json({ error: 'Invalid sync key' });
+  }
+  return next();
+}
+
 router.get('/sync/ping', syncController.ping);
 router.post('/sync/apply', syncController.apply);
 router.get('/sync/catalog', syncController.getCatalog);
+router.get('/sync/uploads/manifest', requireSyncKeyOnly, syncController.getUploadManifest);
+router.get('/sync/uploads/file', requireSyncKeyOnly, syncController.getUploadFile);
+router.post('/sync/uploads/push', requireSyncKeyOnly, syncController.pushUploadFile);
 router.post('/sync/pull', requireSyncAuthOrKey, syncController.pull);
 router.get('/sync/status', requireSyncAuthOrKey, syncController.getStatus);
 router.post('/sync/run', requireSyncAuthOrKey, syncLimiter, syncController.run);

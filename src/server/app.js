@@ -185,8 +185,17 @@ if (fs.existsSync(distPath)) {
 }
 app.use(express.static(rendererPath));
 
-// Static uploads serving
+// Static uploads serving (with fallback to uploads/products for legacy rental paths)
 app.use('/uploads', express.static(config.UPLOADS_DIR));
+app.get('/uploads/:filename', (req, res, next) => {
+  const safeName = path.basename(req.params.filename || '');
+  if (!safeName || safeName !== req.params.filename) return next();
+  const fallbackPath = path.join(config.PRODUCT_UPLOADS_DIR, safeName);
+  if (fs.existsSync(fallbackPath)) {
+    return res.sendFile(fallbackPath);
+  }
+  return next();
+});
 
 // Mount Domain API Modules
 app.use('/api', authRoutes);

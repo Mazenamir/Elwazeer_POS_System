@@ -11,6 +11,7 @@ const { queueSyncOperation, logActivity } = require('../../database/sync.helpers
 const { getRentalAvailability, getRentalGroupRows, getOrCreateSalesInventoryForRental } = require('./rentals.helpers');
 const { normalizePaymentMethod } = require('../reports/reports.helpers');
 const { hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
+const { saveBase64ImageIfPresent } = require('../../middleware/upload.middleware');
 
 function isValidIsoDate(str) {
   if (typeof str !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
@@ -169,6 +170,9 @@ async function listRentalInventory(query = {}, user = null, req = null) {
 
 async function createRentalInventory(body, user) {
   let { name, category, size_cut, color, barcode, image_url, branch_stocks, stock_level, price, rental_price, gender, sizes } = body || {};
+  if (typeof image_url === 'string') {
+    image_url = saveBase64ImageIfPresent(image_url.trim());
+  }
   barcode = normalizeBarcodeInput(barcode);
   const itemPrice = Number(price ?? rental_price ?? 0) || 0;
   const itemGender = gender || 'both';
@@ -330,6 +334,9 @@ async function updateRentalInventory(id, body, user) {
   }
 
   let { name, category, size_cut, color, barcode, image_url, branch_stocks, stock_level, price, rental_price } = body || {};
+  if (typeof image_url === 'string') {
+    image_url = saveBase64ImageIfPresent(image_url.trim());
+  }
   barcode = normalizeBarcodeInput(barcode);
   const itemPrice = Number(price ?? rental_price ?? 0) || 0;
 
@@ -367,11 +374,12 @@ async function updateRentalInventory(id, body, user) {
 
   const item = await db.transaction(async (tx) => {
     await assertBarcodeAvailable(tx, barcode, { rentalInventoryId: id });
+    const safeImageUrl = image_url !== undefined ? image_url : null;
     const { rows } = await tx.query(
       `UPDATE rental_inventory 
-       SET name=$1, category=$2, size_cut=$3, color=$4, barcode=$5, price=$6, image_url=$7 
+       SET name=$1, category=$2, size_cut=$3, color=$4, barcode=$5, price=$6, image_url=COALESCE($7, image_url) 
        WHERE id=$8 RETURNING *`,
-      [name, category, size_cut, color, barcode, itemPrice, image_url, id]
+      [name, category, size_cut, color, barcode, itemPrice, safeImageUrl, id]
     );
 
     if (branch_stocks && Array.isArray(branch_stocks)) {

@@ -1,6 +1,7 @@
 const config = require('../../config/env');
 const db = require('../../database/connection');
 const syncService = require('./sync.service');
+const uploadSyncHelpers = require('./upload-sync.helpers');
 const notificationsService = require('../notifications/notifications.service');
 
 async function ping(req, res) {
@@ -176,6 +177,46 @@ async function configure(req, res, next) {
   }
 }
 
+async function getUploadManifest(req, res, next) {
+  try {
+    await uploadSyncHelpers.repairLegacyImagePaths(db);
+    const files = uploadSyncHelpers.listLocalUploadImages();
+    res.json({ ok: true, files });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getUploadFile(req, res, next) {
+  try {
+    const filePath = uploadSyncHelpers.resolveExistingUploadFile(req.query?.path);
+    if (!filePath) {
+      return res.status(404).json({ error: 'Image file not found' });
+    }
+    return res.sendFile(filePath);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function pushUploadFile(req, res, next) {
+  try {
+    const { path: relPath, data_base64: dataBase64 } = req.body || {};
+    if (!relPath || !dataBase64 || typeof dataBase64 !== 'string') {
+      return res.status(400).json({ error: 'Missing path or data_base64' });
+    }
+    const cleanB64 = dataBase64.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
+    const buffer = Buffer.from(cleanB64, 'base64');
+    const saved = uploadSyncHelpers.saveUploadedImageBuffer(relPath, buffer);
+    res.json(saved);
+  } catch (err) {
+    if (err.statusCode === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    next(err);
+  }
+}
+
 module.exports = {
   ping,
   apply,
@@ -188,5 +229,8 @@ module.exports = {
   configure,
   getDeadLetter,
   retryDeadLetter,
+  getUploadManifest,
+  getUploadFile,
+  pushUploadFile,
 };
 
