@@ -10,6 +10,74 @@ const { parsePagination, appendPagination, paginatedPayload } = require('../../.
 const { queueSyncOperation } = require('../../database/sync.helpers');
 const { hasBranchAccess, getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
 
+function parseBranchIds(raw) {
+  if (Array.isArray(raw)) return raw.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(Number).filter((n) => Number.isFinite(n) && n > 0) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function normalizeEmployeeBranchScope(scope, branchIds, primaryBranchId) {
+  const cleanScope = (scope === 'all' || scope === 'selected') ? scope : 'single';
+  if (cleanScope !== 'selected') {
+    return { branch_scope: cleanScope, branch_ids: [] };
+  }
+  const set = new Set(parseBranchIds(branchIds));
+  if (primaryBranchId && Number(primaryBranchId) > 0) set.add(Number(primaryBranchId));
+  return { branch_scope: 'selected', branch_ids: Array.from(set) };
+}
+
+function hasEmployeeBranchAccess(user, employee) {
+  if (!user || !employee) return false;
+  if (user.role === 'admin' || user.branch_scope === 'all' || user.role === 'accountant') return true;
+  if (employee.branch_scope === 'all') return true;
+  if (hasBranchAccess(user, employee.branch_id)) return true;
+  if (employee.branch_scope === 'selected') {
+    const empBranchIds = parseBranchIds(employee.branch_ids);
+    return empBranchIds.some((bId) => hasBranchAccess(user, bId));
+  }
+  return false;
+}
+
+function buildEmployeeBranchFilterSql(targetBranchIds, params) {
+  const ids = (Array.isArray(targetBranchIds) ? targetBranchIds : [targetBranchIds])
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (ids.length === 0) {
+    params.push(-999);
+    return `e.branch_id = $${params.length}`;
+  }
+  if (ids.length === 1) {
+    const id = ids[0];
+    if (config.IS_BRANCH_MODE) {
+      params.push(id);
+      const pIdx = params.length;
+      return `(e.branch_id = $${pIdx} OR e.branch_scope = 'all' OR (e.branch_scope = 'selected' AND EXISTS (SELECT 1 FROM json_each(COALESCE(e.branch_ids, '[]')) WHERE CAST(value AS INTEGER) = $${pIdx})))`;
+    }
+    params.push(id);
+    const pIdx = params.length;
+    params.push(JSON.stringify([id]));
+    const jsonIdx = params.length;
+    return `(e.branch_id = $${pIdx} OR e.branch_scope = 'all' OR (e.branch_scope = 'selected' AND e.branch_ids @> $${jsonIdx}::jsonb))`;
+  }
+  if (config.IS_BRANCH_MODE) {
+    const placeholders = ids.map((id) => {
+      params.push(id);
+      return `$${params.length}`;
+    }).join(', ');
+    return `(e.branch_id IN (${placeholders}) OR e.branch_scope = 'all' OR (e.branch_scope = 'selected' AND EXISTS (SELECT 1 FROM json_each(COALESCE(e.branch_ids, '[]')) WHERE CAST(value AS INTEGER) IN (${placeholders}))))`;
+  }
+  params.push(ids);
+  const pIdx = params.length;
+  return `(e.branch_id = ANY($${pIdx}) OR e.branch_scope = 'all' OR (e.branch_scope = 'selected' AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(e.branch_ids, '[]'::jsonb)) AS bid WHERE bid::int = ANY($${pIdx}))))`;
+}
+
 async function getEmployeeOptions(query = {}, user = null) {
   const { date: todayDate } = getCairoDateTimeParts();
   const params = [todayDate];
@@ -219,29 +287,20 @@ async function listEmployees(query = {}, user = null, req = null) {
     if (query.branch_id && query.branch_id !== 'all') {
       const targetBId = Number(query.branch_id);
       if (authBranchIds === null || authBranchIds.includes(targetBId)) {
-        whereParams.push(targetBId);
-        where.push(`e.branch_id = $${whereParams.length}`);
+        where.push(buildEmployeeBranchFilterSql(targetBId, whereParams));
       } else {
         whereParams.push(-999);
         where.push(`e.branch_id = $${whereParams.length}`);
       }
     } else if (authBranchIds !== null) {
       if (authBranchIds.length > 0) {
-        if (authBranchIds.length === 1) {
-          whereParams.push(authBranchIds[0]);
-          where.push(`e.branch_id = $${whereParams.length}`);
-        } else {
-          whereParams.push(authBranchIds);
-          where.push(`e.branch_id = ANY($${whereParams.length})`);
-        }
+        where.push(buildEmployeeBranchFilterSql(authBranchIds, whereParams));
       } else if (user.branch_id) {
-        whereParams.push(user.branch_id);
-        where.push(`e.branch_id = $${whereParams.length}`);
+        where.push(buildEmployeeBranchFilterSql(user.branch_id, whereParams));
       }
     }
   } else if (query.branch_id && query.branch_id !== 'all') {
-    whereParams.push(Number(query.branch_id));
-    where.push(`e.branch_id = $${whereParams.length}`);
+    where.push(buildEmployeeBranchFilterSql(query.branch_id, whereParams));
   }
 
   if (query.search) {
@@ -326,17 +385,23 @@ async function listEmployees(query = {}, user = null, req = null) {
 
   const queryParams = [todayDate, monthRange.start, monthRange.end, ...whereParams];
 
+  const normalizeRow = (r) => ({
+    ...r,
+    branch_scope: r.branch_scope || 'single',
+    branch_ids: parseBranchIds(r.branch_ids),
+  });
+
   if (pagination.enabled) {
     selectQuery = appendPagination(selectQuery, queryParams, pagination);
     const [dataRes, countRes] = await Promise.all([
       db.query(selectQuery, queryParams),
       db.query(countQuery, whereParams),
     ]);
-    return paginatedPayload(dataRes.rows, countRes.rows[0]?.total || 0, pagination);
+    return paginatedPayload(dataRes.rows.map(normalizeRow), countRes.rows[0]?.total || 0, pagination);
   }
 
   const result = await db.query(selectQuery, queryParams);
-  return result.rows;
+  return result.rows.map(normalizeRow);
 }
 
 async function createEmployee(body, user) {
@@ -353,6 +418,8 @@ async function createEmployee(body, user) {
     name,
     position,
     branch_id,
+    branch_scope,
+    branch_ids,
     basic_salary,
     phone,
     join_date,
@@ -379,10 +446,11 @@ async function createEmployee(body, user) {
   const employee = await db.transaction(async (tx) => {
     const cairoNow = await getDatabaseCairoNow(tx);
     const cleanBranchId = (branch_id && Number(branch_id) > 0) ? Number(branch_id) : null;
+    const scopeInfo = normalizeEmployeeBranchScope(branch_scope, branch_ids, cleanBranchId);
     const empUuid = body.offline_uuid || (require('crypto').randomUUID ? require('crypto').randomUUID() : ('emp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9)));
     const empResult = await tx.query(
-      'INSERT INTO employees (name, position, branch_id, basic_salary, phone, join_date, shift_start, shift_end, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
-      [name, position, cleanBranchId, basic_salary || 0, phone, join_date || cairoNow.date, shift_start || null, shift_end || null, empUuid]
+      'INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, shift_start, shift_end, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
+      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, phone, join_date || cairoNow.date, shift_start || null, shift_end || null, empUuid]
     );
 
     let createdUser = null;
@@ -446,6 +514,8 @@ async function updateEmployee(id, body, user) {
     name,
     position,
     branch_id,
+    branch_scope,
+    branch_ids,
     basic_salary,
     phone,
     join_date,
@@ -459,9 +529,14 @@ async function updateEmployee(id, body, user) {
   } = body || {};
 
   const employee = await db.transaction(async (tx) => {
+    const existingRes = await tx.query('SELECT branch_id, branch_scope, branch_ids FROM employees WHERE id = $1', [id]);
+    if (existingRes.rows.length === 0) {
+      const err = new Error('Employee not found');
+      err.statusCode = 404;
+      throw err;
+    }
     if (isBranchUser) {
-      const check = await tx.query('SELECT branch_id FROM employees WHERE id = $1', [id]);
-      if (check.rows.length === 0 || !hasBranchAccess(user, check.rows[0].branch_id)) {
+      if (!hasBranchAccess(user, existingRes.rows[0].branch_id)) {
         const err = new Error('Unauthorized access to this employee');
         err.statusCode = 403;
         throw err;
@@ -469,14 +544,19 @@ async function updateEmployee(id, body, user) {
       if (branch_id && hasBranchAccess(user, branch_id)) {
         // Target branch authorized
       } else {
-        branch_id = check.rows[0].branch_id;
+        branch_id = existingRes.rows[0].branch_id;
       }
     }
 
     const cleanBranchId = (branch_id && Number(branch_id) > 0) ? Number(branch_id) : null;
+    const scopeInfo = normalizeEmployeeBranchScope(
+      branch_scope !== undefined ? branch_scope : existingRes.rows[0].branch_scope,
+      branch_ids !== undefined ? branch_ids : existingRes.rows[0].branch_ids,
+      cleanBranchId
+    );
     const result = await tx.query(
-      'UPDATE employees SET name = $1, position = $2, branch_id = $3, basic_salary = $4, phone = $5, join_date = COALESCE($6, join_date), shift_start = $7, shift_end = $8 WHERE id = $9 RETURNING *',
-      [name, position, cleanBranchId, basic_salary || 0, phone, join_date || null, shift_start || null, shift_end || null, id]
+      'UPDATE employees SET name = $1, position = $2, branch_id = $3, branch_scope = $4, branch_ids = $5, basic_salary = $6, phone = $7, join_date = COALESCE($8, join_date), shift_start = $9, shift_end = $10 WHERE id = $11 RETURNING *',
+      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, phone, join_date || null, shift_start || null, shift_end || null, id]
     );
 
     if (result.rows.length === 0) {
@@ -693,8 +773,8 @@ async function recordAttendance(body, user) {
   }
 
   if (isBranchUser) {
-    const check = await db.query('SELECT branch_id FROM employees WHERE id = $1', [employee_id]);
-    if (check.rows.length === 0 || !hasBranchAccess(user, check.rows[0].branch_id)) {
+    const check = await db.query('SELECT branch_id, branch_scope, branch_ids FROM employees WHERE id = $1', [employee_id]);
+    if (check.rows.length === 0 || !hasEmployeeBranchAccess(user, check.rows[0])) {
       const err = new Error('Unauthorized access to this employee');
       err.statusCode = 403;
       throw err;
@@ -737,14 +817,14 @@ async function toggleAttendance(id, manualTime, user) {
     throw err;
   }
 
-  const empRes = await db.query('SELECT branch_id, shift_start, shift_end FROM employees WHERE id = $1', [id]);
+  const empRes = await db.query('SELECT branch_id, branch_scope, branch_ids, shift_start, shift_end FROM employees WHERE id = $1', [id]);
   if (empRes.rows.length === 0) {
     const err = new Error('Employee not found');
     err.statusCode = 404;
     throw err;
   }
 
-  if (isBranchUser && !hasBranchAccess(user, empRes.rows[0].branch_id)) {
+  if (isBranchUser && !hasEmployeeBranchAccess(user, empRes.rows[0])) {
     const err = new Error('Unauthorized access to this employee');
     err.statusCode = 403;
     throw err;
@@ -849,7 +929,7 @@ async function handleCheckoutReminder(id, attendanceDate, user) {
     throw err;
   }
 
-  const empRes = await db.query('SELECT branch_id, shift_start, shift_end FROM employees WHERE id = $1', [id]);
+  const empRes = await db.query('SELECT branch_id, branch_scope, branch_ids, shift_start, shift_end FROM employees WHERE id = $1', [id]);
   if (empRes.rows.length === 0) {
     const err = new Error('Employee not found');
     err.statusCode = 404;
@@ -857,7 +937,7 @@ async function handleCheckoutReminder(id, attendanceDate, user) {
   }
 
   const employee = empRes.rows[0];
-  if (isBranchUser && !hasBranchAccess(user, employee.branch_id)) {
+  if (isBranchUser && !hasEmployeeBranchAccess(user, employee)) {
     const err = new Error('Unauthorized access to this employee');
     err.statusCode = 403;
     throw err;
@@ -951,14 +1031,14 @@ async function recordManualAttendance(id, body, user) {
     throw err;
   }
 
-  const empRes = await db.query('SELECT branch_id, shift_start, shift_end FROM employees WHERE id = $1', [id]);
+  const empRes = await db.query('SELECT branch_id, branch_scope, branch_ids, shift_start, shift_end FROM employees WHERE id = $1', [id]);
   if (empRes.rows.length === 0) {
     const err = new Error('Employee not found');
     err.statusCode = 404;
     throw err;
   }
 
-  if (isBranchUser && !hasBranchAccess(user, empRes.rows[0].branch_id)) {
+  if (isBranchUser && !hasEmployeeBranchAccess(user, empRes.rows[0])) {
     const err = new Error('Unauthorized access to this employee');
     err.statusCode = 403;
     throw err;
@@ -1029,14 +1109,14 @@ async function getAttendanceReport(id, user) {
     throw err;
   }
 
-  const empRes = await db.query('SELECT branch_id, name FROM employees WHERE id = $1', [id]);
+  const empRes = await db.query('SELECT branch_id, branch_scope, branch_ids, name FROM employees WHERE id = $1', [id]);
   if (empRes.rows.length === 0) {
     const err = new Error('Employee not found');
     err.statusCode = 404;
     throw err;
   }
 
-  if (isBranchUser && !hasBranchAccess(user, empRes.rows[0].branch_id)) {
+  if (isBranchUser && !hasEmployeeBranchAccess(user, empRes.rows[0])) {
     const err = new Error('Unauthorized access to this employee');
     err.statusCode = 403;
     throw err;
@@ -1078,8 +1158,8 @@ async function createEmployeeTransaction(body, user) {
   }
 
   if (isBranchUser) {
-    const check = await db.query('SELECT branch_id FROM employees WHERE id = $1', [employee_id]);
-    if (check.rows.length === 0 || !hasBranchAccess(user, check.rows[0].branch_id)) {
+    const check = await db.query('SELECT branch_id, branch_scope, branch_ids FROM employees WHERE id = $1', [employee_id]);
+    if (check.rows.length === 0 || !hasEmployeeBranchAccess(user, check.rows[0])) {
       const err = new Error('Unauthorized access to this employee');
       err.statusCode = 403;
       throw err;

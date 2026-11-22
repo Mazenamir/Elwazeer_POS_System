@@ -124,9 +124,9 @@ export default function BranchStockMatrix({ isAdmin = false }) {
   }, [fetchCategories, branchFilter]);
 
   // Fetch Matrix Data
-  const fetchMatrix = useCallback(async () => {
+  const fetchMatrix = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const params = new URLSearchParams();
       params.set('page', String(page));
       params.set('limit', String(limit));
@@ -151,7 +151,7 @@ export default function BranchStockMatrix({ isAdmin = false }) {
     } catch (err) {
       console.error('Failed to load branch matrix:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, limit, branchFilter, genderFilter, categoryFilter, stockStatus, debouncedSearch]);
 
@@ -159,7 +159,7 @@ export default function BranchStockMatrix({ isAdmin = false }) {
     fetchMatrix();
     const handleSyncCompleted = () => {
       fetchCategories(branchFilter);
-      fetchMatrix();
+      fetchMatrix(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

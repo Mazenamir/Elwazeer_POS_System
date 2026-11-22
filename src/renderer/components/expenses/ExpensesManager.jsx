@@ -241,13 +241,13 @@ export function ExpensesManager({ isCashierTab = false }) {
   }, []);
 
   // Fetch Expenses & Summary
-  const loadExpenses = useCallback(async () => {
+  const loadExpenses = useCallback(async (silent = false) => {
     if (!canAccessExpensesList) {
       setLoading(false);
       return;
     }
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const params = {
         page: pagination.page,
         limit: pagination.limit,
@@ -284,7 +284,7 @@ export function ExpensesManager({ isCashierTab = false }) {
     } catch (err) {
       toast.error(err.message || 'تعذر تحميل المصروفات');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [
     canAccessExpensesList,
@@ -305,17 +305,17 @@ export function ExpensesManager({ isCashierTab = false }) {
   useEffect(() => {
     loadExpenses();
     const handleSyncCompleted = () => {
-      loadExpenses();
+      loadExpenses(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [loadExpenses]);
 
   // Drawer Settlement Fetch & Calculation
-  const loadDrawerSettlement = useCallback(async () => {
+  const loadDrawerSettlement = useCallback(async (silent = false) => {
     if (!canAccessDrawer) return;
     try {
-      setLoadingDrawer(true);
+      if (!silent) setLoadingDrawer(true);
       const params = { date: drawerDate };
       const effectiveBranch = (drawerBranch && drawerBranch !== 'all')
         ? drawerBranch
@@ -334,7 +334,7 @@ export function ExpensesManager({ isCashierTab = false }) {
       toast.error(err.message || 'تعذر تحميل بيانات تقفيل الدرج');
       setDrawerData(null);
     } finally {
-      setLoadingDrawer(false);
+      if (!silent) setLoadingDrawer(false);
     }
   }, [canAccessDrawer, drawerDate, drawerBranch, activeBranchId, user?.branch_id, toast]);
 
@@ -342,7 +342,7 @@ export function ExpensesManager({ isCashierTab = false }) {
     if (activeTab !== 'drawer') return;
     loadDrawerSettlement();
     const handleSyncCompleted = () => {
-      loadDrawerSettlement();
+      loadDrawerSettlement(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

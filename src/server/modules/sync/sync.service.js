@@ -2293,6 +2293,9 @@ async function applyOperation(operation) {
           const byPhone = await tx.query('SELECT id FROM employees WHERE phone = $1 AND branch_id = $2 LIMIT 1', [payload.phone, branchId]);
           if (byPhone.rows.length) existing = byPhone.rows[0];
         }
+        const empBranchIdsJson = payload.branch_ids !== undefined
+          ? (typeof payload.branch_ids === 'string' ? payload.branch_ids : JSON.stringify(payload.branch_ids || []))
+          : null;
         if (existing) {
           await tx.query(
             `UPDATE employees
@@ -2304,8 +2307,10 @@ async function applyOperation(operation) {
                  shift_start = COALESCE($6, shift_start),
                  shift_end = COALESCE($7, shift_end),
                  status = COALESCE($8, status),
-                 offline_uuid = COALESCE($9, offline_uuid)
-             WHERE id = $10`,
+                 offline_uuid = COALESCE($9, offline_uuid),
+                 branch_scope = COALESCE($10, branch_scope),
+                 branch_ids = COALESCE($11, branch_ids)
+             WHERE id = $12`,
             [
               payload.name || null,
               payload.position || null,
@@ -2316,17 +2321,21 @@ async function applyOperation(operation) {
               payload.shift_end || null,
               payload.status || 'active',
               empUuid,
+              payload.branch_scope || null,
+              empBranchIdsJson,
               existing.id,
             ]
           );
         } else {
           await tx.query(
-            `INSERT INTO employees (name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid)
-             VALUES ($1, $2, $3, $4, $5, COALESCE($6::date, CURRENT_DATE), COALESCE($7, 'active'), $8, $9, $10)`,
+            `INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid)
+             VALUES ($1, $2, $3, COALESCE($4, 'single'), COALESCE($5, '[]'::jsonb), $6, $7, COALESCE($8::date, CURRENT_DATE), COALESCE($9, 'active'), $10, $11, $12)`,
             [
               payload.name,
               payload.position || null,
               branchId,
+              payload.branch_scope || 'single',
+              empBranchIdsJson || '[]',
               payload.basic_salary || 0,
               payload.phone || null,
               payload.join_date || null,
@@ -2352,6 +2361,9 @@ async function applyOperation(operation) {
           if (byId.rows.length) empId = byId.rows[0].id;
         }
         if (empId) {
+          const empBranchIdsJson = payload.branch_ids !== undefined
+            ? (typeof payload.branch_ids === 'string' ? payload.branch_ids : JSON.stringify(payload.branch_ids || []))
+            : null;
           await tx.query(
             `UPDATE employees
              SET name = COALESCE($1, name),
@@ -2362,8 +2374,10 @@ async function applyOperation(operation) {
                  shift_start = COALESCE($6, shift_start),
                  shift_end = COALESCE($7, shift_end),
                  status = COALESCE($8, status),
-                 offline_uuid = COALESCE($9, offline_uuid)
-             WHERE id = $10`,
+                 offline_uuid = COALESCE($9, offline_uuid),
+                 branch_scope = COALESCE($10, branch_scope),
+                 branch_ids = COALESCE($11, branch_ids)
+             WHERE id = $12`,
             [
               payload.name || null,
               payload.position || null,
@@ -2374,6 +2388,8 @@ async function applyOperation(operation) {
               payload.shift_end || null,
               payload.status || null,
               empUuid,
+              payload.branch_scope || null,
+              empBranchIdsJson,
               empId,
             ]
           );
@@ -3569,7 +3585,7 @@ async function exportCatalogForBranch(branchId = null) {
   );
 
   const employeesPromise = db.query(
-    'SELECT id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid FROM employees'
+    'SELECT id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid FROM employees'
   );
 
   const customersPromise = db.query(
@@ -4368,12 +4384,14 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       const findEmpByUuidStmt = sqlite.prepare('SELECT id FROM employees WHERE offline_uuid = ? AND id != ?');
 
       const empStmt = sqlite.prepare(`
-        INSERT INTO employees (id, name, position, branch_id, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           position = COALESCE(excluded.position, employees.position),
           branch_id = COALESCE(excluded.branch_id, employees.branch_id),
+          branch_scope = COALESCE(excluded.branch_scope, employees.branch_scope),
+          branch_ids = COALESCE(excluded.branch_ids, employees.branch_ids),
           basic_salary = excluded.basic_salary,
           phone = excluded.phone,
           join_date = COALESCE(excluded.join_date, employees.join_date),
@@ -4403,11 +4421,14 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
             sqlite.prepare('DELETE FROM employees WHERE id = ?').run(dupEmp.id);
           }
         }
+        const empBIds = Array.isArray(emp.branch_ids) ? JSON.stringify(emp.branch_ids) : (typeof emp.branch_ids === 'string' ? emp.branch_ids : '[]');
         empStmt.run(
           emp.id,
           emp.name,
           emp.position || null,
           emp.branch_id || null,
+          emp.branch_scope || 'single',
+          empBIds,
           Number(emp.basic_salary || 0),
           emp.phone || null,
           toSqliteDate(emp.join_date),

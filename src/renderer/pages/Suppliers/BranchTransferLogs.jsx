@@ -157,9 +157,9 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
   }, [canSwitchBranchInLogs, hasAllBranchScope, branches, activeBranchId]);
 
   // Fetch transfer logs
-  const fetchTransferLogs = useCallback(async () => {
+  const fetchTransferLogs = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const params = new URLSearchParams();
 
       if (isBranchScoped) {
@@ -187,14 +187,14 @@ export default function BranchTransferLogs({ isAdmin = false, onRefreshBanners }
       console.error('Failed to load transfer logs:', err);
       toast.error('فشل تحميل سجل تحويلات الفروع');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [isBranchScoped, user?.branch_id, selectedBranchFilter, direction, statusFilter, debouncedSearch, startDate, endDate, page, limit, toast]);
 
   useEffect(() => {
     fetchTransferLogs();
     const handleSyncCompleted = () => {
-      fetchTransferLogs();
+      fetchTransferLogs(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

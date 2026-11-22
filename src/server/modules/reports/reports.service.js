@@ -2804,6 +2804,12 @@ async function getInventoryReport(query = {}, user = null) {
       where.push(`(i.category ILIKE '%SUIT%' OR i.category ILIKE '%بدل%')`);
     } else if (catQuery.type === 'other') {
       where.push(`(i.category IS NULL OR TRIM(i.category) = '' OR LOWER(TRIM(i.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+    } else if (catQuery.type === 'in') {
+      const placeholders = catQuery.values.map((v) => {
+        params.push(v);
+        return `LOWER($${params.length})`;
+      }).join(', ');
+      where.push(`LOWER(TRIM(i.category)) IN (${placeholders})`);
     } else {
       params.push(catQuery.value);
       where.push(`LOWER(TRIM(i.category)) = LOWER($${params.length})`);

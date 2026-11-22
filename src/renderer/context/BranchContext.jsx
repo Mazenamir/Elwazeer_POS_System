@@ -87,10 +87,10 @@ export function BranchProvider({ children }) {
     }
   }, [user]);
 
-  const fetchBranches = useCallback(async () => {
+  const fetchBranches = useCallback(async (silent = false) => {
     if (!isAuthenticated) return;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const data = await api.get('/branches');
       if (Array.isArray(data)) {
         setBranches(data);
@@ -145,14 +145,14 @@ export function BranchProvider({ children }) {
     } catch (err) {
       console.error('Failed to fetch branches:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [isAuthenticated, user]);
 
   useEffect(() => {
     fetchBranches();
     const handleSyncCompleted = () => {
-      fetchBranches();
+      fetchBranches(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

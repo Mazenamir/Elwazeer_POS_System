@@ -83,9 +83,9 @@ export function Dashboard() {
     revenueTrend: [],
   });
 
-  const fetchDashboard = useCallback(async () => {
+  const fetchDashboard = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const query = new URLSearchParams({
         range: selectedRange,
       });
@@ -108,14 +108,14 @@ export function Dashboard() {
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [selectedRange, activeBranchId]);
 
   useEffect(() => {
     fetchDashboard();
     const handleSyncCompleted = () => {
-      fetchDashboard();
+      fetchDashboard(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

@@ -161,9 +161,9 @@ export function WornProducts() {
   const isBranchScoped = !hasAllBranchesAccess && !canSwitchBranches && user?.branch_scope !== 'all' && user?.role !== 'accountant' && !/^(acct|hesabat|accountant|حسابات)/i.test(user?.username || '') && (user?.role === 'branch_user' || user?.role === 'cashier' || user?.role === 'tailor');
 
   // Load summary and list
-  const loadRecords = useCallback(async () => {
+  const loadRecords = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const params = new URLSearchParams({
         page: pagination.page,
         limit: pagination.limit,
@@ -199,14 +199,14 @@ export function WornProducts() {
         variant: 'danger',
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [pagination.page, pagination.limit, search, filterBranch, filterType, filterStatus, toast]);
 
   useEffect(() => {
     loadRecords();
     const handleSyncCompleted = () => {
-      loadRecords();
+      loadRecords(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

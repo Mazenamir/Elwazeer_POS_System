@@ -104,6 +104,8 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'customers', 'wallet_balance', 'REAL DEFAULT 0');
   ensureSqliteColumn(sqlite, 'employees', 'join_date', 'TEXT');
   ensureSqliteColumn(sqlite, 'employees', 'offline_uuid', 'TEXT');
+  ensureSqliteColumn(sqlite, 'employees', 'branch_scope', "TEXT DEFAULT 'single'");
+  ensureSqliteColumn(sqlite, 'employees', 'branch_ids', "TEXT DEFAULT '[]'");
   ensureSqliteColumn(sqlite, 'users', 'full_name', 'TEXT');
   ensureSqliteColumn(sqlite, 'users', 'branch_scope', "TEXT DEFAULT 'single'");
   ensureSqliteColumn(sqlite, 'users', 'branch_ids', "TEXT DEFAULT '[]'");

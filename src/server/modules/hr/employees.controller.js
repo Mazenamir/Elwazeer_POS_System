@@ -56,7 +56,8 @@ async function updateEmployee(req, res, next) {
 
 async function transferEmployee(req, res, next) {
   try {
-    const result = await employeesService.transferEmployee(req.params.id, req.body?.branch_id, req.user);
+    const targetBranchId = req.body?.branch_id ?? req.body?.target_branch_id;
+    const result = await employeesService.transferEmployee(req.params.id, targetBranchId, req.user);
     res.json(result);
   } catch (err) {
     next(err);

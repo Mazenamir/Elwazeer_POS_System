@@ -743,6 +743,8 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec("ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0"); } catch {}
   try { sqlite.exec("ALTER TABLE employees ADD COLUMN join_date TEXT"); } catch {}
   try { sqlite.exec("ALTER TABLE employees ADD COLUMN offline_uuid TEXT"); } catch {}
+  try { sqlite.exec("ALTER TABLE employees ADD COLUMN branch_scope TEXT DEFAULT 'single'"); } catch {}
+  try { sqlite.exec("ALTER TABLE employees ADD COLUMN branch_ids TEXT DEFAULT '[]'"); } catch {}
   try { sqlite.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_offline_uuid ON employees (offline_uuid) WHERE offline_uuid IS NOT NULL"); } catch {}
   try { sqlite.exec("ALTER TABLE return_items ADD COLUMN discount REAL DEFAULT 0"); } catch {}
   try { sqlite.exec("ALTER TABLE return_items ADD COLUMN discount_type TEXT DEFAULT 'amount'"); } catch {}

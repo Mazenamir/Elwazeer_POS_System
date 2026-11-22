@@ -92,6 +92,12 @@ async function listRentalInventory(query = {}, user = null, req = null) {
       where.push(`(ri.category ILIKE '%SUIT%' OR ri.category ILIKE '%بدل%')`);
     } else if (catQuery.type === 'other') {
       where.push(`(ri.category IS NULL OR TRIM(ri.category) = '' OR LOWER(TRIM(ri.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+    } else if (catQuery.type === 'in') {
+      const placeholders = catQuery.values.map((v) => {
+        params.push(v);
+        return `LOWER($${params.length})`;
+      }).join(', ');
+      where.push(`LOWER(TRIM(ri.category)) IN (${placeholders})`);
     } else {
       params.push(catQuery.value);
       where.push(`LOWER(TRIM(ri.category)) = LOWER(TRIM($${params.length}))`);

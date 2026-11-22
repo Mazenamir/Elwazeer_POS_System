@@ -678,7 +678,7 @@ export function POS() {
         } else if (selCategory === 'أخرى' || selCategory === 'اخري') {
           if (cat && !['أخرى', 'اخري', 'other', 'uncategorized'].includes(cat)) return false;
         } else {
-          if (cat !== selCategory && !cat.includes(selCategory) && !selCategory.includes(cat)) return false;
+          if (cat !== selCategory) return false;
         }
       }
 
@@ -1666,9 +1666,9 @@ export function POS() {
   };
 
   // Load Sales History with multi-filters
-  const fetchHistory = useCallback(async () => {
+  const fetchHistory = useCallback(async (silent = false) => {
     try {
-      setHistoryLoading(true);
+      if (!silent) setHistoryLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') {
         query.append('branch_id', activeBranchId);
@@ -1702,7 +1702,7 @@ export function POS() {
     } catch (err) {
       console.error('Failed to load history:', err);
     } finally {
-      setHistoryLoading(false);
+      if (!silent) setHistoryLoading(false);
     }
   }, [activeBranchId, historyFilters, historyPagination.page, historyPagination.limit]);
 
@@ -1710,16 +1710,16 @@ export function POS() {
     if (activeTab !== 'history') return;
     fetchHistory();
     const handleSyncCompleted = () => {
-      fetchHistory();
+      fetchHistory(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [activeTab, fetchHistory]);
 
   // Load Returns History
-  const fetchReturns = useCallback(async () => {
+  const fetchReturns = useCallback(async (silent = false) => {
     try {
-      setLoadingReturns(true);
+      if (!silent) setLoadingReturns(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') {
         query.append('branch_id', activeBranchId);
@@ -1759,7 +1759,7 @@ export function POS() {
     } catch (err) {
       console.error('Failed to load returns:', err);
     } finally {
-      setLoadingReturns(false);
+      if (!silent) setLoadingReturns(false);
     }
   }, [activeBranchId, returnFilters, returnsPagination.page, returnsPagination.limit]);
 
@@ -1767,7 +1767,7 @@ export function POS() {
     if (activeTab !== 'returns') return;
     fetchReturns();
     const handleSyncCompleted = () => {
-      fetchReturns();
+      fetchReturns(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

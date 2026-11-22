@@ -67,9 +67,9 @@ export function Alterations() {
   const [selectedTicketAlt, setSelectedTicketAlt] = useState(null);
 
   // Load Alterations
-  const fetchAlterations = useCallback(async () => {
+  const fetchAlterations = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (statusFilter !== 'all') query.append('status', statusFilter);
@@ -80,14 +80,14 @@ export function Alterations() {
     } catch (err) {
       console.error('Failed to load alterations:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeBranchId, statusFilter, search]);
 
   useEffect(() => {
     fetchAlterations();
     const handleSyncCompleted = () => {
-      fetchAlterations();
+      fetchAlterations(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

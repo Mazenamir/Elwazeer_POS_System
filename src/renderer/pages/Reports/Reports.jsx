@@ -402,9 +402,9 @@ export function Reports() {
   }, [selectedBranch, dailyFrom, dailyTo]);
 
   // Load Daily History
-  const loadDailyHistory = useCallback(async () => {
+  const loadDailyHistory = useCallback(async (silent = false) => {
     try {
-      setLoadingDaily(true);
+      if (!silent) setLoadingDaily(true);
       const params = new URLSearchParams({ days: '30' });
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
       if (dailyFrom) params.set('date_from', dailyFrom);
@@ -420,14 +420,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingDaily(false);
+      if (!silent) setLoadingDaily(false);
     }
   }, [selectedBranch, dailyFrom, dailyTo, toast]);
 
   // Load Monthly History
-  const loadMonthlyHistory = useCallback(async () => {
+  const loadMonthlyHistory = useCallback(async (silent = false) => {
     try {
-      setLoadingMonthly(true);
+      if (!silent) setLoadingMonthly(true);
       const params = new URLSearchParams({ months: '12' });
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
 
@@ -441,14 +441,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingMonthly(false);
+      if (!silent) setLoadingMonthly(false);
     }
   }, [selectedBranch, toast]);
 
   // Load Top Products
-  const loadTopProducts = useCallback(async () => {
+  const loadTopProducts = useCallback(async (silent = false) => {
     try {
-      setLoadingTopProducts(true);
+      if (!silent) setLoadingTopProducts(true);
       const params = new URLSearchParams({ limit: '20' });
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
 
@@ -464,14 +464,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingTopProducts(false);
+      if (!silent) setLoadingTopProducts(false);
     }
   }, [selectedBranch, toast]);
 
   // Load Sales Report
-  const loadSalesReport = useCallback(async () => {
+  const loadSalesReport = useCallback(async (silent = false) => {
     try {
-      setLoadingSales(true);
+      if (!silent) setLoadingSales(true);
       const params = new URLSearchParams({ limit: '1000' });
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
       if (dailyFrom) params.set('date_from', dailyFrom);
@@ -486,14 +486,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingSales(false);
+      if (!silent) setLoadingSales(false);
     }
   }, [selectedBranch, dailyFrom, dailyTo, toast]);
 
   // Load Rentals Report
-  const loadRentalsReport = useCallback(async () => {
+  const loadRentalsReport = useCallback(async (silent = false) => {
     try {
-      setLoadingRentals(true);
+      if (!silent) setLoadingRentals(true);
       const params = new URLSearchParams({ limit: '1000' });
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
       if (dailyFrom) params.set('date_from', dailyFrom);
@@ -508,14 +508,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingRentals(false);
+      if (!silent) setLoadingRentals(false);
     }
   }, [selectedBranch, dailyFrom, dailyTo, toast]);
 
   // Load Expenses Report
-  const loadExpensesReport = useCallback(async () => {
+  const loadExpensesReport = useCallback(async (silent = false) => {
     try {
-      setLoadingExpenses(true);
+      if (!silent) setLoadingExpenses(true);
       const params = new URLSearchParams({ limit: '1000' });
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
       if (dailyFrom) params.set('date_from', dailyFrom);
@@ -530,14 +530,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingExpenses(false);
+      if (!silent) setLoadingExpenses(false);
     }
   }, [selectedBranch, dailyFrom, dailyTo, toast]);
 
   // Load Inventory Report
-  const loadInventoryReport = useCallback(async () => {
+  const loadInventoryReport = useCallback(async (silent = false) => {
     try {
-      setLoadingInventory(true);
+      if (!silent) setLoadingInventory(true);
       const params = new URLSearchParams();
       if (selectedBranch !== 'all') params.set('branch_id', selectedBranch);
       if (inventoryGender !== 'all') params.set('gender', inventoryGender);
@@ -551,14 +551,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingInventory(false);
+      if (!silent) setLoadingInventory(false);
     }
   }, [selectedBranch, inventoryGender, toast]);
 
   // Load Master Sheet Report
-  const loadMasterReport = useCallback(async () => {
+  const loadMasterReport = useCallback(async (silent = false) => {
     try {
-      setLoadingMaster(true);
+      if (!silent) setLoadingMaster(true);
       const params = { month: selectedMonth, branch_id: selectedBranch };
       const res = await reportsService.getMonthlyMaster(params);
       const data = res?.data || res;
@@ -577,14 +577,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingMaster(false);
+      if (!silent) setLoadingMaster(false);
     }
   }, [selectedMonth, selectedBranch, toast]);
 
   // Load OHDA Report
-  const loadOhdaReport = useCallback(async () => {
+  const loadOhdaReport = useCallback(async (silent = false) => {
     try {
-      setLoadingOhda(true);
+      if (!silent) setLoadingOhda(true);
       const params = { month: selectedMonth, branch_id: selectedBranch };
       const res = await reportsService.getMonthlyOhda(params);
       setOhdaReport(res?.data || res);
@@ -595,14 +595,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingOhda(false);
+      if (!silent) setLoadingOhda(false);
     }
   }, [selectedMonth, selectedBranch, toast]);
 
   // Load Salary Sheet
-  const loadSalaryReport = useCallback(async () => {
+  const loadSalaryReport = useCallback(async (silent = false) => {
     try {
-      setLoadingSalary(true);
+      if (!silent) setLoadingSalary(true);
       const params = { month: selectedMonth, branch_id: selectedBranch };
       const res = await reportsService.getMonthlySalarySheet(params);
       setSalaryReport(res?.data || res);
@@ -613,14 +613,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingSalary(false);
+      if (!silent) setLoadingSalary(false);
     }
   }, [selectedMonth, selectedBranch, toast]);
 
   // Load Sales KPI Report
-  const loadKpiReport = useCallback(async () => {
+  const loadKpiReport = useCallback(async (silent = false) => {
     try {
-      setLoadingKpi(true);
+      if (!silent) setLoadingKpi(true);
       const params = { month: selectedMonth, branch_id: selectedBranch };
       const res = await reportsService.getSalesKpi(params);
       setKpiReport(res?.data || res);
@@ -631,14 +631,14 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingKpi(false);
+      if (!silent) setLoadingKpi(false);
     }
   }, [selectedMonth, selectedBranch, toast]);
 
   // Load Suppliers Ledger (File 1)
-  const loadSuppliersLedger = useCallback(async () => {
+  const loadSuppliersLedger = useCallback(async (silent = false) => {
     try {
-      setLoadingLedger(true);
+      if (!silent) setLoadingLedger(true);
       const params = {};
       if (selectedBranch !== 'all') params.branch_id = selectedBranch;
       if (ledgerSearch.trim()) params.search = ledgerSearch.trim();
@@ -652,7 +652,7 @@ export function Reports() {
         variant: 'danger',
       });
     } finally {
-      setLoadingLedger(false);
+      if (!silent) setLoadingLedger(false);
     }
   }, [selectedBranch, ledgerSearch, ledgerCategory, toast]);
 
@@ -678,40 +678,40 @@ export function Reports() {
   // Initial and reactive fetch
   useEffect(() => {
     if (!accessibleTabs.length) return;
-    const refreshCurrentReport = () => {
+    const refreshCurrentReport = (silent = false) => {
       if (canViewProfits) {
         loadProfitSummary();
       }
       if (activeTab === 'daily') {
-        loadDailyHistory();
+        loadDailyHistory(silent);
       } else if (activeTab === 'master') {
-        loadMasterReport();
+        loadMasterReport(silent);
       } else if (activeTab === 'ohda') {
-        loadOhdaReport();
+        loadOhdaReport(silent);
       } else if (activeTab === 'salary') {
-        loadSalaryReport();
+        loadSalaryReport(silent);
       } else if (activeTab === 'kpi') {
-        loadKpiReport();
+        loadKpiReport(silent);
       } else if (activeTab === 'suppliers_ledger') {
-        loadSuppliersLedger();
+        loadSuppliersLedger(silent);
       } else if (activeTab === 'monthly') {
-        loadMonthlyHistory();
+        loadMonthlyHistory(silent);
       } else if (activeTab === 'sales') {
-        loadSalesReport();
+        loadSalesReport(silent);
       } else if (activeTab === 'rentals') {
-        loadRentalsReport();
+        loadRentalsReport(silent);
       } else if (activeTab === 'expenses') {
-        loadExpensesReport();
+        loadExpensesReport(silent);
       } else if (activeTab === 'inventory') {
-        loadInventoryReport();
+        loadInventoryReport(silent);
       } else if (activeTab === 'top_products') {
-        loadTopProducts();
+        loadTopProducts(silent);
       }
     };
-    refreshCurrentReport();
+    refreshCurrentReport(false);
 
     const handleSyncCompleted = () => {
-      refreshCurrentReport();
+      refreshCurrentReport(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

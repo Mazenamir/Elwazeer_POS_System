@@ -113,6 +113,8 @@ export function Employees() {
     position: '',
     basic_salary: '',
     branch_id: '',
+    branch_scope: 'single',
+    branch_ids: [],
     shift_start: '10:00',
     shift_end: '22:00',
     commission_rate: 0,
@@ -179,13 +181,13 @@ export function Employees() {
   const [loadingSalesReport, setLoadingSalesReport] = useState(false);
 
   // Load Employees
-  const loadEmployees = useCallback(async () => {
+  const loadEmployees = useCallback(async (silent = false) => {
     if (!canViewEmployees) {
       setLoading(false);
       return;
     }
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await client.get('/employees', { params: { month: selectedMonth, limit: 1000, branch_id: 'all' } });
       const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : Array.isArray(res?.employees) ? res.employees : [];
       setEmployees(list);
@@ -196,14 +198,14 @@ export function Employees() {
         variant: 'danger',
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [canViewEmployees, selectedMonth, toast]);
 
   useEffect(() => {
     loadEmployees();
     const handleSyncCompleted = () => {
-      loadEmployees();
+      loadEmployees(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
@@ -228,7 +230,12 @@ export function Employees() {
   // Filtered list
   const filteredEmployees = useMemo(() => {
     return employees.filter((emp) => {
-      if (filterBranch !== 'all' && String(emp.branch_id) !== String(filterBranch)) return false;
+      if (filterBranch !== 'all') {
+        const matchesPrimary = String(emp.branch_id) === String(filterBranch);
+        const matchesAll = emp.branch_scope === 'all';
+        const matchesSelected = emp.branch_scope === 'selected' && Array.isArray(emp.branch_ids) && emp.branch_ids.some((bId) => String(bId) === String(filterBranch));
+        if (!matchesPrimary && !matchesAll && !matchesSelected) return false;
+      }
       if (filterPosition !== 'all' && emp.position !== filterPosition) return false;
       if (filterBonusStatus === 'with_bonus' && Number(emp.current_month_bonuses || 0) <= 0) return false;
       if (filterBonusStatus === 'no_bonus' && Number(emp.current_month_bonuses || 0) > 0) return false;
@@ -344,6 +351,8 @@ export function Employees() {
       position: '',
       basic_salary: '',
       branch_id: initialBranch,
+      branch_scope: 'single',
+      branch_ids: [Number(initialBranch)],
       shift_start: '10:00',
       shift_end: '22:00',
       commission_rate: 0,
@@ -354,12 +363,16 @@ export function Employees() {
   const handleOpenEdit = (emp) => {
     setIsEditing(true);
     setEditingId(emp.id);
+    const primaryBId = String(emp.branch_id || (activeBranchId !== 'all' ? activeBranchId : branches[0]?.id) || '1');
+    const parsedIds = Array.isArray(emp.branch_ids) ? emp.branch_ids.map(Number).filter((n) => n > 0) : [];
     setEmpForm({
       name: emp.name || '',
       phone: emp.phone || '',
       position: emp.position || '',
       basic_salary: emp.basic_salary || '',
-      branch_id: String(emp.branch_id || (activeBranchId !== 'all' ? activeBranchId : branches[0]?.id) || '1'),
+      branch_id: primaryBId,
+      branch_scope: emp.branch_scope || 'single',
+      branch_ids: parsedIds.length > 0 ? parsedIds : [Number(primaryBId)],
       shift_start: emp.shift_start ? emp.shift_start.slice(0, 5) : '10:00',
       shift_end: emp.shift_end ? emp.shift_end.slice(0, 5) : '22:00',
       commission_rate: emp.commission_rate || 0,
@@ -389,6 +402,10 @@ export function Employees() {
         position: empForm.position.trim() || null,
         basic_salary: empForm.basic_salary ? Number(empForm.basic_salary) : 0,
         branch_id: branchIdNum,
+        branch_scope: empForm.branch_scope || 'single',
+        branch_ids: empForm.branch_scope === 'selected'
+          ? Array.from(new Set([branchIdNum, ...(empForm.branch_ids || []).map(Number).filter((n) => n > 0)]))
+          : [],
         shift_start: empForm.shift_start ? `${empForm.shift_start.slice(0, 5)}:00` : null,
         shift_end: empForm.shift_end ? `${empForm.shift_end.slice(0, 5)}:00` : null,
         commission_rate: Number(empForm.commission_rate || 0),
@@ -752,7 +769,7 @@ export function Employees() {
     if (!targetBranchId) return;
     try {
       await client.post(`/employees/${transferEmp.id}/transfer`, {
-        target_branch_id: Number(targetBranchId),
+        branch_id: Number(targetBranchId),
       });
       toast({ title: 'تم النقل', message: 'تم نقل الموظف للفرع الجديد بنجاح', variant: 'success' });
       setShowTransferModal(false);
@@ -1072,7 +1089,19 @@ export function Employees() {
                             {(emp.name || 'م')[0]}
                           </div>
                           <div>
-                            <div className="font-black text-[#24221F]">{emp.name}</div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-black text-[#24221F]">{emp.name}</span>
+                              {emp.branch_scope === 'all' && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  كل الفروع
+                                </span>
+                              )}
+                              {emp.branch_scope === 'selected' && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-700 border border-amber-200">
+                                  {emp.branch_ids?.length || 1} فروع
+                                </span>
+                              )}
+                            </div>
                             {emp.commission_rate > 0 && (
                               <div className="text-[11px] font-bold text-emerald-700">
                                 عمولة: {emp.commission_rate}%
@@ -1409,12 +1438,21 @@ export function Employees() {
 
             <div>
               <label className="block text-xs font-black text-slate-700 mb-1.5">
-                الفرع *
+                الفرع الأساسي (للراتب) *
               </label>
               <select
                 className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
                 value={empForm.branch_id}
-                onChange={(e) => setEmpForm({ ...empForm, branch_id: e.target.value })}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setEmpForm((prev) => ({
+                    ...prev,
+                    branch_id: val,
+                    branch_ids: prev.branch_scope === 'selected'
+                      ? Array.from(new Set([Number(val), ...(prev.branch_ids || []).map(Number).filter(Boolean)]))
+                      : prev.branch_ids,
+                  }));
+                }}
                 required
               >
                 {branches.map((b) => (
@@ -1446,6 +1484,84 @@ export function Employees() {
                 onChange={(e) => setEmpForm({ ...empForm, shift_end: e.target.value })}
               />
             </div>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+            <div>
+              <label className="block text-xs font-black text-slate-800 mb-1.5">
+                نطاق الحضور والعمل عبر الفروع
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'single', label: 'الفرع الأساسي فقط' },
+                  { id: 'selected', label: 'فروع محددة' },
+                  { id: 'all', label: 'كل الفروع' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() =>
+                      setEmpForm((prev) => ({
+                        ...prev,
+                        branch_scope: opt.id,
+                        branch_ids: opt.id === 'selected'
+                          ? Array.from(new Set([Number(prev.branch_id), ...(prev.branch_ids || []).map(Number).filter(Boolean)]))
+                          : prev.branch_ids,
+                      }))
+                    }
+                    className={`py-2 px-2.5 rounded-xl text-[11px] font-black border transition-all ${
+                      empForm.branch_scope === opt.id
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {empForm.branch_scope === 'selected' && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {branches.map((b) => {
+                  const bId = Number(b.id);
+                  const isPrimary = bId === Number(empForm.branch_id);
+                  const isChecked = isPrimary || (empForm.branch_ids || []).map(Number).includes(bId);
+                  return (
+                    <label
+                      key={b.id}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
+                        isChecked
+                          ? 'bg-amber-50 border-amber-300 text-amber-900'
+                          : 'bg-white border-slate-200 text-slate-600'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        disabled={isPrimary}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setEmpForm((prev) => {
+                            const current = new Set((prev.branch_ids || []).map(Number).filter(Boolean));
+                            if (checked) current.add(bId);
+                            else if (!isPrimary) current.delete(bId);
+                            return { ...prev, branch_ids: Array.from(current) };
+                          });
+                        }}
+                        className="accent-slate-900"
+                      />
+                      <span>{b.name}</span>
+                      {isPrimary && <span className="text-[10px] text-amber-700">(أساسي)</span>}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="text-[11px] font-semibold text-slate-500">
+              يستطيع الموظف تسجيل الحضور والانصراف من الفروع المسموحة هنا، بينما يظل احتساب راتبه مرتبطاً بالفرع الأساسي فقط.
+            </p>
           </div>
 
           <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-2">

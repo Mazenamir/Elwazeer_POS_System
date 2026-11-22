@@ -705,13 +705,13 @@ total: 0,
   }, [supplyProductsList, products, supplySupplierId, supplyProductGenderFilter, supplyProductSearch]);
 
   // Load Inventory Products
-  const fetchProducts = useCallback(async () => {
+  const fetchProducts = useCallback(async (silent = false) => {
     if (!canAccessInventory) {
       setLoadingProducts(false);
       return;
     }
     try {
-      setLoadingProducts(true);
+      if (!silent) setLoadingProducts(true);
       const query = new URLSearchParams();
       const branchToUse = canSwitchBranchInInventory ? inventoryBranchFilter : activeBranchId;
       if (branchToUse && branchToUse !== 'all') query.append('branch_id', branchToUse);
@@ -761,7 +761,7 @@ total: 0,
     } catch (err) {
       console.error('Failed to load inventory products:', err);
     } finally {
-      setLoadingProducts(false);
+      if (!silent) setLoadingProducts(false);
     }
   }, [canSwitchBranchInInventory, inventoryBranchFilter, activeBranchId, productSearch, selectedCategory, stockStatusFilter, sortOrder, supplierFilter, inventoryGenderFilter, inventoryPagination.page, inventoryPagination.limit]);
 
@@ -771,10 +771,11 @@ total: 0,
       setLoadingSuppliers(false);
       return;
     }
+    const isPlainObj = overrides && typeof overrides === 'object' && !('nativeEvent' in overrides) && !('preventDefault' in overrides);
+    const opts = isPlainObj ? overrides : {};
+    const silent = Boolean(opts.silent);
     try {
-      setLoadingSuppliers(true);
-      const isPlainObj = overrides && typeof overrides === 'object' && !('nativeEvent' in overrides) && !('preventDefault' in overrides);
-      const opts = isPlainObj ? overrides : {};
+      if (!silent) setLoadingSuppliers(true);
       const activeSearch = opts.search !== undefined ? opts.search : supplierSearch;
       const activeSort = opts.sort !== undefined ? opts.sort : supplierSort;
       const activeGenderCategory = opts.gender_category !== undefined ? opts.gender_category : supplierCategoryFilter;
@@ -841,42 +842,42 @@ total: 0,
     } catch (err) {
       console.error('Failed to load suppliers:', err);
     } finally {
-      setLoadingSuppliers(false);
+      if (!silent) setLoadingSuppliers(false);
     }
   }, [supplierSearch, supplierSort, supplierCategoryFilter, supplierPagination.page, supplierPagination.limit]);
 
   // Load Inter-branch transfer requests
-  const fetchRequests = useCallback(async () => {
+  const fetchRequests = useCallback(async (silent = false) => {
     if (!canAccessTransfers) {
       setLoadingRequests(false);
       return;
     }
     try {
-      setLoadingRequests(true);
+      if (!silent) setLoadingRequests(true);
       const data = await api.get('/inventory/transfers/requests').catch(() => []);
       setIncomingRequests(Array.isArray(data) ? data : data?.requests || []);
     } catch {
       setIncomingRequests([]);
     } finally {
-      setLoadingRequests(false);
+      if (!silent) setLoadingRequests(false);
     }
   }, [canAccessTransfers]);
 
   // Load Incoming Shipments pending confirmation
-  const fetchIncomingShipments = useCallback(async () => {
+  const fetchIncomingShipments = useCallback(async (silent = false) => {
     if (!canAccessTransfers) {
       setLoadingShipments(false);
       return;
     }
     try {
-      setLoadingShipments(true);
+      if (!silent) setLoadingShipments(true);
       const branchParam = activeBranchId && activeBranchId !== 'all' ? `?branch_id=${activeBranchId}` : '';
       const data = await api.get(`/inventory/transfers/incoming${branchParam}`).catch(() => []);
       setIncomingShipments(Array.isArray(data) ? data : []);
     } catch {
       setIncomingShipments([]);
     } finally {
-      setLoadingShipments(false);
+      if (!silent) setLoadingShipments(false);
     }
   }, [activeBranchId, canAccessTransfers]);
 
@@ -900,26 +901,26 @@ total: 0,
   useEffect(() => {
     if (!accessibleTabs.length) return;
 
-    const refreshCurrentTab = () => {
+    const refreshCurrentTab = (silent = false) => {
       if (activeTab === 'inventory' && canAccessInventory) {
-        fetchProducts();
+        fetchProducts(silent);
         lastFetchedSupplierQueryRef.current = '';
-        fetchSuppliers({ force: true });
+        fetchSuppliers({ force: true, silent });
         if (canAccessTransfers) {
-          fetchRequests();
-          fetchIncomingShipments();
+          fetchRequests(silent);
+          fetchIncomingShipments(silent);
         }
       } else if (activeTab === 'suppliers' && canAccessSuppliers) {
         lastFetchedSupplierQueryRef.current = '';
-        fetchSuppliers({ force: true });
+        fetchSuppliers({ force: true, silent });
       } else if (activeTab === 'transfer_logs' && canAccessTransfers) {
-        fetchRequests();
-        fetchIncomingShipments();
+        fetchRequests(silent);
+        fetchIncomingShipments(silent);
       }
     };
 
     const handleSyncCompleted = () => {
-      refreshCurrentTab();
+      refreshCurrentTab(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
 

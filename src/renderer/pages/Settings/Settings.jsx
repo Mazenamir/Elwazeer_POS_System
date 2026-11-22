@@ -244,9 +244,9 @@ export function Settings() {
   const [branchResetSubmitting, setBranchResetSubmitting] = useState(false);
 
   // Load General Settings
-  const loadSettings = useCallback(async () => {
+  const loadSettings = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await client.get('/settings');
       if (res.data) {
         setSettings((prev) => ({ ...prev, ...res.data }));
@@ -258,63 +258,64 @@ export function Settings() {
         variant: 'danger',
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [toast]);
 
   // Load Branch Users
-  const loadBranchUsers = useCallback(async () => {
+  const loadBranchUsers = useCallback(async (silent = false) => {
     if (!isAdmin) {
       setBranchUsers([]);
       return;
     }
     try {
-      setLoadingUsers(true);
+      if (!silent) setLoadingUsers(true);
       const res = await client.get('/users/branch');
       const list = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
       setBranchUsers(list);
     } catch {
       setBranchUsers([]);
     } finally {
-      setLoadingUsers(false);
+      if (!silent) setLoadingUsers(false);
     }
   }, [isAdmin]);
 
   // Load Sensitive Passwords Status
-  const loadSensitiveStatus = useCallback(async () => {
+  const loadSensitiveStatus = useCallback(async (silent = false) => {
     if (!canAccessSensitive) return;
     try {
-      setLoadingSensitive(true);
+      if (!silent) setLoadingSensitive(true);
       const res = await client.get('/sensitive-passwords/status');
       setSensitiveStatus(res.data || res || {});
     } catch (err) {
       console.error('Failed to load sensitive password status:', err);
     } finally {
-      setLoadingSensitive(false);
+      if (!silent) setLoadingSensitive(false);
     }
   }, [canAccessSensitive]);
 
   useEffect(() => {
     loadSettings();
     const handleSyncCompleted = () => {
-      loadSettings();
+      loadSettings(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
   }, [loadSettings]);
 
   useEffect(() => {
-    const refreshActiveSettingsTab = () => {
+    const refreshActiveSettingsTab = (silent = false) => {
       if (activeTab === 'users' && canAccessUsers) {
-        loadBranchUsers();
+        loadBranchUsers(silent);
       }
       if (activeTab === 'sensitive' && canAccessSensitive) {
-        loadSensitiveStatus();
+        loadSensitiveStatus(silent);
       }
     };
-    refreshActiveSettingsTab();
-    window.addEventListener('elwazeer:sync-completed', refreshActiveSettingsTab);
-    return () => window.removeEventListener('elwazeer:sync-completed', refreshActiveSettingsTab);
+    refreshActiveSettingsTab(false);
+    const handleSyncRefresh = () => refreshActiveSettingsTab(true);
+    window.addEventListener('elwazeer:sync-completed', handleSyncRefresh);
+    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncRefresh);
   }, [activeTab, canAccessUsers, canAccessSensitive, loadBranchUsers, loadSensitiveStatus]);
 
   useEffect(() => {

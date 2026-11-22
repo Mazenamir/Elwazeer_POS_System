@@ -207,9 +207,9 @@ export function Tailoring() {
   };
 
   // Load Tailoring Orders
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (debouncedSearch.trim()) query.append('search', debouncedSearch.trim());
@@ -219,7 +219,7 @@ export function Tailoring() {
     } catch (err) {
       console.error('Failed to load tailoring orders:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeBranchId, debouncedSearch]);
 
@@ -229,7 +229,7 @@ export function Tailoring() {
 
   useEffect(() => {
     const handleSyncRefresh = () => {
-      fetchOrders();
+      fetchOrders(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncRefresh);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncRefresh);

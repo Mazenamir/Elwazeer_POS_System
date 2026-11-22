@@ -221,9 +221,9 @@ export function Rentals() {
   }, [activeBranchId]);
 
   // Load Rentals List
-  const fetchRentals = useCallback(async () => {
+  const fetchRentals = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (statusFilter !== 'all') query.append('status', statusFilter);
@@ -234,14 +234,14 @@ export function Rentals() {
     } catch (err) {
       console.error('Failed to load rentals:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeBranchId, statusFilter, debouncedSearch]);
 
   // Load Preparation List (Task 3)
-  const fetchPreparation = useCallback(async () => {
+  const fetchPreparation = useCallback(async (silent = false) => {
     try {
-      setPrepLoading(true);
+      if (!silent) setPrepLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (prepUpcomingOnly) query.append('upcoming', 'true');
@@ -253,7 +253,7 @@ export function Rentals() {
     } catch (err) {
       console.error('Failed to load preparation list:', err);
     } finally {
-      setPrepLoading(false);
+      if (!silent) setPrepLoading(false);
     }
   }, [activeBranchId, prepUpcomingOnly]);
 
@@ -271,9 +271,9 @@ export function Rentals() {
   };
 
   // Load History Ledger (Task 3)
-  const fetchLedger = useCallback(async () => {
+  const fetchLedger = useCallback(async (silent = false) => {
     try {
-      setLedgerLoading(true);
+      if (!silent) setLedgerLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (ledgerStartDate) query.append('start_date', ledgerStartDate);
@@ -296,25 +296,25 @@ export function Rentals() {
     } catch (err) {
       console.error('Failed to load history ledger:', err);
     } finally {
-      setLedgerLoading(false);
+      if (!silent) setLedgerLoading(false);
     }
   }, [activeBranchId, ledgerStartDate, ledgerEndDate, ledgerStatusFilter]);
 
   useEffect(() => {
-    const refreshActiveView = () => {
+    const refreshActiveView = (silent = false) => {
       if (activeTab === 'preparation') {
-        fetchPreparation();
+        fetchPreparation(silent);
       } else if (activeTab === 'ledger') {
-        fetchLedger();
+        fetchLedger(silent);
       } else {
-        fetchRentals();
+        fetchRentals(silent);
         fetchSummary();
       }
     };
-    refreshActiveView();
+    refreshActiveView(false);
 
     const handleSyncCompleted = () => {
-      refreshActiveView();
+      refreshActiveView(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);

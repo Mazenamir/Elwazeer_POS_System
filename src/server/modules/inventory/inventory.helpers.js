@@ -462,89 +462,14 @@ function resolveCategoryQuery(catInput) {
   if (!raw || raw === 'all' || raw === 'الكل' || raw === 'كل التصنيفات' || raw === 'كل الأصناف') return null;
   const lower = raw.toLowerCase();
 
-  // Formal Suit
-  if (
-    lower === 'formal suit' ||
-    lower.includes('formal') ||
-    lower === 'بدل رسمية' ||
-    lower === 'بدل رسميه' ||
-    lower.includes('بدل رسمية') ||
-    lower.includes('بدل رسميه') ||
-    lower.includes('بدلة رسمية') ||
-    lower.includes('بدله رسميه')
-  ) {
-    return { type: 'exact', value: 'FORMAL SUIT' };
-  }
-
-  // Tuxedo Suit
-  if (
-    lower === 'tuxedo suit' ||
-    lower === 'tuxedo' ||
-    lower.includes('tuxedo') ||
-    lower === 'بدل سموكن' ||
-    lower.includes('بدل سموكن') ||
-    lower.includes('سموكن')
-  ) {
-    return { type: 'exact', value: 'TUXEDO SUIT' };
-  }
-
-  // Casual Suit
-  if (
-    lower === 'casual suit' ||
-    lower.includes('casual') ||
-    lower === 'بدل كاجوال' ||
-    lower.includes('بدل كاجوال') ||
-    lower.includes('بدلة كاجوال')
-  ) {
-    return { type: 'exact', value: 'CASUAL SUIT' };
-  }
-
-  // Regular Suit
-  if (
-    lower === 'suit' ||
-    lower === 'بدل عادية' ||
-    lower === 'بدل عاديه' ||
-    lower.includes('بدل عادية') ||
-    lower.includes('بدل عاديه') ||
-    lower.includes('بدلة عادية')
-  ) {
-    return { type: 'exact', value: 'SUIT' };
-  }
-
   // All Suits
   if (
     lower === 'بدل' ||
     lower === 'suits' ||
-    lower.includes('بدل (جميع') ||
-    lower.includes('بدل (جميع الانواع)') ||
-    lower.includes('بدل (جميع الأنواع)') ||
-    lower === 'all suits'
+    lower === 'all suits' ||
+    lower.includes('بدل (جميع')
   ) {
     return { type: 'suits' };
-  }
-
-  // Kids
-  if (
-    lower === 'kids' ||
-    lower === 'أطفال' ||
-    lower === 'اطفال' ||
-    lower.includes('أطفال') ||
-    lower.includes('اطفال') ||
-    lower.includes('kids')
-  ) {
-    return { type: 'exact', value: 'KIDS' };
-  }
-
-  // Wallets
-  if (
-    lower === 'wallet' ||
-    lower === 'محافظ' ||
-    lower.includes('محافظ') ||
-    lower.includes('محفظة') ||
-    lower.includes('محفظه') ||
-    lower.includes('wallet')
-  ) {
-    return { type: 'exact', value: 'WALLET' };
   }
 
   // Uncategorized / Other
@@ -553,15 +478,33 @@ function resolveCategoryQuery(catInput) {
     lower === 'اخري' ||
     lower === 'other' ||
     lower === 'uncategorized' ||
-    lower.includes('بدون تصنيف') ||
-    lower.includes('أخرى') ||
-    lower.includes('اخري') ||
-    lower === 'none'
+    lower === 'none' ||
+    lower === 'بدون تصنيف' ||
+    lower === 'بدون تصنيف / أخرى'
   ) {
     return { type: 'other' };
   }
 
-  // Exact fallback
+  // Known display-label aliases -> match canonical + alias values without hijacking distinct DB categories like 'FORMAL SUITS' or 'FORMAL S'
+  const ALIAS_GROUPS = [
+    ['formal suit', 'بدل رسمية', 'بدل رسميه', 'بدلة رسمية', 'بدله رسميه', 'بدل رسمية (formal suit)'],
+    ['tuxedo suit', 'بدل سموكن', 'بدلة سموكن', 'بدل سموكن (tuxedo suit)'],
+    ['casual suit', 'بدل كاجوال', 'بدلة كاجوال', 'بدل كاجوال (casual suit)'],
+    ['suit', 'بدل عادية', 'بدل عاديه', 'بدلة عادية', 'بدل عادية (suit)'],
+    ['kids', 'أطفال', 'اطفال', 'أطفال (kids)'],
+    ['wallet', 'محافظ', 'محفظة', 'محفظه', 'محافظ (wallet)'],
+  ];
+
+  for (const group of ALIAS_GROUPS) {
+    if (group.includes(lower)) {
+      if (lower === group[0]) {
+        return { type: 'exact', value: raw };
+      }
+      return { type: 'in', values: group };
+    }
+  }
+
+  // Exact fallback (preserves exact DB category strings like 'FORMAL SUITS', 'FORMAL S', etc.)
   return { type: 'exact', value: raw };
 }
 

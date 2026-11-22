@@ -619,6 +619,12 @@ async function listInventory(req, user) {
         where.push(`(i.category LIKE '%SUIT%' OR i.category LIKE '%suit%' OR i.category LIKE '%بدل%')`);
       } else if (catQuery.type === 'other') {
         where.push(`(i.category IS NULL OR TRIM(i.category) = '' OR LOWER(TRIM(i.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+      } else if (catQuery.type === 'in') {
+        const placeholders = catQuery.values.map((v) => {
+          params.push(v);
+          return 'LOWER(?)';
+        }).join(', ');
+        where.push(`LOWER(TRIM(i.category)) IN (${placeholders})`);
       } else {
         params.push(catQuery.value);
         where.push('LOWER(TRIM(i.category)) = LOWER(?)');
@@ -859,6 +865,12 @@ async function listInventory(req, user) {
       where.push(`(i.category ILIKE '%SUIT%' OR i.category ILIKE '%بدل%')`);
     } else if (catQuery.type === 'other') {
       where.push(`(i.category IS NULL OR TRIM(i.category) = '' OR LOWER(TRIM(i.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+    } else if (catQuery.type === 'in') {
+      const placeholders = catQuery.values.map((v) => {
+        params.push(v);
+        return `LOWER($${params.length})`;
+      }).join(', ');
+      where.push(`LOWER(TRIM(i.category)) IN (${placeholders})`);
     } else {
       params.push(catQuery.value);
       where.push(`LOWER(TRIM(i.category)) = LOWER($${params.length})`);
@@ -3106,8 +3118,14 @@ async function getBranchMatrix(query = {}, user = null) {
   const params = [];
 
   if (query.gender && query.gender !== 'all') {
-    params.push(query.gender);
-    where.push(`i.gender = $${params.length}`);
+    const gVal = String(query.gender).toLowerCase().trim();
+    if (gVal === 'men' || gVal === 'رجالي') {
+      where.push(`(i.gender = 'men' OR i.gender = 'رجالي')`);
+    } else if (gVal === 'women' || gVal === 'حريمي') {
+      where.push(`(i.gender = 'women' OR i.gender = 'حريمي')`);
+    } else if (gVal === 'both' || gVal === 'مشترك' || gVal === 'كلاهما') {
+      where.push(`(i.gender = 'both' OR i.gender = 'مشترك' OR i.gender = 'كلاهما')`);
+    }
   }
 
   const catQuery = resolveCategoryQuery(query.category);
@@ -3116,6 +3134,12 @@ async function getBranchMatrix(query = {}, user = null) {
       where.push(`(i.category ILIKE '%SUIT%' OR i.category ILIKE '%بدل%')`);
     } else if (catQuery.type === 'other') {
       where.push(`(i.category IS NULL OR TRIM(i.category) = '' OR LOWER(TRIM(i.category)) IN ('أخرى', 'اخري', 'other', 'uncategorized'))`);
+    } else if (catQuery.type === 'in') {
+      const placeholders = catQuery.values.map((v) => {
+        params.push(v);
+        return `LOWER($${params.length})`;
+      }).join(', ');
+      where.push(`LOWER(TRIM(i.category)) IN (${placeholders})`);
     } else {
       params.push(catQuery.value);
       where.push(`LOWER(TRIM(i.category)) = LOWER(TRIM($${params.length}))`);

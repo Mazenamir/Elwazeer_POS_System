@@ -111,9 +111,9 @@ export function RentalInventory() {
   }, [fetchCategories]);
 
   // Load Inventory
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (search.trim()) query.append('search', search.trim());
@@ -152,7 +152,7 @@ export function RentalInventory() {
     } catch (err) {
       console.error('Failed to load rental inventory:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeBranchId, search, selectedCategory, pagination.page, pagination.limit]);
 
@@ -162,7 +162,7 @@ export function RentalInventory() {
     }, 200);
     const handleSyncCompleted = () => {
       fetchCategories();
-      fetchItems();
+      fetchItems(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => {

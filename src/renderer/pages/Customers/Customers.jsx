@@ -74,9 +74,9 @@ export function Customers() {
   const [historyLoading, setHistoryLoading] = useState(false);
 
   // Load Customers
-  const fetchCustomers = useCallback(async () => {
+  const fetchCustomers = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const query = new URLSearchParams();
       if (activeBranchId && activeBranchId !== 'all') query.append('branch_id', activeBranchId);
       if (search.trim()) query.append('search', search.trim());
@@ -114,7 +114,7 @@ export function Customers() {
     } catch (err) {
       console.error('Failed to load customers:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeBranchId, search, pagination.page, pagination.limit]);
 
@@ -123,7 +123,7 @@ export function Customers() {
       fetchCustomers();
     }, 200);
     const handleSyncCompleted = () => {
-      fetchCustomers();
+      fetchCustomers(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
     return () => {
