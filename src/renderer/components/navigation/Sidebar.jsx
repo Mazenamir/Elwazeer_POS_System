@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
+import { useAppVersion } from '../../hooks/useAppVersion';
 
 const ALL_NAV_ITEMS = [
   { to: '/dashboard', label: 'لوحة التحكم', icon: LayoutDashboard, perm: 'Dashboard.html', category: 'العامة' },
@@ -50,6 +51,7 @@ const ALL_NAV_ITEMS = [
 export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePin }) {
   const { user, logout, isAdmin, hasPermission } = useAuth();
   const { activeBranch, branches, rentalsEnabled } = useBranch();
+  const { version: appVersion } = useAppVersion();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef(null);
 
@@ -242,8 +244,8 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
           })}
         </nav>
 
-        {/* Footer Logout Button */}
-        <div className="p-3 border-t border-neutral-800/70 shrink-0">
+        {/* Footer Logout Button & Version */}
+        <div className="p-3 border-t border-neutral-800/70 shrink-0 space-y-2">
           <button
             onClick={logout}
             title={!isExpanded ? 'تسجيل الخروج' : undefined}
@@ -260,6 +262,15 @@ export function Sidebar({ mobileOpen, setMobileOpen, isPinned = true, onTogglePi
               </span>
             )}
           </button>
+
+          <div
+            className={`text-center font-mono text-[10px] font-bold text-neutral-500 select-none ${
+              isExpanded ? 'px-3' : 'px-1'
+            }`}
+            title={`إصدار النظام: v${appVersion}`}
+          >
+            v{appVersion}
+          </div>
         </div>
       </aside>
     </>

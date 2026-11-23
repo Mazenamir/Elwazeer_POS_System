@@ -8,6 +8,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
 import client from '../../services/api/client';
+import ErrorLogsPanel from '../../components/settings/ErrorLogsPanel';
+import { useAppVersion } from '../../hooks/useAppVersion';
 import {
   Settings as SettingsIcon,
   Save,
@@ -101,6 +103,7 @@ export function Settings() {
   const { user, isAdmin, hasPermission } = useAuth();
   const { branches, reloadBranches } = useBranch();
   const { toast } = useToast();
+  const { version: appVersion, edition: appEdition, isElectron, checkingUpdate, checkForUpdates } = useAppVersion();
 
   const [activeTab, setActiveTab] = useState('store');
 
@@ -108,6 +111,7 @@ export function Settings() {
   const canAccessUsers = Boolean(isAdmin || hasPermission('settings.users.manage'));
   const canAccessSensitive = Boolean(isAdmin || hasPermission('settings.passwords.manage'));
   const canAccessBackup = Boolean(isAdmin || hasPermission('settings.backup.export') || hasPermission('settings.backup.restore'));
+  const canAccessErrorLogs = Boolean(isAdmin);
 
   const isTabAccessible = useCallback((tab) => {
     if (tab === 'store' || tab === 'profile') return true;
@@ -115,8 +119,9 @@ export function Settings() {
     if (tab === 'users') return canAccessUsers;
     if (tab === 'sensitive') return canAccessSensitive;
     if (tab === 'backup') return canAccessBackup;
+    if (tab === 'error_logs') return canAccessErrorLogs;
     return false;
-  }, [canAccessBranches, canAccessUsers, canAccessSensitive, canAccessBackup]); // 'store' | 'branches' | 'users' | 'sensitive' | 'profile' | 'backup'
+  }, [canAccessBranches, canAccessUsers, canAccessSensitive, canAccessBackup, canAccessErrorLogs]); // 'store' | 'branches' | 'users' | 'sensitive' | 'profile' | 'backup' | 'error_logs'
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -1036,9 +1041,23 @@ export function Settings() {
               <SettingsIcon className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-                إعدادات النظام والتهيئة
-              </h1>
+              <div className="flex items-center flex-wrap gap-2">
+                <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                  إعدادات النظام والتهيئة
+                </h1>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#FAF6ED] border border-[#E6DECD] text-[11px] font-mono font-black text-[#24221F]">
+                  v{appVersion}
+                  {appEdition && (
+                    <span className={`px-1.5 py-0.2 rounded text-[10px] font-sans font-black ${
+                      appEdition === 'branch'
+                        ? 'bg-indigo-100 text-indigo-800'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}>
+                      {appEdition === 'branch' ? 'فرع' : 'رئيسي'}
+                    </span>
+                  )}
+                </span>
+              </div>
               <p className="text-sm font-semibold text-slate-500 mt-0.5">
                 تخصيص بيانات المتجر، الفروع، المستخدمين، والنسخ الاحتياطي
               </p>
@@ -1046,16 +1065,38 @@ export function Settings() {
           </div>
         </div>
 
-        {activeTab === 'store' && (
-          <Button
-            variant="primary"
-            icon={Save}
-            onClick={handleSaveSettings}
-            loading={saving}
-          >
-            حفظ التغييرات
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {isElectron && (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={RefreshCw}
+              isLoading={checkingUpdate}
+              onClick={async () => {
+                try {
+                  const res = await checkForUpdates();
+                  if (res?.supported) {
+                    toast.info('جاري التحقق من توفر تحديثات جديدة...');
+                  }
+                } catch (err) {
+                  toast.error(err?.message || 'تعذر التحقق من التحديثات');
+                }
+              }}
+            >
+              فحص التحديثات
+            </Button>
+          )}
+          {activeTab === 'store' && (
+            <Button
+              variant="primary"
+              icon={Save}
+              onClick={handleSaveSettings}
+              loading={saving}
+            >
+              حفظ التغييرات
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Tabs Bar */}
@@ -1137,6 +1178,20 @@ export function Settings() {
           >
             <Database className="w-4 h-4" />
             <span>النسخ الاحتياطي والصيانة</span>
+          </button>
+        )}
+
+        {canAccessErrorLogs && (
+          <button
+            onClick={() => setActiveTab('error_logs')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'error_logs'
+                ? 'bg-[#151515] text-white shadow-sm'
+                : 'bg-[#FFFDF9] text-[#777266] border border-[#E6DECD] hover:bg-[#FAF6ED]'
+            }`}
+          >
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
+            <span>سجل الأخطاء</span>
           </button>
         )}
       </div>
@@ -1974,6 +2029,11 @@ export function Settings() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Tab 7: Central System Error Logs (Admin Only) */}
+      {canAccessErrorLogs && activeTab === 'error_logs' && (
+        <ErrorLogsPanel />
       )}
 
       {/* Branch Modal */}

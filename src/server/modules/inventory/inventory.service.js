@@ -112,8 +112,27 @@ async function listColors() {
   return rows;
 }
 
+function formatUniqueSizeSummary(parsedSizes, fallback = '', maxLength = 100) {
+  const rawList = Array.isArray(parsedSizes) && parsedSizes.length > 0
+    ? parsedSizes.map((s) => String(s?.size || s?.size_name || '').trim()).filter(Boolean)
+    : String(fallback || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (rawList.length === 0) return '';
+  const seen = new Set();
+  const unique = [];
+  for (const item of rawList) {
+    const key = item.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(item);
+    }
+  }
+  const joined = unique.join(', ');
+  if (!maxLength || joined.length <= maxLength) return joined;
+  return joined.slice(0, maxLength).replace(/,\s*$/, '').trim() || joined.slice(0, maxLength);
+}
+
 async function createOrGetColor(colorName, tx = db) {
-  const clean = String(colorName || '').trim();
+  const clean = String(colorName || '').trim().slice(0, 100);
   if (!clean) return null;
 
   if (config.IS_BRANCH_MODE) {
@@ -165,7 +184,7 @@ async function listSizes() {
 }
 
 async function createOrGetSize(sizeName, tx = db) {
-  const clean = String(sizeName || '').trim();
+  const clean = String(sizeName || '').trim().slice(0, 100);
   if (!clean) return null;
 
   if (config.IS_BRANCH_MODE) {
@@ -1070,13 +1089,10 @@ async function createProduct(body, user, file = null) {
     throw err;
   }
 
-  const targetColorStr = String(new_color || color || '').trim();
-  let targetSizeStr = '';
-  if (hasMultiSizes && parsedSizes.length > 0) {
-    targetSizeStr = parsedSizes.map((s) => s.size).join(', ');
-  } else {
-    targetSizeStr = String(new_size || size_cut || body.size || '').trim();
-  }
+  const targetColorStr = String(new_color || color || '').trim().slice(0, 100);
+  const targetSizeStr = (hasMultiSizes && parsedSizes.length > 0)
+    ? formatUniqueSizeSummary(parsedSizes, '', 100)
+    : formatUniqueSizeSummary(null, new_size || size_cut || body.size || '', 100);
 
   try {
     if (config.IS_BRANCH_MODE) {
@@ -1447,13 +1463,10 @@ async function updateProduct(id, body, user, file = null) {
 
   const numPrice = Number(price) || 0;
   const numCost = Number(cost_price) || 0;
-  const targetColorStr = String(new_color || color || '').trim();
-  let targetSizeStr = '';
-  if (hasMultiSizes && parsedSizes.length > 0) {
-    targetSizeStr = parsedSizes.map((s) => s.size).join(', ');
-  } else {
-    targetSizeStr = String(new_size || size_cut || body.size || '').trim();
-  }
+  const targetColorStr = String(new_color || color || '').trim().slice(0, 100);
+  const targetSizeStr = (hasMultiSizes && parsedSizes.length > 0)
+    ? formatUniqueSizeSummary(parsedSizes, '', 100)
+    : formatUniqueSizeSummary(null, new_size || size_cut || body.size || '', 100);
 
   try {
     if (barcode) {

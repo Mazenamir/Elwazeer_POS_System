@@ -24,6 +24,7 @@ const PUBLIC_PATHS = new Set([
   '/api/public/check-setup',
   '/api/public/setup',
   '/api/public/settings',
+  '/api/client-errors',
   '/api/server-time',
   '/api/sync/apply',
   '/api/sync/ping',

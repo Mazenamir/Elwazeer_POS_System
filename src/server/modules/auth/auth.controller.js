@@ -471,7 +471,16 @@ async function deleteBranchUser(req, res, next) {
   }
 }
 
+const pkgVersion = (() => {
+  try {
+    return require('../../../../package.json').version || '1.0.0';
+  } catch {
+    return '1.0.0';
+  }
+})();
+
 async function getServerTime(req, res) {
+  const edition = config.IS_BRANCH_MODE ? 'branch' : 'master';
   try {
     const cairoNow = await getDatabaseCairoNow(db);
     res.json({
@@ -481,6 +490,8 @@ async function getServerTime(req, res) {
       date: cairoNow.date,
       time: cairoNow.time,
       month: cairoNow.month,
+      app_version: pkgVersion,
+      edition,
     });
   } catch (err) {
     const fallback = getCairoDateTimeParts();
@@ -492,6 +503,8 @@ async function getServerTime(req, res) {
       time: fallback.time,
       month: fallback.date.substring(0, 7),
       fallback: true,
+      app_version: pkgVersion,
+      edition,
     });
   }
 }

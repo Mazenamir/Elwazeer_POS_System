@@ -1,11 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'fs';
 
 const currentDir = import.meta.dirname;
+const pkg = JSON.parse(fs.readFileSync(path.resolve(currentDir, 'package.json'), 'utf8'));
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version || '1.0.0'),
+  },
   root: path.resolve(currentDir, 'src/renderer'),
   publicDir: path.resolve(currentDir, 'src/renderer/public'),
   build: {

@@ -8,6 +8,7 @@ const db = require('./database/connection');
 const { runMigrations } = require('./database/migrator');
 const syncService = require('./modules/sync/sync.service');
 const { drainCoordinator } = require('./core/drain-coordinator');
+const errorLogger = require('./core/error-logger');
 
 function isPortOpen(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
@@ -294,9 +295,23 @@ async function ensurePostgresRunning() {
 async function startServer() {
   process.on('uncaughtException', (err) => {
     console.error('[Server] Uncaught Exception (kept alive):', err?.stack || err);
+    errorLogger.logError({
+      source: 'server',
+      level: 'fatal',
+      code: err?.code || 'UNCAUGHT_EXCEPTION',
+      message: err?.message || String(err),
+      stack: err?.stack || null,
+    });
   });
   process.on('unhandledRejection', (reason) => {
     console.error('[Server] Unhandled Rejection (kept alive):', reason?.stack || reason);
+    errorLogger.logError({
+      source: 'server',
+      level: 'fatal',
+      code: reason?.code || 'UNHANDLED_REJECTION',
+      message: reason?.message || String(reason),
+      stack: reason?.stack || null,
+    });
   });
   try {
     console.log(`🚀 Starting Bebyoon Server in ${config.IS_BRANCH_MODE ? 'BRANCH' : 'MASTER'} mode...`);
@@ -343,6 +358,13 @@ async function startServer() {
     });
 
     server.on('error', (err) => {
+      errorLogger.logError({
+        source: 'server',
+        level: 'fatal',
+        code: err?.code || 'HTTP_SERVER_ERROR',
+        message: err?.message || 'HTTP server error',
+        stack: err?.stack || null,
+      });
       if (err.code === 'EADDRINUSE') {
         console.error(`\n❌ Error: Port ${config.PORT} is already in use by another process.`);
         console.error(`💡 Tip: An instance of Bebyoon Server is already running on port ${config.PORT}.\n`);

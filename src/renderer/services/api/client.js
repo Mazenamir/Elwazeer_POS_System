@@ -17,6 +17,7 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.status = status;
     this.data = data;
+    this.errorId = data?.errorId || null;
   }
 }
 
@@ -156,6 +157,9 @@ async function request(endpoint, options = {}) {
         } catch {}
       }
       errorMessage = errorData?.error || errorData?.message || errorMessage;
+      if (response.status >= 500 && errorData?.errorId && !errorMessage.includes(errorData.errorId)) {
+        errorMessage = `${errorMessage} (${errorData.errorId})`;
+      }
       throw new ApiError(errorMessage, response.status, errorData);
     }
 

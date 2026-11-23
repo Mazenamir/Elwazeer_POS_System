@@ -883,6 +883,7 @@ class AutoUpdateManager extends EventEmitter {
 
   getStatus() {
     return {
+      currentVersion: this.currentVersion,
       isChecking: this.isChecking,
       isDownloading: this.isDownloading,
       updateDownloaded: this.updateDownloaded,

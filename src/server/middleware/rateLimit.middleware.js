@@ -44,9 +44,17 @@ const syncLimiter = createLimiter({
   message: 'تم تجاوز الحد المسموح به لتشغيل المزامنة، برجاء المحاولة لاحقاً',
 });
 
+// 4. Client Error Limiter: 30 reports per minute per client
+const clientErrorLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: 'تم تجاوز الحد المسموح به لتسجيل تقارير الأخطاء',
+});
+
 module.exports = {
   createLimiter,
   searchLimiter,
   exportLimiter,
   syncLimiter,
+  clientErrorLimiter,
 };

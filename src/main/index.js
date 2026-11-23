@@ -26,6 +26,7 @@ let updaterManager = null;
 let tray = null;
 let isQuiting = false;
 let logPath = null;
+let sharedErrorLogPath = null;
 
 function log(msg) {
   console.log(msg);
@@ -37,10 +38,43 @@ function log(msg) {
   }
 }
 
-// Global exception handler
+function logElectronError(code, err) {
+  const message = err instanceof Error ? err.message : String(err || 'Unknown Electron error');
+  const stack = err instanceof Error ? err.stack : null;
+  log(`${code}: ${stack || message}`);
+  if (sharedErrorLogPath) {
+    try {
+      fs.mkdirSync(path.dirname(sharedErrorLogPath), { recursive: true });
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const suffix = Math.random().toString(16).slice(2, 8).toUpperCase().padEnd(6, '0');
+      const entry = {
+        errorId: `ERR-${y}${m}${d}-${suffix}`,
+        timestamp: now.toISOString(),
+        source: 'electron',
+        level: 'fatal',
+        code,
+        statusCode: null,
+        message: message.slice(0, 2000),
+        stack: stack ? stack.slice(0, 4000) : null,
+      };
+      fs.appendFileSync(sharedErrorLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
+    } catch {}
+  }
+}
+
+// Global exception & rejection handlers
 process.on('uncaughtException', (error) => {
-  log(`UNCAUGHT EXCEPTION: ${error.message}`);
-  dialog.showErrorBox('خطأ في النظام', error.message || 'حدث خطأ غير متوقع');
+  logElectronError('ELECTRON_UNCAUGHT_EXCEPTION', error);
+  try {
+    dialog.showErrorBox('خطأ في النظام', error?.message || 'حدث خطأ غير متوقع');
+  } catch {}
+});
+
+process.on('unhandledRejection', (reason) => {
+  logElectronError('ELECTRON_UNHANDLED_REJECTION', reason);
 });
 
 // Performance and memory switches
@@ -415,6 +449,7 @@ app.on('ready', async () => {
     ? (process.env.ProgramData ? path.join(process.env.ProgramData, appDataFolderName) : path.join(app.getPath('userData'), 'data'))
     : appRoot;
   const dataDir = process.env.DATA_DIR || defaultDataDir;
+  sharedErrorLogPath = path.join(dataDir, 'logs', 'errors.jsonl');
 
   const dataEnvPath = path.join(dataDir, '.env');
   if (fs.existsSync(dataEnvPath)) {
@@ -519,6 +554,7 @@ app.on('before-quit', () => {
           ? (process.env.ProgramData ? path.join(process.env.ProgramData, 'Bebyoon System') : path.join(app.getPath('userData'), 'data'))
           : path.resolve(__dirname, '../../');
         const dataDir = process.env.DATA_DIR || defaultDataDir;
+  sharedErrorLogPath = path.join(dataDir, 'logs', 'errors.jsonl');
         const pgData = app.isPackaged
           ? path.join(dataDir, 'postgres_data')
           : path.resolve(__dirname, '../../programs/data');

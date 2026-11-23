@@ -1,9 +1,10 @@
 import React from 'react';
+import { reportClientError } from '../../utils/errorReporter';
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, errorId: null, copied: false };
   }
 
   static getDerivedStateFromError(error) {
@@ -26,7 +27,33 @@ export class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error('App ErrorBoundary caught error:', error, errorInfo);
+    reportClientError({
+      message: error?.message || 'React ErrorBoundary Crash',
+      stack: error?.stack || null,
+      componentStack: errorInfo?.componentStack || null,
+      type: 'REACT_ERROR_BOUNDARY',
+    }).then((errorId) => {
+      if (errorId) {
+        this.setState({ errorId });
+      }
+    });
   }
+
+  handleCopyDetails = () => {
+    try {
+      const text = [
+        this.state.errorId ? `Error ID: ${this.state.errorId}` : null,
+        `URL: ${window.location.pathname}${window.location.search}`,
+        `Message: ${this.state.error?.message || 'Unknown error'}`,
+        this.state.error?.stack ? `Stack:\n${this.state.error.stack}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      navigator.clipboard?.writeText(text);
+      this.setState({ copied: true });
+      setTimeout(() => this.setState({ copied: false }), 2500);
+    } catch {}
+  };
 
   handleRouteReset = () => {
     if (this.state.hasError) {
@@ -64,6 +91,19 @@ export class ErrorBoundary extends React.Component {
               <pre className="text-xs bg-slate-950/70 text-rose-400 p-3 rounded-xl overflow-x-auto text-left max-h-28">
                 {this.state.error.message}
               </pre>
+            )}
+            {this.state.errorId && (
+              <div className="flex items-center justify-between gap-2 bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2 text-xs">
+                <span className="text-slate-400">رقم المرجع:</span>
+                <span className="font-mono font-bold text-amber-400 select-text">{this.state.errorId}</span>
+                <button
+                  type="button"
+                  onClick={this.handleCopyDetails}
+                  className="text-indigo-400 hover:text-indigo-300 font-bold cursor-pointer"
+                >
+                  {this.state.copied ? 'تم النسخ ✓' : 'نسخ التفاصيل'}
+                </button>
+              </div>
             )}
             <div className="flex flex-col sm:flex-row gap-2.5">
               <button

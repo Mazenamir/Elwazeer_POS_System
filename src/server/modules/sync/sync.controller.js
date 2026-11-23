@@ -3,6 +3,7 @@ const db = require('../../database/connection');
 const syncService = require('./sync.service');
 const uploadSyncHelpers = require('./upload-sync.helpers');
 const notificationsService = require('../notifications/notifications.service');
+const errorLogger = require('../../core/error-logger');
 
 async function ping(req, res) {
   const branchId = req.query?.branch_id || req.headers['x-branch-id'];
@@ -61,7 +62,25 @@ async function apply(req, res, next) {
     res.json({ success: true, operation_uuid: operation.operation_uuid });
   } catch (err) {
     console.error('Sync apply failed:', err);
-    res.status(400).json({ error: err.message });
+    const errorId = errorLogger.logError({
+      source: 'sync',
+      level: 'error',
+      code: err?.code || 'SYNC_APPLY_FAILED',
+      statusCode: 400,
+      message: `فشل تطبيق عملية مزامنة (${operation.entity_type} / ${operation.action})`,
+      rawMessage: err?.message || null,
+      method: 'POST',
+      path: '/api/sync/apply',
+      branchId: operation.branch_id || null,
+      stack: err?.stack || null,
+      details: {
+        operation_uuid: operation.operation_uuid,
+        entity_type: operation.entity_type,
+        action: operation.action,
+        entity_id: operation.entity_id,
+      },
+    });
+    res.status(400).json({ error: err.message, errorId });
   }
 }
 

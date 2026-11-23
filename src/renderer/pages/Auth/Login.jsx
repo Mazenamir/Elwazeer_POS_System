@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
+import { useAppVersion } from '../../hooks/useAppVersion';
 
 const SUIT_SLIDES = [
   {
@@ -76,6 +77,7 @@ export function Login() {
   const navigate = useNavigate();
   const { login, isAuthenticated } = useAuth();
   const toast = useToast();
+  const { version: appVersion } = useAppVersion();
 
   const [username, setUsername] = useState(() => localStorage.getItem('bebyoon_remembered_username') || '');
   const [password, setPassword] = useState('');
@@ -455,7 +457,7 @@ export function Login() {
             </button>
             <button
               type="button"
-              onClick={() => toast.info(isArabic ? 'نظام بيبون لإدارة وتأجير البدلات - الإصدار 1.0.6' : 'Bebyoon Suits POS System v1.0.6')}
+              onClick={() => toast.info(isArabic ? `نظام بيبيون لإدارة وتأجير البدلات - الإصدار ${appVersion}` : `Bebyoon Suits POS System v${appVersion}`)}
               aria-label="System Info"
               title={isArabic ? 'معلومات النظام' : 'System Info'}
               className="w-7 h-7 rounded-full border border-neutral-200 hover:border-neutral-400 hover:text-neutral-700 flex items-center justify-center transition cursor-pointer"

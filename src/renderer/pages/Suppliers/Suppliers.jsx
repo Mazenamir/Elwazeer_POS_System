@@ -58,6 +58,8 @@ import MatrixVariantGenerator, { generate12DigitBarcode } from '../../components
 import BranchStockMatrix from './BranchStockMatrix';
 import BranchTransferLogs from './BranchTransferLogs';
 import SmartStockRequestModal from '../../components/inventory/SmartStockRequestModal';
+import ProductVariantsCell from '../../components/inventory/ProductVariantsCell';
+import VariantMatrixModal from '../../components/inventory/VariantMatrixModal';
 import SupplierReturnModal from '../../components/suppliers/SupplierReturnModal';
 
 const CATEGORY_DISPLAY_MAP = {
@@ -525,6 +527,16 @@ total: 0,
   // Smart Inter-Branch Stock Request Modal
   const [showSmartRequestModal, setShowSmartRequestModal] = useState(false);
   const [smartRequestProduct, setSmartRequestProduct] = useState(null);
+
+  // Product Variants Color × Size Matrix Modal
+  const [variantMatrixState, setVariantMatrixState] = useState({
+    open: false,
+    product: null,
+    initialColor: '',
+  });
+  const openVariantMatrix = useCallback((product, initialColor = '') => {
+    setVariantMatrixState({ open: true, product, initialColor });
+  }, []);
 
   // Incoming Shipments (Pending receiving)
   const [incomingShipments, setIncomingShipments] = useState([]);
@@ -1156,7 +1168,7 @@ total: 0,
     }
 
     const finalStock = cleanedSizes.reduce((sum, s) => sum + s.stock_level, 0);
-    const finalSizeCut = cleanedSizes.map((s) => s.size_name).join(', ');
+    const finalSizeCut = [...new Set(cleanedSizes.map((s) => s.size_name))].join(', ');
 
     setProductSubmitting(true);
     try {
@@ -2984,66 +2996,7 @@ total: 0,
                             </div>
                           </td>
                           <td className="py-3">
-                            <div className="flex flex-col gap-1.5 max-w-sm">
-                              {Array.isArray(p.sizes) && p.sizes.length > 0 ? (
-                                (() => {
-                                  const colorGroups = new Map();
-                                  for (const s of p.sizes) {
-                                    const cName = String(s.color_name || p.color || '').trim();
-                                    if (!colorGroups.has(cName)) colorGroups.set(cName, []);
-                                    colorGroups.get(cName).push(s);
-                                  }
-                                  return Array.from(colorGroups.entries()).map(([cName, groupSizes], gIdx) => (
-                                    <div key={gIdx} className="flex flex-wrap items-center gap-1.5">
-                                      {cName && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 text-[11px] font-black border border-indigo-200 shrink-0">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                                          {cName}
-                                        </span>
-                                      )}
-                                      {groupSizes.map((s, sIdx) => {
-                                        const qty = Number(s.stock_level ?? 0);
-                                        return (
-                                          <span
-                                            key={sIdx}
-                                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border transition-colors ${
-                                              qty > 0
-                                                ? 'bg-[#FAF6ED] text-[#24221F] border-[#E6DECD]'
-                                                : 'bg-rose-50/70 text-rose-600 border-rose-200'
-                                            }`}
-                                            title={`${cName ? `اللون: ${cName} | ` : ''}المقاس: ${s.size_name} | الرصيد: ${qty} قطعة`}
-                                          >
-                                            <span className="font-extrabold">{s.size_name}</span>
-                                            <span
-                                              className={`px-1.5 py-0.2 rounded text-[11px] font-black ${
-                                                qty > 0 ? 'bg-[#FFFDF9] text-[#24221F] border border-[#E6DECD]' : 'bg-rose-100 text-rose-700'
-                                              }`}
-                                            >
-                                              {qty}
-                                            </span>
-                                          </span>
-                                        );
-                                      })}
-                                    </div>
-                                  ));
-                                })()
-                              ) : (
-                                <>
-                                  {p.color && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 text-xs font-bold border border-indigo-200">
-                                        {p.color}
-                                      </span>
-                                    </div>
-                                  )}
-                                  {(p.size_cut || p.size) && (
-                                    <span className="text-xs text-[#777266] font-bold">
-                                      {p.size_cut || p.size}
-                                    </span>
-                                  )}
-                                </>
-                              )}
-                            </div>
+                            <ProductVariantsCell product={p} onOpenMatrix={openVariantMatrix} />
                           </td>
                           <td className="py-3 font-mono text-xs text-[#777266]" dir="ltr">
                             {p.barcode || '-'}
@@ -5438,6 +5391,21 @@ total: 0,
         branchLogo={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.logo_url}
         branchId={activeBranchId}
         isNewlyCreated={isBarcodeNewlyCreated}
+      />
+
+      {/* PRODUCT VARIANTS COLOR × SIZE MATRIX MODAL */}
+      <VariantMatrixModal
+        isOpen={variantMatrixState.open}
+        product={variantMatrixState.product}
+        initialColor={variantMatrixState.initialColor}
+        onClose={() => setVariantMatrixState({ open: false, product: null, initialColor: '' })}
+        canEdit={Boolean(isAdmin || hasPermission('inventory_admin') || hasPermission('inventory.products.edit'))}
+        onEditProduct={(prod) => openEditProduct(prod)}
+        onPrintBarcode={(prod) => {
+          setSelectedProductForBarcode(prod);
+          setIsBarcodeNewlyCreated(false);
+          setShowBarcodePrintModal(true);
+        }}
       />
     </div>
   );
