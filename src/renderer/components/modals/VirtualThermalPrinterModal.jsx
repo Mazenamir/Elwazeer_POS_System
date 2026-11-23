@@ -131,7 +131,7 @@ function SimulatedSticker({ item, paperType, storeName, logoUrl, forceShadow = f
       {/* Header: Logo or Store Name */}
       <div
         className="w-full flex items-center justify-center overflow-hidden shrink-0"
-        style={{ height: is50Format ? '7.2mm' : '6.2mm', maxHeight: is50Format ? '7.2mm' : '6.2mm' }}
+        style={{ height: is50Format ? '5.5mm' : '4.6mm', maxHeight: is50Format ? '5.5mm' : '4.6mm' }}
       >
         {logoUrl ? (
           <img
@@ -139,7 +139,7 @@ function SimulatedSticker({ item, paperType, storeName, logoUrl, forceShadow = f
             alt=""
             className="object-contain"
             style={{
-              maxHeight: is50Format ? '7.0mm' : '6.0mm',
+              maxHeight: is50Format ? '5.3mm' : '4.4mm',
               maxWidth: is50Format ? '36mm' : '28mm',
             }}
             onError={(e) => {
@@ -165,11 +165,16 @@ function SimulatedSticker({ item, paperType, storeName, logoUrl, forceShadow = f
 
       {/* Product Title */}
       <div
-        className="w-full font-extrabold truncate shrink-0"
+        className="w-full font-extrabold shrink-0"
         style={{
-          fontSize: is50Format ? '7pt' : '6pt',
+          fontSize: is50Format ? '6.5pt' : '5.5pt',
           lineHeight: 1.05,
-          maxHeight: is50Format ? '3.4mm' : '2.8mm',
+          maxHeight: is50Format ? '5.0mm' : '4.2mm',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
           direction: 'rtl',
         }}
       >

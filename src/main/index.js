@@ -344,11 +344,17 @@ function createWindow(targetUrl, isDevMode = false) {
 
   Menu.setApplicationMenu(null);
 
-  mainWindow.on('close', () => {
-    isQuiting = true;
-    if (updaterManager && updaterManager.updateDownloaded) {
-      log('[APP] Update downloaded, executing quitAndInstall on window close...');
-      updaterManager.quitAndInstall();
+  mainWindow.on('close', (event) => {
+    if (!isQuiting) {
+      if (updaterManager && updaterManager.updateDownloaded) {
+        isQuiting = true;
+        log('[APP] Update downloaded, executing quitAndInstall on window close...');
+        updaterManager.quitAndInstall();
+        return;
+      }
+      event.preventDefault();
+      mainWindow.hide();
+      log('[APP] Main window hidden to system tray (server continues running).');
       return;
     }
     stopAutoUpdater();

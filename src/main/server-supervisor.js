@@ -41,6 +41,11 @@ class ServerSupervisor {
     this.isReady = false;
     this.isStopping = false;
     this.recentStderr = [];
+    this.restartAttempts = 0;
+    this.maxRestarts = options.maxRestarts ?? 5;
+    this.restartWindowMs = options.restartWindowMs ?? 60000;
+    this.restartTimer = null;
+    this.lastStartTime = 0;
   }
 
   log(message) {
@@ -59,6 +64,7 @@ class ServerSupervisor {
     this.isReady = false;
     this.isStopping = false;
     this.recentStderr = [];
+    this.lastStartTime = Date.now();
     this.log(`Checking server path: ${this.serverScript}`);
     this.log(`Server root: ${this.appRoot}`);
     this.log(`Configured port: ${this.port}`);
@@ -150,13 +156,35 @@ class ServerSupervisor {
 
     this.process.on('exit', (code, signal) => {
       this.log(`Server process exited. Code: ${code}, Signal: ${signal}`);
-      if (!this.isReady && !this.isStopping && code !== 0) {
+      if (this.isStopping) {
+        return;
+      }
+      if (!this.isReady && code !== 0) {
         const stderrSnippet = this.recentStderr.join('').trim();
         const errDetail = stderrSnippet
           ? stderrSnippet.split('\n').slice(-10).join('\n')
           : `Process terminated with code ${code} (${signal || 'no signal'})`;
         if (typeof this.errorCallback === 'function') {
           this.errorCallback(errDetail);
+        }
+        return;
+      }
+      if (this.isReady) {
+        if (Date.now() - this.lastStartTime > this.restartWindowMs) {
+          this.restartAttempts = 0;
+        }
+        if (this.restartAttempts < this.maxRestarts) {
+          this.restartAttempts += 1;
+          const delayMs = Math.min(1000 * Math.pow(2, this.restartAttempts - 1), 15000);
+          this.log(`[Supervisor] Server exited unexpectedly (code=${code}, signal=${signal}). Auto-restarting in ${delayMs}ms (attempt ${this.restartAttempts}/${this.maxRestarts})...`);
+          this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            if (!this.isStopping) {
+              this.start(this.readyCallback, this.errorCallback);
+            }
+          }, delayMs);
+        } else {
+          this.log(`[Supervisor] Max auto-restart attempts (${this.maxRestarts}) reached. Server will not restart.`);
         }
       }
     });
@@ -168,12 +196,14 @@ class ServerSupervisor {
     if (!this.process || this.isExternal) {
       return { success: true, reason: 'no_child_process_or_external' };
     }
+    this.isStopping = true;
     this.log(`[Supervisor] Requesting server process to drain active operations and stop (Timeout: ${timeoutMs}ms)...`);
     return new Promise((resolve) => {
       let resolved = false;
       const cleanupTimer = setTimeout(() => {
         if (!resolved) {
           resolved = true;
+          this.isStopping = false;
           this.log('[Supervisor] Warning: drainAndStop timed out waiting for server drain.');
           resolve({ success: false, reason: 'drain_timeout' });
         }
@@ -185,6 +215,7 @@ class ServerSupervisor {
         } else if (msg?.type === 'drain-failed') {
           if (!resolved) {
             resolved = true;
+            this.isStopping = false;
             clearTimeout(cleanupTimer);
             this.process?.removeListener('message', messageHandler);
             resolve({ success: false, reason: 'drain_rejected_by_server', details: msg.details });
@@ -210,6 +241,7 @@ class ServerSupervisor {
       } catch (err) {
         if (!resolved) {
           resolved = true;
+          this.isStopping = false;
           clearTimeout(cleanupTimer);
           resolve({ success: false, reason: err.message });
         }
@@ -219,6 +251,10 @@ class ServerSupervisor {
 
   stop() {
     this.isStopping = true;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     if (this.process) {
       this.log('Signaling server process to shut down gracefully...');
       try {

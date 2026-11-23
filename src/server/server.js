@@ -292,6 +292,12 @@ async function ensurePostgresRunning() {
 }
 
 async function startServer() {
+  process.on('uncaughtException', (err) => {
+    console.error('[Server] Uncaught Exception (kept alive):', err?.stack || err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[Server] Unhandled Rejection (kept alive):', reason?.stack || reason);
+  });
   try {
     console.log(`🚀 Starting Bebyoon Server in ${config.IS_BRANCH_MODE ? 'BRANCH' : 'MASTER'} mode...`);
 
@@ -348,9 +354,38 @@ async function startServer() {
 
     // 3. Graceful shutdown
     let isShuttingDown = false;
+    let pgWatchdogTimer = null;
+    let isHealingDb = false;
+
+    if (!config.IS_BRANCH_MODE && (config.DB_HOST === 'localhost' || config.DB_HOST === '127.0.0.1')) {
+      pgWatchdogTimer = setInterval(async () => {
+        if (isShuttingDown || isHealingDb) return;
+        try {
+          const alive = await db.isPrimaryDbAvailable();
+          if (!alive && !isShuttingDown) {
+            isHealingDb = true;
+            console.warn('[Database] Watchdog: PostgreSQL became unreachable. Attempting auto-recovery...');
+            await ensurePostgresRunning();
+            console.log('[Database] Watchdog: PostgreSQL recovered successfully.');
+          }
+        } catch (err) {
+          console.error('[Database] Watchdog recovery error:', err.message);
+        } finally {
+          isHealingDb = false;
+        }
+      }, 15000);
+      if (typeof pgWatchdogTimer.unref === 'function') {
+        pgWatchdogTimer.unref();
+      }
+    }
+
     const shutdown = async (signal) => {
       if (isShuttingDown) return;
       isShuttingDown = true;
+      if (pgWatchdogTimer) {
+        clearInterval(pgWatchdogTimer);
+        pgWatchdogTimer = null;
+      }
       console.log(`\nReceived ${signal}. Shutting down gracefully...`);
       server.close(async () => {
         try {
