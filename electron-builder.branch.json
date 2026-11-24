@@ -34,10 +34,6 @@
       ]
     },
     {
-      "from": "package.json",
-      "to": "package.json"
-    },
-    {
       "from": "programs/node",
       "to": "programs/node",
       "filter": [
