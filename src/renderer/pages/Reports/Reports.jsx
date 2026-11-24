@@ -617,6 +617,147 @@ export function Reports() {
     }
   }, [selectedMonth, selectedBranch, toast]);
 
+  const [bulkRequiredHours, setBulkRequiredHours] = useState('');
+  const [applyingBulkHours, setApplyingBulkHours] = useState(false);
+  const [editingSalaryEmp, setEditingSalaryEmp] = useState(null);
+  const [salaryEditForm, setSalaryEditForm] = useState(null);
+  const [savingSalaryEdit, setSavingSalaryEdit] = useState(false);
+
+  const canExecutePayroll = Boolean(isAdmin || hasPermission('employees.payroll.execute'));
+
+  const handleApplyBulkRequiredHours = async () => {
+    const hrs = Number(bulkRequiredHours);
+    if (bulkRequiredHours === '' || !Number.isFinite(hrs) || hrs < 0) {
+      toast({ title: 'تنبيه', message: 'يرجى إدخال عدد ساعات صحيح', variant: 'warning' });
+      return;
+    }
+    try {
+      setApplyingBulkHours(true);
+      await client.post('/employees/payroll/bulk-required-hours', {
+        month: selectedMonth,
+        branch_id: selectedBranch,
+        required_hours: hrs,
+      });
+      toast({ title: 'تم التحديث', message: `تم تطبيق ${hrs} ساعة مطلوبة على موظفي شهر ${selectedMonth}`, variant: 'success' });
+      await loadSalaryReport(true);
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر تحديث الساعات المطلوبة', variant: 'danger' });
+    } finally {
+      setApplyingBulkHours(false);
+    }
+  };
+
+  const openSalaryEditModal = async (emp) => {
+    setEditingSalaryEmp(emp);
+    setSalaryEditForm({
+      basic_salary_override: String(emp.basic_salary ?? 0),
+      master_basic_salary: Number(emp.master_basic_salary ?? emp.basic_salary ?? 0),
+      work_days: String(emp.work_days ?? 30),
+      allowed_leave_days: String(emp.allowed_leave_days ?? 4),
+      include_unused_leave_payout: Boolean(emp.effective_unused_leave_enabled),
+      required_hours: String(emp.required_hours ?? 0),
+      overtime_amount_override: emp.has_overtime_override ? String(emp.overtime_amount ?? 0) : '',
+      delay_deduction_override: emp.has_delay_override ? String(emp.delay_deduction ?? 0) : '',
+      absent_days_override: String(emp.absent_days ?? 0),
+      leave_days_override: String(emp.leave_days ?? 0),
+      half_days_override: String(emp.half_days ?? 0),
+      penalty_days: String(emp.penalty_days ?? 0),
+      old_advances: String(emp.old_advances ?? 0),
+      previous_dues: String(emp.previous_dues ?? 0),
+      transportation_allowance: String(emp.transportation_allowance ?? 0),
+      commissions: String(emp.commissions ?? 0),
+      manual_bonuses_override: String(emp.allowances ?? 0),
+      manual_deductions_override: String(emp.other_deductions ?? 0),
+    });
+    try {
+      const res = await client.get(`/employees/${emp.employee_id}/payslip`, { params: { month: selectedMonth } });
+      const raw = res?.data || res;
+      if (raw?.adjustment) {
+        const a = raw.adjustment;
+        setSalaryEditForm({
+          basic_salary_override: a.basic_salary_override !== null && a.basic_salary_override !== undefined ? String(a.basic_salary_override) : String(raw.basic_salary ?? 0),
+          master_basic_salary: Number(raw.employee_master_basic_salary ?? raw.basic_salary ?? 0),
+          work_days: a.work_days !== null && a.work_days !== undefined ? String(a.work_days) : String(raw.work_days ?? 30),
+          allowed_leave_days: a.allowed_leave_days !== null && a.allowed_leave_days !== undefined ? String(a.allowed_leave_days) : String(raw.allowed_leave_days ?? 4),
+          include_unused_leave_payout: a.include_unused_leave_payout !== null && a.include_unused_leave_payout !== undefined
+            ? (a.include_unused_leave_payout === true || a.include_unused_leave_payout === 1)
+            : Boolean(raw.effective_unused_leave_enabled),
+          required_hours: a.required_hours !== null && a.required_hours !== undefined ? String(a.required_hours) : String(raw.required_hours ?? 0),
+          overtime_amount_override: a.overtime_amount_override !== null && a.overtime_amount_override !== undefined ? String(a.overtime_amount_override) : '',
+          delay_deduction_override: a.delay_deduction_override !== null && a.delay_deduction_override !== undefined ? String(a.delay_deduction_override) : '',
+          absent_days_override: a.absent_days_override !== null && a.absent_days_override !== undefined ? String(a.absent_days_override) : String(raw.attendance?.absent_days ?? 0),
+          leave_days_override: a.leave_days_override !== null && a.leave_days_override !== undefined ? String(a.leave_days_override) : String(raw.attendance?.leave_days ?? 0),
+          half_days_override: a.half_days_override !== null && a.half_days_override !== undefined ? String(a.half_days_override) : String(raw.attendance?.half_days ?? 0),
+          penalty_days: String(a.penalty_days ?? 0),
+          old_advances: String(a.old_advances ?? 0),
+          previous_dues: String(a.previous_dues ?? 0),
+          transportation_allowance: String(a.transportation_allowance ?? 0),
+          commissions: String(a.commissions ?? 0),
+          manual_bonuses_override: a.manual_bonuses_override !== null && a.manual_bonuses_override !== undefined ? String(a.manual_bonuses_override) : String(raw.manual_bonuses ?? 0),
+          manual_deductions_override: a.manual_deductions_override !== null && a.manual_deductions_override !== undefined ? String(a.manual_deductions_override) : String(raw.financials?.deductions_manual ?? 0),
+        });
+      }
+    } catch {}
+  };
+
+  const handleSaveSalaryRowEdit = async (e) => {
+    e.preventDefault();
+    if (!editingSalaryEmp || !salaryEditForm) return;
+    try {
+      setSavingSalaryEdit(true);
+      const toOptNum = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+      const formBasic = toOptNum(salaryEditForm.basic_salary_override);
+      const masterBasic = Number(salaryEditForm.master_basic_salary ?? 0);
+      await client.put(`/employees/${editingSalaryEmp.employee_id}/payslip-adjustments`, {
+        month: selectedMonth,
+        basic_salary_override: formBasic !== null && formBasic !== masterBasic ? formBasic : null,
+        work_days: toOptNum(salaryEditForm.work_days),
+        allowed_leave_days: toOptNum(salaryEditForm.allowed_leave_days),
+        include_unused_leave_payout: Boolean(salaryEditForm.include_unused_leave_payout),
+        required_hours: toOptNum(salaryEditForm.required_hours),
+        overtime_amount_override: toOptNum(salaryEditForm.overtime_amount_override),
+        delay_deduction_override: toOptNum(salaryEditForm.delay_deduction_override),
+        absent_days_override: toOptNum(salaryEditForm.absent_days_override),
+        leave_days_override: toOptNum(salaryEditForm.leave_days_override),
+        half_days_override: toOptNum(salaryEditForm.half_days_override),
+        penalty_days: Number(salaryEditForm.penalty_days || 0),
+        old_advances: Number(salaryEditForm.old_advances || 0),
+        previous_dues: Number(salaryEditForm.previous_dues || 0),
+        transportation_allowance: Number(salaryEditForm.transportation_allowance || 0),
+        commissions: Number(salaryEditForm.commissions || 0),
+        manual_bonuses_override: toOptNum(salaryEditForm.manual_bonuses_override),
+        manual_deductions_override: toOptNum(salaryEditForm.manual_deductions_override),
+      });
+      toast({ title: 'تم الحفظ', message: `تم حفظ تعديلات راتب ${editingSalaryEmp.employee_name}`, variant: 'success' });
+      setEditingSalaryEmp(null);
+      await loadSalaryReport(true);
+      window.dispatchEvent(new CustomEvent('elwazeer:payroll-updated'));
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر حفظ التعديل', variant: 'danger' });
+    } finally {
+      setSavingSalaryEdit(false);
+    }
+  };
+
+  const handleResetSalaryRowEdit = async () => {
+    if (!editingSalaryEmp) return;
+    try {
+      setSavingSalaryEdit(true);
+      await client.put(`/employees/${editingSalaryEmp.employee_id}/payslip-adjustments`, {
+        month: selectedMonth,
+        reset: true,
+      });
+      toast({ title: 'تمت الاستعادة', message: 'تمت استعادة الحساب التلقائي', variant: 'info' });
+      setEditingSalaryEmp(null);
+      await loadSalaryReport(true);
+      window.dispatchEvent(new CustomEvent('elwazeer:payroll-updated'));
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر الاستعادة', variant: 'danger' });
+    } finally {
+      setSavingSalaryEdit(false);
+    }
+  };
+
   // Load Sales KPI Report
   const loadKpiReport = useCallback(async (silent = false) => {
     try {
@@ -714,7 +855,11 @@ export function Reports() {
       refreshCurrentReport(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
-    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    window.addEventListener('elwazeer:payroll-updated', handleSyncCompleted);
+    return () => {
+      window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+      window.removeEventListener('elwazeer:payroll-updated', handleSyncCompleted);
+    };
   }, [
     accessibleTabs.length,
     canViewProfits,
@@ -2269,6 +2414,14 @@ export function Reports() {
                                           {formatCurrency(expandedDetails.extended.summary?.total_supplier_cash_payments || 0)}
                                         </span>
                                       </div>
+                                      {Number(expandedDetails.extended.summary?.total_salary_cash_payments || 0) > 0 && (
+                                        <div>
+                                          <span className="text-slate-400 font-bold ml-1.5">رواتب من الدرج:</span>
+                                          <span className="text-cyan-300 font-black">
+                                            {formatCurrency(expandedDetails.extended.summary?.total_salary_cash_payments || 0)}
+                                          </span>
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
 
@@ -3098,38 +3251,67 @@ export function Reports() {
         <Card>
           <CardHeader
             title="مسير المرتبات الشامل (SALARY)"
-            subtitle="جدول استحقاقات وخصومات الموظفين (ساعات التأخير، الإضافي 1.35x، الغياب 2x، الإجازات، السلف وصافي القبض)"
+            subtitle="جدول استحقاقات وخصومات الموظفين (أيام العمل الفعلية، الساعات المتغيرة، الإضافي 1.35x، التأخير 1.5x، الغياب 2x، بدل الإجازات، السلف والسوالف القديمة)"
           />
 
           <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-bold text-slate-500">
+            <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500">
+              <span>
                 الشهر: <span className="font-black text-slate-900">{salaryReport?.month || selectedMonth}</span>
               </span>
-              <span className="text-xs font-bold text-slate-500">
-                الساعات المعيارية: <span className="font-black text-slate-900">268 ساعة</span>
+              <span>
+                الإضافي: <span className="font-mono font-bold text-emerald-700">((اليومية / 10) × 1.35)</span>
               </span>
-              <span className="text-xs font-bold text-slate-500">
-                معادلة الإضافي: <span className="font-mono font-bold text-indigo-700">((اليومية / 10) * 1.35) * الساعات</span>
+              <span>
+                التأخير: <span className="font-mono font-bold text-rose-700">((اليومية / 10) × 1.5)</span>
               </span>
-              <span className="text-xs font-bold text-slate-500">
-                معادلة الغياب: <span className="font-mono font-bold text-rose-700">الغياب * اليومية * 2</span>
+              <span>
+                الغياب: <span className="font-mono font-bold text-rose-700">2x اليومية</span>
+              </span>
+              <span>
+                بدل الإجازة غير المستنفدة: <span className="font-mono font-bold text-emerald-700">1x اليومية</span>
               </span>
               <Badge variant={selectedBranch === 'all' ? 'primary' : 'success'}>
                 {currentBranchLabel}
               </Badge>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              icon={FileSpreadsheet}
-              isLoading={exportingConsolidated}
-              onClick={exportConsolidatedExcel}
-              className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-white"
-            >
-              تصدير شيت المجمع (.xlsx)
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {canExecutePayroll && (
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1">
+                  <span className="text-[11px] font-bold text-slate-600">الساعات المطلوبة للشهر:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="مثلاً 240"
+                    value={bulkRequiredHours}
+                    onChange={(e) => setBulkRequiredHours(e.target.value)}
+                    className="w-20 px-2 py-1 rounded-lg border border-slate-300 text-xs font-black text-slate-900 text-center"
+                  />
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    isLoading={applyingBulkHours}
+                    onClick={handleApplyBulkRequiredHours}
+                    className="!py-1 !px-2.5 text-[11px]"
+                  >
+                    تطبيق على الكل
+                  </Button>
+                </div>
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                icon={FileSpreadsheet}
+                isLoading={exportingConsolidated}
+                onClick={exportConsolidatedExcel}
+                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 bg-white"
+              >
+                تصدير شيت المجمع (.xlsx)
+              </Button>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -3137,144 +3319,249 @@ export function Reports() {
               <thead>
                 <tr className="bg-slate-900 text-white font-black">
                   <th className="py-3 px-3">الموظف</th>
-                  <th className="py-3 px-3">الراتب الأساسي</th>
-                  <th className="py-3 px-2.5">اليومية</th>
-                  <th className="py-3 px-2.5 text-center">ساعات فعلية</th>
-                  <th className="py-3 px-2.5 text-center">تأخير (س)</th>
-                  <th className="py-3 px-2.5 text-center">خصم تأخير</th>
-                  <th className="py-3 px-2.5 text-center">إضافي (س)</th>
-                  <th className="py-3 px-2.5 text-center text-emerald-300">قيمة الإضافي</th>
-                  <th className="py-3 px-2 text-center">غياب (يوم)</th>
-                  <th className="py-3 px-2.5 text-center text-rose-300">خصم غياب (2x)</th>
-                  <th className="py-3 px-2 text-center">إجازات</th>
-                  <th className="py-3 px-2.5 text-center text-rose-300">خصم إجازات (&gt;4)</th>
-                  <th className="py-3 px-2 text-center">نص يوم</th>
-                  <th className="py-3 px-2.5 text-center text-rose-300">خصم نص يوم</th>
-                  <th className="py-3 px-3 text-center text-rose-300">سلف الشهر</th>
+                  <th className="py-3 px-2.5">الراتب</th>
+                  <th className="py-3 px-2">أيام العمل</th>
+                  <th className="py-3 px-2">اليومية</th>
+                  <th className="py-3 px-2.5 text-center">ساعات (فعلية / مطلوبة)</th>
+                  <th className="py-3 px-2 text-center">خصم تأخير (1.5x)</th>
+                  <th className="py-3 px-2 text-center text-emerald-300">إضافي (1.35x)</th>
+                  <th className="py-3 px-2 text-center text-rose-300">غياب (2x)</th>
+                  <th className="py-3 px-2 text-center">إجازات / بدل</th>
+                  <th className="py-3 px-2 text-center text-rose-300">جزاءات وخصومات</th>
+                  <th className="py-3 px-2.5 text-center text-rose-300">سلف الشهر</th>
+                  <th className="py-3 px-2.5 text-center text-rose-300">سوالف قديمة</th>
                   <th className="py-3 px-2.5 text-center text-emerald-300">مكافآت وبدلات</th>
-                  <th className="py-3 px-3.5 text-center bg-emerald-950/80 text-emerald-300 font-black">صافي القبض المستحق 💵</th>
+                  <th className="py-3 px-2 text-center text-blue-300">مدفوع</th>
+                  <th className="py-3 px-3 text-center bg-emerald-950/80 text-emerald-300 font-black">المتبقي للقبض 💵</th>
+                  {canExecutePayroll && <th className="py-3 px-2 text-center">تسوية</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-bold">
                 {loadingSalary ? (
                   <tr>
-                    <td colSpan={17} className="py-12 text-center text-slate-400 font-bold">
+                    <td colSpan={canExecutePayroll ? 16 : 15} className="py-12 text-center text-slate-400 font-bold">
                       جارِ حساب مسير المرتبات والخصومات...
                     </td>
                   </tr>
                 ) : !salaryReport?.employees || salaryReport.employees.length === 0 ? (
                   <tr>
-                    <td colSpan={17} className="py-12 text-center text-slate-400 font-bold">
+                    <td colSpan={canExecutePayroll ? 16 : 15} className="py-12 text-center text-slate-400 font-bold">
                       لا تتوفر بيانات مرتبات لهذا الشهر
                     </td>
                   </tr>
                 ) : (
-                  salaryReport.employees.map((emp, idx) => (
-                    <tr key={emp.employee_id || idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-3 font-black text-slate-900 whitespace-nowrap">
-                        {emp.employee_name}
-                      </td>
-                      <td className="py-3 px-3 font-black font-mono text-slate-800">
-                        {formatCurrency(emp.basic_salary)}
-                      </td>
-                      <td className="py-3 px-2.5 font-mono text-slate-600">
-                        {formatCurrency(emp.daily_rate)}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-indigo-700">
-                        {emp.actual_hours} س
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-rose-600">
-                        {emp.delay_hours > 0 ? `${emp.delay_hours} س` : '-'}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-rose-600">
-                        {emp.delay_deduction > 0 ? formatCurrency(emp.delay_deduction) : '-'}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-emerald-600">
-                        {emp.overtime_hours > 0 ? `${emp.overtime_hours} س` : '-'}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-emerald-600 font-black">
-                        {emp.overtime_amount > 0 ? formatCurrency(emp.overtime_amount) : '-'}
-                      </td>
-                      <td className="py-3 px-2 text-center font-mono text-rose-600">
-                        {emp.absent_days > 0 ? emp.absent_days : '-'}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-rose-600">
-                        {emp.absent_deduction > 0 ? formatCurrency(emp.absent_deduction) : '-'}
-                      </td>
-                      <td className="py-3 px-2 text-center font-mono text-slate-600">
-                        {emp.leave_days > 0 ? emp.leave_days : '-'}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-rose-600">
-                        {emp.leave_deduction > 0 ? formatCurrency(emp.leave_deduction) : '-'}
-                      </td>
-                      <td className="py-3 px-2 text-center font-mono text-amber-600">
-                        {emp.half_days > 0 ? emp.half_days : '-'}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-rose-600">
-                        {emp.half_day_deduction > 0 ? formatCurrency(emp.half_day_deduction) : '-'}
-                      </td>
-                      <td className="py-3 px-3 text-center font-mono text-rose-700 font-black bg-rose-50/30">
-                        {emp.advances > 0 ? formatCurrency(emp.advances) : '-'}
-                      </td>
-                      <td className="py-3 px-2.5 text-center font-mono text-emerald-700 bg-emerald-50/30">
-                        {emp.allowances > 0 ? formatCurrency(emp.allowances) : '-'}
-                      </td>
-                      <td className="py-3 px-3.5 text-center font-mono font-black text-sm text-emerald-700 bg-emerald-50/70">
-                        {formatCurrency(emp.net_salary)}
-                      </td>
-                    </tr>
-                  ))
+                  salaryReport.employees.map((emp, idx) => {
+                    const totalPenaltiesAndOther = Number(emp.penalty_days_amount || 0) + Number(emp.other_deductions || 0) + Number(emp.half_day_deduction || 0);
+                    const totalBonusesDisplay = Number(emp.allowances || 0) + Number(emp.transportation_allowance || 0) + Number(emp.commissions || 0) + Number(emp.previous_dues || 0);
+                    const remaining = Number(emp.remaining_balance ?? emp.net_salary ?? 0);
+                    return (
+                      <tr key={emp.employee_id || idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-3 font-black text-slate-900 whitespace-nowrap">
+                          <div>{emp.employee_name}</div>
+                          {emp.status === 'inactive' && (
+                            <span className="text-[10px] font-bold text-rose-600">
+                              متوقف{emp.end_date ? ` (${String(emp.end_date).slice(0, 10)})` : ''}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-2.5 font-black font-mono text-slate-800">
+                          {formatCurrency(emp.basic_salary)}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono text-slate-700">
+                          {emp.work_days ?? 30} ي
+                        </td>
+                        <td className="py-3 px-2 font-mono text-slate-600">
+                          {formatCurrency(emp.daily_rate)}
+                        </td>
+                        <td className="py-3 px-2.5 text-center font-mono text-indigo-700 whitespace-nowrap">
+                          {emp.actual_hours} / {emp.required_hours > 0 ? emp.required_hours : 'غير محدد'}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono text-rose-600">
+                          {emp.delay_deduction > 0 ? formatCurrency(emp.delay_deduction) : '-'}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono text-emerald-600 font-black">
+                          {emp.overtime_amount > 0 ? formatCurrency(emp.overtime_amount) : '-'}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono text-rose-600">
+                          {emp.absent_deduction > 0 ? `${emp.absent_days}ي (${formatCurrency(emp.absent_deduction)})` : '-'}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono whitespace-nowrap">
+                          {emp.leave_deduction > 0 ? (
+                            <span className="text-rose-600">-{formatCurrency(emp.leave_deduction)} ({emp.leave_days}ي)</span>
+                          ) : emp.unused_leave_amount > 0 ? (
+                            <span className="text-emerald-700 font-black">+{formatCurrency(emp.unused_leave_amount)} ({emp.unused_leave_days}ي)</span>
+                          ) : (
+                            <span className="text-slate-500">{emp.leave_days || 0} / {emp.allowed_leave_days ?? 4}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono text-rose-600">
+                          {totalPenaltiesAndOther > 0 ? formatCurrency(totalPenaltiesAndOther) : '-'}
+                        </td>
+                        <td className="py-3 px-2.5 text-center font-mono text-rose-700 font-black bg-rose-50/30">
+                          {emp.advances > 0 ? formatCurrency(emp.advances) : '-'}
+                        </td>
+                        <td className="py-3 px-2.5 text-center font-mono text-rose-700 font-black">
+                          {emp.old_advances > 0 ? formatCurrency(emp.old_advances) : '-'}
+                        </td>
+                        <td className="py-3 px-2.5 text-center font-mono text-emerald-700 bg-emerald-50/30">
+                          {totalBonusesDisplay > 0 ? formatCurrency(totalBonusesDisplay) : '-'}
+                        </td>
+                        <td className="py-3 px-2 text-center font-mono text-blue-700">
+                          {emp.salary_payments > 0 ? formatCurrency(emp.salary_payments) : '-'}
+                        </td>
+                        <td className={`py-3 px-3 text-center font-mono font-black text-sm ${remaining < 0 ? 'text-rose-700 bg-rose-50' : 'text-emerald-700 bg-emerald-50/70'}`}>
+                          {formatCurrency(remaining)}
+                        </td>
+                        {canExecutePayroll && (
+                          <td className="py-3 px-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => openSalaryEditModal(emp)}
+                              title="تعديل وحفظ تسوية الراتب"
+                              className="p-1.5 rounded-lg text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
               {salaryReport?.employees?.length > 0 && (
                 <tfoot>
                   <tr className="bg-slate-100 font-black text-slate-900 border-t-2 border-slate-300">
                     <td className="py-3 px-3">إجمالي المسير</td>
-                    <td className="py-3 px-3 font-mono">
+                    <td className="py-3 px-2.5 font-mono">
                       {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.basic_salary || 0), 0))}
                     </td>
-                    <td className="py-3 px-2.5 text-center">-</td>
+                    <td className="py-3 px-2 text-center">-</td>
+                    <td className="py-3 px-2 text-center">-</td>
                     <td className="py-3 px-2.5 text-center font-mono">
                       {Math.round(salaryReport.employees.reduce((sum, e) => sum + (e.actual_hours || 0), 0))} س
                     </td>
-                    <td className="py-3 px-2.5 text-center font-mono">
-                      {Math.round(salaryReport.employees.reduce((sum, e) => sum + (e.delay_hours || 0), 0))} س
-                    </td>
-                    <td className="py-3 px-2.5 text-center font-mono text-rose-700">
+                    <td className="py-3 px-2 text-center font-mono text-rose-700">
                       {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.delay_deduction || 0), 0))}
                     </td>
-                    <td className="py-3 px-2.5 text-center font-mono">
-                      {Math.round(salaryReport.employees.reduce((sum, e) => sum + (e.overtime_hours || 0), 0))} س
-                    </td>
-                    <td className="py-3 px-2.5 text-center font-mono text-emerald-700">
+                    <td className="py-3 px-2 text-center font-mono text-emerald-700">
                       {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.overtime_amount || 0), 0))}
                     </td>
-                    <td className="py-3 px-2 text-center">-</td>
-                    <td className="py-3 px-2.5 text-center font-mono text-rose-700">
+                    <td className="py-3 px-2 text-center font-mono text-rose-700">
                       {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.absent_deduction || 0), 0))}
                     </td>
-                    <td className="py-3 px-2 text-center">-</td>
-                    <td className="py-3 px-2.5 text-center font-mono text-rose-700">
-                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.leave_deduction || 0), 0))}
+                    <td className="py-3 px-2 text-center font-mono text-emerald-700">
+                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.unused_leave_amount || 0), 0))}
                     </td>
-                    <td className="py-3 px-2 text-center">-</td>
-                    <td className="py-3 px-2.5 text-center font-mono text-rose-700">
-                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.half_day_deduction || 0), 0))}
+                    <td className="py-3 px-2 text-center font-mono text-rose-700">
+                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.penalty_days_amount || 0) + (e.other_deductions || 0) + (e.half_day_deduction || 0), 0))}
                     </td>
-                    <td className="py-3 px-3 text-center font-mono text-rose-800">
+                    <td className="py-3 px-2.5 text-center font-mono text-rose-800">
                       {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.advances || 0), 0))}
                     </td>
+                    <td className="py-3 px-2.5 text-center font-mono text-rose-800">
+                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.old_advances || 0), 0))}
+                    </td>
                     <td className="py-3 px-2.5 text-center font-mono text-emerald-800">
-                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.allowances || 0), 0))}
+                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.allowances || 0) + (e.transportation_allowance || 0) + (e.commissions || 0) + (e.previous_dues || 0), 0))}
                     </td>
-                    <td className="py-3 px-3.5 text-center font-mono text-sm text-emerald-900 bg-emerald-100">
-                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.net_salary || 0), 0))}
+                    <td className="py-3 px-2 text-center font-mono text-blue-800">
+                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.salary_payments || 0), 0))}
                     </td>
+                    <td className="py-3 px-3 text-center font-mono text-sm text-emerald-900 bg-emerald-100">
+                      {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.remaining_balance ?? e.net_salary ?? 0), 0))}
+                    </td>
+                    {canExecutePayroll && <td className="py-3 px-2"></td>}
                   </tr>
                 </tfoot>
               )}
             </table>
           </div>
+
+          {/* Quick Row Settlement Modal in Reports */}
+          <Modal
+            isOpen={Boolean(editingSalaryEmp)}
+            onClose={() => setEditingSalaryEmp(null)}
+            title={`تسوية وتعديل راتب: ${editingSalaryEmp?.employee_name || ''} (${selectedMonth})`}
+            maxWidth="max-w-xl"
+          >
+            {salaryEditForm && (
+              <form onSubmit={handleSaveSalaryRowEdit} className="space-y-3 text-xs font-bold">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-amber-800 mb-1">الراتب الأساسي للشهر:</label>
+                    <Input type="number" min="0" step="any" value={salaryEditForm.basic_salary_override} onChange={(e) => setSalaryEditForm((p) => ({ ...p, basic_salary_override: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-slate-700 mb-1">أيام العمل:</label>
+                    <Input type="number" min="0" max="31" step="0.5" value={salaryEditForm.work_days} onChange={(e) => setSalaryEditForm((p) => ({ ...p, work_days: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-slate-700 mb-1">الإجازات المسموحة:</label>
+                    <Input type="number" min="0" step="1" value={salaryEditForm.allowed_leave_days} onChange={(e) => setSalaryEditForm((p) => ({ ...p, allowed_leave_days: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-indigo-700 mb-1">الساعات المطلوبة:</label>
+                    <Input type="number" min="0" step="0.5" value={salaryEditForm.required_hours} onChange={(e) => setSalaryEditForm((p) => ({ ...p, required_hours: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-slate-700 mb-1">أيام الإجازات المأخوذة:</label>
+                    <Input type="number" min="0" step="0.5" value={salaryEditForm.leave_days_override} onChange={(e) => setSalaryEditForm((p) => ({ ...p, leave_days_override: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-rose-700 mb-1">أيام الغياب (2x):</label>
+                    <Input type="number" min="0" step="0.5" value={salaryEditForm.absent_days_override} onChange={(e) => setSalaryEditForm((p) => ({ ...p, absent_days_override: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-rose-700 mb-1">أيام الجزاء (1x):</label>
+                    <Input type="number" min="0" step="0.5" value={salaryEditForm.penalty_days} onChange={(e) => setSalaryEditForm((p) => ({ ...p, penalty_days: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-emerald-700 mb-1">أوفر تايم 1.35x (تعديل):</label>
+                    <Input type="number" min="0" step="1" placeholder="تلقائي" value={salaryEditForm.overtime_amount_override} onChange={(e) => setSalaryEditForm((p) => ({ ...p, overtime_amount_override: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-rose-700 mb-1">خصم تأخير 1.5x (تعديل):</label>
+                    <Input type="number" min="0" step="1" placeholder="تلقائي" value={salaryEditForm.delay_deduction_override} onChange={(e) => setSalaryEditForm((p) => ({ ...p, delay_deduction_override: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-rose-700 mb-1">سوالف قديمة عليه (-):</label>
+                    <Input type="number" min="0" step="any" value={salaryEditForm.old_advances} onChange={(e) => setSalaryEditForm((p) => ({ ...p, old_advances: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-emerald-700 mb-1">مستحقات سابقة له (+):</label>
+                    <Input type="number" min="0" step="any" value={salaryEditForm.previous_dues} onChange={(e) => setSalaryEditForm((p) => ({ ...p, previous_dues: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-emerald-700 mb-1">مكافآت وبدلات (+):</label>
+                    <Input type="number" min="0" step="any" value={salaryEditForm.manual_bonuses_override} onChange={(e) => setSalaryEditForm((p) => ({ ...p, manual_bonuses_override: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-rose-700 mb-1">خصومات إضافية (-):</label>
+                    <Input type="number" min="0" step="any" value={salaryEditForm.manual_deductions_override} onChange={(e) => setSalaryEditForm((p) => ({ ...p, manual_deductions_override: e.target.value }))} />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 cursor-pointer text-emerald-900">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(salaryEditForm.include_unused_leave_payout)}
+                    onChange={(e) => setSalaryEditForm((p) => ({ ...p, include_unused_leave_payout: e.target.checked }))}
+                    className="w-4 h-4 accent-emerald-700"
+                  />
+                  <span>احتساب بدل الإجازات غير المستنفدة (+1× اليومية)</span>
+                </label>
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <button type="button" onClick={handleResetSalaryRowEdit} disabled={savingSalaryEdit} className="text-amber-700 underline font-black">
+                    استعادة الحساب التلقائي
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" onClick={() => setEditingSalaryEmp(null)}>إلغاء</Button>
+                    <Button type="submit" variant="primary" isLoading={savingSalaryEdit} className="!bg-emerald-700 hover:!bg-emerald-800">حفظ التعديلات</Button>
+                  </div>
+                </div>
+              </form>
+            )}
+          </Modal>
         </Card>
       )}
 

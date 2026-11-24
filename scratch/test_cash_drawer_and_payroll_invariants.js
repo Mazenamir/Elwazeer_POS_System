@@ -35,8 +35,14 @@ async function runInvariantsTests() {
     assert.ok('total_advances' in summary, 'Summary must record total_advances');
     assert.ok('physical_cash_in_drawer' in summary, 'Summary must record physical_cash_in_drawer');
 
-    // Rule: physical_cash_in_drawer = max(0, cash_collected - cash_expenses - total_advances)
-    const expectedPhysical = Math.max(0, summary.cash_collected - summary.cash_expenses - summary.total_advances);
+    // Rule: physical_cash_in_drawer = cash_collected - cash_expenses - total_advances - supplier_cash_payments - salary_cash_payments
+    const expectedPhysical = Math.round((
+      summary.cash_collected
+      - summary.cash_expenses
+      - summary.total_advances
+      - (summary.total_supplier_cash_payments || 0)
+      - (summary.total_salary_cash_payments || 0)
+    ) * 100) / 100;
     assert.strictEqual(
       summary.physical_cash_in_drawer,
       expectedPhysical,
@@ -56,42 +62,50 @@ async function runInvariantsTests() {
   });
 
   // 3. Monthly Payroll Invariants Verification
-  await test('PAYROLL-01: Monthly salary sheet implements 268h standard, double absence, 4 free leaves, and 1.35x overtime', async () => {
+  await test('PAYROLL-01: Monthly salary sheet implements fixed 30-day rate, variable required hours, 1.35x overtime, 1.5x delay, double absence, and dynamic leaves', async () => {
     const salarySheet = await reportsService.getMonthlySalarySheet({ month: '2026-10' }, { role: 'admin' });
     const employeesList = salarySheet.employees || salarySheet.salary_sheet;
     assert.ok(Array.isArray(employeesList), 'Salary sheet employees must be an array');
     
     for (const emp of employeesList) {
-      assert.strictEqual(emp.required_hours, 268, 'Standard monthly required hours must strictly be 268');
+      assert.ok(Number(emp.required_hours) >= 0, 'Required hours must be >= 0 (dynamic per month/employee)');
       
       const expectedDaily = Math.round((emp.basic_salary / 30) * 100) / 100;
       assert.strictEqual(emp.daily_rate, expectedDaily, 'Daily rate must be basic_salary / 30');
 
-      const expectedOvertime = Math.round(((emp.daily_rate / 10) * 1.35) * emp.overtime_hours);
-      assert.strictEqual(emp.overtime_amount, expectedOvertime, 'Overtime must equal ((daily/10)*1.35)*overtime_hours');
+      if (!emp.has_overtime_override) {
+        const expectedOvertime = Math.round(((emp.daily_rate / 10) * 1.35) * emp.overtime_hours);
+        assert.strictEqual(emp.overtime_amount, expectedOvertime, 'Overtime must equal ((daily/10)*1.35)*overtime_hours');
+      }
 
       const expectedAbsentDeduction = Math.round(emp.absent_days * emp.daily_rate * 2);
       assert.strictEqual(emp.absent_deduction, expectedAbsentDeduction, 'Absence must carry double penalty deduction');
 
-      const expectedLeaveDeduction = Math.round(Math.max(0, emp.leave_days - 4) * emp.daily_rate);
-      assert.strictEqual(emp.leave_deduction, expectedLeaveDeduction, 'First 4 leave days must be free, excess deducted at daily rate');
+      const allowedLeaves = Number(emp.allowed_leave_days ?? 4);
+      const expectedLeaveDeduction = Math.round(Math.max(0, emp.leave_days - allowedLeaves) * emp.daily_rate);
+      assert.strictEqual(emp.leave_deduction, expectedLeaveDeduction, 'Excess leave days above allowed quota must be deducted at daily rate');
 
       const expectedHalfDayDeduction = Math.round(emp.half_days * (emp.daily_rate / 2));
       assert.strictEqual(emp.half_day_deduction, expectedHalfDayDeduction, 'Half days deducted at daily/2');
 
-      const expectedDelayDeduction = Math.round(emp.delay_hours * (emp.daily_rate / 10));
-      assert.strictEqual(emp.delay_deduction, expectedDelayDeduction, 'Delay hours deducted at daily/10');
+      if (!emp.has_delay_override) {
+        const expectedDelayDeduction = Math.round(((emp.daily_rate / 10) * 1.5) * emp.delay_hours);
+        assert.strictEqual(emp.delay_deduction, expectedDelayDeduction, 'Delay hours deducted at (daily/10)*1.5');
+      }
     }
   });
 
   // 4. Parity Between getMonthlySalarySheet and getEmployeePayslip
   await test('PAYROLL-02: Parity between getMonthlySalarySheet and getEmployeePayslip formulas', async () => {
-    // Pick first active employee
     const empRes = await db.query("SELECT id FROM employees WHERE status = 'active' LIMIT 1");
     if (empRes.rows.length === 0) return;
     const testEmpId = empRes.rows[0].id;
 
-    const payslip = await employeesService.getEmployeePayslip(testEmpId, '2026-10', { role: 'admin' });
+    const month = '2026-10';
+    const [payslip, salarySheet] = await Promise.all([
+      employeesService.getEmployeePayslip(testEmpId, month, { role: 'admin' }),
+      reportsService.getMonthlySalarySheet({ month }, { role: 'admin' }),
+    ]);
     assert.ok(payslip, 'Payslip must return data');
     assert.ok('basic_salary' in payslip, 'Payslip must contain basic_salary');
     assert.ok('net_salary' in payslip, 'Payslip must contain net_salary at top level');
@@ -104,8 +118,14 @@ async function runInvariantsTests() {
     const expectedAbsent = Math.round(att.absent_days * dailyRate * 2);
     assert.strictEqual(att.absence_deduction, expectedAbsent, 'Payslip absence deduction must follow double penalty');
 
-    const expectedLeave = Math.round(Math.max(0, att.leave_days - 4) * dailyRate);
-    assert.strictEqual(att.leave_deduction, expectedLeave, 'Payslip leave deduction must respect 4 allowed days');
+    const expectedLeave = Math.round(Math.max(0, att.leave_days - payslip.allowed_leave_days) * dailyRate);
+    assert.strictEqual(att.leave_deduction, expectedLeave, 'Payslip leave deduction must respect allowed_leave_days');
+
+    const sheetRow = (salarySheet.employees || []).find((e) => Number(e.employee_id) === Number(testEmpId));
+    if (sheetRow) {
+      assert.strictEqual(payslip.net_salary, sheetRow.net_salary, 'Payslip net_salary must match Salary Sheet net_salary');
+      assert.strictEqual(payslip.remaining_balance, sheetRow.remaining_balance, 'Payslip remaining_balance must match Salary Sheet');
+    }
   });
 
   console.log('\n================================================================');

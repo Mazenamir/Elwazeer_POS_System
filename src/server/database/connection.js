@@ -103,9 +103,13 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'returns', 'refund_method', "TEXT DEFAULT 'cash'");
   ensureSqliteColumn(sqlite, 'customers', 'wallet_balance', 'REAL DEFAULT 0');
   ensureSqliteColumn(sqlite, 'employees', 'join_date', 'TEXT');
+  ensureSqliteColumn(sqlite, 'employees', 'end_date', 'TEXT');
   ensureSqliteColumn(sqlite, 'employees', 'offline_uuid', 'TEXT');
   ensureSqliteColumn(sqlite, 'employees', 'branch_scope', "TEXT DEFAULT 'single'");
   ensureSqliteColumn(sqlite, 'employees', 'branch_ids', "TEXT DEFAULT '[]'");
+  ensureSqliteColumn(sqlite, 'employee_transactions', 'payment_method', "TEXT DEFAULT 'cash'");
+  ensureSqliteColumn(sqlite, 'employee_transactions', 'paid_from_drawer', 'INTEGER DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'employee_payroll_adjustments', 'basic_salary_override', 'REAL');
   ensureSqliteColumn(sqlite, 'users', 'full_name', 'TEXT');
   ensureSqliteColumn(sqlite, 'users', 'branch_scope', "TEXT DEFAULT 'single'");
   ensureSqliteColumn(sqlite, 'users', 'branch_ids', "TEXT DEFAULT '[]'");

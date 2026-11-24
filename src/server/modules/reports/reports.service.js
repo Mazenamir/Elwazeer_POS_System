@@ -22,6 +22,7 @@ const {
 const { hasPermission, isBranchScopedUser } = require('../../../shared/constants/permissions');
 const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
 const { resolveCategoryQuery } = require('../inventory/inventory.helpers');
+const { calculateEmployeeMonthlyPayroll, shouldIncludeEmployeeInMonth } = require('../hr/payroll.calculator');
 
 async function getDashboard(query = {}, user = null) {
   if (!user) {
@@ -485,6 +486,7 @@ async function getProfitReport(query = {}, user = null) {
     inventoryValueRes,
     advancesRes,
     supplierPaymentsRes,
+    salaryDrawerPaymentsRes,
   ] = await Promise.all([
     db.query(
       `SELECT branch_id, COALESCE(SUM(total_amount), 0) as total
@@ -695,6 +697,19 @@ async function getProfitReport(query = {}, user = null) {
        GROUP BY branch_id`,
       reportParams
     ),
+    db.query(
+      `SELECT e.branch_id, COALESCE(SUM(et.amount), 0) as total
+       FROM employee_transactions et
+       JOIN employees e ON e.id = et.employee_id
+       WHERE e.branch_id = ANY($1::int[])
+         AND et.type = 'salary_payment'
+         AND COALESCE(et.paid_from_drawer, FALSE) IS TRUE
+         AND COALESCE(et.payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
+         AND et.transaction_date >= $2::date
+         AND et.transaction_date < $3::date
+       GROUP BY e.branch_id`,
+      reportParams
+    ),
   ]);
 
   const salesByBranch = rowsByBranch(salesRes.rows, row => Number(row.total));
@@ -712,6 +727,7 @@ async function getProfitReport(query = {}, user = null) {
   const inventoryValueByBranch = rowsByBranch(inventoryValueRes.rows, row => Number(row.total));
   const advancesByBranch = rowsByBranch(advancesRes.rows, row => Number(row.total));
   const supplierPaymentsByBranch = rowsByBranch(supplierPaymentsRes.rows, row => Number(row.total));
+  const salaryDrawerPaymentsByBranch = rowsByBranch(salaryDrawerPaymentsRes.rows, row => Number(row.total));
 
   const report = branches.map(branch => {
     const branchId = Number(branch.id);
@@ -726,9 +742,10 @@ async function getProfitReport(query = {}, user = null) {
     const total_revenue = total_sales + total_rentals + total_tailoring;
     const cash_returns = cashReturnsByBranch.get(branchId) || 0;
     const supplier_payments = supplierPaymentsByBranch.get(branchId) || 0;
+    const salary_drawer_payments = salaryDrawerPaymentsByBranch.get(branchId) || 0;
     const cash_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - supplier_payments;
     const advances = advancesByBranch.get(branchId) || 0;
-    const physical_cash_in_drawer = cash_drawer - advances;
+    const physical_cash_in_drawer = cash_drawer - advances - salary_drawer_payments;
     const gross_profit = total_revenue - cogs;
     const net_profit = total_revenue - (cogs + expenses + total_salaries_paid);
     const profit_margin = total_revenue > 0 ? (net_profit / total_revenue) * 100 : 0;
@@ -760,6 +777,8 @@ async function getProfitReport(query = {}, user = null) {
       total_advances: advances,
       supplier_payments,
       total_supplier_payments: supplier_payments,
+      salary_drawer_payments,
+      total_salary_cash_payments: salary_drawer_payments,
       total_expenses_and_advances: expenses + advances,
       net_profit,
       profit: net_profit,
@@ -782,9 +801,10 @@ async function getProfitReport(query = {}, user = null) {
     acc.total_advances += (curr.advances || 0);
     acc.supplier_payments += (curr.supplier_payments || 0);
     acc.total_supplier_payments += (curr.total_supplier_payments || curr.supplier_payments || 0);
+    acc.salary_drawer_payments += (curr.salary_drawer_payments || 0);
     acc.total_inventory_value += curr.total_inventory_value;
     return acc;
-  }, { total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0, cash_drawer: 0, physical_cash_in_drawer: 0, total_advances: 0, supplier_payments: 0, total_supplier_payments: 0, cogs: 0, expenses: 0, total_salaries_paid: 0, net_profit: 0, total_inventory_value: 0 });
+  }, { total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0, cash_drawer: 0, physical_cash_in_drawer: 0, total_advances: 0, supplier_payments: 0, total_supplier_payments: 0, salary_drawer_payments: 0, cogs: 0, expenses: 0, total_salaries_paid: 0, net_profit: 0, total_inventory_value: 0 });
 
   const gross_profit = summary.total_revenue - summary.cogs;
   const net_profit = summary.net_profit;
@@ -799,10 +819,11 @@ async function getProfitReport(query = {}, user = null) {
   summary.profit = net_profit;
   summary.profit_margin = profit_margin;
   summary.gross_cash_drawer = summary.cash_drawer;
-  summary.physical_cash_in_drawer = summary.gross_cash_drawer - summary.total_advances;
+  summary.physical_cash_in_drawer = summary.gross_cash_drawer - summary.total_advances - summary.salary_drawer_payments;
   summary.cash_in_drawer = summary.physical_cash_in_drawer;
   summary.cash_drawer = summary.physical_cash_in_drawer;
   summary.supplier_payments = summary.total_supplier_payments;
+  summary.total_salary_cash_payments = summary.salary_drawer_payments;
   summary.total_expenses_and_advances = summary.expenses + summary.total_advances;
   summary.total_sales_and_revenue = summary.total_revenue;
   summary.net_cash = summary.physical_cash_in_drawer;
@@ -1713,6 +1734,7 @@ async function getDailyReport(query = {}, user = null) {
       inventoryValueRes,
       advancesRes,
       supplierPaymentsRes,
+      salaryDrawerPaymentsRes,
     ] = await Promise.all([
       db.query(
         `SELECT branch_id, COALESCE(SUM(total_amount), 0) as total, COUNT(id)::int as count
@@ -1924,6 +1946,19 @@ async function getDailyReport(query = {}, user = null) {
          GROUP BY branch_id`,
         reportParams
       ),
+      db.query(
+        `SELECT e.branch_id, COALESCE(SUM(et.amount), 0) as total
+         FROM employee_transactions et
+         JOIN employees e ON e.id = et.employee_id
+         WHERE e.branch_id = ANY($1::int[])
+           AND et.type = 'salary_payment'
+           AND COALESCE(et.paid_from_drawer, FALSE) IS TRUE
+           AND COALESCE(et.payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
+           AND et.transaction_date >= $2::date
+           AND et.transaction_date < $3::date
+         GROUP BY e.branch_id`,
+        reportParams
+      ),
     ]);
 
     const salesByBranch = rowsByBranch(salesRes.rows, row => ({ total: Number(row.total), count: Number(row.count) }));
@@ -1940,6 +1975,7 @@ async function getDailyReport(query = {}, user = null) {
     const inventoryValueByBranch = rowsByBranch(inventoryValueRes.rows, row => Number(row.total));
     const advancesByBranch = rowsByBranch(advancesRes.rows, row => Number(row.total));
     const supplierPaymentsByBranch = rowsByBranch(supplierPaymentsRes.rows, row => Number(row.total));
+    const salaryDrawerPaymentsByBranch = rowsByBranch(salaryDrawerPaymentsRes.rows, row => Number(row.total));
 
     report = branches.map(branch => {
       const branchId = Number(branch.id);
@@ -1953,13 +1989,14 @@ async function getDailyReport(query = {}, user = null) {
       const cash_expenses = cashExpensesByBranch.get(branchId) || 0;
       const advances = advancesByBranch.get(branchId) || 0;
       const supplier_payments = supplierPaymentsByBranch.get(branchId) || 0;
+      const salary_drawer_payments = salaryDrawerPaymentsByBranch.get(branchId) || 0;
       const total_salaries_paid = salariesByBranch.get(branchId) || 0;
       const total_rentals = rentals.total + (finesByBranch.get(branchId) || 0);
       const total_tailoring = tailoring.total;
       const total_revenue = total_sales + total_rentals + total_tailoring;
       const cash_returns = returns.cash_total || 0;
       const cash_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - supplier_payments;
-      const physical_cash_in_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - advances - supplier_payments;
+      const physical_cash_in_drawer = (cashByBranch.get(branchId) || 0) - cash_returns - cash_expenses - advances - supplier_payments - salary_drawer_payments;
       const gross_profit = total_revenue - cogs;
       const net_profit = total_revenue - (cogs + expenses + total_salaries_paid);
 
@@ -1981,6 +2018,8 @@ async function getDailyReport(query = {}, user = null) {
         total_advances: advances,
         supplier_payments,
         total_supplier_payments: supplier_payments,
+        salary_drawer_payments,
+        total_salary_cash_payments: salary_drawer_payments,
         total_rentals,
         rentals: total_rentals,
         total_tailoring,
@@ -2359,12 +2398,15 @@ async function getDailyReport(query = {}, user = null) {
     acc.net_profit += Number(curr.net_profit || 0);
     acc.supplier_payments += Number(curr.supplier_payments || 0);
     acc.total_supplier_payments += Number(curr.total_supplier_payments || curr.supplier_payments || 0);
+    acc.salary_drawer_payments += Number(curr.salary_drawer_payments || 0);
+    acc.total_salary_cash_payments += Number(curr.total_salary_cash_payments || curr.salary_drawer_payments || 0);
     return acc;
   }, {
     total_sales: 0, total_rentals: 0, total_tailoring: 0, total_revenue: 0,
     expenses: 0, total_expenses: 0, salaries: 0, total_salaries_paid: 0,
     advances: 0, total_advances: 0, cash_drawer: 0, cash_in_drawer: 0,
-    physical_cash_in_drawer: 0, net_profit: 0, supplier_payments: 0, total_supplier_payments: 0
+    physical_cash_in_drawer: 0, net_profit: 0, supplier_payments: 0, total_supplier_payments: 0,
+    salary_drawer_payments: 0, total_salary_cash_payments: 0
   });
 
   let cashCollected = 0;
@@ -2896,7 +2938,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
   const params = [range.start, range.end];
   if (reportBranchId) params.push(reportBranchId);
 
-  const [ordersRes, rentalsRes, rentalFinesRes, tailoringRes, returnsRes, advancesRes, expensesRes, attendanceRes, supplierPaymentsRes, orderPaymentsRes, rentalPaymentsRes, rentalPickupsRes] = await Promise.all([
+  const [ordersRes, rentalsRes, rentalFinesRes, tailoringRes, returnsRes, advancesRes, expensesRes, attendanceRes, supplierPaymentsRes, orderPaymentsRes, rentalPaymentsRes, rentalPickupsRes, salaryDrawerPaymentsRes] = await Promise.all([
     // 1. Sales Invoices
     db.query(`
       SELECT 
@@ -3264,6 +3306,28 @@ async function getExtendedDailyReport(query = {}, user = null) {
         ${branchFilterRentals}
       ORDER BY r.pickup_date ASC, r.id ASC
     `, params),
+
+    // 13. Salary Payments made in cash from drawer on this date
+    db.query(`
+      SELECT
+        et.id,
+        et.employee_id,
+        e.name as employee_name,
+        et.amount,
+        COALESCE(NULLIF(et.notes, ''), 'صرف راتب من الدرج') as notes,
+        e.branch_id,
+        COALESCE(et.payment_method, 'cash') as payment_method,
+        COALESCE(et.paid_from_drawer, FALSE) as paid_from_drawer,
+        TO_CHAR(et.transaction_date, 'YYYY-MM-DD') as transaction_date
+      FROM employee_transactions et
+      JOIN employees e ON et.employee_id = e.id
+      WHERE et.type = 'salary_payment'
+        AND COALESCE(et.paid_from_drawer, FALSE) IS TRUE
+        AND COALESCE(et.payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
+        AND et.transaction_date >= $1::date AND et.transaction_date < $2::date
+        ${branchFilterEmp}
+      ORDER BY et.id ASC
+    `, params),
   ]);
 
   const mapSplits = (row) => {
@@ -3340,12 +3404,18 @@ async function getExtendedDailyReport(query = {}, user = null) {
     amount: Number(row.amount || 0),
   }));
 
+  const salaryDrawerPayments = ((salaryDrawerPaymentsRes && salaryDrawerPaymentsRes.rows) || []).map(row => ({
+    ...row,
+    amount: Number(row.amount || 0),
+  }));
+
   const totalSales = Math.round(allDailyTransactions.reduce((sum, inv) => sum + inv.total_amount, 0) * 100) / 100;
   const totalPaid = Math.round(allDailyTransactions.reduce((sum, inv) => sum + inv.paid_amount, 0) * 100) / 100;
   const totalAdvances = Math.round(advances.reduce((sum, adv) => sum + adv.amount, 0) * 100) / 100;
   const totalExpenses = Math.round(expenses.reduce((sum, exp) => sum + exp.amount, 0) * 100) / 100;
   const totalSupplierPayments = Math.round(supplierPayments.reduce((sum, sp) => sum + sp.amount, 0) * 100) / 100;
-  const totalDeductions = Math.round((totalAdvances + totalExpenses + totalSupplierPayments) * 100) / 100;
+  const totalSalaryCashPayments = Math.round(salaryDrawerPayments.reduce((sum, sp) => sum + sp.amount, 0) * 100) / 100;
+  const totalDeductions = Math.round((totalAdvances + totalExpenses + totalSupplierPayments + totalSalaryCashPayments) * 100) / 100;
 
   let cashCollected = 0;
   let cardCollected = 0;
@@ -3390,7 +3460,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
   bankCollected = Math.round(bankCollected * 100) / 100;
   walletCollected = Math.round(walletCollected * 100) / 100;
 
-  const physicalCashInDrawer = Math.round((cashCollected - cashExpenses - totalAdvances - totalSupplierPayments) * 100) / 100;
+  const physicalCashInDrawer = Math.round((cashCollected - cashExpenses - totalAdvances - totalSupplierPayments - totalSalaryCashPayments) * 100) / 100;
   const cashDrawerExcel = Math.round((totalPaid - totalDeductions) * 100) / 100;
 
   const paymentMethods = [
@@ -3418,6 +3488,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
     expenses,
     attendance,
     supplier_payments: supplierPayments,
+    salary_drawer_payments: salaryDrawerPayments,
     payment_methods: paymentMethods,
     summary: {
       total_sales: totalSales,
@@ -3426,6 +3497,8 @@ async function getExtendedDailyReport(query = {}, user = null) {
       total_expenses: totalExpenses,
       total_supplier_cash_payments: totalSupplierPayments,
       supplier_cash_payments: totalSupplierPayments,
+      total_salary_cash_payments: totalSalaryCashPayments,
+      salary_cash_payments: totalSalaryCashPayments,
       total_deductions: totalDeductions,
       cash_in_drawer: physicalCashInDrawer,
       physical_cash_in_drawer: physicalCashInDrawer,
@@ -3460,15 +3533,16 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
   const monthStart = `${month}-01`;
   const monthEnd = addDays(`${month}-${String(daysInMonth).padStart(2, '0')}`, 1);
 
-  const empFilter = reportBranchId ? 'AND e.branch_id = $1' : '';
+  const empFilter = reportBranchId ? 'WHERE e.branch_id = $1' : '';
   const empParams = reportBranchId ? [reportBranchId] : [];
 
-  const [employeesRes, attendanceRes, advancesRes] = await Promise.all([
+  const [cairoNow, employeesRes, attendanceRes, advancesRes, adjustmentsRes] = await Promise.all([
+    getDatabaseCairoNow(db),
     db.query(`
-      SELECT e.id, e.name, e.basic_salary, e.branch_id, b.name as branch_name
+      SELECT e.id, e.name, e.basic_salary, e.branch_id, e.status, e.join_date, e.end_date, b.name as branch_name
       FROM employees e
       LEFT JOIN branches b ON e.branch_id = b.id
-      WHERE e.status = 'active' ${empFilter}
+      ${empFilter}
       ORDER BY e.id ASC
     `, empParams),
 
@@ -3496,7 +3570,15 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
       WHERE et.type = 'advance'
         AND et.transaction_date >= $1::date AND et.transaction_date < $2::date
         ${reportBranchId ? 'AND e.branch_id = $3' : ''}
-    `, [monthStart, monthEnd, ...(reportBranchId ? [reportBranchId] : [])])
+    `, [monthStart, monthEnd, ...(reportBranchId ? [reportBranchId] : [])]),
+
+    db.query(`
+      SELECT apa.*
+      FROM employee_payroll_adjustments apa
+      JOIN employees e ON apa.employee_id = e.id
+      WHERE apa.month = $1
+        ${reportBranchId ? 'AND e.branch_id = $2' : ''}
+    `, reportBranchId ? [month, reportBranchId] : [month])
   ]);
 
   const arabicDayNames = ['الأحد', 'الأثنين', 'الثلاثاء', 'الاربعاء', 'الخميس', 'الجمعة', 'السبت'];
@@ -3513,9 +3595,18 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
   }
 
   const attendanceMap = new Map();
+  const attendanceByEmp = new Map();
   attendanceRes.rows.forEach(row => {
     const day = row.day || (row.date ? parseInt(String(row.date).slice(8, 10), 10) : null);
     if (day) attendanceMap.set(`${row.employee_id}_${day}`, row);
+    const eId = Number(row.employee_id);
+    if (!attendanceByEmp.has(eId)) attendanceByEmp.set(eId, []);
+    attendanceByEmp.get(eId).push(row);
+  });
+
+  const adjByEmp = new Map();
+  adjustmentsRes.rows.forEach((row) => {
+    adjByEmp.set(Number(row.employee_id), row);
   });
 
   const advancesMap = new Map();
@@ -3527,10 +3618,27 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
     }
   });
 
-  const employees = employeesRes.rows.map(emp => {
+  const ohdaActiveEmpIds = new Set([
+    ...attendanceRes.rows.map((r) => Number(r.employee_id)),
+    ...advancesRes.rows.map((r) => Number(r.employee_id)),
+    ...adjustmentsRes.rows.map((r) => Number(r.employee_id)),
+  ]);
+
+  const employees = employeesRes.rows
+    .filter((emp) => shouldIncludeEmployeeInMonth(emp, month, ohdaActiveEmpIds.has(Number(emp.id))))
+    .map(emp => {
     const empId = emp.id;
-    const basicSalary = Number(emp.basic_salary || 0);
-    const dailyRate = Math.round(basicSalary / 30);
+    const adj = adjByEmp.get(Number(empId)) || null;
+    const calc = calculateEmployeeMonthlyPayroll({
+      employee: emp,
+      month,
+      currentCairoMonth: cairoNow.month,
+      attendanceRows: attendanceByEmp.get(Number(empId)) || [],
+      transactionRows: [],
+      adjustment: adj,
+    });
+    const basicSalary = calc.basic_salary;
+    const dailyRate = Math.round(calc.daily_rate);
 
     const days = [];
     let advances1to10 = 0;
@@ -3568,13 +3676,23 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
       });
     }
 
-    const monthEntitlement = totalAttendance >= 26 ? basicSalary : totalAttendance * dailyRate;
+    const hasWorkDaysOrBasicOverride = Boolean(
+      adj && (
+        (adj.work_days !== null && adj.work_days !== undefined) ||
+        (adj.basic_salary_override !== null && adj.basic_salary_override !== undefined)
+      )
+    );
+    const monthEntitlement = (hasWorkDaysOrBasicOverride || calc.default_work_days < 30)
+      ? calc.earned_base_salary
+      : (totalAttendance >= 26 ? basicSalary : totalAttendance * dailyRate);
 
     return {
       employee_id: empId,
       employee_name: emp.name,
       branch_name: emp.branch_name,
       basic_salary: basicSalary,
+      has_basic_salary_override: calc.has_basic_salary_override,
+      has_saved_adjustment: calc.has_saved_adjustment,
       daily_rate: dailyRate,
       days,
       advances_1_to_10: advances1to10,
@@ -3617,9 +3735,11 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
 }
 
 async function getMonthlySalarySheet(query = {}, user = null) {
+  const cairoNow = await getDatabaseCairoNow(db);
+  const currentCairoMonth = cairoNow.month;
   let month = query.month;
   if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-    month = (await getDatabaseCairoNow(db)).month;
+    month = currentCairoMonth;
   }
   const reportBranchId = getReportBranchId(user, query);
 
@@ -3631,15 +3751,15 @@ async function getMonthlySalarySheet(query = {}, user = null) {
   const monthStart = `${month}-01`;
   const monthEnd = addDays(`${month}-${String(daysInMonth).padStart(2, '0')}`, 1);
 
-  const empFilter = reportBranchId ? 'AND e.branch_id = $1' : '';
+  const empWhere = reportBranchId ? 'WHERE e.branch_id = $1' : '';
   const empParams = reportBranchId ? [reportBranchId] : [];
 
-  const [employeesRes, attendanceRes, transactionsRes] = await Promise.all([
+  const [employeesRes, attendanceRes, transactionsRes, adjustmentsRes] = await Promise.all([
     db.query(`
-      SELECT e.id, e.name, e.basic_salary, e.branch_id, b.name as branch_name
+      SELECT e.id, e.name, e.basic_salary, e.branch_id, e.status, e.join_date, e.end_date, b.name as branch_name
       FROM employees e
       LEFT JOIN branches b ON e.branch_id = b.id
-      WHERE e.status = 'active' ${empFilter}
+      ${empWhere}
       ORDER BY e.id ASC
     `, empParams),
 
@@ -3648,6 +3768,7 @@ async function getMonthlySalarySheet(query = {}, user = null) {
         a.employee_id,
         a.status,
         a.notes,
+        a.check_in,
         COALESCE(a.total_hours, 0) as total_hours
       FROM attendance a
       JOIN employees e ON a.employee_id = e.id
@@ -3665,120 +3786,114 @@ async function getMonthlySalarySheet(query = {}, user = null) {
       JOIN employees e ON et.employee_id = e.id
       WHERE et.transaction_date >= $1::date AND et.transaction_date < $2::date
         ${reportBranchId ? 'AND e.branch_id = $3' : ''}
-    `, [monthStart, monthEnd, ...(reportBranchId ? [reportBranchId] : [])])
+    `, [monthStart, monthEnd, ...(reportBranchId ? [reportBranchId] : [])]),
+
+    db.query(`
+      SELECT adj.*
+      FROM employee_payroll_adjustments adj
+      JOIN employees e ON adj.employee_id = e.id
+      WHERE adj.month = $1
+        ${reportBranchId ? 'AND e.branch_id = $2' : ''}
+    `, [month, ...(reportBranchId ? [reportBranchId] : [])]),
   ]);
 
-  const empAttendance = new Map();
-  attendanceRes.rows.forEach(r => {
-    const current = empAttendance.get(r.employee_id) || {
-      total_hours: 0,
-      absent_count: 0,
-      leave_count: 0,
-      half_day_count: 0,
-    };
-    current.total_hours += Number(r.total_hours || 0);
-    const notes = String(r.notes || '');
-    const status = String(r.status || '');
-
-    if (notes.includes('غياب') || status === 'absent') {
-      current.absent_count += 1;
-    }
-    if (notes.includes('جاز') || notes.includes('إجازة') || status === 'leave') {
-      current.leave_count += 1;
-    }
-    if (notes.includes('نص يوم') || status === 'half_day') {
-      current.half_day_count += 1;
-    }
-    empAttendance.set(r.employee_id, current);
+  const attByEmp = new Map();
+  attendanceRes.rows.forEach((r) => {
+    const k = Number(r.employee_id);
+    if (!attByEmp.has(k)) attByEmp.set(k, []);
+    attByEmp.get(k).push(r);
   });
 
-  const empTransactions = new Map();
-  transactionsRes.rows.forEach(r => {
-    const current = empTransactions.get(r.employee_id) || {
-      advances: 0,
-      deductions: 0,
-      bonuses: 0,
-    };
-    const amt = Number(r.amount || 0);
-    if (r.type === 'advance') current.advances += amt;
-    else if (r.type === 'deduction') current.deductions += amt;
-    else if (r.type === 'bonus') current.bonuses += amt;
-    empTransactions.set(r.employee_id, current);
+  const txByEmp = new Map();
+  transactionsRes.rows.forEach((r) => {
+    const k = Number(r.employee_id);
+    if (!txByEmp.has(k)) txByEmp.set(k, []);
+    txByEmp.get(k).push(r);
   });
 
-  const salarySheet = employeesRes.rows.map(emp => {
-    const empId = emp.id;
-    const basicSalary = Number(emp.basic_salary || 0);
-    const dailyRate = Math.round((basicSalary / 30) * 100) / 100;
-    const att = empAttendance.get(empId) || { total_hours: 0, absent_count: 0, leave_count: 0, half_day_count: 0 };
-    const tx = empTransactions.get(empId) || { advances: 0, deductions: 0, bonuses: 0 };
-
-    const requiredHours = 268;
-    const actualHours = Math.round(att.total_hours * 100) / 100;
-    const delayHours = actualHours < requiredHours ? Math.round((requiredHours - actualHours) * 100) / 100 : 0;
-    const overtimeHours = actualHours > requiredHours ? Math.round((actualHours - requiredHours) * 100) / 100 : 0;
-    const overtimeAmount = Math.round(((dailyRate / 10) * 1.35) * overtimeHours);
-
-    const workDays = 30;
-    const allowances = tx.bonuses;
-    const transportationAllowance = 0;
-    const grossSalary = basicSalary + allowances + overtimeAmount + transportationAllowance;
-
-    const advances = tx.advances;
-    const absentDays = att.absent_count;
-    const absentDeduction = Math.round(absentDays * dailyRate * 2);
-
-    const leaveDays = att.leave_count;
-    const leaveDeduction = Math.round(Math.max(0, leaveDays - 4) * dailyRate);
-
-    const halfDays = att.half_day_count;
-    const halfDayDeduction = Math.round(halfDays * (dailyRate / 2));
-
-    const delayDeduction = Math.round(delayHours * (dailyRate / 10));
-    const otherDeductions = tx.deductions;
-    const oldDebts = 0;
-    const externalDebts = 0;
-
-    const netSalary = Math.round(
-      grossSalary - advances - absentDeduction - leaveDeduction - halfDayDeduction - delayDeduction - otherDeductions - oldDebts - externalDebts
-    );
-
-    return {
-      employee_id: empId,
-      employee_name: emp.name,
-      branch_name: emp.branch_name,
-      actual_hours: actualHours,
-      required_hours: requiredHours,
-      delay_hours: delayHours,
-      allowances,
-      overtime_hours: overtimeHours,
-      overtime_amount: overtimeAmount,
-      basic_salary: basicSalary,
-      daily_rate: dailyRate,
-      gross_salary: grossSalary,
-      work_days: workDays,
-      transportation_allowance: transportationAllowance,
-      advances,
-      absent_days: absentDays,
-      absent_deduction: absentDeduction,
-      leave_days: leaveDays,
-      leave_deduction: leaveDeduction,
-      half_days: halfDays,
-      half_day_deduction: halfDayDeduction,
-      other_deductions: otherDeductions,
-      delay_deduction: delayDeduction,
-      net_salary: netSalary,
-      old_debts: oldDebts,
-      external_debts: externalDebts,
-    };
+  const adjByEmp = new Map();
+  adjustmentsRes.rows.forEach((r) => {
+    adjByEmp.set(Number(r.employee_id), r);
   });
+
+  const salarySheet = employeesRes.rows
+    .filter((emp) => {
+      const k = Number(emp.id);
+      const hasActivity = attByEmp.has(k) || txByEmp.has(k) || adjByEmp.has(k);
+      return shouldIncludeEmployeeInMonth(emp, month, hasActivity);
+    })
+    .map((emp) => {
+      const k = Number(emp.id);
+      const calc = calculateEmployeeMonthlyPayroll({
+        employee: emp,
+        month,
+        currentCairoMonth,
+        attendanceRows: attByEmp.get(k) || [],
+        transactionRows: txByEmp.get(k) || [],
+        adjustment: adjByEmp.get(k) || null,
+      });
+
+      return {
+        employee_id: emp.id,
+        employee_name: emp.name,
+        branch_name: emp.branch_name,
+        status: emp.status || 'active',
+        join_date: emp.join_date,
+        end_date: emp.end_date,
+        actual_hours: calc.actual_hours,
+        required_hours: calc.required_hours,
+        delay_hours: calc.delay_hours,
+        delay_deduction: calc.delay_deduction,
+        has_delay_override: calc.has_delay_override,
+        overtime_hours: calc.overtime_hours,
+        overtime_amount: calc.overtime_amount,
+        has_overtime_override: calc.has_overtime_override,
+        basic_salary: calc.basic_salary,
+        daily_rate: calc.daily_rate,
+        work_days: calc.work_days,
+        default_work_days: calc.default_work_days,
+        earned_base_salary: calc.earned_base_salary,
+        allowed_leave_days: calc.allowed_leave_days,
+        unused_leave_days: calc.unused_leave_days,
+        unused_leave_amount: calc.unused_leave_amount,
+        effective_unused_leave_enabled: calc.effective_unused_leave_enabled,
+        allowances: calc.manual_bonuses,
+        commissions: calc.commissions,
+        transportation_allowance: calc.transportation_allowance,
+        previous_dues: calc.previous_dues,
+        gross_salary: calc.gross_salary,
+        advances: calc.advances,
+        absent_days: calc.absent_days,
+        absent_deduction: calc.absent_deduction,
+        leave_days: calc.leave_days,
+        leave_deduction: calc.leave_deduction,
+        half_days: calc.half_days,
+        half_day_deduction: calc.half_day_deduction,
+        penalty_days: calc.penalty_days,
+        penalty_days_amount: calc.penalty_days_amount,
+        other_deductions: calc.manual_deductions,
+        old_advances: calc.old_advances,
+        old_debts: calc.old_advances,
+        external_debts: calc.external_debts,
+        salary_payments: calc.salary_payments,
+        net_salary: calc.net_salary,
+        remaining_balance: calc.remaining_balance,
+        has_saved_adjustment: calc.has_saved_adjustment,
+      };
+    });
 
   const summary = {
     total_employees: salarySheet.length,
     total_basic_salaries: salarySheet.reduce((s, e) => s + (e.basic_salary || 0), 0),
+    total_earned_base_salaries: salarySheet.reduce((s, e) => s + (e.earned_base_salary || 0), 0),
     total_gross_salaries: salarySheet.reduce((s, e) => s + (e.gross_salary || 0), 0),
     total_net_salary: salarySheet.reduce((s, e) => s + (e.net_salary || 0), 0),
+    total_remaining_balance: salarySheet.reduce((s, e) => s + (e.remaining_balance || 0), 0),
+    total_salary_payments: salarySheet.reduce((s, e) => s + (e.salary_payments || 0), 0),
     total_advances: salarySheet.reduce((s, e) => s + (e.advances || 0), 0),
+    total_old_advances: salarySheet.reduce((s, e) => s + (e.old_advances || 0), 0),
+    total_previous_dues: salarySheet.reduce((s, e) => s + (e.previous_dues || 0), 0),
+    total_unused_leave_amount: salarySheet.reduce((s, e) => s + (e.unused_leave_amount || 0), 0),
     total_actual_hours: salarySheet.reduce((s, e) => s + (e.actual_hours || 0), 0),
     total_delay_hours: salarySheet.reduce((s, e) => s + (e.delay_hours || 0), 0),
     total_overtime_hours: salarySheet.reduce((s, e) => s + (e.overtime_hours || 0), 0),
@@ -3790,6 +3905,7 @@ async function getMonthlySalarySheet(query = {}, user = null) {
     total_half_days: salarySheet.reduce((s, e) => s + (e.half_days || 0), 0),
     total_half_day_deductions: salarySheet.reduce((s, e) => s + (e.half_day_deduction || 0), 0),
     total_delay_deductions: salarySheet.reduce((s, e) => s + (e.delay_deduction || 0), 0),
+    total_penalty_days_amount: salarySheet.reduce((s, e) => s + (e.penalty_days_amount || 0), 0),
     total_other_deductions: salarySheet.reduce((s, e) => s + (e.other_deductions || 0), 0),
   };
 

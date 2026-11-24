@@ -1098,9 +1098,54 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN created_by_name TEXT'); } catch {}
   try { sqlite.exec('ALTER TABLE stock_transfers ADD COLUMN notes TEXT'); } catch {}
   try { sqlite.exec("ALTER TABLE stock_transfers ADD COLUMN priority TEXT DEFAULT 'normal'"); } catch {}
-  try { sqlite.exec("ALTER TABLE returns ADD COLUMN refund_method TEXT DEFAULT 'cash'"); } catch {}
+  try { sqlite.exec('ALTER TABLE returns ADD COLUMN refund_method TEXT DEFAULT \'cash\''); } catch {}
   try { sqlite.exec('ALTER TABLE rentals ADD COLUMN actual_pickup_date TEXT'); } catch {}
   try { sqlite.exec('ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0'); } catch {}
+  try { sqlite.exec('ALTER TABLE employees ADD COLUMN end_date TEXT'); } catch {}
+  try { sqlite.exec("ALTER TABLE employee_transactions ADD COLUMN payment_method TEXT DEFAULT 'cash'"); } catch {}
+  try { sqlite.exec('ALTER TABLE employee_transactions ADD COLUMN paid_from_drawer INTEGER DEFAULT 0'); } catch {}
+
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS employee_payroll_adjustments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER NOT NULL,
+        month TEXT NOT NULL,
+        basic_salary_override REAL,
+        work_days REAL,
+        allowed_leave_days REAL,
+        include_unused_leave_payout INTEGER,
+        unused_leave_amount_override REAL,
+        required_hours REAL,
+        overtime_amount_override REAL,
+        delay_deduction_override REAL,
+        absent_days_override REAL,
+        leave_days_override REAL,
+        half_days_override REAL,
+        penalty_days REAL DEFAULT 0,
+        manual_deductions_override REAL,
+        manual_bonuses_override REAL,
+        commissions REAL DEFAULT 0,
+        transportation_allowance REAL DEFAULT 0,
+        old_advances REAL DEFAULT 0,
+        previous_dues REAL DEFAULT 0,
+        external_debts REAL DEFAULT 0,
+        notes TEXT,
+        updated_by INTEGER,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        offline_uuid TEXT UNIQUE,
+        pending_sync INTEGER DEFAULT 0,
+        UNIQUE (employee_id, month)
+      );
+      CREATE INDEX IF NOT EXISTS idx_emp_payroll_adj_month ON employee_payroll_adjustments(month);
+      CREATE INDEX IF NOT EXISTS idx_emp_payroll_adj_employee_month ON employee_payroll_adjustments(employee_id, month);
+    `);
+    try {
+      sqlite.exec('ALTER TABLE employee_payroll_adjustments ADD COLUMN basic_salary_override REAL');
+    } catch {}
+  } catch (err) {
+    console.warn('Could not create employee_payroll_adjustments table in SQLite:', err.message);
+  }
 
   // Seed initial users & branches into branch SQLite if empty
   try {

@@ -34,6 +34,7 @@ class ServerSupervisor {
     this.port = options.port || '6253';
     this.dataDir = options.dataDir || null;
     this.logFile = options.logFile || null;
+    this.appVersion = options.appVersion || null;
     this.process = null;
     this.readyCallback = null;
     this.errorCallback = null;
@@ -99,6 +100,9 @@ class ServerSupervisor {
     if (this.dataDir) {
       env.DATA_DIR = this.dataDir;
       this.log(`[Supervisor] Configured persistent DATA_DIR: ${this.dataDir}`);
+    }
+    if (this.appVersion) {
+      env.APP_VERSION = String(this.appVersion);
     }
 
     const forkOptions = {

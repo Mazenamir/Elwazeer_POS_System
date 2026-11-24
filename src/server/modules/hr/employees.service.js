@@ -9,6 +9,12 @@ const { clampInt } = require('../../../shared/utils/numbers');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { queueSyncOperation } = require('../../database/sync.helpers');
 const { hasBranchAccess, getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
+const {
+  getPreviousMonthKey,
+  calculateEmployeeMonthlyPayroll,
+  numOrNull,
+  boolOrNull,
+} = require('./payroll.calculator');
 
 function parseBranchIds(raw) {
   if (Array.isArray(raw)) return raw.map(Number).filter((n) => Number.isFinite(n) && n > 0);
@@ -82,6 +88,9 @@ async function getEmployeeOptions(query = {}, user = null) {
   const { date: todayDate } = getCairoDateTimeParts();
   const params = [todayDate];
   const where = [];
+  if (query.include_inactive !== 'true') {
+    where.push("COALESCE(e.status, 'active') = 'active'");
+  }
 
   if (user && user.role !== 'admin') {
     const authBranchIds = getUserAuthorizedBranchIds(user);
@@ -138,6 +147,7 @@ async function getActiveSellers(query = {}, user = null) {
   const { date: todayDate } = getCairoDateTimeParts();
   const params = [todayDate];
   const where = [
+    "COALESCE(e.status, 'active') = 'active'",
     'a.check_in IS NOT NULL',
     'a.check_out IS NULL',
   ];
@@ -319,6 +329,10 @@ async function listEmployees(query = {}, user = null, req = null) {
     whereParams.push(likePattern(query.phone));
     where.push(`e.phone ILIKE $${whereParams.length}`);
   }
+  if (query.status === 'active' || query.status === 'inactive') {
+    whereParams.push(query.status);
+    where.push(`COALESCE(e.status, 'active') = $${whereParams.length}`);
+  }
 
   const countWhereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const countQuery = `SELECT COUNT(*)::int as total FROM employees e ${countWhereClause}`;
@@ -385,11 +399,105 @@ async function listEmployees(query = {}, user = null, req = null) {
 
   const queryParams = [todayDate, monthRange.start, monthRange.end, ...whereParams];
 
-  const normalizeRow = (r) => ({
-    ...r,
-    branch_scope: r.branch_scope || 'single',
-    branch_ids: parseBranchIds(r.branch_ids),
-  });
+  const enrichWithMonthlyPayroll = async (rows) => {
+    if (!rows || rows.length === 0) return [];
+    const canViewPayroll = !user || user.role === 'admin' || hasPermission(user, 'employees.payroll.view');
+    const canEditEmp = !user || user.role === 'admin' || hasPermission(user, 'employees.edit');
+    if (!canViewPayroll) {
+      return rows.map((r) => ({
+        ...r,
+        branch_scope: r.branch_scope || 'single',
+        branch_ids: parseBranchIds(r.branch_ids),
+        master_basic_salary: canEditEmp ? Number(r.basic_salary || 0) : null,
+        basic_salary: canEditEmp ? Number(r.basic_salary || 0) : null,
+        has_basic_salary_override: false,
+        current_month_bonus_count: 0,
+        current_month_bonuses: 0,
+        latest_bonus_notes: null,
+        latest_bonus_date: null,
+        current_month_advances: 0,
+        current_month_deductions: 0,
+        current_month_salary_payments: 0,
+        current_month_work_days: null,
+        current_month_earned_base: null,
+        current_month_net_salary: null,
+        current_month_remaining_balance: null,
+        has_saved_adjustment: false,
+      }));
+    }
+    const empIds = rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n) && n > 0);
+    if (empIds.length === 0) return rows;
+
+    const idListSql = empIds.join(',');
+    const currentCairoMonth = todayDate.substring(0, 7);
+    const [attRes, txRes, adjRes] = await Promise.all([
+      db.query(
+        `SELECT employee_id, status, notes, check_in, COALESCE(total_hours, 0) AS total_hours
+         FROM attendance
+         WHERE employee_id IN (${idListSql}) AND date >= $1::date AND date < $2::date`,
+        [monthRange.start, monthRange.end]
+      ),
+      db.query(
+        `SELECT employee_id, type, amount
+         FROM employee_transactions
+         WHERE employee_id IN (${idListSql}) AND transaction_date >= $1::date AND transaction_date < $2::date`,
+        [monthRange.start, monthRange.end]
+      ),
+      db.query(
+        `SELECT *
+         FROM employee_payroll_adjustments
+         WHERE employee_id IN (${idListSql}) AND month = $1`,
+        [selectedMonth]
+      ),
+    ]);
+
+    const attByEmp = new Map();
+    attRes.rows.forEach((row) => {
+      const k = Number(row.employee_id);
+      if (!attByEmp.has(k)) attByEmp.set(k, []);
+      attByEmp.get(k).push(row);
+    });
+    const txByEmp = new Map();
+    txRes.rows.forEach((row) => {
+      const k = Number(row.employee_id);
+      if (!txByEmp.has(k)) txByEmp.set(k, []);
+      txByEmp.get(k).push(row);
+    });
+    const adjByEmp = new Map();
+    adjRes.rows.forEach((row) => {
+      adjByEmp.set(Number(row.employee_id), row);
+    });
+
+    return rows.map((r) => {
+      const k = Number(r.id);
+      const calc = calculateEmployeeMonthlyPayroll({
+        employee: r,
+        month: selectedMonth,
+        currentCairoMonth,
+        attendanceRows: attByEmp.get(k) || [],
+        transactionRows: txByEmp.get(k) || [],
+        adjustment: adjByEmp.get(k) || null,
+      });
+      const totalAdditionsForMonth = Math.round((calc.total_additions || 0) * 100) / 100;
+      return {
+        ...r,
+        branch_scope: r.branch_scope || 'single',
+        branch_ids: parseBranchIds(r.branch_ids),
+        master_basic_salary: Number(r.basic_salary || 0),
+        basic_salary: calc.basic_salary,
+        has_basic_salary_override: calc.has_basic_salary_override,
+        current_month_bonuses: totalAdditionsForMonth,
+        current_month_advances: calc.advances,
+        current_month_deductions: calc.deductions_without_advances,
+        current_month_salary_payments: calc.salary_payments,
+        current_month_work_days: calc.work_days,
+        current_month_earned_base: calc.earned_base_salary,
+        current_month_net_salary: calc.net_salary,
+        current_month_remaining_balance: calc.remaining_balance,
+        has_saved_adjustment: calc.has_saved_adjustment,
+      };
+    });
+  };
 
   if (pagination.enabled) {
     selectQuery = appendPagination(selectQuery, queryParams, pagination);
@@ -397,11 +505,12 @@ async function listEmployees(query = {}, user = null, req = null) {
       db.query(selectQuery, queryParams),
       db.query(countQuery, whereParams),
     ]);
-    return paginatedPayload(dataRes.rows.map(normalizeRow), countRes.rows[0]?.total || 0, pagination);
+    const enriched = await enrichWithMonthlyPayroll(dataRes.rows);
+    return paginatedPayload(enriched, countRes.rows[0]?.total || 0, pagination);
   }
 
   const result = await db.query(selectQuery, queryParams);
-  return result.rows.map(normalizeRow);
+  return enrichWithMonthlyPayroll(result.rows);
 }
 
 async function createEmployee(body, user) {
@@ -519,6 +628,8 @@ async function updateEmployee(id, body, user) {
     basic_salary,
     phone,
     join_date,
+    end_date,
+    status,
     create_account,
     username,
     password,
@@ -529,7 +640,7 @@ async function updateEmployee(id, body, user) {
   } = body || {};
 
   const employee = await db.transaction(async (tx) => {
-    const existingRes = await tx.query('SELECT branch_id, branch_scope, branch_ids FROM employees WHERE id = $1', [id]);
+    const existingRes = await tx.query('SELECT branch_id, branch_scope, branch_ids, status, end_date FROM employees WHERE id = $1', [id]);
     if (existingRes.rows.length === 0) {
       const err = new Error('Employee not found');
       err.statusCode = 404;
@@ -554,9 +665,14 @@ async function updateEmployee(id, body, user) {
       branch_ids !== undefined ? branch_ids : existingRes.rows[0].branch_ids,
       cleanBranchId
     );
+    const nextStatus = status || existingRes.rows[0].status || 'active';
+    const nextEndDate = end_date !== undefined
+      ? (end_date || null)
+      : (nextStatus === 'active' ? null : (existingRes.rows[0].end_date || null));
+
     const result = await tx.query(
-      'UPDATE employees SET name = $1, position = $2, branch_id = $3, branch_scope = $4, branch_ids = $5, basic_salary = $6, phone = $7, join_date = COALESCE($8, join_date), shift_start = $9, shift_end = $10 WHERE id = $11 RETURNING *',
-      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, phone, join_date || null, shift_start || null, shift_end || null, id]
+      'UPDATE employees SET name = $1, position = $2, branch_id = $3, branch_scope = $4, branch_ids = $5, basic_salary = $6, phone = $7, join_date = COALESCE($8, join_date), end_date = $9, status = $10, shift_start = $11, shift_end = $12 WHERE id = $13 RETURNING *',
+      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, phone, join_date || null, nextEndDate, nextStatus, shift_start || null, shift_end || null, id]
     );
 
     if (result.rows.length === 0) {
@@ -638,6 +754,9 @@ async function updateEmployee(id, body, user) {
         await queueSyncOperation(tx, null, 'employee', 'update', id, branch_id || user?.branch_id || 1, {
           id,
           ...body,
+          status: result.rows[0].status,
+          end_date: nextEndDate,
+          clear_end_date: nextEndDate === null,
           offline_uuid: result.rows[0].offline_uuid,
         });
       } catch (e) {
@@ -704,7 +823,7 @@ async function transferEmployee(id, targetBranchId, user) {
   return { success: true, employee: result };
 }
 
-async function deleteEmployee(id, user) {
+async function deactivateEmployee(id, body = {}, user) {
   const isAdmin = user && user.role === 'admin';
   const isBranchUser = user && user.role !== 'admin';
 
@@ -712,6 +831,85 @@ async function deleteEmployee(id, user) {
     const err = new Error('Unauthorized');
     err.statusCode = 403;
     throw err;
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const check = await tx.query('SELECT id, name, phone, branch_id, offline_uuid FROM employees WHERE id = $1', [id]);
+    if (check.rows.length === 0) {
+      const err = new Error('Employee not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (isBranchUser && !hasEmployeeBranchAccess(user, check.rows[0])) {
+      const err = new Error('Unauthorized access to this employee');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const cairoNow = await getDatabaseCairoNow(tx);
+    const endDate = (body && body.end_date) ? String(body.end_date).slice(0, 10) : cairoNow.date;
+    const updatedRes = await tx.query(
+      "UPDATE employees SET status = 'inactive', end_date = $1 WHERE id = $2 RETURNING *",
+      [endDate, id]
+    );
+    const userCheck = await tx.query('SELECT id, username FROM users WHERE employee_id = $1', [id]);
+    await tx.query('DELETE FROM users WHERE employee_id = $1', [id]);
+
+    if (config.IS_BRANCH_MODE) {
+      const bId = check.rows[0].branch_id || user?.branch_id || 1;
+      try {
+        await queueSyncOperation(tx, null, 'employee', 'update', id, bId, {
+          id,
+          status: 'inactive',
+          end_date: endDate,
+          offline_uuid: check.rows[0].offline_uuid,
+        });
+        for (const u of userCheck.rows) {
+          await queueSyncOperation(tx, null, 'user', 'delete', u.id, bId, {
+            id: u.id,
+            username: u.username,
+            employee_id: id,
+            employee_offline_uuid: check.rows[0].offline_uuid,
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to queue employee deactivate sync:', e.message);
+      }
+    }
+    return updatedRes.rows[0];
+  });
+
+  return {
+    success: true,
+    deactivated: true,
+    employee: result,
+    message: 'تم إيقاف الموظف وحفظ سجله المالي وتاريخ ترك العمل بنجاح',
+  };
+}
+
+async function deleteEmployee(id, user, options = {}) {
+  const isAdmin = user && user.role === 'admin';
+  const isBranchUser = user && user.role !== 'admin';
+
+  if (!isAdmin && !isBranchUser) {
+    const err = new Error('Unauthorized');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // If employee has historical attendance, transactions, or sales, soft-deactivate with end_date instead of wiping history!
+  const histCheck = await db.query(
+    `SELECT
+       (SELECT COUNT(*) FROM attendance WHERE employee_id = $1) AS att_cnt,
+       (SELECT COUNT(*) FROM employee_transactions WHERE employee_id = $1) AS tx_cnt,
+       (SELECT COUNT(*) FROM employee_payroll_adjustments WHERE employee_id = $1) AS adj_cnt,
+       (SELECT COUNT(*) FROM orders WHERE seller_id = $1) AS ord_cnt`,
+    [id]
+  );
+  const h = histCheck.rows[0] || {};
+  const hasHistory = (Number(h.att_cnt) + Number(h.tx_cnt) + Number(h.adj_cnt) + Number(h.ord_cnt)) > 0;
+  if (hasHistory && !options.force_hard_delete) {
+    return deactivateEmployee(id, { end_date: options.end_date }, user);
   }
 
   const result = await db.transaction(async (tx) => {
@@ -726,6 +924,7 @@ async function deleteEmployee(id, user) {
 
     const userCheck = await tx.query('SELECT id, username FROM users WHERE employee_id = $1', [id]);
     await tx.query('DELETE FROM attendance WHERE employee_id = $1', [id]);
+    await tx.query('DELETE FROM employee_payroll_adjustments WHERE employee_id = $1', [id]);
     await tx.query('DELETE FROM employee_transactions WHERE employee_id = $1', [id]);
     await tx.query('DELETE FROM users WHERE employee_id = $1', [id]);
     const delRes = await tx.query('DELETE FROM employees WHERE id = $1 RETURNING *', [id]);
@@ -1157,35 +1356,137 @@ async function createEmployeeTransaction(body, user) {
     throw err;
   }
 
-  if (isBranchUser) {
-    const check = await db.query('SELECT branch_id, branch_scope, branch_ids FROM employees WHERE id = $1', [employee_id]);
-    if (check.rows.length === 0 || !hasEmployeeBranchAccess(user, check.rows[0])) {
-      const err = new Error('Unauthorized access to this employee');
+  const empCheckRes = await db.query(
+    'SELECT id, name, phone, branch_id, branch_scope, branch_ids, offline_uuid FROM employees WHERE id = $1',
+    [employee_id]
+  );
+  if (empCheckRes.rows.length === 0) {
+    const err = new Error('Employee not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  const empRow = empCheckRes.rows[0];
+  if (isBranchUser && !hasEmployeeBranchAccess(user, empRow)) {
+    const err = new Error('Unauthorized access to this employee');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const paymentMethod = body?.payment_method || 'cash';
+  const isCashMethod = ['cash', 'نقدي', 'كاش'].includes(String(paymentMethod).trim().toLowerCase());
+  const rawPaidFromDrawer = body?.paid_from_drawer;
+  const paidFromDrawer = type === 'salary_payment'
+    ? (isCashMethod && (rawPaidFromDrawer === true || rawPaidFromDrawer === 1 || rawPaidFromDrawer === 'true' || rawPaidFromDrawer === '1'))
+    : false;
+  const dbPaidFromDrawer = config.IS_BRANCH_MODE ? (paidFromDrawer ? 1 : 0) : Boolean(paidFromDrawer);
+
+  const offlineUuid = newUuid(body?.offline_uuid);
+  const cairoNow = await getDatabaseCairoNow();
+  const result = await db.query(
+    'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+    [employee_id, type, amount, transaction_date || cairoNow.date, notes || null, paymentMethod, dbPaidFromDrawer, offlineUuid]
+  );
+  const transRow = result.rows[0];
+  const branchId = empRow.branch_id || user?.branch_id || config.BRANCH_ID || 1;
+  await queueSyncOperation(db, null, 'employee_transaction', 'create', transRow.id, branchId, {
+    id: transRow.id,
+    employee_id: transRow.employee_id,
+    employee_ref: {
+      name: empRow.name,
+      phone: empRow.phone,
+      offline_uuid: empRow.offline_uuid,
+    },
+    type: transRow.type,
+    amount: transRow.amount,
+    transaction_date: transRow.transaction_date,
+    notes: transRow.notes,
+    payment_method: paymentMethod,
+    paid_from_drawer: paidFromDrawer,
+    offline_uuid: transRow.offline_uuid || offlineUuid,
+    branch_id: branchId,
+  });
+  return transRow;
+}
+
+async function deleteEmployeeTransaction(txId, user) {
+  const isAdmin = user && user.role === 'admin';
+  const isBranchUser = user && user.role !== 'admin';
+
+  if (!isAdmin && !isBranchUser) {
+    const err = new Error('Unauthorized');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const txRes = await db.query(
+    `SELECT et.*, e.name AS emp_name, e.phone AS emp_phone, e.branch_id, e.branch_scope, e.branch_ids, e.offline_uuid AS emp_offline_uuid
+     FROM employee_transactions et
+     JOIN employees e ON e.id = et.employee_id
+     WHERE et.id = $1`,
+    [txId]
+  );
+  if (txRes.rows.length === 0) {
+    const err = new Error('الحركة المالية غير موجودة');
+    err.statusCode = 404;
+    throw err;
+  }
+  const row = txRes.rows[0];
+
+  if (!isAdmin) {
+    if (!hasEmployeeBranchAccess(user, row)) {
+      const err = new Error('غير مصرح لك بالوصول إلى هذا الموظف');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (row.type === 'advance') {
+      if (!hasPermission(user, 'employees.advances.create')) {
+        const err = new Error('ليس لديك صلاحية حذف السلف');
+        err.statusCode = 403;
+        throw err;
+      }
+    } else if (!hasPermission(user, 'employees.payroll.execute')) {
+      const err = new Error('ليس لديك صلاحية حذف حركات الرواتب والخصومات والمكافآت');
       err.statusCode = 403;
       throw err;
     }
   }
 
-  const offlineUuid = newUuid(body?.offline_uuid);
-  const cairoNow = await getDatabaseCairoNow();
-  const result = await db.query(
-    'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-    [employee_id, type, amount, transaction_date || cairoNow.date, notes || null, offlineUuid]
-  );
-  const transRow = result.rows[0];
-  const empBranchRes = await db.query('SELECT branch_id FROM employees WHERE id = $1', [employee_id]);
-  const branchId = empBranchRes.rows[0]?.branch_id || user?.branch_id || config.BRANCH_ID || 1;
-  await queueSyncOperation(db, null, 'employee_transaction', 'create', transRow.id, branchId, {
-    id: transRow.id,
-    employee_id: transRow.employee_id,
-    type: transRow.type,
-    amount: transRow.amount,
-    transaction_date: transRow.transaction_date,
-    notes: transRow.notes,
-    offline_uuid: transRow.offline_uuid || offlineUuid,
-    branch_id: branchId,
+  await db.transaction(async (tx) => {
+    await tx.query('DELETE FROM employee_transactions WHERE id = $1', [txId]);
+
+    // If this was a bonus synced from an expense, soft-delete the linked expense as well
+    if (row.type === 'bonus' && row.offline_uuid) {
+      const expRes = await tx.query(
+        `UPDATE expenses
+         SET is_deleted = TRUE, deleted_by = $1, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE offline_uuid = $2 AND category = 'bonus' AND is_deleted IS NOT TRUE
+         RETURNING *`,
+        [user?.id || null, row.offline_uuid]
+      );
+      if (expRes.rows.length > 0 && config.IS_BRANCH_MODE) {
+        await queueSyncOperation(tx, null, 'expense', 'upsert', expRes.rows[0].id, expRes.rows[0].branch_id, {
+          ...expRes.rows[0],
+          is_deleted: true,
+        });
+      }
+    }
+
+    const branchId = row.branch_id || user?.branch_id || config.BRANCH_ID || 1;
+    await queueSyncOperation(tx, null, 'employee_transaction', 'delete', row.id, branchId, {
+      id: row.id,
+      employee_id: row.employee_id,
+      employee_ref: {
+        name: row.emp_name,
+        phone: row.emp_phone,
+        offline_uuid: row.emp_offline_uuid,
+      },
+      type: row.type,
+      offline_uuid: row.offline_uuid,
+      branch_id: branchId,
+    });
   });
-  return transRow;
+
+  return { success: true, deleted_id: Number(txId), type: row.type };
 }
 
 async function getEmployeeSummary(id, monthParam, user, options = {}) {
@@ -1198,15 +1499,21 @@ async function getEmployeeSummary(id, monthParam, user, options = {}) {
     throw err;
   }
 
-  const month = monthParam || getCairoDateTimeParts().date.substring(0, 7);
-  const empRes = await db.query('SELECT branch_id, basic_salary FROM employees WHERE id = $1', [id]);
+  const cairoNow = await getDatabaseCairoNow(db);
+  const currentCairoMonth = cairoNow.month || getCairoDateTimeParts().date.substring(0, 7);
+  const month = (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) ? monthParam : currentCairoMonth;
+  const empRes = await db.query(
+    'SELECT id, branch_id, branch_scope, branch_ids, basic_salary, join_date, end_date, status FROM employees WHERE id = $1',
+    [id]
+  );
   if (empRes.rows.length === 0) {
     const err = new Error('Not found');
     err.statusCode = 404;
     throw err;
   }
+  const employee = empRes.rows[0];
 
-  if (isBranchUser && !hasBranchAccess(user, empRes.rows[0].branch_id)) {
+  if (isBranchUser && !hasEmployeeBranchAccess(user, employee)) {
     const err = new Error('Unauthorized access to this employee');
     err.statusCode = 403;
     throw err;
@@ -1216,59 +1523,108 @@ async function getEmployeeSummary(id, monthParam, user, options = {}) {
   const hasPayrollView = !isAdvanceMode && (isAdmin || Boolean(user && hasPermission(user, 'employees.payroll.view')));
   const canSeeSalary = !isAdvanceMode && (isAdmin || Boolean(hasPayrollView && user?.salaryAccessVerified));
 
-  const rawBasicSalary = Number(empRes.rows[0].basic_salary);
-  const basic_salary = canSeeSalary ? rawBasicSalary : null;
   const monthRange = getMonthRange(month);
+  const [year, monthNumber] = month.split('-').map(Number);
+  const selectedMonthDate = new Date(Date.UTC(year, monthNumber - 1, 1));
+  const monthKeys = [];
+  for (let offset = 11; offset >= 0; offset -= 1) {
+    monthKeys.push(getMonthKey(new Date(Date.UTC(selectedMonthDate.getUTCFullYear(), selectedMonthDate.getUTCMonth() - offset, 1))));
+  }
+  const windowStart = `${monthKeys[0]}-01`;
+  const windowEnd = getMonthRange(monthKeys[monthKeys.length - 1]).end;
 
-  const transRes = await db.query(
-    `SELECT type, SUM(amount) as total 
-     FROM employee_transactions 
-     WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date
-     GROUP BY type`,
-    [id, monthRange.start, monthRange.end]
-  );
-  let advances = 0;
-  let deductions = 0;
-  let bonuses = 0;
-  let salaryPayments = 0;
+  const [monthTxRowsRes, windowTxRes, windowAttRes, windowAdjRes] = await Promise.all([
+    db.query(
+      `SELECT id, employee_id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') as transaction_date, notes,
+              COALESCE(payment_method, 'cash') as payment_method,
+              COALESCE(paid_from_drawer, FALSE) as paid_from_drawer,
+              offline_uuid
+       FROM employee_transactions
+       WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date
+       ORDER BY transaction_date DESC, id DESC`,
+      [id, monthRange.start, monthRange.end]
+    ),
+    db.query(
+      `SELECT id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') as transaction_date,
+              TO_CHAR(transaction_date, 'YYYY-MM') as month
+       FROM employee_transactions
+       WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date`,
+      [id, windowStart, windowEnd]
+    ),
+    db.query(
+      `SELECT TO_CHAR(date, 'YYYY-MM') as month, status, notes, check_in, COALESCE(total_hours, 0) as total_hours
+       FROM attendance
+       WHERE employee_id = $1 AND date >= $2::date AND date < $3::date`,
+      [id, windowStart, windowEnd]
+    ),
+    db.query(
+      `SELECT *
+       FROM employee_payroll_adjustments
+       WHERE employee_id = $1 AND month >= $2 AND month <= $3`,
+      [id, monthKeys[0], monthKeys[monthKeys.length - 1]]
+    ),
+  ]);
 
-  transRes.rows.forEach((r) => {
-    if (r.type === 'advance') advances = Number(r.total);
-    if (!isAdvanceMode) {
-      if (r.type === 'deduction') deductions = Number(r.total);
-      if (r.type === 'bonus') bonuses = Number(r.total);
-      if (r.type === 'salary_payment') salaryPayments = Number(r.total);
-    }
+  const txByMonth = new Map();
+  windowTxRes.rows.forEach((r) => {
+    if (!txByMonth.has(r.month)) txByMonth.set(r.month, []);
+    txByMonth.get(r.month).push(r);
   });
 
-  const net_salary = canSeeSalary ? (salaryPayments + bonuses - advances - deductions) : null;
-  const remaining_salary = canSeeSalary ? (rawBasicSalary + bonuses - advances - deductions - salaryPayments) : null;
+  const attByMonth = new Map();
+  windowAttRes.rows.forEach((r) => {
+    if (!attByMonth.has(r.month)) attByMonth.set(r.month, []);
+    attByMonth.get(r.month).push(r);
+  });
 
-  const [year, monthNumber] = month.split('-').map(Number);
+  const adjByMonth = new Map();
+  windowAdjRes.rows.forEach((r) => {
+    adjByMonth.set(r.month, r);
+  });
 
-  const dailyTransRes = await db.query(
-    `SELECT TO_CHAR(transaction_date, 'YYYY-MM-DD') as day, type, SUM(amount) as total
-     FROM employee_transactions
-     WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date
-     GROUP BY day, type`,
-    [id, monthRange.start, monthRange.end]
-  );
+  const currentMonthCalc = calculateEmployeeMonthlyPayroll({
+    employee,
+    month,
+    currentCairoMonth,
+    attendanceRows: attByMonth.get(month) || [],
+    transactionRows: txByMonth.get(month) || [],
+    adjustment: adjByMonth.get(month) || null,
+  });
+
+  const advances = currentMonthCalc.advances;
+  const deductions = isAdvanceMode ? 0 : currentMonthCalc.deductions_without_advances;
+  const bonuses = isAdvanceMode ? 0 : currentMonthCalc.total_additions;
+  const salaryPayments = isAdvanceMode ? 0 : currentMonthCalc.salary_payments;
+
+  const rawBasicSalary = currentMonthCalc.basic_salary;
+  const basic_salary = canSeeSalary ? rawBasicSalary : null;
+  const net_salary = canSeeSalary ? currentMonthCalc.net_salary : null;
+  const remaining_salary = canSeeSalary ? currentMonthCalc.remaining_balance : null;
 
   const dailyMap = new Map();
-  dailyTransRes.rows.forEach((row) => {
-    if (!dailyMap.has(row.day)) {
-      dailyMap.set(row.day, { salary_payments: 0, advances: 0, deductions: 0, bonuses: 0 });
+  (txByMonth.get(month) || []).forEach((row) => {
+    const dayKey = row.transaction_date;
+    if (!dailyMap.has(dayKey)) {
+      dailyMap.set(dayKey, { salary_payments: 0, advances: 0, deductions: 0, bonuses: 0 });
     }
-    const entry = dailyMap.get(row.day);
-    if (row.type === 'advance') entry.advances = Number(row.total);
+    const entry = dailyMap.get(dayKey);
+    if (row.type === 'advance') entry.advances += Number(row.amount || 0);
     if (!isAdvanceMode) {
-      if (row.type === 'deduction') entry.deductions = Number(row.total);
-      if (row.type === 'bonus') entry.bonuses = Number(row.total);
-      if (row.type === 'salary_payment') entry.salary_payments = Number(row.total);
+      if (row.type === 'deduction') entry.deductions += Number(row.amount || 0);
+      if (row.type === 'bonus') entry.bonuses += Number(row.amount || 0);
+      if (row.type === 'salary_payment') entry.salary_payments += Number(row.amount || 0);
     }
   });
 
   const daily_summary = [];
+  const basePlusNonTxAdditions = currentMonthCalc.earned_base_salary
+    + currentMonthCalc.unused_leave_amount
+    + currentMonthCalc.overtime_amount
+    + currentMonthCalc.commissions
+    + currentMonthCalc.transportation_allowance
+    + currentMonthCalc.previous_dues
+    - (currentMonthCalc.absent_deduction + currentMonthCalc.leave_deduction + currentMonthCalc.half_day_deduction + currentMonthCalc.delay_deduction + currentMonthCalc.penalty_days_amount + currentMonthCalc.old_advances);
+
   const runningDaily = { salary_payments: 0, advances: 0, deductions: 0, bonuses: 0 };
   Array.from(dailyMap.keys()).sort().forEach((dayKey) => {
     const entry = dailyMap.get(dayKey);
@@ -1282,6 +1638,12 @@ async function getEmployeeSummary(id, monthParam, user, options = {}) {
       : (entry.advances > 0);
 
     if (shouldInclude) {
+      const effBonuses = currentMonthCalc.adjustment?.manual_bonuses_override !== null && currentMonthCalc.adjustment?.manual_bonuses_override !== undefined
+        ? currentMonthCalc.manual_bonuses
+        : runningDaily.bonuses;
+      const effDeds = currentMonthCalc.adjustment?.manual_deductions_override !== null && currentMonthCalc.adjustment?.manual_deductions_override !== undefined
+        ? currentMonthCalc.manual_deductions
+        : runningDaily.deductions;
       daily_summary.push({
         day: dayKey,
         basic_salary: canSeeSalary ? rawBasicSalary : null,
@@ -1291,7 +1653,7 @@ async function getEmployeeSummary(id, monthParam, user, options = {}) {
         bonuses: hasPayrollView ? entry.bonuses : 0,
         net_salary: canSeeSalary ? (entry.salary_payments + entry.bonuses - entry.advances - entry.deductions) : null,
         remaining_salary: canSeeSalary
-          ? (rawBasicSalary + runningDaily.bonuses - runningDaily.advances - runningDaily.deductions - runningDaily.salary_payments)
+          ? Math.round(basePlusNonTxAdditions + effBonuses - runningDaily.advances - effDeds - runningDaily.salary_payments)
           : null,
       });
     }
@@ -1299,57 +1661,49 @@ async function getEmployeeSummary(id, monthParam, user, options = {}) {
 
   daily_summary.sort((a, b) => b.day.localeCompare(a.day));
 
-  const selectedMonthDate = new Date(Date.UTC(year, monthNumber - 1, 1));
-  const monthKeys = [];
-  for (let offset = 11; offset >= 0; offset -= 1) {
-    monthKeys.push(getMonthKey(new Date(Date.UTC(selectedMonthDate.getUTCFullYear(), selectedMonthDate.getUTCMonth() - offset, 1))));
-  }
-
-  const monthlyTransRes = await db.query(
-    `SELECT TO_CHAR(transaction_date, 'YYYY-MM') as month, type, SUM(amount) as total
-     FROM employee_transactions
-     WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date
-     GROUP BY month, type`,
-    [id, `${monthKeys[0]}-01`, getMonthRange(monthKeys[monthKeys.length - 1]).end]
-  );
-
-  const monthlyMap = new Map();
-  monthlyTransRes.rows.forEach((row) => {
-    if (!monthlyMap.has(row.month)) {
-      monthlyMap.set(row.month, { salary_payments: 0, advances: 0, deductions: 0, bonuses: 0 });
-    }
-    const entry = monthlyMap.get(row.month);
-    if (row.type === 'advance') entry.advances = Number(row.total);
-    if (!isAdvanceMode) {
-      if (row.type === 'deduction') entry.deductions = Number(row.total);
-      if (row.type === 'bonus') entry.bonuses = Number(row.total);
-      if (row.type === 'salary_payment') entry.salary_payments = Number(row.total);
-    }
-  });
-
   const monthly_summary = [];
   monthKeys.forEach((monthKey) => {
-    const entry = monthlyMap.get(monthKey) || { salary_payments: 0, advances: 0, deductions: 0, bonuses: 0 };
+    const mCalc = calculateEmployeeMonthlyPayroll({
+      employee,
+      month: monthKey,
+      currentCairoMonth,
+      attendanceRows: attByMonth.get(monthKey) || [],
+      transactionRows: txByMonth.get(monthKey) || [],
+      adjustment: adjByMonth.get(monthKey) || null,
+    });
     const shouldInclude = hasPayrollView
-      ? (monthKey === month || entry.salary_payments > 0 || entry.advances > 0 || entry.deductions > 0 || entry.bonuses > 0)
-      : (monthKey === month || entry.advances > 0);
+      ? (monthKey === month || mCalc.salary_payments > 0 || mCalc.advances > 0 || mCalc.deductions_without_advances > 0 || mCalc.total_additions > 0 || mCalc.has_saved_adjustment)
+      : (monthKey === month || mCalc.advances > 0);
 
     if (shouldInclude) {
       monthly_summary.push({
         month: monthKey,
-        basic_salary: canSeeSalary ? rawBasicSalary : null,
-        salary_payments: hasPayrollView ? entry.salary_payments : 0,
-        advances: entry.advances,
-        deductions: hasPayrollView ? entry.deductions : 0,
-        bonuses: hasPayrollView ? entry.bonuses : 0,
-        net_salary: canSeeSalary ? (entry.salary_payments + entry.bonuses - entry.advances - entry.deductions) : null,
-        remaining_salary: canSeeSalary
-          ? (rawBasicSalary + entry.bonuses - entry.advances - entry.deductions - entry.salary_payments)
-          : null,
+        basic_salary: canSeeSalary ? mCalc.basic_salary : null,
+        work_days: mCalc.work_days,
+        salary_payments: hasPayrollView ? mCalc.salary_payments : 0,
+        advances: mCalc.advances,
+        deductions: hasPayrollView ? mCalc.deductions_without_advances : 0,
+        bonuses: hasPayrollView ? mCalc.total_additions : 0,
+        net_salary: canSeeSalary ? mCalc.net_salary : null,
+        remaining_salary: canSeeSalary ? mCalc.remaining_balance : null,
+        has_saved_adjustment: mCalc.has_saved_adjustment,
       });
     }
   });
   monthly_summary.reverse();
+
+  const transactions = monthTxRowsRes.rows
+    .filter((r) => (isAdvanceMode ? r.type === 'advance' : (hasPayrollView ? true : r.type === 'advance')))
+    .map((r) => ({
+      id: r.id,
+      employee_id: r.employee_id,
+      type: r.type,
+      amount: Number(r.amount || 0),
+      transaction_date: r.transaction_date,
+      notes: String(r.notes || '').replace(/\s*\[EXP-[^\]]+\]\s*/g, ' ').trim(),
+      payment_method: r.payment_method || 'cash',
+      paid_from_drawer: Boolean(r.paid_from_drawer === true || r.paid_from_drawer === 1),
+    }));
 
   return {
     basic_salary,
@@ -1359,7 +1713,10 @@ async function getEmployeeSummary(id, monthParam, user, options = {}) {
     bonuses: hasPayrollView ? bonuses : 0,
     net_salary,
     remaining_salary,
+    work_days: currentMonthCalc.work_days,
+    has_saved_adjustment: currentMonthCalc.has_saved_adjustment,
     month,
+    transactions,
     daily_summary,
     monthly_summary,
   };
@@ -1375,141 +1732,200 @@ async function getEmployeePayslip(id, monthParam, user) {
     throw err;
   }
 
-  const month = monthParam || getCairoDateTimeParts().date.substring(0, 7);
-  const empRes = await db.query('SELECT name, position, branch_id, basic_salary, shift_start, shift_end FROM employees WHERE id = $1', [id]);
+  const cairoNow = await getDatabaseCairoNow(db);
+  const currentCairoMonth = cairoNow.month || getCairoDateTimeParts().date.substring(0, 7);
+  const month = (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) ? monthParam : currentCairoMonth;
+
+  const empRes = await db.query(
+    'SELECT id, name, position, branch_id, branch_scope, branch_ids, basic_salary, join_date, end_date, status, shift_start, shift_end, offline_uuid FROM employees WHERE id = $1',
+    [id]
+  );
   if (empRes.rows.length === 0) {
     const err = new Error('Not found');
     err.statusCode = 404;
     throw err;
   }
+  const employee = empRes.rows[0];
 
-  if (isBranchUser && !hasBranchAccess(user, empRes.rows[0].branch_id)) {
+  if (isBranchUser && !hasEmployeeBranchAccess(user, employee)) {
     const err = new Error('Unauthorized access to this employee');
     err.statusCode = 403;
     throw err;
   }
 
-  const branchRes = await db.query('SELECT name FROM branches WHERE id = $1', [empRes.rows[0].branch_id]);
+  const branchRes = await db.query('SELECT name FROM branches WHERE id = $1', [employee.branch_id]);
   const branchName = branchRes.rows.length > 0 ? branchRes.rows[0].name : '';
 
-  const basic_salary = Number(empRes.rows[0].basic_salary) || 0;
   const monthRange = getMonthRange(month);
+  const prevMonth = getPreviousMonthKey(month);
+  const prevRange = prevMonth ? getMonthRange(prevMonth) : null;
 
-  // 1. Transactions
-  const transRes = await db.query(
-    `SELECT type, SUM(amount) as total 
-     FROM employee_transactions 
-     WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date
-     GROUP BY type`,
-    [id, monthRange.start, monthRange.end]
-  );
-  const transactionDetailsRes = await db.query(
-    `SELECT id, type, amount, transaction_date, notes
-     FROM employee_transactions
-     WHERE employee_id = $1
-       AND type IN ('bonus', 'deduction')
-       AND transaction_date >= $2::date
-       AND transaction_date < $3::date
-     ORDER BY transaction_date, id`,
-    [id, monthRange.start, monthRange.end]
-  );
+  const [txRes, attRes, adjRes, prevTxRes, prevAttRes, prevAdjRes] = await Promise.all([
+    db.query(
+      `SELECT id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') AS transaction_date, notes,
+              COALESCE(payment_method, 'cash') AS payment_method,
+              COALESCE(paid_from_drawer, FALSE) AS paid_from_drawer
+       FROM employee_transactions
+       WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date
+       ORDER BY transaction_date, id`,
+      [id, monthRange.start, monthRange.end]
+    ),
+    db.query(
+      `SELECT status, notes, check_in,
+              COALESCE(late_minutes, 0) as late_minutes,
+              COALESCE(early_departure_minutes, 0) as early_minutes,
+              COALESCE(overtime_minutes, 0) as overtime_minutes,
+              COALESCE(total_hours, 0) as total_hours
+       FROM attendance
+       WHERE employee_id = $1 AND date >= $2::date AND date < $3::date`,
+      [id, monthRange.start, monthRange.end]
+    ),
+    db.query(
+      'SELECT * FROM employee_payroll_adjustments WHERE employee_id = $1 AND month = $2 LIMIT 1',
+      [id, month]
+    ),
+    prevRange
+      ? db.query(
+          `SELECT id, type, amount
+           FROM employee_transactions
+           WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date`,
+          [id, prevRange.start, prevRange.end]
+        )
+      : Promise.resolve({ rows: [] }),
+    prevRange
+      ? db.query(
+          `SELECT status, notes, check_in, COALESCE(total_hours, 0) as total_hours
+           FROM attendance
+           WHERE employee_id = $1 AND date >= $2::date AND date < $3::date`,
+          [id, prevRange.start, prevRange.end]
+        )
+      : Promise.resolve({ rows: [] }),
+    prevMonth
+      ? db.query(
+          'SELECT * FROM employee_payroll_adjustments WHERE employee_id = $1 AND month = $2 LIMIT 1',
+          [id, prevMonth]
+        )
+      : Promise.resolve({ rows: [] }),
+  ]);
 
-  let advances = 0;
-  let deductions = 0;
-  let bonuses = 0;
-  let salaryPayments = 0;
-
-  transRes.rows.forEach((r) => {
-    if (r.type === 'advance') advances = Number(r.total);
-    if (r.type === 'deduction') deductions = Number(r.total);
-    if (r.type === 'bonus') bonuses = Number(r.total);
-    if (r.type === 'salary_payment') salaryPayments = Number(r.total);
+  const txRows = txRes.rows;
+  const calc = calculateEmployeeMonthlyPayroll({
+    employee,
+    month,
+    currentCairoMonth,
+    attendanceRows: attRes.rows,
+    transactionRows: txRows,
+    adjustment: adjRes.rows[0] || null,
   });
 
-  // 2. Attendance
-  const attRes = await db.query(
-    `SELECT 
-       status,
-       notes,
-       COALESCE(late_minutes, 0) as late_minutes,
-       COALESCE(early_departure_minutes, 0) as early_minutes,
-       COALESCE(overtime_minutes, 0) as overtime_minutes,
-       COALESCE(total_hours, 0) as total_hours
-     FROM attendance
-     WHERE employee_id = $1 AND date >= $2::date AND date < $3::date`,
-    [id, monthRange.start, monthRange.end]
-  );
+  let carryoverSuggestion = {
+    prev_month: prevMonth,
+    prev_remaining_balance: 0,
+    suggested_old_advances: 0,
+    suggested_previous_dues: 0,
+  };
 
-  let lateMinutes = 0;
-  let earlyMinutes = 0;
-  let overtimeMinutes = 0;
-  let absentDays = 0;
-  let leaveDays = 0;
-  let halfDays = 0;
-  let totalHours = 0;
-
-  attRes.rows.forEach((r) => {
-    lateMinutes += Number(r.late_minutes || 0);
-    earlyMinutes += Number(r.early_minutes || 0);
-    overtimeMinutes += Number(r.overtime_minutes || 0);
-    totalHours += Number(r.total_hours || 0);
-    const notes = String(r.notes || '');
-    const status = String(r.status || '');
-    if (notes.includes('غياب') || status === 'absent') absentDays += 1;
-    if (notes.includes('جاز') || notes.includes('إجازة') || status === 'leave') leaveDays += 1;
-    if (notes.includes('نص يوم') || status === 'half_day') halfDays += 1;
-  });
-
-  // Calculate according to Elwazeer standard payroll invariants
-  const requiredHours = 268;
-  const actualHours = Math.round(totalHours * 100) / 100;
-  const dailyRate = Math.round((basic_salary / 30) * 100) / 100;
-  const absenceDeduction = Math.round(absentDays * dailyRate * 2); // Double penalty
-  const leaveDeduction = Math.round(Math.max(0, leaveDays - 4) * dailyRate); // 4 days allowed
-  const halfDayDeduction = Math.round(halfDays * (dailyRate / 2));
-
-  let delayHours = 0;
-  let overtimeHours = 0;
-  if (totalHours > 0) {
-    delayHours = actualHours < requiredHours ? Math.round((requiredHours - actualHours) * 100) / 100 : 0;
-    overtimeHours = actualHours > requiredHours ? Math.round((actualHours - requiredHours) * 100) / 100 : 0;
-  } else if (lateMinutes > 0 || earlyMinutes > 0 || overtimeMinutes > 0) {
-    delayHours = Math.round(((lateMinutes + earlyMinutes) / 60) * 100) / 100;
-    overtimeHours = Math.round((overtimeMinutes / 60) * 100) / 100;
+  if (prevMonth) {
+    const prevHadActivity = prevTxRes.rows.length > 0 || prevAttRes.rows.length > 0 || prevAdjRes.rows.length > 0;
+    if (prevHadActivity || calc.default_work_days > 0) {
+      const prevCalc = calculateEmployeeMonthlyPayroll({
+        employee,
+        month: prevMonth,
+        currentCairoMonth,
+        attendanceRows: prevAttRes.rows,
+        transactionRows: prevTxRes.rows,
+        adjustment: prevAdjRes.rows[0] || null,
+      });
+      carryoverSuggestion = {
+        prev_month: prevMonth,
+        prev_remaining_balance: prevCalc.remaining_balance,
+        suggested_old_advances: prevCalc.remaining_balance < 0 ? Math.abs(prevCalc.remaining_balance) : 0,
+        suggested_previous_dues: (prevMonth < currentCairoMonth && prevCalc.remaining_balance > 0) ? prevCalc.remaining_balance : 0,
+      };
+    }
   }
-
-  const delayDeduction = Math.round(delayHours * (dailyRate / 10));
-  const lateDeduction = delayDeduction;
-  const earlyDeduction = 0;
-  const overtimeAmount = Math.round(((dailyRate / 10) * 1.35) * overtimeHours);
-  const overtimeBonus = overtimeAmount;
-
-  const totalDeductions = deductions + advances + absenceDeduction + leaveDeduction + halfDayDeduction + delayDeduction;
-  const totalBonuses = bonuses + overtimeBonus;
-
-  const netSalary = Math.round(basic_salary + totalBonuses - totalDeductions);
-  const remainingBalance = netSalary - salaryPayments;
 
   return {
     employee: {
-      name: empRes.rows[0].name,
-      position: empRes.rows[0].position,
+      id: employee.id,
+      name: employee.name,
+      position: employee.position,
       branch_name: branchName,
+      join_date: employee.join_date,
+      end_date: employee.end_date,
+      status: employee.status || 'active',
     },
     month,
-    basic_salary,
-    bonuses: totalBonuses,
-    commissions: 0,
-    advances,
-    deductions: totalDeductions,
-    already_paid: salaryPayments,
-    net_salary: netSalary,
+    basic_salary: calc.basic_salary,
+    employee_master_basic_salary: calc.employee_master_basic_salary,
+    has_basic_salary_override: calc.has_basic_salary_override,
+    daily_rate: calc.daily_rate,
+    work_days: calc.work_days,
+    default_work_days: calc.default_work_days,
+    earned_base_salary: calc.earned_base_salary,
+
+    allowed_leave_days: calc.allowed_leave_days,
+    default_allowed_leave_days: calc.default_allowed_leave_days,
+    include_unused_leave_payout: calc.include_unused_leave_payout,
+    effective_unused_leave_enabled: calc.effective_unused_leave_enabled,
+    unused_leave_days: calc.unused_leave_days,
+    unused_leave_amount: calc.unused_leave_amount,
+    has_unused_leave_override: calc.has_unused_leave_override,
+
+    actual_hours: calc.actual_hours,
+    required_hours: calc.required_hours,
+    overtime_hours: calc.overtime_hours,
+    overtime_amount: calc.overtime_amount,
+    calc_overtime_amount: calc.calc_overtime_amount,
+    has_overtime_override: calc.has_overtime_override,
+    delay_hours: calc.delay_hours,
+    delay_deduction: calc.delay_deduction,
+    calc_delay_deduction: calc.calc_delay_deduction,
+    has_delay_override: calc.has_delay_override,
+
+    bonuses: calc.manual_bonuses,
+    manual_bonuses: calc.manual_bonuses,
+    commissions: calc.commissions,
+    transportation_allowance: calc.transportation_allowance,
+    previous_dues: calc.previous_dues,
+    total_additions: calc.total_additions,
+    gross_salary: calc.gross_salary,
+
+    advances: calc.advances,
+    old_advances: calc.old_advances,
+    external_debts: calc.external_debts,
+    deductions: calc.deductions_without_advances,
+    deductions_without_advances: calc.deductions_without_advances,
+    penalty_days: calc.penalty_days,
+    penalty_days_amount: calc.penalty_days_amount,
+    already_paid: calc.already_paid,
+    net_salary: calc.net_salary,
+    remaining_balance: calc.remaining_balance,
+    has_saved_adjustment: calc.has_saved_adjustment,
+    adjustment: calc.adjustment,
+    carryover_suggestion: carryoverSuggestion,
+
     financials: {
-      advances,
-      deductions_manual: deductions,
-      bonuses_manual: bonuses,
-      salary_payments: salaryPayments,
-      bonus_details: transactionDetailsRes.rows
+      advances: calc.advances,
+      deductions_manual: calc.manual_deductions,
+      tx_deductions: calc.tx_deductions,
+      bonuses_manual: calc.manual_bonuses,
+      tx_bonuses: calc.tx_bonuses,
+      salary_payments: calc.salary_payments,
+      old_advances: calc.old_advances,
+      previous_dues: calc.previous_dues,
+      penalty_days: calc.penalty_days,
+      penalty_days_amount: calc.penalty_days_amount,
+      advance_details: txRows
+        .filter((row) => row.type === 'advance')
+        .map((row) => ({
+          id: row.id,
+          amount: Number(row.amount || 0),
+          date: row.transaction_date,
+          payment_method: row.payment_method || 'cash',
+          notes: row.notes || 'سلفة',
+        })),
+      bonus_details: txRows
         .filter((row) => row.type === 'bonus')
         .map((row) => ({
           id: row.id,
@@ -1517,7 +1933,7 @@ async function getEmployeePayslip(id, monthParam, user) {
           date: row.transaction_date,
           notes: String(row.notes || 'مكافأة').replace(/\s*\[EXP-[^\]]+\]\s*/g, ' ').trim(),
         })),
-      deduction_details: transactionDetailsRes.rows
+      deduction_details: txRows
         .filter((row) => row.type === 'deduction')
         .map((row) => ({
           id: row.id,
@@ -1525,35 +1941,327 @@ async function getEmployeePayslip(id, monthParam, user) {
           date: row.transaction_date,
           notes: row.notes || 'خصم',
         })),
+      salary_payment_details: txRows
+        .filter((row) => row.type === 'salary_payment')
+        .map((row) => ({
+          id: row.id,
+          amount: Number(row.amount || 0),
+          date: row.transaction_date,
+          payment_method: row.payment_method || 'cash',
+          paid_from_drawer: Boolean(row.paid_from_drawer === true || row.paid_from_drawer === 1),
+          notes: row.notes || 'صرف راتب',
+        })),
     },
     attendance: {
-      absent_days: absentDays,
-      leave_days: leaveDays,
-      half_days: halfDays,
-      late_minutes: lateMinutes,
-      early_minutes: earlyMinutes,
-      overtime_minutes: overtimeMinutes,
-      actual_hours: actualHours,
-      required_hours: requiredHours,
-      delay_hours: delayHours,
-      overtime_hours: overtimeHours,
-      daily_rate: dailyRate,
-      absence_deduction: Number(absenceDeduction.toFixed(2)),
-      leave_deduction: Number(leaveDeduction.toFixed(2)),
-      half_day_deduction: Number(halfDayDeduction.toFixed(2)),
-      delay_deduction: Number(delayDeduction.toFixed(2)),
-      late_deduction: Number(lateDeduction.toFixed(2)),
-      early_deduction: Number(earlyDeduction.toFixed(2)),
-      overtime_bonus: Number(overtimeBonus.toFixed(2)),
-      overtime_amount: Number(overtimeAmount.toFixed(2)),
+      present_days: calc.present_days,
+      absent_days: calc.absent_days,
+      leave_days: calc.leave_days,
+      half_days: calc.half_days,
+      actual_hours: calc.actual_hours,
+      required_hours: calc.required_hours,
+      delay_hours: calc.delay_hours,
+      overtime_hours: calc.overtime_hours,
+      daily_rate: calc.daily_rate,
+      absence_deduction: calc.absent_deduction,
+      leave_deduction: calc.leave_deduction,
+      half_day_deduction: calc.half_day_deduction,
+      delay_deduction: calc.delay_deduction,
+      late_deduction: calc.delay_deduction,
+      early_deduction: 0,
+      overtime_bonus: calc.overtime_amount,
+      overtime_amount: calc.overtime_amount,
+      unused_leave_days: calc.unused_leave_days,
+      unused_leave_amount: calc.unused_leave_amount,
     },
     totals: {
-      total_deductions: Number(totalDeductions.toFixed(2)),
-      total_bonuses: Number(totalBonuses.toFixed(2)),
-      net_salary: Number(netSalary.toFixed(2)),
-      remaining_balance: Number(remainingBalance.toFixed(2)),
+      total_additions: calc.total_additions,
+      gross_salary: calc.gross_salary,
+      total_deductions: calc.deductions_without_advances,
+      total_bonuses: calc.total_additions,
+      net_salary: calc.net_salary,
+      remaining_balance: calc.remaining_balance,
     },
   };
+}
+
+async function saveEmployeePayrollAdjustment(id, body = {}, user = null) {
+  const isAdmin = user && user.role === 'admin';
+  const isBranchUser = user && user.role !== 'admin';
+  if (!isAdmin && !isBranchUser) {
+    const err = new Error('Unauthorized');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const empRes = await db.query(
+    'SELECT id, name, phone, branch_id, branch_scope, branch_ids, offline_uuid FROM employees WHERE id = $1',
+    [id]
+  );
+  if (empRes.rows.length === 0) {
+    const err = new Error('Employee not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  const employee = empRes.rows[0];
+  if (isBranchUser && !hasEmployeeBranchAccess(user, employee)) {
+    const err = new Error('Unauthorized access to this employee');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const cairoNow = await getDatabaseCairoNow(db);
+  const month = (body.month && /^\d{4}-\d{2}$/.test(body.month)) ? body.month : cairoNow.month;
+  const branchId = employee.branch_id || user?.branch_id || config.BRANCH_ID || 1;
+  const employeeRef = {
+    name: employee.name,
+    phone: employee.phone,
+    offline_uuid: employee.offline_uuid,
+  };
+
+  if (body.reset === true) {
+    await db.transaction(async (tx) => {
+      await tx.query('DELETE FROM employee_payroll_adjustments WHERE employee_id = $1 AND month = $2', [id, month]);
+      if (config.IS_BRANCH_MODE) {
+        await queueSyncOperation(tx, null, 'employee_payroll_adjustment', 'delete', Number(id), branchId, {
+          employee_id: Number(id),
+          employee_ref: employeeRef,
+          month,
+        });
+      }
+    });
+    return getEmployeePayslip(id, month, user);
+  }
+
+  const workDays = numOrNull(body.work_days);
+  const basicSalaryOverride = numOrNull(body.basic_salary_override);
+  const applyBasicSalaryToEmployee = body.apply_basic_salary_to_employee === true;
+  if (applyBasicSalaryToEmployee && basicSalaryOverride !== null && !isAdmin && !hasPermission(user, 'employees.edit')) {
+    const err = new Error('ليس لديك صلاحية تعديل الراتب الأساسي الدائم للموظف');
+    err.statusCode = 403;
+    throw err;
+  }
+  const allowedLeaveDays = numOrNull(body.allowed_leave_days);
+  const includeUnusedPref = boolOrNull(body.include_unused_leave_payout);
+  const unusedLeaveOverride = numOrNull(body.unused_leave_amount_override);
+  const requiredHours = numOrNull(body.required_hours);
+  const overtimeOverride = numOrNull(body.overtime_amount_override);
+  const delayOverride = numOrNull(body.delay_deduction_override);
+  const absentOverride = numOrNull(body.absent_days_override);
+  const leaveOverride = numOrNull(body.leave_days_override);
+  const halfOverride = numOrNull(body.half_days_override);
+  const penaltyDays = numOrNull(body.penalty_days) ?? 0;
+  const manualDedOverride = numOrNull(body.manual_deductions_override);
+  const manualBonusOverride = numOrNull(body.manual_bonuses_override);
+  const commissions = numOrNull(body.commissions) ?? 0;
+  const transportationAllowance = numOrNull(body.transportation_allowance) ?? 0;
+  const oldAdvances = numOrNull(body.old_advances) ?? 0;
+  const previousDues = numOrNull(body.previous_dues) ?? 0;
+  const externalDebts = numOrNull(body.external_debts) ?? 0;
+  const notes = body.notes ? String(body.notes).trim() : null;
+
+  const dbIncludeUnused = includeUnusedPref === null
+    ? null
+    : (config.IS_BRANCH_MODE ? (includeUnusedPref ? 1 : 0) : includeUnusedPref);
+  const offlineUuid = newUuid(body.offline_uuid);
+
+  await db.transaction(async (tx) => {
+    const res = await tx.query(
+      `INSERT INTO employee_payroll_adjustments (
+         employee_id, month, basic_salary_override, work_days, allowed_leave_days, include_unused_leave_payout,
+         unused_leave_amount_override, required_hours, overtime_amount_override, delay_deduction_override,
+         absent_days_override, leave_days_override, half_days_override, penalty_days,
+         manual_deductions_override, manual_bonuses_override, commissions, transportation_allowance,
+         old_advances, previous_dues, external_debts, notes, updated_by, updated_at, offline_uuid
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, CURRENT_TIMESTAMP, $24)
+       ON CONFLICT (employee_id, month) DO UPDATE SET
+         basic_salary_override = EXCLUDED.basic_salary_override,
+         work_days = EXCLUDED.work_days,
+         allowed_leave_days = EXCLUDED.allowed_leave_days,
+         include_unused_leave_payout = EXCLUDED.include_unused_leave_payout,
+         unused_leave_amount_override = EXCLUDED.unused_leave_amount_override,
+         required_hours = EXCLUDED.required_hours,
+         overtime_amount_override = EXCLUDED.overtime_amount_override,
+         delay_deduction_override = EXCLUDED.delay_deduction_override,
+         absent_days_override = EXCLUDED.absent_days_override,
+         leave_days_override = EXCLUDED.leave_days_override,
+         half_days_override = EXCLUDED.half_days_override,
+         penalty_days = EXCLUDED.penalty_days,
+         manual_deductions_override = EXCLUDED.manual_deductions_override,
+         manual_bonuses_override = EXCLUDED.manual_bonuses_override,
+         commissions = EXCLUDED.commissions,
+         transportation_allowance = EXCLUDED.transportation_allowance,
+         old_advances = EXCLUDED.old_advances,
+         previous_dues = EXCLUDED.previous_dues,
+         external_debts = EXCLUDED.external_debts,
+         notes = EXCLUDED.notes,
+         updated_by = EXCLUDED.updated_by,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING id, offline_uuid`,
+      [
+        id,
+        month,
+        basicSalaryOverride,
+        workDays,
+        allowedLeaveDays,
+        dbIncludeUnused,
+        unusedLeaveOverride,
+        requiredHours,
+        overtimeOverride,
+        delayOverride,
+        absentOverride,
+        leaveOverride,
+        halfOverride,
+        penaltyDays,
+        manualDedOverride,
+        manualBonusOverride,
+        commissions,
+        transportationAllowance,
+        oldAdvances,
+        previousDues,
+        externalDebts,
+        notes,
+        user?.id || null,
+        offlineUuid,
+      ]
+    );
+
+    const savedId = res.rows?.[0]?.id || null;
+    const savedUuid = res.rows?.[0]?.offline_uuid || offlineUuid;
+
+    if (applyBasicSalaryToEmployee && basicSalaryOverride !== null) {
+      await tx.query('UPDATE employees SET basic_salary = $1 WHERE id = $2', [basicSalaryOverride, id]);
+      if (config.IS_BRANCH_MODE) {
+        await queueSyncOperation(tx, null, 'employee', 'update', Number(id), branchId, {
+          id: Number(id),
+          basic_salary: basicSalaryOverride,
+          offline_uuid: employee.offline_uuid,
+        });
+      }
+    }
+
+    if (config.IS_BRANCH_MODE) {
+      await queueSyncOperation(tx, null, 'employee_payroll_adjustment', 'update', savedId, branchId, {
+        employee_id: Number(id),
+        employee_ref: employeeRef,
+        month,
+        basic_salary_override: basicSalaryOverride,
+        work_days: workDays,
+        allowed_leave_days: allowedLeaveDays,
+        include_unused_leave_payout: includeUnusedPref,
+        unused_leave_amount_override: unusedLeaveOverride,
+        required_hours: requiredHours,
+        overtime_amount_override: overtimeOverride,
+        delay_deduction_override: delayOverride,
+        absent_days_override: absentOverride,
+        leave_days_override: leaveOverride,
+        half_days_override: halfOverride,
+        penalty_days: penaltyDays,
+        manual_deductions_override: manualDedOverride,
+        manual_bonuses_override: manualBonusOverride,
+        commissions,
+        transportation_allowance: transportationAllowance,
+        old_advances: oldAdvances,
+        previous_dues: previousDues,
+        external_debts: externalDebts,
+        notes,
+        updated_by: user?.id || null,
+        offline_uuid: savedUuid,
+      });
+    }
+  });
+
+  return getEmployeePayslip(id, month, user);
+}
+
+async function setBulkMonthlyRequiredHours(body = {}, user = null) {
+  const isAdmin = user && user.role === 'admin';
+  const isBranchUser = user && user.role !== 'admin';
+  if (!isAdmin && !isBranchUser) {
+    const err = new Error('Unauthorized');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const cairoNow = await getDatabaseCairoNow(db);
+  const month = (body.month && /^\d{4}-\d{2}$/.test(body.month)) ? body.month : cairoNow.month;
+  const requiredHours = numOrNull(body.required_hours);
+  if (requiredHours === null || requiredHours < 0) {
+    const err = new Error('يرجى إدخال عدد ساعات صحيح (0 أو أكثر)');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const empParams = [];
+  const empWhere = [];
+  if (isBranchUser) {
+    const authBranchIds = getUserAuthorizedBranchIds(user);
+    if (body.branch_id && body.branch_id !== 'all') {
+      const targetBId = Number(body.branch_id);
+      if (authBranchIds !== null && !authBranchIds.includes(targetBId)) {
+        const err = new Error('Unauthorized branch');
+        err.statusCode = 403;
+        throw err;
+      }
+      empWhere.push(buildEmployeeBranchFilterSql(targetBId, empParams));
+    } else if (authBranchIds !== null) {
+      empWhere.push(buildEmployeeBranchFilterSql(authBranchIds.length ? authBranchIds : [user.branch_id], empParams));
+    }
+  } else if (body.branch_id && body.branch_id !== 'all') {
+    empWhere.push(buildEmployeeBranchFilterSql(body.branch_id, empParams));
+  }
+
+  const whereSql = empWhere.length ? `WHERE ${empWhere.join(' AND ')}` : '';
+  const empsRes = await db.query(
+    `SELECT id, name, phone, branch_id, offline_uuid, status, join_date, end_date FROM employees e ${whereSql}`,
+    empParams
+  );
+
+  const monthRange = getMonthRange(month);
+  let updatedCount = 0;
+
+  await db.transaction(async (tx) => {
+    for (const emp of empsRes.rows) {
+      const hasActRes = await tx.query(
+        `SELECT
+           EXISTS(SELECT 1 FROM attendance WHERE employee_id = $1 AND date >= $2::date AND date < $3::date) AS has_att,
+           EXISTS(SELECT 1 FROM employee_transactions WHERE employee_id = $1 AND transaction_date >= $2::date AND transaction_date < $3::date) AS has_tx,
+           EXISTS(SELECT 1 FROM employee_payroll_adjustments WHERE employee_id = $1 AND month = $4) AS has_adj`,
+        [emp.id, monthRange.start, monthRange.end, month]
+      );
+      const act = hasActRes.rows[0] || {};
+      const hasActivity = Boolean(act.has_att || act.has_tx || act.has_adj);
+      const { shouldIncludeEmployeeInMonth } = require('./payroll.calculator');
+      if (!shouldIncludeEmployeeInMonth(emp, month, hasActivity)) continue;
+
+      const offlineUuid = newUuid();
+      const res = await tx.query(
+        `INSERT INTO employee_payroll_adjustments (employee_id, month, required_hours, updated_by, updated_at, offline_uuid)
+         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5)
+         ON CONFLICT (employee_id, month) DO UPDATE SET
+           required_hours = EXCLUDED.required_hours,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [emp.id, month, requiredHours, user?.id || null, offlineUuid]
+      );
+      updatedCount += 1;
+
+      if (config.IS_BRANCH_MODE && res.rows[0]) {
+        const saved = res.rows[0];
+        await queueSyncOperation(tx, null, 'employee_payroll_adjustment', 'update', saved.id, emp.branch_id || user?.branch_id || 1, {
+          ...saved,
+          employee_id: emp.id,
+          employee_ref: { name: emp.name, phone: emp.phone, offline_uuid: emp.offline_uuid },
+          month,
+          required_hours: requiredHours,
+          include_unused_leave_payout: boolOrNull(saved.include_unused_leave_payout),
+        });
+      }
+    }
+  });
+
+  return { success: true, month, required_hours: requiredHours, updated_count: updatedCount };
 }
 
 async function getEmployeeSalesReport(id, queryOrUser = {}, maybeUser = null) {
@@ -1728,6 +2436,7 @@ module.exports = {
   createEmployee,
   updateEmployee,
   transferEmployee,
+  deactivateEmployee,
   deleteEmployee,
   recordAttendance,
   toggleAttendance,
@@ -1735,8 +2444,11 @@ module.exports = {
   recordManualAttendance,
   getAttendanceReport,
   createEmployeeTransaction,
+  deleteEmployeeTransaction,
   getEmployeeSummary,
   getEmployeeFinancialSummary: getEmployeeSummary,
   getEmployeePayslip,
+  saveEmployeePayrollAdjustment,
+  setBulkMonthlyRequiredHours,
   getEmployeeSalesReport,
 };

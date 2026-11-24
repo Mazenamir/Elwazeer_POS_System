@@ -778,6 +778,12 @@ function buildDailyOperationsSheet(ws, d, titleOrOptions, maybeOptions = {}) {
       amount: Number(sp.amount || 0),
     });
   });
+  (d?.salary_drawer_payments || []).forEach(sp => {
+    deductionItems.push({
+      description: `صرف راتب (كاش من الدرج): ${sp.employee_name}${sp.notes ? ` - ${sp.notes}` : ''}`,
+      amount: Number(sp.amount || 0),
+    });
+  });
 
   // Track 3: Separate Electronic Payments
   const electronicPayments = [];
@@ -917,7 +923,7 @@ function buildDailyOperationsSheet(ws, d, titleOrOptions, maybeOptions = {}) {
   r76.getCell(4).value = { formula: 'SUM(D3:D75)', result: d?.summary?.total_sales || 0 };
   r76.getCell(5).value = { formula: 'SUM(E3:E75)', result: d?.summary?.total_paid || 0 };
   r76.getCell(10).value = { formula: 'SUM(J3:J75)', result: d?.summary?.total_advances || 0 };
-  const totalL76 = (d?.summary?.total_expenses || 0) + (d?.summary?.total_supplier_cash_payments || 0);
+  const totalL76 = (d?.summary?.total_expenses || 0) + (d?.summary?.total_supplier_cash_payments || 0) + (d?.summary?.total_salary_cash_payments || 0);
   r76.getCell(12).value = { formula: 'SUM(L3:L75)', result: totalL76 };
   const totalElectronic = Number(d?.summary?.electronic_collections || 0);
   r76.getCell(15).value = { formula: 'SUM(O3:O75)', result: totalElectronic };
@@ -2544,7 +2550,7 @@ function buildSalaryWorksheet(salWs, salaryData, branding = {}, month = '', isCo
     'المبلغ',
     'نص يوم',
     'المبلغ',
-    'سوالب قديمه',
+    'سوالف قديمة',
     'القبض',
     null,
     'ديون خارجيه'
@@ -2576,23 +2582,72 @@ function buildSalaryWorksheet(salWs, salaryData, branding = {}, month = '', isCo
       r.getCell(3).numFmt = '#,##0.00';
     }
 
-    r.getCell(4).value = Number(emp.required_hours || 268);
-    r.getCell(5).value = { formula: `IF(C${rIdx}*24<D${rIdx},C${rIdx}*24-D${rIdx},0)`, result: emp.delay_hours > 0 ? -emp.delay_hours : 0 };
-    r.getCell(6).value = emp.delay_deduction || '';
-    r.getCell(7).value = { formula: `IF(C${rIdx}>D${rIdx}/24,C${rIdx}-D${rIdx}/24,0)`, result: (emp.overtime_hours || 0) / 24 };
-    r.getCell(7).numFmt = '[h]:mm';
-    r.getCell(8).value = { formula: `((J${rIdx}/10)*1.35)*(G${rIdx}*24)`, result: Number(emp.overtime_amount || 0) };
+    r.getCell(4).value = Number(emp.required_hours || 0);
+    if (isConsolidated) {
+      r.getCell(5).value = {
+        formula: `IF(AND(D${rIdx}>0,C${rIdx}*24<D${rIdx}),C${rIdx}*24-D${rIdx},0)`,
+        result: emp.delay_hours > 0 ? -emp.delay_hours : 0,
+      };
+    } else {
+      r.getCell(5).value = {
+        formula: `IF(AND(D${rIdx}>0,C${rIdx}<D${rIdx}),C${rIdx}-D${rIdx},0)`,
+        result: emp.delay_hours > 0 ? -emp.delay_hours : 0,
+      };
+    }
+
+    if (emp.has_delay_override) {
+      r.getCell(6).value = Number(emp.delay_deduction || 0);
+    } else {
+      r.getCell(6).value = {
+        formula: `ABS(E${rIdx})*((J${rIdx}/10)*1.5)`,
+        result: Number(emp.delay_deduction || 0),
+      };
+    }
+    r.getCell(6).numFmt = '#,##0.00';
+
+    if (isConsolidated) {
+      r.getCell(7).value = {
+        formula: `IF(AND(D${rIdx}>0,C${rIdx}>D${rIdx}/24),C${rIdx}-D${rIdx}/24,0)`,
+        result: (emp.overtime_hours || 0) / 24,
+      };
+      r.getCell(7).numFmt = '[h]:mm';
+    } else {
+      r.getCell(7).value = {
+        formula: `IF(AND(D${rIdx}>0,C${rIdx}>D${rIdx}),C${rIdx}-D${rIdx},0)`,
+        result: Number(emp.overtime_hours || 0),
+      };
+      r.getCell(7).numFmt = '#,##0.00';
+    }
+
+    if (emp.has_overtime_override) {
+      r.getCell(8).value = Number(emp.overtime_amount || 0);
+    } else {
+      r.getCell(8).value = {
+        formula: isConsolidated ? `((J${rIdx}/10)*1.35)*(G${rIdx}*24)` : `((J${rIdx}/10)*1.35)*G${rIdx}`,
+        result: Number(emp.overtime_amount || 0),
+      };
+    }
     r.getCell(8).numFmt = '#,##0.00';
+
     r.getCell(9).value = Number(emp.basic_salary || 0);
     r.getCell(10).value = { formula: `I${rIdx}/30`, result: Number(emp.daily_rate || 0) };
     r.getCell(10).numFmt = '#,##0.00';
-    r.getCell(11).value = { formula: `J${rIdx}*L${rIdx}+H${rIdx}+M${rIdx}+N${rIdx}`, result: Number(emp.gross_salary || 0) };
+
+    const workDaysVal = Number(emp.work_days ?? 30);
+    r.getCell(11).value = workDaysVal === 30
+      ? { formula: `I${rIdx}+H${rIdx}+M${rIdx}+N${rIdx}`, result: Number(emp.gross_salary || 0) }
+      : { formula: `J${rIdx}*L${rIdx}+H${rIdx}+M${rIdx}+N${rIdx}`, result: Number(emp.gross_salary || 0) };
     r.getCell(11).numFmt = '#,##0.00';
-    r.getCell(12).value = Number(emp.work_days || 30);
-    r.getCell(13).value = emp.transportation_allowance || '';
-    r.getCell(14).value = emp.allowances || '';
-    r.getCell(15).value = '';
-    r.getCell(16).value = '';
+
+    r.getCell(12).value = workDaysVal;
+    r.getCell(13).value = Number(emp.transportation_allowance || 0) || '';
+    const totalAllowances = Number(emp.allowances || 0) + Number(emp.unused_leave_amount || 0) + Number(emp.commissions || 0) + Number(emp.previous_dues || 0);
+    r.getCell(14).value = totalAllowances || '';
+    const extraDed = Number(emp.penalty_days_amount || 0) + Number(emp.other_deductions || 0);
+    r.getCell(15).value = extraDed > 0 ? (Number(emp.penalty_days || 0) > 0 ? `جزاء (${emp.penalty_days} يوم)` : 'خصومات') : '';
+    r.getCell(16).value = extraDed || '';
+
+    const allowedLv = Number(emp.allowed_leave_days ?? 4);
 
     if (isConsolidated) {
       r.getCell(17).value = { formula: `SUMIF('MASTER SHEET'!I:I, B${rIdx}, 'MASTER SHEET'!J:J)`, result: Number(emp.advances || 0) };
@@ -2601,7 +2656,7 @@ function buildSalaryWorksheet(salWs, salaryData, branding = {}, month = '', isCo
       r.getCell(19).value = { formula: `R${rIdx} * J${rIdx} * 2`, result: Number(emp.absent_deduction || 0) };
       r.getCell(19).numFmt = '#,##0.00';
       r.getCell(20).value = { formula: `COUNTIFS('MASTER SHEET'!I:I, B${rIdx}, 'MASTER SHEET'!T:T, "*جاز*")`, result: Number(emp.leave_days || 0) };
-      r.getCell(21).value = { formula: `IF(T${rIdx} > 4, (T${rIdx} - 4) * J${rIdx}, 0)`, result: Number(emp.leave_deduction || 0) };
+      r.getCell(21).value = { formula: `IF(T${rIdx} > ${allowedLv}, (T${rIdx} - ${allowedLv}) * J${rIdx}, 0)`, result: Number(emp.leave_deduction || 0) };
       r.getCell(21).numFmt = '#,##0.00';
       r.getCell(22).value = { formula: `COUNTIFS('MASTER SHEET'!I:I, B${rIdx}, 'MASTER SHEET'!T:T, "*نص يوم*")`, result: Number(emp.half_days || 0) };
       r.getCell(23).value = { formula: `V${rIdx} * (J${rIdx} / 2)`, result: Number(emp.half_day_deduction || 0) };
@@ -2613,14 +2668,14 @@ function buildSalaryWorksheet(salWs, salaryData, branding = {}, month = '', isCo
       r.getCell(19).value = { formula: `R${rIdx} * J${rIdx} * 2`, result: Number(emp.absent_deduction || 0) };
       r.getCell(19).numFmt = '#,##0.00';
       r.getCell(20).value = Number(emp.leave_days || 0);
-      r.getCell(21).value = { formula: `IF(T${rIdx} > 4, (T${rIdx} - 4) * J${rIdx}, 0)`, result: Number(emp.leave_deduction || 0) };
+      r.getCell(21).value = { formula: `IF(T${rIdx} > ${allowedLv}, (T${rIdx} - ${allowedLv}) * J${rIdx}, 0)`, result: Number(emp.leave_deduction || 0) };
       r.getCell(21).numFmt = '#,##0.00';
       r.getCell(22).value = Number(emp.half_days || 0);
       r.getCell(23).value = { formula: `V${rIdx} * (J${rIdx} / 2)`, result: Number(emp.half_day_deduction || 0) };
       r.getCell(23).numFmt = '#,##0.00';
     }
 
-    r.getCell(24).value = emp.old_debts || '';
+    r.getCell(24).value = Number(emp.old_advances ?? emp.old_debts ?? 0) || '';
     r.getCell(25).value = { formula: `K${rIdx}-P${rIdx}-Q${rIdx}-S${rIdx}-U${rIdx}-W${rIdx}-F${rIdx}-X${rIdx}`, result: Number(emp.net_salary || 0) };
     r.getCell(25).numFmt = '#,##0.00';
     r.getCell(27).value = emp.external_debts || '';

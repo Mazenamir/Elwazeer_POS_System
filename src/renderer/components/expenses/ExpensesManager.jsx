@@ -354,9 +354,10 @@ export function ExpensesManager({ isCashierTab = false }) {
     const cashExpenses = Number(sum.cash_expenses || 0);
     const totalAdvances = Number(sum.total_advances || sum.advances || 0);
     const supplierPayments = Number(sum.supplier_cash_payments || sum.total_supplier_cash_payments || sum.supplier_payments || 0);
+    const salaryCashPayments = Number(sum.total_salary_cash_payments || sum.salary_cash_payments || sum.salary_drawer_payments || 0);
     const physicalCash = sum.physical_cash_in_drawer !== undefined && sum.physical_cash_in_drawer !== null
       ? Number(sum.physical_cash_in_drawer)
-      : (cashCollected - cashExpenses - totalAdvances - supplierPayments);
+      : (cashCollected - cashExpenses - totalAdvances - supplierPayments - salaryCashPayments);
     let visaCollected = Number(sum.visa_collected || sum.card_collected || 0);
     let instapayCollected = Number(sum.instapay_collected || sum.bank_collected || 0);
     let walletCollected = Number(sum.wallet_collected || 0);
@@ -398,6 +399,8 @@ export function ExpensesManager({ isCashierTab = false }) {
       cashCollected,
       cashExpenses,
       totalAdvances,
+      supplierPayments,
+      salaryCashPayments,
       physicalCash,
       visaCollected,
       instapayCollected,
@@ -782,7 +785,11 @@ export function ExpensesManager({ isCashierTab = false }) {
               value={formatCurrency(drawerSummary.totalAdvances)}
               icon={User}
               variant="warning"
-              subtitle="سلف نقدية منصرفة من الدرج"
+              subtitle={
+                (drawerSummary.supplierPayments > 0 || drawerSummary.salaryCashPayments > 0)
+                  ? `موردين: ${formatCurrency(drawerSummary.supplierPayments)} | رواتب درج: ${formatCurrency(drawerSummary.salaryCashPayments)}`
+                  : "سلف نقدية منصرفة من الدرج"
+              }
             />
             <StatCard
               title={drawerSummary.physicalCash < 0 ? "عجز نقدي بالدرج (مسلب) ⚠️" : "صافي الكاش للتوريد بالدرج"}

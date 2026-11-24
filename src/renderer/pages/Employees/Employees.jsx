@@ -66,6 +66,7 @@ export function Employees() {
     () => searchParams.get('branch_id') || (activeBranchId && activeBranchId !== 'all' ? activeBranchId : 'all')
   );
   const [filterPosition, setFilterPosition] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('active');
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [filterBonusStatus, setFilterBonusStatus] = useState('all');
 
@@ -118,7 +119,16 @@ export function Employees() {
     shift_start: '10:00',
     shift_end: '22:00',
     commission_rate: 0,
+    join_date: new Date().toISOString().split('T')[0],
+    end_date: '',
+    status: 'active',
   });
+
+  // Deactivate / End of Service Modal
+  const [showDeactivateModal, setShowDeactivateModal] = useState(false);
+  const [deactivateEmp, setDeactivateEmp] = useState(null);
+  const [deactivateDate, setDeactivateDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [deactivating, setDeactivating] = useState(false);
 
   // Transfer Branch Modal
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -148,14 +158,17 @@ export function Employees() {
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [showSalaryInModal, setShowSalaryInModal] = useState(false);
   const [summaryEmp, setSummaryEmp] = useState(null);
-  const [summaryData, setSummaryData] = useState({ daily_summary: [], monthly_summary: [] });
+  const [summaryData, setSummaryData] = useState({ daily_summary: [], monthly_summary: [], transactions: [] });
   const [activeSummaryTab, setActiveSummaryTab] = useState('daily');
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [deletingTxId, setDeletingTxId] = useState(null);
   const [txForm, setTxForm] = useState(() => ({
     type: canCreateAdvance ? 'advance' : 'deduction',
     amount: '',
     notes: '',
     transaction_date: new Date().toISOString().split('T')[0],
+    payment_method: 'cash',
+    paid_from_drawer: false,
   }));
 
   useEffect(() => {
@@ -169,10 +182,19 @@ export function Employees() {
   // Payslip Modal
   const [showPayslipModal, setShowPayslipModal] = useState(false);
   const [payslipEmp, setPayslipEmp] = useState(null);
+  const [payslipMonth, setPayslipMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [payslipData, setPayslipData] = useState(null);
   const [editablePayslipData, setEditablePayslipData] = useState(null);
+  const [payslipAdjForm, setPayslipAdjForm] = useState(null);
+  const [savingPayslipAdj, setSavingPayslipAdj] = useState(false);
   const [isEditingPayslip, setIsEditingPayslip] = useState(false);
   const [loadingPayslip, setLoadingPayslip] = useState(false);
+  const [quickPayOpen, setQuickPayOpen] = useState(false);
+  const [quickPayAmount, setQuickPayAmount] = useState('');
+  const [quickPayMethod, setQuickPayMethod] = useState('cash');
+  const [quickPayFromDrawer, setQuickPayFromDrawer] = useState(false);
+  const [quickPayNotes, setQuickPayNotes] = useState('');
+  const [quickPaySubmitting, setQuickPaySubmitting] = useState(false);
 
   // Sales Report Modal
   const [showSalesReportModal, setShowSalesReportModal] = useState(false);
@@ -208,7 +230,11 @@ export function Employees() {
       loadEmployees(true);
     };
     window.addEventListener('elwazeer:sync-completed', handleSyncCompleted);
-    return () => window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+    window.addEventListener('elwazeer:payroll-updated', handleSyncCompleted);
+    return () => {
+      window.removeEventListener('elwazeer:sync-completed', handleSyncCompleted);
+      window.removeEventListener('elwazeer:payroll-updated', handleSyncCompleted);
+    };
   }, [loadEmployees]);
 
   useEffect(() => {
@@ -230,6 +256,8 @@ export function Employees() {
   // Filtered list
   const filteredEmployees = useMemo(() => {
     return employees.filter((emp) => {
+      const empStatus = emp.status || 'active';
+      if (filterStatus !== 'all' && empStatus !== filterStatus) return false;
       if (filterBranch !== 'all') {
         const matchesPrimary = String(emp.branch_id) === String(filterBranch);
         const matchesAll = emp.branch_scope === 'all';
@@ -248,7 +276,7 @@ export function Employees() {
       }
       return true;
     });
-  }, [employees, filterBranch, filterPosition, filterBonusStatus, search]);
+  }, [employees, filterStatus, filterBranch, filterPosition, filterBonusStatus, search]);
 
   const totalPages = Math.ceil(filteredEmployees.length / itemsPerPage) || 1;
   const paginatedEmployees = useMemo(() => {
@@ -356,6 +384,9 @@ export function Employees() {
       shift_start: '10:00',
       shift_end: '22:00',
       commission_rate: 0,
+      join_date: new Date().toISOString().split('T')[0],
+      end_date: '',
+      status: 'active',
     });
     setShowAddModal(true);
   };
@@ -376,6 +407,9 @@ export function Employees() {
       shift_start: emp.shift_start ? emp.shift_start.slice(0, 5) : '10:00',
       shift_end: emp.shift_end ? emp.shift_end.slice(0, 5) : '22:00',
       commission_rate: emp.commission_rate || 0,
+      join_date: emp.join_date ? String(emp.join_date).slice(0, 10) : '',
+      end_date: emp.end_date ? String(emp.end_date).slice(0, 10) : '',
+      status: emp.status || 'active',
     });
     setShowAddModal(true);
   };
@@ -409,6 +443,9 @@ export function Employees() {
         shift_start: empForm.shift_start ? `${empForm.shift_start.slice(0, 5)}:00` : null,
         shift_end: empForm.shift_end ? `${empForm.shift_end.slice(0, 5)}:00` : null,
         commission_rate: Number(empForm.commission_rate || 0),
+        join_date: empForm.join_date || null,
+        end_date: empForm.status === 'inactive' ? (empForm.end_date || new Date().toISOString().split('T')[0]) : null,
+        status: empForm.status || 'active',
       };
 
       if (isEditing) {
@@ -432,19 +469,37 @@ export function Employees() {
     }
   };
 
-  // Delete Employee
-  const handleDeleteEmployee = async (id, name) => {
-    if (!window.confirm(`هل أنت متأكد من حذف الموظف "${name}"؟`)) return;
+  // Deactivate / End of Service Employee
+  const openDeactivateModal = (emp) => {
+    setDeactivateEmp(emp);
+    setDeactivateDate(emp.end_date ? String(emp.end_date).slice(0, 10) : new Date().toISOString().split('T')[0]);
+    setShowDeactivateModal(true);
+  };
+
+  const handleConfirmDeactivate = async (e) => {
+    if (e) e.preventDefault();
+    if (!deactivateEmp) return;
     try {
-      await client.delete(`/employees/${id}`);
-      toast({ title: 'تم الحذف', message: 'تم حذف الموظف بنجاح', variant: 'success' });
+      setDeactivating(true);
+      await client.post(`/employees/${deactivateEmp.id}/deactivate`, {
+        end_date: deactivateDate || new Date().toISOString().split('T')[0],
+      });
+      toast({
+        title: 'تم إنهاء العمل',
+        message: `تم إيقاف "${deactivateEmp.name}" بتاريخ ${deactivateDate} مع حفظ مستحقاته وسلفه في الشهر`,
+        variant: 'success',
+      });
+      setShowDeactivateModal(false);
+      setDeactivateEmp(null);
       loadEmployees();
     } catch (err) {
       toast({
-        title: 'خطأ في الحذف',
-        message: err.message || 'تعذر حذف الموظف لوجود سجلات مرتبطة',
+        title: 'خطأ',
+        message: err.message || 'تعذر إيقاف الموظف',
         variant: 'danger',
       });
+    } finally {
+      setDeactivating(false);
     }
   };
 
@@ -572,16 +627,20 @@ export function Employees() {
       amount: '',
       notes: '',
       transaction_date: new Date().toISOString().split('T')[0],
+      payment_method: 'cash',
+      paid_from_drawer: false,
       salary_password: pwd,
     });
     try {
       const headers = pwd ? { 'x-salary-password': pwd } : {};
-      const queryParam = targetType === 'advance' ? '?type=advance' : '';
-      const res = await client.get(`/employees/${emp.id}/summary${queryParam}`, { headers });
-      setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
+      const qs = new URLSearchParams();
+      if (targetType === 'advance') qs.set('type', 'advance');
+      if (selectedMonth) qs.set('month', selectedMonth);
+      const res = await client.get(`/employees/${emp.id}/summary?${qs.toString()}`, { headers });
+      setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [], transactions: [] });
     } catch (err) {
       toast({ title: 'خطأ', message: err.message || 'تعذر تحميل البيانات المالية', variant: 'danger' });
-      setSummaryData({ daily_summary: [], monthly_summary: [] });
+      setSummaryData({ daily_summary: [], monthly_summary: [], transactions: [] });
       setShowSummaryModal(false);
     } finally {
       setLoadingSummary(false);
@@ -617,9 +676,11 @@ export function Employees() {
       try {
         const pwd = salaryPassword || txForm.salary_password || '';
         const headers = pwd ? { 'x-salary-password': pwd } : {};
-        const queryParam = isNowAdvance ? '?type=advance' : '';
-        const res = await client.get(`/employees/${summaryEmp.id}/summary${queryParam}`, { headers });
-        setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
+        const qs = new URLSearchParams();
+        if (isNowAdvance) qs.set('type', 'advance');
+        if (selectedMonth) qs.set('month', selectedMonth);
+        const res = await client.get(`/employees/${summaryEmp.id}/summary?${qs.toString()}`, { headers });
+        setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [], transactions: [] });
       } catch {
         // preserve current summary on temporary error
       } finally {
@@ -651,6 +712,8 @@ export function Employees() {
         amount: Number(txForm.amount),
         notes: txForm.notes.trim() || null,
         transaction_date: txForm.transaction_date,
+        payment_method: txForm.type === 'salary_payment' ? (txForm.payment_method || 'cash') : 'cash',
+        paid_from_drawer: txForm.type === 'salary_payment' && txForm.payment_method === 'cash' ? Boolean(txForm.paid_from_drawer) : false,
       });
 
       toast({
@@ -662,10 +725,13 @@ export function Employees() {
       // Reload summary
       const pwd = salaryPassword || txForm.salary_password || '';
       const headers = pwd ? { 'x-salary-password': pwd } : {};
-      const queryParam = txForm.type === 'advance' ? '?type=advance' : '';
-      const res = await client.get(`/employees/${summaryEmp.id}/summary${queryParam}`, { headers });
-      setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [] });
-      loadEmployees();
+      const qs = new URLSearchParams();
+      if (txForm.type === 'advance') qs.set('type', 'advance');
+      if (selectedMonth) qs.set('month', selectedMonth);
+      const res = await client.get(`/employees/${summaryEmp.id}/summary?${qs.toString()}`, { headers });
+      setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [], transactions: [] });
+      loadEmployees(true);
+      window.dispatchEvent(new CustomEvent('elwazeer:payroll-updated'));
     } catch (err) {
       toast({
         title: 'خطأ',
@@ -675,16 +741,120 @@ export function Employees() {
     }
   };
 
-  const executeOpenPayslip = async (emp, pwd) => {
+  const handleDeleteTransaction = async (tx, source = 'summary') => {
+    if (!tx?.id) return;
+    const isAdvance = tx.type === 'advance';
+    if (isAdvance && !canCreateAdvance) {
+      toast({ title: 'غير مصرح', message: 'ليس لديك صلاحية حذف السلف', variant: 'danger' });
+      return;
+    }
+    if (!isAdvance && !canExecutePayroll) {
+      toast({ title: 'غير مصرح', message: 'ليس لديك صلاحية حذف حركات الرواتب', variant: 'danger' });
+      return;
+    }
+    const typeLabel =
+      tx.type === 'advance'
+        ? 'السلفة'
+        : tx.type === 'bonus'
+        ? 'المكافأة'
+        : tx.type === 'deduction'
+        ? 'الخصم'
+        : 'صرف الراتب';
+    if (!window.confirm(`هل أنت متأكد من حذف ${typeLabel} بقيمة ${formatCurrency(tx.amount)}؟`)) {
+      return;
+    }
+    try {
+      setDeletingTxId(tx.id);
+      await client.delete(`/employee_transactions/${tx.id}`);
+      toast({ title: 'تم الحذف', message: `تم حذف ${typeLabel} وإعادة احتساب الراتب`, variant: 'success' });
+      if (source === 'summary' && summaryEmp) {
+        const pwd = salaryPassword || txForm.salary_password || '';
+        const headers = pwd ? { 'x-salary-password': pwd } : {};
+        const qs = new URLSearchParams();
+        if (txForm.type === 'advance') qs.set('type', 'advance');
+        if (selectedMonth) qs.set('month', selectedMonth);
+        const res = await client.get(`/employees/${summaryEmp.id}/summary?${qs.toString()}`, { headers });
+        setSummaryData(res?.data || res || { daily_summary: [], monthly_summary: [], transactions: [] });
+      }
+      if (showPayslipModal && payslipEmp) {
+        await executeOpenPayslip(payslipEmp, salaryPassword || '', payslipMonth);
+      }
+      await loadEmployees(true);
+      window.dispatchEvent(new CustomEvent('elwazeer:payroll-updated'));
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر حذف الحركة المالية', variant: 'danger' });
+    } finally {
+      setDeletingTxId(null);
+    }
+  };
+
+  const buildAdjFormFromPayslip = (raw) => {
+    const adj = raw?.adjustment || {};
+    const att = raw?.attendance || {};
+    const fin = raw?.financials || {};
+    return {
+      basic_salary_override: adj.basic_salary_override !== null && adj.basic_salary_override !== undefined
+        ? String(adj.basic_salary_override)
+        : String(raw?.basic_salary ?? 0),
+      apply_basic_salary_to_employee: false,
+      work_days: adj.work_days !== null && adj.work_days !== undefined ? String(adj.work_days) : String(raw?.work_days ?? 30),
+      allowed_leave_days: adj.allowed_leave_days !== null && adj.allowed_leave_days !== undefined ? String(adj.allowed_leave_days) : String(raw?.allowed_leave_days ?? 4),
+      include_unused_leave_payout: adj.include_unused_leave_payout !== null && adj.include_unused_leave_payout !== undefined
+        ? (adj.include_unused_leave_payout === true || adj.include_unused_leave_payout === 1)
+        : Boolean(raw?.effective_unused_leave_enabled),
+      unused_leave_amount_override: adj.unused_leave_amount_override !== null && adj.unused_leave_amount_override !== undefined
+        ? String(adj.unused_leave_amount_override)
+        : '',
+      required_hours: adj.required_hours !== null && adj.required_hours !== undefined ? String(adj.required_hours) : String(raw?.required_hours ?? 0),
+      overtime_amount_override: adj.overtime_amount_override !== null && adj.overtime_amount_override !== undefined
+        ? String(adj.overtime_amount_override)
+        : '',
+      delay_deduction_override: adj.delay_deduction_override !== null && adj.delay_deduction_override !== undefined
+        ? String(adj.delay_deduction_override)
+        : '',
+      absent_days_override: adj.absent_days_override !== null && adj.absent_days_override !== undefined
+        ? String(adj.absent_days_override)
+        : String(att.absent_days ?? 0),
+      leave_days_override: adj.leave_days_override !== null && adj.leave_days_override !== undefined
+        ? String(adj.leave_days_override)
+        : String(att.leave_days ?? 0),
+      half_days_override: adj.half_days_override !== null && adj.half_days_override !== undefined
+        ? String(adj.half_days_override)
+        : String(att.half_days ?? 0),
+      penalty_days: String(adj.penalty_days ?? raw?.penalty_days ?? 0),
+      manual_bonuses_override: adj.manual_bonuses_override !== null && adj.manual_bonuses_override !== undefined
+        ? String(adj.manual_bonuses_override)
+        : String(fin.bonuses_manual ?? raw?.manual_bonuses ?? 0),
+      transportation_allowance: String(adj.transportation_allowance ?? raw?.transportation_allowance ?? 0),
+      commissions: String(adj.commissions ?? raw?.commissions ?? 0),
+      manual_deductions_override: adj.manual_deductions_override !== null && adj.manual_deductions_override !== undefined
+        ? String(adj.manual_deductions_override)
+        : String(fin.deductions_manual ?? 0),
+      old_advances: String(adj.old_advances ?? raw?.old_advances ?? 0),
+      previous_dues: String(adj.previous_dues ?? raw?.previous_dues ?? 0),
+      notes: adj.notes || '',
+    };
+  };
+
+  const executeOpenPayslip = async (emp, pwd, monthOverride = null) => {
+    const targetMonth = monthOverride || selectedMonth || new Date().toISOString().slice(0, 7);
     setPayslipEmp(emp);
+    setPayslipMonth(targetMonth);
     setShowPayslipModal(true);
     setLoadingPayslip(true);
+    setQuickPayOpen(false);
     try {
       const headers = pwd ? { 'x-salary-password': pwd } : {};
-      const res = await client.get(`/employees/${emp.id}/payslip`, { headers });
+      const res = await client.get(`/employees/${emp.id}/payslip`, {
+        params: { month: targetMonth },
+        headers,
+      });
       const raw = res?.data || res;
       setPayslipData(raw);
       setEditablePayslipData(raw);
+      setPayslipAdjForm(buildAdjFormFromPayslip(raw));
+      setQuickPayAmount(String(Math.max(0, Number(raw?.remaining_balance ?? raw?.net_salary ?? 0))));
+      setQuickPayNotes(`صرف راتب شهر ${targetMonth}`);
       setIsEditingPayslip(false);
     } catch (err) {
       toast({ title: 'خطأ', message: err.message || 'كلمة سر الرواتب غير صحيحة أو غير مصرح', variant: 'danger' });
@@ -695,25 +865,227 @@ export function Employees() {
     }
   };
 
-  const handlePayslipFieldChange = (field, val) => {
-    const num = val === '' ? 0 : parseFloat(val) || 0;
-    setEditablePayslipData((prev) => {
-      const updated = { ...prev, [field]: num };
-      const basic = Number(updated.basic_salary) || 0;
-      const bonuses = Number(updated.bonuses) || 0;
-      const commissions = Number(updated.commissions) || 0;
-      const advances = Number(updated.advances) || 0;
-      const deductions = Number(updated.deductions) || 0;
-      const alreadyPaid = Number(updated.already_paid) || 0;
-      updated.net_salary = Math.max(0, basic + bonuses + commissions - advances - deductions - alreadyPaid);
-      return updated;
-    });
+  const livePayslipPreview = useMemo(() => {
+    if (!payslipData) return null;
+    if (!isEditingPayslip || !payslipAdjForm) return editablePayslipData || payslipData;
+
+    const toNum = (v, fallback = 0) => {
+      if (v === '' || v === null || v === undefined) return fallback;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    const toOpt = (v) => {
+      if (v === '' || v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const masterBasic = Number(payslipData.employee_master_basic_salary ?? payslipData.basic_salary ?? 0);
+    const basicOverride = toOpt(payslipAdjForm.basic_salary_override);
+    const basicSalary = basicOverride !== null ? Math.max(0, basicOverride) : masterBasic;
+    const dailyRate = Math.round((basicSalary / 30) * 100) / 100;
+    const workDays = Math.max(0, toNum(payslipAdjForm.work_days, payslipData.work_days ?? 30));
+    const earnedBaseSalary = workDays === 30 ? basicSalary : Math.round(workDays * dailyRate * 100) / 100;
+
+    const allowedLeaveDays = Math.max(0, toNum(payslipAdjForm.allowed_leave_days, payslipData.allowed_leave_days ?? 4));
+    const absentDays = Math.max(0, toNum(payslipAdjForm.absent_days_override, 0));
+    const leaveDays = Math.max(0, toNum(payslipAdjForm.leave_days_override, 0));
+    const halfDays = Math.max(0, toNum(payslipAdjForm.half_days_override, 0));
+    const penaltyDays = Math.max(0, toNum(payslipAdjForm.penalty_days, 0));
+
+    const absenceDeduction = Math.round(absentDays * dailyRate * 2);
+    const leaveDeduction = leaveDays > allowedLeaveDays ? Math.round((leaveDays - allowedLeaveDays) * dailyRate) : 0;
+    const halfDayDeduction = Math.round(halfDays * (dailyRate / 2));
+    const penaltyDaysAmount = Math.round(penaltyDays * dailyRate);
+
+    const unusedEnabled = Boolean(payslipAdjForm.include_unused_leave_payout);
+    const unusedLeaveDays = (unusedEnabled && workDays > 0 && leaveDays < allowedLeaveDays)
+      ? Math.max(0, allowedLeaveDays - leaveDays)
+      : 0;
+    const unusedOverride = toOpt(payslipAdjForm.unused_leave_amount_override);
+    const unusedLeaveAmount = unusedOverride !== null ? Math.round(unusedOverride) : Math.round(unusedLeaveDays * dailyRate);
+
+    const actualHours = Number(payslipData.actual_hours || 0);
+    const requiredHours = Math.max(0, toNum(payslipAdjForm.required_hours, 0));
+    const overtimeHours = (requiredHours > 0 && actualHours > requiredHours) ? Math.round((actualHours - requiredHours) * 100) / 100 : 0;
+    const delayHours = (requiredHours > 0 && actualHours < requiredHours) ? Math.round((requiredHours - actualHours) * 100) / 100 : 0;
+
+    const calcOvertime = Math.round(((dailyRate / 10) * 1.35) * overtimeHours);
+    const calcDelay = Math.round(((dailyRate / 10) * 1.5) * delayHours);
+    const otOverride = toOpt(payslipAdjForm.overtime_amount_override);
+    const dlOverride = toOpt(payslipAdjForm.delay_deduction_override);
+    const overtimeAmount = otOverride !== null ? Math.round(otOverride) : calcOvertime;
+    const delayDeduction = dlOverride !== null ? Math.round(dlOverride) : calcDelay;
+
+    const manualBonuses = toNum(payslipAdjForm.manual_bonuses_override, 0);
+    const transportationAllowance = toNum(payslipAdjForm.transportation_allowance, 0);
+    const commissions = toNum(payslipAdjForm.commissions, 0);
+    const previousDues = toNum(payslipAdjForm.previous_dues, 0);
+    const manualDeductions = toNum(payslipAdjForm.manual_deductions_override, 0);
+    const oldAdvances = toNum(payslipAdjForm.old_advances, 0);
+    const advances = Number(payslipData.advances || 0);
+    const alreadyPaid = Number(payslipData.already_paid || 0);
+
+    const totalAdditions = Math.round((unusedLeaveAmount + overtimeAmount + manualBonuses + commissions + transportationAllowance + previousDues) * 100) / 100;
+    const grossSalary = Math.round((earnedBaseSalary + totalAdditions) * 100) / 100;
+    const deductionsWithoutAdvances = Math.round((absenceDeduction + leaveDeduction + halfDayDeduction + delayDeduction + penaltyDaysAmount + manualDeductions) * 100) / 100;
+    const netSalary = Math.round(grossSalary - advances - deductionsWithoutAdvances - oldAdvances);
+    const remainingBalance = Math.round(netSalary - alreadyPaid);
+
+    return {
+      ...payslipData,
+      basic_salary: basicSalary,
+      daily_rate: dailyRate,
+      work_days: workDays,
+      earned_base_salary: earnedBaseSalary,
+      allowed_leave_days: allowedLeaveDays,
+      unused_leave_days: unusedLeaveDays,
+      unused_leave_amount: unusedLeaveAmount,
+      required_hours: requiredHours,
+      overtime_hours: overtimeHours,
+      overtime_amount: overtimeAmount,
+      calc_overtime_amount: calcOvertime,
+      delay_hours: delayHours,
+      delay_deduction: delayDeduction,
+      calc_delay_deduction: calcDelay,
+      manual_bonuses: manualBonuses,
+      bonuses: manualBonuses,
+      transportation_allowance: transportationAllowance,
+      commissions,
+      previous_dues: previousDues,
+      old_advances: oldAdvances,
+      penalty_days: penaltyDays,
+      penalty_days_amount: penaltyDaysAmount,
+      deductions: deductionsWithoutAdvances,
+      deductions_without_advances: deductionsWithoutAdvances,
+      gross_salary: grossSalary,
+      net_salary: netSalary,
+      remaining_balance: remainingBalance,
+      attendance: {
+        ...payslipData.attendance,
+        absent_days: absentDays,
+        leave_days: leaveDays,
+        half_days: halfDays,
+        absence_deduction: absenceDeduction,
+        leave_deduction: leaveDeduction,
+        half_day_deduction: halfDayDeduction,
+        delay_deduction: delayDeduction,
+        overtime_amount: overtimeAmount,
+      },
+    };
+  }, [payslipData, editablePayslipData, isEditingPayslip, payslipAdjForm]);
+
+  const handleSavePayslipAdjustment = async () => {
+    if (!payslipEmp || !payslipAdjForm) return;
+    try {
+      setSavingPayslipAdj(true);
+      const toOptNum = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+      const masterBasic = Number(payslipData?.employee_master_basic_salary ?? payslipData?.basic_salary ?? 0);
+      const formBasic = toOptNum(payslipAdjForm.basic_salary_override);
+      const basicSalaryOverride = payslipAdjForm.apply_basic_salary_to_employee
+        ? formBasic
+        : (formBasic !== null && formBasic !== masterBasic ? formBasic : null);
+      const payload = {
+        month: payslipMonth,
+        basic_salary_override: basicSalaryOverride,
+        apply_basic_salary_to_employee: Boolean(canEditEmployee && payslipAdjForm.apply_basic_salary_to_employee),
+        work_days: toOptNum(payslipAdjForm.work_days),
+        allowed_leave_days: toOptNum(payslipAdjForm.allowed_leave_days),
+        include_unused_leave_payout: Boolean(payslipAdjForm.include_unused_leave_payout),
+        unused_leave_amount_override: toOptNum(payslipAdjForm.unused_leave_amount_override),
+        required_hours: toOptNum(payslipAdjForm.required_hours),
+        overtime_amount_override: toOptNum(payslipAdjForm.overtime_amount_override),
+        delay_deduction_override: toOptNum(payslipAdjForm.delay_deduction_override),
+        absent_days_override: toOptNum(payslipAdjForm.absent_days_override),
+        leave_days_override: toOptNum(payslipAdjForm.leave_days_override),
+        half_days_override: toOptNum(payslipAdjForm.half_days_override),
+        penalty_days: Number(payslipAdjForm.penalty_days || 0),
+        manual_bonuses_override: toOptNum(payslipAdjForm.manual_bonuses_override),
+        transportation_allowance: Number(payslipAdjForm.transportation_allowance || 0),
+        commissions: Number(payslipAdjForm.commissions || 0),
+        manual_deductions_override: toOptNum(payslipAdjForm.manual_deductions_override),
+        old_advances: Number(payslipAdjForm.old_advances || 0),
+        previous_dues: Number(payslipAdjForm.previous_dues || 0),
+        notes: payslipAdjForm.notes?.trim() || null,
+      };
+
+      const pwd = salaryPassword || '';
+      const headers = pwd ? { 'x-salary-password': pwd } : {};
+      const res = await client.put(`/employees/${payslipEmp.id}/payslip-adjustments`, payload, { headers });
+      const raw = res?.data || res;
+      setPayslipData(raw);
+      setEditablePayslipData(raw);
+      setPayslipAdjForm(buildAdjFormFromPayslip(raw));
+      setQuickPayAmount(String(Math.max(0, Number(raw?.remaining_balance ?? 0))));
+      setIsEditingPayslip(false);
+      toast({ title: 'تم الحفظ', message: 'تم حفظ تسوية وتعديلات الراتب وتعميمها في السيستم بنجاح', variant: 'success' });
+      loadEmployees(true);
+      window.dispatchEvent(new CustomEvent('elwazeer:payroll-updated'));
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر حفظ التعديلات', variant: 'danger' });
+    } finally {
+      setSavingPayslipAdj(false);
+    }
+  };
+
+  const handleResetPayslipAdjustment = async () => {
+    if (!payslipEmp) return;
+    try {
+      setSavingPayslipAdj(true);
+      const pwd = salaryPassword || '';
+      const headers = pwd ? { 'x-salary-password': pwd } : {};
+      const res = await client.put(`/employees/${payslipEmp.id}/payslip-adjustments`, { month: payslipMonth, reset: true }, { headers });
+      const raw = res?.data || res;
+      setPayslipData(raw);
+      setEditablePayslipData(raw);
+      setPayslipAdjForm(buildAdjFormFromPayslip(raw));
+      setQuickPayAmount(String(Math.max(0, Number(raw?.remaining_balance ?? 0))));
+      setIsEditingPayslip(false);
+      toast({ title: 'تمت الاستعادة', message: 'تمت استعادة الحساب التلقائي للراتب', variant: 'info' });
+      loadEmployees(true);
+      window.dispatchEvent(new CustomEvent('elwazeer:payroll-updated'));
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر استعادة الحساب التلقائي', variant: 'danger' });
+    } finally {
+      setSavingPayslipAdj(false);
+    }
+  };
+
+  const handleQuickSalaryPayout = async (e) => {
+    e.preventDefault();
+    if (!payslipEmp) return;
+    const amt = Number(quickPayAmount || 0);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast({ title: 'تنبيه', message: 'يرجى إدخال مبلغ صحيح للصرف', variant: 'warning' });
+      return;
+    }
+    try {
+      setQuickPaySubmitting(true);
+      await client.post('/employee_transactions', {
+        employee_id: payslipEmp.id,
+        type: 'salary_payment',
+        amount: amt,
+        payment_method: quickPayMethod,
+        paid_from_drawer: quickPayMethod === 'cash' ? Boolean(quickPayFromDrawer) : false,
+        transaction_date: new Date().toISOString().split('T')[0],
+        notes: quickPayNotes?.trim() || `صرف راتب شهر ${payslipMonth}`,
+      });
+      toast({ title: 'تم الصرف', message: 'تم تسجيل صرف الراتب بنجاح', variant: 'success' });
+      setQuickPayOpen(false);
+      await executeOpenPayslip(payslipEmp, salaryPassword || '', payslipMonth);
+      loadEmployees(true);
+      window.dispatchEvent(new CustomEvent('elwazeer:payroll-updated'));
+    } catch (err) {
+      toast({ title: 'خطأ', message: err.message || 'تعذر تسجيل صرف الراتب', variant: 'danger' });
+    } finally {
+      setQuickPaySubmitting(false);
+    }
   };
 
   // Open Payslip
   const openPayslipModal = (emp) => {
     const proceed = (pwd) => {
-      executeOpenPayslip(emp, pwd);
+      executeOpenPayslip(emp, pwd, selectedMonth);
     };
 
     if (salaryPassword || user?.role === 'admin') {
@@ -1018,6 +1390,30 @@ export function Employees() {
               الرجوع للشهر الحالي ({getArabicMonthName(new Date().toISOString().slice(0, 7))})
             </button>
           )}
+
+          <div className="flex items-center gap-1.5 bg-[#FAF6ED] p-1 rounded-xl border border-[#E6DECD]">
+            {[
+              { id: 'active', label: 'الموظفون الحاليون' },
+              { id: 'inactive', label: 'المتوقفون / السابقون' },
+              { id: 'all', label: 'الكل' },
+            ].map((st) => (
+              <button
+                key={st.id}
+                type="button"
+                onClick={() => {
+                  setFilterStatus(st.id);
+                  setPage(1);
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all ${
+                  filterStatus === st.id
+                    ? 'bg-[#151515] text-white shadow-xs'
+                    : 'text-[#777266] hover:text-[#24221F]'
+                }`}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
         </div>
       </Card>
 
@@ -1101,6 +1497,11 @@ export function Employees() {
                                   {emp.branch_ids?.length || 1} فروع
                                 </span>
                               )}
+                              {emp.status === 'inactive' && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
+                                  متوقف{emp.end_date ? ` (${String(emp.end_date).slice(0, 10)})` : ''}
+                                </span>
+                              )}
                             </div>
                             {emp.commission_rate > 0 && (
                               <div className="text-[11px] font-bold text-emerald-700">
@@ -1139,36 +1540,61 @@ export function Employees() {
                       </td>
 
                       <td className="py-3.5 px-4 font-black text-[#24221F] whitespace-nowrap">
-                        {salaryVisible ? formatCurrency(emp.basic_salary) : '••••••'}
+                        {salaryVisible ? (
+                          <div className="flex flex-col items-start gap-0.5">
+                            <span>{formatCurrency(emp.basic_salary)}</span>
+                            {emp.has_basic_salary_override && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                معدل للشهر (الأساسي: {formatCurrency(emp.master_basic_salary)})
+                              </span>
+                            )}
+                          </div>
+                        ) : '••••••'}
                       </td>
 
                       {/* Bonuses Column */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         {!salaryVisible ? (
                           <span className="text-slate-400 font-mono tracking-widest text-xs">••••••</span>
-                        ) : Number(emp.current_month_bonuses || 0) > 0 ? (
+                        ) : (
                           <div className="flex flex-col gap-1 items-start">
-                            <button
-                              type="button"
-                              onClick={() => openSummaryModal(emp, 'bonus')}
-                              title="عرض تفاصيل المكافأة والحركات المالية"
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-xs"
-                            >
-                              <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span>+{formatCurrency(emp.current_month_bonuses)}</span>
-                              {emp.current_month_bonus_count > 1 && (
-                                <span className="bg-emerald-200 text-emerald-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
-                                  {emp.current_month_bonus_count}
-                                </span>
-                              )}
-                            </button>
+                            {Number(emp.current_month_bonuses || 0) > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => openSummaryModal(emp, 'bonus')}
+                                title="عرض تفاصيل المكافأة والحركات المالية"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-xs"
+                              >
+                                <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>+{formatCurrency(emp.current_month_bonuses)}</span>
+                                {emp.current_month_bonus_count > 1 && (
+                                  <span className="bg-emerald-200 text-emerald-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                                    {emp.current_month_bonus_count}
+                                  </span>
+                                )}
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-black bg-slate-100 text-slate-600 border border-slate-200">
+                                {emp.has_saved_adjustment ? 'تسوية محفوظة' : 'المرتب فقط'}
+                              </span>
+                            )}
                             <div className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
                               <span>المستحق:</span>
-                              <span className="text-emerald-700 font-black">
-                                {formatCurrency(Number(emp.basic_salary || 0) + Number(emp.current_month_bonuses || 0))}
+                              <span className={`font-black ${Number(emp.current_month_net_salary ?? 0) < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                {formatCurrency(
+                                  emp.current_month_net_salary != null
+                                    ? emp.current_month_net_salary
+                                    : Number(emp.basic_salary || 0) + Number(emp.current_month_bonuses || 0)
+                                )}
                               </span>
                             </div>
-                            {emp.latest_bonus_notes && (
+                            {emp.current_month_remaining_balance != null &&
+                              Number(emp.current_month_salary_payments || 0) > 0 && (
+                              <div className="text-[10px] font-bold text-blue-700">
+                                المتبقي: {formatCurrency(emp.current_month_remaining_balance)}
+                              </div>
+                            )}
+                            {emp.latest_bonus_notes && Number(emp.current_month_bonuses || 0) > 0 && (
                               <span
                                 className="text-[10px] text-slate-400 truncate max-w-[170px]"
                                 title={cleanNotes(emp.latest_bonus_notes)}
@@ -1176,15 +1602,6 @@ export function Employees() {
                                 {cleanNotes(emp.latest_bonus_notes)}
                               </span>
                             )}
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-0.5 items-start">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-black bg-slate-100 text-slate-600 border border-slate-200">
-                              المرتب فقط
-                            </span>
-                            <span className="text-[11px] font-semibold text-slate-400">
-                              المستحق: {formatCurrency(emp.basic_salary)}
-                            </span>
                           </div>
                         )}
                       </td>
@@ -1317,8 +1734,8 @@ export function Employees() {
 
                           {(isAdmin || canEditEmployee) && (
                             <button
-                              onClick={() => handleDeleteEmployee(emp.id, emp.name)}
-                              title="حذف الموظف"
+                              onClick={() => openDeactivateModal(emp)}
+                              title="إنهاء عمل / إيقاف الموظف"
                               className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1484,6 +1901,46 @@ export function Employees() {
                 onChange={(e) => setEmpForm({ ...empForm, shift_end: e.target.value })}
               />
             </div>
+
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1.5">
+                تاريخ النزول / التعيين
+              </label>
+              <Input
+                type="date"
+                value={empForm.join_date || ''}
+                onChange={(e) => setEmpForm({ ...empForm, join_date: e.target.value })}
+              />
+            </div>
+
+            {isEditing && (
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1.5">
+                  حالة الخدمة
+                </label>
+                <select
+                  className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white font-bold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  value={empForm.status || 'active'}
+                  onChange={(e) => setEmpForm({ ...empForm, status: e.target.value })}
+                >
+                  <option value="active">على رأس العمل (نشط)</option>
+                  <option value="inactive">منتهي خدمته (متوقف)</option>
+                </select>
+              </div>
+            )}
+
+            {isEditing && empForm.status === 'inactive' && (
+              <div>
+                <label className="block text-xs font-black text-rose-700 mb-1.5">
+                  تاريخ ترك العمل
+                </label>
+                <Input
+                  type="date"
+                  value={empForm.end_date || ''}
+                  onChange={(e) => setEmpForm({ ...empForm, end_date: e.target.value })}
+                />
+              </div>
+            )}
           </div>
 
           <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
@@ -1780,6 +2237,10 @@ export function Employees() {
           ? (summaryData.monthly_summary || []).filter((r) => Number(r.advances || 0) > 0 || r.month === summaryData.month)
           : (summaryData.monthly_summary || []);
 
+        const displayedTransactions = (summaryData.transactions || []).filter((tx) =>
+          isAdvanceMode ? tx.type === 'advance' : true
+        );
+
         return (
           <Modal
             isOpen={showSummaryModal}
@@ -1862,6 +2323,40 @@ export function Employees() {
                     </div>
                   </div>
 
+                  {txForm.type === 'salary_payment' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200/70">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">طريقة صرف الراتب</label>
+                        <select
+                          className="w-full h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
+                          value={txForm.payment_method || 'cash'}
+                          onChange={(e) => {
+                            const m = e.target.value;
+                            setTxForm((prev) => ({
+                              ...prev,
+                              payment_method: m,
+                              paid_from_drawer: m === 'cash' ? prev.paid_from_drawer : false,
+                            }));
+                          }}
+                        >
+                          <option value="cash">نقدي (كاش)</option>
+                          <option value="bank_transfer">انستاباي / تحويل بنكي</option>
+                        </select>
+                      </div>
+                      {txForm.payment_method === 'cash' && (
+                        <label className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-xs font-bold text-amber-900 cursor-pointer select-none self-end">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(txForm.paid_from_drawer)}
+                            onChange={(e) => setTxForm((prev) => ({ ...prev, paid_from_drawer: e.target.checked }))}
+                            className="w-4 h-4 accent-slate-900"
+                          />
+                          <span>خصم المبلغ من درج الكاشير اليومي بالفرع</span>
+                        </label>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex justify-end">
                     <Button type="submit" variant="primary" size="sm">
                       {isAdvanceMode ? 'تأكيد وقيد السلفة' : 'تأكيد وقيد الحركة'}
@@ -1894,6 +2389,17 @@ export function Employees() {
                     }`}
                   >
                     {isAdvanceMode ? 'سجل السلف الشهري' : 'كشف الحساب الشهري'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSummaryTab('transactions')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                      activeSummaryTab === 'transactions'
+                        ? 'bg-rose-700 text-white shadow-sm'
+                        : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                    }`}
+                  >
+                    {isAdvanceMode ? 'حذف / تفاصيل السلف' : 'تفاصيل الحركات (حذف)'} ({displayedTransactions.length})
                   </button>
                 </div>
 
@@ -1936,6 +2442,88 @@ export function Employees() {
 
               {/* Table */}
               <div className="overflow-x-auto max-h-80 border border-slate-200 rounded-2xl">
+                {activeSummaryTab === 'transactions' ? (
+                  <table className="w-full text-right border-collapse text-xs">
+                    <thead className="sticky top-0 bg-slate-100 border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-3 font-black text-slate-700">التاريخ</th>
+                        <th className="py-2.5 px-3 font-black text-slate-700">النوع</th>
+                        <th className="py-2.5 px-3 font-black text-slate-700">المبلغ</th>
+                        <th className="py-2.5 px-3 font-black text-slate-700">طريقة الصرف</th>
+                        <th className="py-2.5 px-3 font-black text-slate-700">الملاحظات</th>
+                        <th className="py-2.5 px-3 font-black text-slate-700 text-center">حذف</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-bold">
+                      {loadingSummary ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400">
+                            جارِ تحميل تفاصيل الحركات...
+                          </td>
+                        </tr>
+                      ) : displayedTransactions.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400">
+                            {isAdvanceMode ? 'لا توجد سلف مسجلة لهذا الشهر' : 'لا توجد حركات مالية مسجلة لهذا الشهر'}
+                          </td>
+                        </tr>
+                      ) : (
+                        displayedTransactions.map((tx) => {
+                          const canDeleteTx = tx.type === 'advance' ? canCreateAdvance : canExecutePayroll;
+                          const typeBadge =
+                            tx.type === 'advance'
+                              ? { label: 'سلفة', cls: 'bg-amber-50 text-amber-800 border-amber-200' }
+                              : tx.type === 'bonus'
+                              ? { label: 'مكافأة', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' }
+                              : tx.type === 'deduction'
+                              ? { label: 'خصم', cls: 'bg-rose-50 text-rose-800 border-rose-200' }
+                              : { label: 'صرف راتب', cls: 'bg-blue-50 text-blue-800 border-blue-200' };
+                          return (
+                            <tr key={tx.id} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 text-slate-800 font-black whitespace-nowrap">
+                                {tx.transaction_date ? new Date(tx.transaction_date).toLocaleDateString('ar-EG-u-nu-latn') : '-'}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`inline-flex px-2 py-0.5 rounded-lg border text-[11px] font-black ${typeBadge.cls}`}>
+                                  {typeBadge.label}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-black text-slate-900 whitespace-nowrap">
+                                {formatCurrency(tx.amount)}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600 text-[11px]">
+                                {tx.payment_method === 'bank_transfer'
+                                  ? 'بنك / انستاباي'
+                                  : tx.type === 'advance' || tx.paid_from_drawer
+                                  ? 'كاش (من الدرج)'
+                                  : 'كاش (خارج الدرج)'}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-500 max-w-[180px] truncate" title={cleanNotes(tx.notes)}>
+                                {cleanNotes(tx.notes) || '-'}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                {canDeleteTx ? (
+                                  <button
+                                    type="button"
+                                    disabled={deletingTxId === tx.id}
+                                    onClick={() => handleDeleteTransaction(tx, 'summary')}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-black bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 disabled:opacity-50"
+                                    title="حذف الحركة نهائياً"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>{deletingTxId === tx.id ? 'جارِ الحذف...' : 'حذف'}</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-slate-300 text-[11px]">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                ) : (
                 <table className="w-full text-right border-collapse text-xs">
                   <thead className="sticky top-0 bg-slate-100 border-b border-slate-200">
                     <tr>
@@ -2004,190 +2592,663 @@ export function Employees() {
                     )}
                   </tbody>
                 </table>
+                )}
               </div>
             </div>
           </Modal>
         );
       })()}
 
-      {/* Payslip Modal */}
+      {/* Deactivate / End of Service Modal */}
+      <Modal
+        isOpen={showDeactivateModal}
+        onClose={() => setShowDeactivateModal(false)}
+        title={`إنهاء عمل / إيقاف موظف: ${deactivateEmp?.name || ''}`}
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleConfirmDeactivate} className="space-y-4">
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-bold text-amber-900 leading-relaxed">
+            سيتم إيقاف الموظف وإلغاء حساب دخوله، مع <strong>الاحتفاظ بكامل سلفه وحضوره في مسير هذا الشهر</strong> وحساب أيام عمله حتى تاريخ ترك العمل، وسيختفي تلقائياً من الشهور التالية.
+          </div>
+
+          <div>
+            <label className="block text-xs font-black text-slate-700 mb-1.5">
+              تاريخ ترك العمل (آخر يوم عمل) *
+            </label>
+            <Input
+              type="date"
+              required
+              value={deactivateDate}
+              onChange={(e) => setDeactivateDate(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowDeactivateModal(false)}
+              disabled={deactivating}
+            >
+              إلغاء
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              isLoading={deactivating}
+              className="!bg-rose-600 hover:!bg-rose-700"
+            >
+              تأكيد الإيقاف وحفظ التاريخ
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Payslip & Monthly Settlement Modal */}
       <Modal
         isOpen={showPayslipModal}
         onClose={() => {
           setShowPayslipModal(false);
           setIsEditingPayslip(false);
+          setQuickPayOpen(false);
         }}
-        title={`قسيمة الراتب (Payslip): ${payslipEmp?.name || ''}`}
-        maxWidth="max-w-xl"
+        title={`قسيمة الراتب وتسوية الشهر: ${payslipEmp?.name || ''}`}
+        maxWidth="max-w-2xl"
       >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
+            <Calendar className="w-4 h-4 text-slate-700" />
+            <span>الشهر:</span>
+            <input
+              type="month"
+              value={payslipMonth}
+              onChange={(e) => {
+                const m = e.target.value;
+                if (m && payslipEmp) {
+                  executeOpenPayslip(payslipEmp, salaryPassword || '', m);
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-900"
+            />
+            {payslipData?.has_saved_adjustment && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                تعديل محفوظ
+              </span>
+            )}
+          </div>
+          {payslipData && (
+            <div className="text-[11px] font-bold text-slate-500">
+              اليومية: <span className="font-black text-slate-900">{formatCurrency(payslipData.daily_rate)}</span> |
+              الساعات المحققة: <span className="font-black text-indigo-700">{payslipData.actual_hours} س</span>
+            </div>
+          )}
+        </div>
+
         {loadingPayslip ? (
           <div className="py-12 text-center text-slate-400 font-bold">جارِ تجهيز كشف الراتب...</div>
-        ) : !editablePayslipData ? (
+        ) : !livePayslipPreview ? (
           <div className="py-12 text-center text-slate-400 font-bold">لا تتوفر بيانات راتب لهذا الشهر</div>
         ) : (
           <div className="space-y-4">
-            {isEditingPayslip ? (
-              <div className="p-4 rounded-2xl bg-amber-50/70 border-2 border-amber-200 space-y-3">
-                <div className="flex items-center justify-between border-b border-amber-200/60 pb-2">
+            {/* Carryover Suggestion Banner */}
+            {(payslipData?.carryover_suggestion?.suggested_old_advances > 0 || payslipData?.carryover_suggestion?.suggested_previous_dues > 0) &&
+             Number(payslipAdjForm?.old_advances || 0) === 0 &&
+             Number(payslipAdjForm?.previous_dues || 0) === 0 && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="font-bold text-amber-900">
+                  {payslipData.carryover_suggestion.suggested_old_advances > 0
+                    ? `يوجد سالب / سوالف متبقية من شهر ${payslipData.carryover_suggestion.prev_month} بقيمة ${formatCurrency(payslipData.carryover_suggestion.suggested_old_advances)}`
+                    : `يوجد مستحقات غير منصرفة من شهر ${payslipData.carryover_suggestion.prev_month} بقيمة ${formatCurrency(payslipData.carryover_suggestion.suggested_previous_dues)}`}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setIsEditingPayslip(true);
+                    setPayslipAdjForm((prev) => ({
+                      ...prev,
+                      old_advances: payslipData.carryover_suggestion.suggested_old_advances > 0
+                        ? String(payslipData.carryover_suggestion.suggested_old_advances)
+                        : prev.old_advances,
+                      previous_dues: payslipData.carryover_suggestion.suggested_previous_dues > 0
+                        ? String(payslipData.carryover_suggestion.suggested_previous_dues)
+                        : prev.previous_dues,
+                    }));
+                  }}
+                  className="bg-white border-amber-300 text-amber-800 hover:bg-amber-100"
+                >
+                  ترحيل تلقائي للشهر الحالي
+                </Button>
+              </div>
+            )}
+
+            {isEditingPayslip && payslipAdjForm ? (
+              <div className="p-4 rounded-2xl bg-amber-50/70 border-2 border-amber-200 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 pb-2">
                   <div className="flex items-center gap-2 text-amber-900 font-black text-xs">
                     <Edit className="w-4 h-4 text-amber-600" />
-                    <span>تعديل بنود قسيمة الراتب قبل الطباعة</span>
+                    <span>تعديل وحفظ بنود راتب شهر {payslipMonth}</span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setEditablePayslipData({ ...payslipData })}
+                    onClick={handleResetPayslipAdjustment}
+                    disabled={savingPayslipAdj}
                     className="text-[11px] font-black text-amber-700 hover:text-amber-900 underline cursor-pointer"
                   >
-                    استعادة الحساب الأصلي
+                    استعادة الحساب التلقائي
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-bold">
+                {/* Group 0: Basic Salary Override for Month (or Permanent) */}
+                <div className="p-3 rounded-xl bg-white border border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-bold">
                   <div>
-                    <label className="block text-slate-700 mb-1">الراتب الأساسي (ج.م):</label>
+                    <label className="block text-slate-700 mb-1">الراتب الأساسي للشهر (ج.م):</label>
                     <input
                       type="number"
                       min="0"
                       step="any"
-                      value={editablePayslipData.basic_salary ?? 0}
-                      onChange={(e) => handlePayslipFieldChange('basic_salary', e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left"
+                      value={payslipAdjForm.basic_salary_override}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, basic_salary_override: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-amber-300 bg-white font-black text-slate-900 text-left"
+                    />
+                    <span className="text-[10px] text-slate-500">
+                      الراتب المسجل بملف الموظف: {formatCurrency(payslipData.employee_master_basic_salary ?? payslipData.basic_salary)}
+                    </span>
+                  </div>
+                  {canEditEmployee && (
+                    <div className="flex flex-col justify-end">
+                      <label className="flex items-center gap-2 p-2 rounded-xl bg-amber-50 border border-amber-200 cursor-pointer text-amber-900">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(payslipAdjForm.apply_basic_salary_to_employee)}
+                          onChange={(e) => setPayslipAdjForm((p) => ({ ...p, apply_basic_salary_to_employee: e.target.checked }))}
+                          className="w-4 h-4 accent-amber-700"
+                        />
+                        <span className="text-[11px] font-black">تحديث الراتب الأساسي الدائم للموظف بهذا المبلغ</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                {/* Group 1: Days & Leaves */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs font-bold">
+                  <div>
+                    <label className="block text-slate-700 mb-1">أيام العمل المستحقة:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="31"
+                      step="0.5"
+                      value={payslipAdjForm.work_days}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, work_days: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-900 text-left"
+                    />
+                    <span className="text-[10px] text-slate-500">الافتراضي: {payslipData.default_work_days} يوم | حضور: {payslipData.attendance?.present_days || 0}</span>
+                  </div>
+                  <div>
+                    <label className="block text-slate-700 mb-1">الإجازات المسموحة:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={payslipAdjForm.allowed_leave_days}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, allowed_leave_days: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-900 text-left"
+                    />
+                    <span className="text-[10px] text-slate-500">الافتراضي: {payslipData.default_allowed_leave_days} يوم</span>
+                  </div>
+                  <div>
+                    <label className="block text-slate-700 mb-1">الإجازات المأخوذة:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={payslipAdjForm.leave_days_override}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, leave_days_override: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-900 text-left"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-emerald-700 mb-1">المكافآت والبدلات (+) (ج.م):</label>
+                    <label className="block text-rose-700 mb-1">أيام الغياب (2x):</label>
                     <input
                       type="number"
                       min="0"
-                      step="any"
-                      value={editablePayslipData.bonuses ?? 0}
-                      onChange={(e) => handlePayslipFieldChange('bonuses', e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl border border-emerald-300 bg-white font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 text-left"
+                      step="0.5"
+                      value={payslipAdjForm.absent_days_override}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, absent_days_override: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-rose-300 bg-white font-bold text-rose-800 text-left"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-blue-700 mb-1">عمولات المبيعات (+) (ج.م):</label>
+                    <label className="block text-slate-700 mb-1">أنصاف الأيام (0.5x):</label>
                     <input
                       type="number"
                       min="0"
-                      step="any"
-                      value={editablePayslipData.commissions ?? 0}
-                      onChange={(e) => handlePayslipFieldChange('commissions', e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl border border-blue-300 bg-white font-bold text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-400 text-left"
+                      step="1"
+                      value={payslipAdjForm.half_days_override}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, half_days_override: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-900 text-left"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-amber-700 mb-1">السلف المسحوبة (-) (ج.م):</label>
+                    <label className="block text-rose-700 mb-1">أيام الجزاء (1x):</label>
                     <input
                       type="number"
                       min="0"
-                      step="any"
-                      value={editablePayslipData.advances ?? 0}
-                      onChange={(e) => handlePayslipFieldChange('advances', e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl border border-amber-300 bg-white font-bold text-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left"
+                      step="0.5"
+                      value={payslipAdjForm.penalty_days}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, penalty_days: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-rose-300 bg-white font-bold text-rose-800 text-left"
                     />
                   </div>
+                  <div className="col-span-2 flex flex-col justify-end">
+                    <label className="flex items-center gap-2 p-2 rounded-xl bg-emerald-50 border border-emerald-200 cursor-pointer text-emerald-900">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(payslipAdjForm.include_unused_leave_payout)}
+                        onChange={(e) => setPayslipAdjForm((p) => ({ ...p, include_unused_leave_payout: e.target.checked }))}
+                        className="w-4 h-4 accent-emerald-700"
+                      />
+                      <span className="text-[11px] font-black">صرف بدل الإجازات غير المستنفدة (+1× اليومية)</span>
+                    </label>
+                  </div>
+                </div>
 
+                {/* Group 2: Variable Hours & Direct Overrides */}
+                <div className="p-3 rounded-xl bg-white border border-amber-200 space-y-2.5 text-xs font-bold">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <span className="text-slate-700 font-black">حساب الساعات المتغيرة:</span>
+                    <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-800 font-black">
+                      الساعات المحققة من الحضور: {payslipData.actual_hours} ساعة
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                    <div>
+                      <label className="block text-slate-700 mb-1">الساعات المطلوبة:</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={payslipAdjForm.required_hours}
+                        onChange={(e) => setPayslipAdjForm((p) => ({ ...p, required_hours: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-indigo-300 bg-white font-bold text-indigo-900 text-left"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-emerald-700 mb-1">أوفر تايم 1.35x (تعديل):</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder={`تلقائي: ${livePayslipPreview.calc_overtime_amount ?? 0}`}
+                        value={payslipAdjForm.overtime_amount_override}
+                        onChange={(e) => setPayslipAdjForm((p) => ({ ...p, overtime_amount_override: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-emerald-300 bg-white font-bold text-emerald-800 text-left"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-rose-700 mb-1">خصم تأخير 1.5x (تعديل):</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder={`تلقائي: ${livePayslipPreview.calc_delay_deduction ?? 0}`}
+                        value={payslipAdjForm.delay_deduction_override}
+                        onChange={(e) => setPayslipAdjForm((p) => ({ ...p, delay_deduction_override: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-rose-300 bg-white font-bold text-rose-800 text-left"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-emerald-700 mb-1">بدل إجازات (تعديل):</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder="تلقائي"
+                        value={payslipAdjForm.unused_leave_amount_override}
+                        onChange={(e) => setPayslipAdjForm((p) => ({ ...p, unused_leave_amount_override: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-emerald-300 bg-white font-bold text-emerald-800 text-left"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Group 3: Bonuses, Old Advances ("سوالف قديمة") & Deductions */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs font-bold">
                   <div>
-                    <label className="block text-rose-700 mb-1">الخصومات والجزاءات (-) (ج.م):</label>
+                    <label className="block text-emerald-700 mb-1">مكافآت وبدلات (+):</label>
                     <input
                       type="number"
                       min="0"
                       step="any"
-                      value={editablePayslipData.deductions ?? 0}
-                      onChange={(e) => handlePayslipFieldChange('deductions', e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl border border-rose-300 bg-white font-bold text-rose-800 focus:outline-none focus:ring-2 focus:ring-rose-400 text-left"
+                      value={payslipAdjForm.manual_bonuses_override}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, manual_bonuses_override: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-emerald-300 bg-white font-bold text-emerald-800 text-left"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-700 mb-1">المدفوع مسبقاً (-) (ج.م):</label>
+                    <label className="block text-emerald-700 mb-1">بدل مواصلات (+):</label>
                     <input
                       type="number"
                       min="0"
                       step="any"
-                      value={editablePayslipData.already_paid ?? 0}
-                      onChange={(e) => handlePayslipFieldChange('already_paid', e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 text-left"
+                      value={payslipAdjForm.transportation_allowance}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, transportation_allowance: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-emerald-300 bg-white font-bold text-emerald-800 text-left"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-blue-700 mb-1">عمولات المبيعات (+):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={payslipAdjForm.commissions}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, commissions: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-blue-300 bg-white font-bold text-blue-800 text-left"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-emerald-700 mb-1">مستحقات سابقة له (+):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={payslipAdjForm.previous_dues}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, previous_dues: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-emerald-300 bg-white font-bold text-emerald-800 text-left"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-rose-700 mb-1">سوالف قديمة عليه (-):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={payslipAdjForm.old_advances}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, old_advances: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-rose-300 bg-white font-bold text-rose-800 text-left"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-rose-700 mb-1">خصومات مالية إضافية (-):</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={payslipAdjForm.manual_deductions_override}
+                      onChange={(e) => setPayslipAdjForm((p) => ({ ...p, manual_deductions_override: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-rose-300 bg-white font-bold text-rose-800 text-left"
                     />
                   </div>
                 </div>
 
                 <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-200 flex justify-between items-center text-xs font-black text-emerald-900">
-                  <span>صافي المستحق للصرف المحسوب:</span>
-                  <span className="text-sm font-black text-emerald-700">
-                    {formatCurrency(editablePayslipData.net_salary)}
+                  <span>المتبقي المحسوب بعد التعديل:</span>
+                  <span className={`text-sm font-black ${livePayslipPreview.remaining_balance < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                    {formatCurrency(livePayslipPreview.remaining_balance)}
                   </span>
                 </div>
               </div>
             ) : null}
 
-            {/* Printable Area - Always reflects editablePayslipData */}
-            <div className={`p-6 rounded-2xl bg-white border-2 border-slate-200 space-y-4 ${isEditingPayslip ? 'opacity-40 pointer-events-none' : ''}`} id="payslip-print-area">
+            {/* Printable Area - Clean separated rows */}
+            <div className={`p-6 rounded-2xl bg-white border-2 border-slate-200 space-y-4 ${isEditingPayslip ? 'opacity-50 pointer-events-none' : ''}`} id="payslip-print-area">
               <div className="text-center border-b border-slate-100 pb-3">
-                <h3 className="text-lg font-black text-slate-900">مركز الببيون - كشف راتب شهري</h3>
+                <h3 className="text-lg font-black text-slate-900">مركز الببيون - كشف راتب شهري ({payslipMonth})</h3>
                 <p className="text-xs font-bold text-slate-500 mt-1">
-                  الموظف: {payslipEmp?.name} | الوظيفة: {payslipEmp?.position || 'موظف'}
+                  الموظف: {payslipEmp?.name} | الوظيفة: {payslipEmp?.position || 'موظف'} | الفرع: {livePayslipPreview.employee?.branch_name || payslipEmp?.branch_name || 'الرئيسي'}
                 </p>
                 <p className="text-[11px] font-semibold text-slate-400">
-                  الفرع: {payslipEmp?.branch_name || 'الرئيسي'} | التاريخ: {new Date().toLocaleDateString('ar-EG-u-nu-latn')}
+                  أيام العمل: {livePayslipPreview.work_days} يوم | اليومية: {formatCurrency(livePayslipPreview.daily_rate)} | التاريخ: {new Date().toLocaleDateString('ar-EG-u-nu-latn')}
                 </p>
               </div>
 
               <div className="space-y-2 text-xs font-bold">
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100">
-                  <span className="text-slate-500">الراتب الأساسي:</span>
-                  <span className="text-slate-900">{formatCurrency(editablePayslipData.basic_salary)}</span>
+                  <span className="text-slate-600">
+                    {livePayslipPreview.work_days === 30
+                      ? 'الراتب الأساسي (30 يوم):'
+                      : `استحقاق أيام العمل (${livePayslipPreview.work_days} يوم × ${formatCurrency(livePayslipPreview.daily_rate)} من أصل ${formatCurrency(livePayslipPreview.basic_salary)}):`}
+                  </span>
+                  <span className="text-slate-900">{formatCurrency(livePayslipPreview.earned_base_salary)}</span>
                 </div>
+                {Number(livePayslipPreview.unused_leave_amount || 0) > 0 && (
+                  <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-emerald-700">
+                    <span>بدل إجازات غير مستنفدة ({livePayslipPreview.unused_leave_days} يوم +):</span>
+                    <span>+{formatCurrency(livePayslipPreview.unused_leave_amount)}</span>
+                  </div>
+                )}
+                {Number(livePayslipPreview.overtime_amount || 0) > 0 && (
+                  <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-emerald-700">
+                    <span>إضافي / أوفر تايم ({livePayslipPreview.overtime_hours} س × 1.35 +):</span>
+                    <span>+{formatCurrency(livePayslipPreview.overtime_amount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-emerald-600">
-                  <span>المكافآت والبدلات (+):</span>
-                  <span>{formatCurrency(editablePayslipData.bonuses)}</span>
+                  <span>المكافآت وبدل المواصلات (+):</span>
+                  <span>{formatCurrency(Number(livePayslipPreview.bonuses || 0) + Number(livePayslipPreview.transportation_allowance || 0))}</span>
                 </div>
-                <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-blue-600">
-                  <span>عمولات المبيعات (+):</span>
-                  <span>{formatCurrency(editablePayslipData.commissions)}</span>
-                </div>
+                {Number(livePayslipPreview.commissions || 0) > 0 && (
+                  <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-blue-600">
+                    <span>عمولات المبيعات (+):</span>
+                    <span>{formatCurrency(livePayslipPreview.commissions)}</span>
+                  </div>
+                )}
+                {Number(livePayslipPreview.previous_dues || 0) > 0 && (
+                  <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-emerald-700">
+                    <span>مستحقات سابقة له (+):</span>
+                    <span>{formatCurrency(livePayslipPreview.previous_dues)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-amber-600">
                   <span>السلف المسحوبة (-):</span>
-                  <span>{formatCurrency(editablePayslipData.advances)}</span>
+                  <span>{formatCurrency(livePayslipPreview.advances)}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-rose-600">
-                  <span>الخصومات والجزاءات (-):</span>
-                  <span>{formatCurrency(editablePayslipData.deductions)}</span>
+                  <div>
+                    <span>الخصومات والجزاءات والغياب والتأخير (-):</span>
+                    {(livePayslipPreview.attendance?.absence_deduction > 0 ||
+                      livePayslipPreview.attendance?.leave_deduction > 0 ||
+                      livePayslipPreview.attendance?.half_day_deduction > 0 ||
+                      livePayslipPreview.delay_deduction > 0 ||
+                      livePayslipPreview.penalty_days_amount > 0) && (
+                      <div className="text-[10px] text-rose-400 font-semibold">
+                        {[
+                          livePayslipPreview.attendance?.absence_deduction > 0 ? `غياب (${livePayslipPreview.attendance.absent_days}ي): ${formatCurrency(livePayslipPreview.attendance.absence_deduction)}` : null,
+                          livePayslipPreview.attendance?.leave_deduction > 0 ? `إجازات زائدة: ${formatCurrency(livePayslipPreview.attendance.leave_deduction)}` : null,
+                          livePayslipPreview.attendance?.half_day_deduction > 0 ? `نص يوم: ${formatCurrency(livePayslipPreview.attendance.half_day_deduction)}` : null,
+                          livePayslipPreview.penalty_days_amount > 0 ? `جزاء (${livePayslipPreview.penalty_days}ي): ${formatCurrency(livePayslipPreview.penalty_days_amount)}` : null,
+                          livePayslipPreview.delay_deduction > 0 ? `تأخير (${livePayslipPreview.delay_hours}س × 1.5): ${formatCurrency(livePayslipPreview.delay_deduction)}` : null,
+                        ].filter(Boolean).join(' | ')}
+                      </div>
+                    )}
+                  </div>
+                  <span>{formatCurrency(livePayslipPreview.deductions_without_advances ?? livePayslipPreview.deductions)}</span>
                 </div>
+                {Number(livePayslipPreview.old_advances || 0) > 0 && (
+                  <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-rose-700">
+                    <span>سوالف قديمة عليه (-):</span>
+                    <span>{formatCurrency(livePayslipPreview.old_advances)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-slate-600">
                   <span>المدفوع مسبقاً (-):</span>
-                  <span>{formatCurrency(editablePayslipData.already_paid)}</span>
+                  <span>{formatCurrency(livePayslipPreview.already_paid)}</span>
                 </div>
                 <div className="flex justify-between pt-3 text-sm font-black text-slate-900 border-t-2 border-slate-900">
-                  <span>صافي المستحق للصرف:</span>
-                  <span>{formatCurrency(editablePayslipData.net_salary)}</span>
+                  <span>{livePayslipPreview.remaining_balance < 0 ? 'سوالف متبقية على الموظف:' : 'صافي المستحق للصرف:'}</span>
+                  <span className={livePayslipPreview.remaining_balance < 0 ? 'text-rose-700' : 'text-emerald-700'}>
+                    {formatCurrency(livePayslipPreview.remaining_balance)}
+                  </span>
                 </div>
               </div>
             </div>
 
-            <div className="flex justify-between items-center gap-2 pt-2">
-              <div>
-                {!isEditingPayslip ? (
+            {/* Interactive Monthly Transactions List inside Payslip (Delete Advances / Bonuses / Deductions / Payments) */}
+            {(() => {
+              const fin = payslipData?.financials || {};
+              const items = [
+                ...(fin.advance_details || []).map((x) => ({ ...x, type: 'advance', label: 'سلفة', badge: 'bg-amber-50 text-amber-800 border-amber-200' })),
+                ...(fin.bonus_details || []).map((x) => ({ ...x, type: 'bonus', label: 'مكافأة', badge: 'bg-emerald-50 text-emerald-800 border-emerald-200' })),
+                ...(fin.deduction_details || []).map((x) => ({ ...x, type: 'deduction', label: 'خصم', badge: 'bg-rose-50 text-rose-800 border-rose-200' })),
+                ...(fin.salary_payment_details || []).map((x) => ({ ...x, type: 'salary_payment', label: 'صرف راتب', badge: 'bg-blue-50 text-blue-800 border-blue-200' })),
+              ].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+              if (items.length === 0) return null;
+              return (
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs print:hidden">
+                  <div className="flex items-center justify-between font-black text-slate-800">
+                    <span>تفاصيل سلف وحركات شهر {payslipMonth} ({items.length})</span>
+                    <span className="text-[11px] font-bold text-slate-500">يمكن حذف أي حركة لإعادة الحساب تلقائياً</span>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto divide-y divide-slate-200/70 bg-white rounded-xl border border-slate-200">
+                    {items.map((item) => {
+                      const canDel = item.type === 'advance' ? canCreateAdvance : canExecutePayroll;
+                      return (
+                        <div key={`${item.type}_${item.id}`} className="flex items-center justify-between gap-2 px-3 py-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`px-2 py-0.5 rounded-md border text-[10px] font-black shrink-0 ${item.badge}`}>
+                              {item.label}
+                            </span>
+                            <span className="font-black text-slate-900 whitespace-nowrap">{formatCurrency(item.amount)}</span>
+                            <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                              {item.date ? new Date(item.date).toLocaleDateString('ar-EG-u-nu-latn') : ''}
+                            </span>
+                            {item.notes && (
+                              <span className="text-[11px] text-slate-400 truncate max-w-[160px]" title={cleanNotes(item.notes)}>
+                                {cleanNotes(item.notes)}
+                              </span>
+                            )}
+                          </div>
+                          {canDel && (
+                            <button
+                              type="button"
+                              disabled={deletingTxId === item.id}
+                              onClick={() => handleDeleteTransaction(item, 'payslip')}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 shrink-0 disabled:opacity-50"
+                              title="حذف الحركة"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>{deletingTxId === item.id ? '...' : 'حذف'}</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Quick Salary Payout Box */}
+            {canExecutePayroll && quickPayOpen && !isEditingPayslip && (
+              <form onSubmit={handleQuickSalaryPayout} className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-3 text-xs">
+                <div className="font-black text-emerald-900">تسديد وصرف الراتب وتحديد مصدر الفلوس</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">المبلغ المصروف (ج.م)</label>
+                    <Input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      required
+                      value={quickPayAmount}
+                      onChange={(e) => setQuickPayAmount(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">طريقة الصرف</label>
+                    <select
+                      className="w-full h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
+                      value={quickPayMethod}
+                      onChange={(e) => {
+                        const m = e.target.value;
+                        setQuickPayMethod(m);
+                        if (m !== 'cash') setQuickPayFromDrawer(false);
+                      }}
+                    >
+                      <option value="cash">نقدي (كاش)</option>
+                      <option value="bank_transfer">انستاباي / تحويل بنكي</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">ملاحظة</label>
+                    <Input
+                      value={quickPayNotes}
+                      onChange={(e) => setQuickPayNotes(e.target.value)}
+                      placeholder="صرف راتب..."
+                    />
+                  </div>
+                </div>
+                {quickPayMethod === 'cash' && (
+                  <label className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-xl border border-amber-200 font-bold text-amber-900 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={quickPayFromDrawer}
+                      onChange={(e) => setQuickPayFromDrawer(e.target.checked)}
+                      className="w-4 h-4 accent-slate-900"
+                    />
+                    <span>خصم المبلغ من درج الكاشير اليومي بالفرع (يقلل صافي الدرج اليومي)</span>
+                  </label>
+                )}
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setQuickPayOpen(false)}>
+                    إلغاء
+                  </Button>
+                  <Button type="submit" variant="primary" size="sm" isLoading={quickPaySubmitting} className="!bg-emerald-700 hover:!bg-emerald-800">
+                    تأكيد صرف الراتب
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            <div className="flex flex-wrap justify-between items-center gap-2 pt-2">
+              <div className="flex items-center gap-2">
+                {canExecutePayroll && !isEditingPayslip && (
                   <Button
                     variant="outline"
                     icon={Edit}
                     onClick={() => setIsEditingPayslip(true)}
                     className="text-amber-700 border-amber-300 hover:bg-amber-50"
                   >
-                    تعديل القسيمة قبل الطباعة
+                    تعديل وتسوية الراتب
                   </Button>
-                ) : (
+                )}
+                {isEditingPayslip && (
+                  <>
+                    <Button
+                      variant="primary"
+                      icon={CheckCircle}
+                      isLoading={savingPayslipAdj}
+                      onClick={handleSavePayslipAdjustment}
+                      className="!bg-emerald-700 hover:!bg-emerald-800"
+                    >
+                      حفظ التعديلات في النظام
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setPayslipAdjForm(buildAdjFormFromPayslip(payslipData));
+                        setIsEditingPayslip(false);
+                      }}
+                      disabled={savingPayslipAdj}
+                    >
+                      إلغاء التعديل
+                    </Button>
+                  </>
+                )}
+                {canExecutePayroll && !isEditingPayslip && Number(livePayslipPreview.remaining_balance || 0) > 0 && (
                   <Button
                     variant="outline"
-                    icon={CheckCircle}
-                    onClick={() => setIsEditingPayslip(false)}
+                    icon={DollarSign}
+                    onClick={() => {
+                      setQuickPayAmount(String(Math.max(0, Number(livePayslipPreview.remaining_balance || 0))));
+                      setQuickPayOpen((v) => !v);
+                    }}
                     className="text-emerald-700 border-emerald-300 hover:bg-emerald-50"
                   >
-                    اعتماد ومعاينة الطباعة
+                    صرف المتبقي
                   </Button>
                 )}
               </div>
@@ -2196,6 +3257,7 @@ export function Employees() {
                 <Button variant="outline" onClick={() => {
                   setShowPayslipModal(false);
                   setIsEditingPayslip(false);
+                  setQuickPayOpen(false);
                 }}>
                   إغلاق
                 </Button>

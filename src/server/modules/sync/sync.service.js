@@ -445,7 +445,7 @@ async function repairAndReviveDeadLetterOperations() {
       FROM sync_queue
       WHERE (status IN ('failed', 'dead_letter') OR last_error IS NOT NULL)
         AND (
-          entity_type IN ('product', 'inventory', 'supplier', 'supplier_transaction', 'attendance', 'employee_transaction', 'expense', 'worn_product', 'tailoring_order', 'stock_transfer')
+          entity_type IN ('product', 'inventory', 'supplier', 'supplier_transaction', 'attendance', 'employee_transaction', 'employee_payroll_adjustment', 'expense', 'worn_product', 'tailoring_order', 'stock_transfer')
           OR last_error LIKE '%inventory_size_id_fkey%'
           OR last_error LIKE '%supplier_transactions_supplier_id_fkey%'
           OR last_error LIKE '%employee_id_fkey%'
@@ -724,27 +724,124 @@ async function applyOperation(operation) {
     }
 
     if (operation.entity_type === 'employee_transaction') {
+      if (operation.action === 'delete') {
+        if (payload.offline_uuid) {
+          await tx.query('DELETE FROM employee_transactions WHERE offline_uuid = $1', [payload.offline_uuid]);
+        } else if (payload.id) {
+          const empId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
+          if (empId) {
+            await tx.query('DELETE FROM employee_transactions WHERE id = $1 AND employee_id = $2', [payload.id, empId]);
+          } else {
+            await tx.query('DELETE FROM employee_transactions WHERE id = $1', [payload.id]);
+          }
+        }
+        return;
+      }
       const empId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
       if (!empId) {
         console.warn(`[Sync] Employee transaction skipped: cannot resolve employee #${payload.employee_id}`);
         return;
       }
+      const paidFromDrawerBool = payload.paid_from_drawer === true || payload.paid_from_drawer === 1 || payload.paid_from_drawer === '1' || payload.paid_from_drawer === 'true';
       await tx.query(
-        `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid)
-         VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6)
+        `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, offline_uuid)
+         VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6, $7, $8)
          ON CONFLICT (offline_uuid) DO UPDATE SET
            employee_id = EXCLUDED.employee_id,
            type = EXCLUDED.type,
            amount = EXCLUDED.amount,
            transaction_date = EXCLUDED.transaction_date,
-           notes = EXCLUDED.notes`,
+           notes = EXCLUDED.notes,
+           payment_method = EXCLUDED.payment_method,
+           paid_from_drawer = EXCLUDED.paid_from_drawer`,
         [
           empId,
           payload.type,
           payload.amount || 0,
           payload.transaction_date || null,
           payload.notes || null,
+          payload.payment_method || 'cash',
+          paidFromDrawerBool,
           payload.offline_uuid,
+        ]
+      );
+      return;
+    }
+
+    if (operation.entity_type === 'employee_payroll_adjustment') {
+      const empId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
+      if (!empId) {
+        console.warn(`[Sync] Payroll adjustment skipped: cannot resolve employee #${payload.employee_id}`);
+        return;
+      }
+      if (operation.action === 'delete') {
+        await tx.query(
+          'DELETE FROM employee_payroll_adjustments WHERE employee_id = $1 AND month = $2',
+          [empId, payload.month]
+        );
+        return;
+      }
+      const includeUnused = payload.include_unused_leave_payout === null || payload.include_unused_leave_payout === undefined
+        ? null
+        : (payload.include_unused_leave_payout === true || payload.include_unused_leave_payout === 1 || payload.include_unused_leave_payout === '1' || payload.include_unused_leave_payout === 'true');
+      await tx.query(
+        `INSERT INTO employee_payroll_adjustments (
+           employee_id, month, basic_salary_override, work_days, allowed_leave_days, include_unused_leave_payout,
+           unused_leave_amount_override, required_hours, overtime_amount_override, delay_deduction_override,
+           absent_days_override, leave_days_override, half_days_override, penalty_days,
+           manual_deductions_override, manual_bonuses_override, commissions, transportation_allowance,
+           old_advances, previous_dues, external_debts, notes, updated_by, updated_at, offline_uuid
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, CURRENT_TIMESTAMP, $24)
+         ON CONFLICT (employee_id, month) DO UPDATE SET
+           basic_salary_override = EXCLUDED.basic_salary_override,
+           work_days = EXCLUDED.work_days,
+           allowed_leave_days = EXCLUDED.allowed_leave_days,
+           include_unused_leave_payout = EXCLUDED.include_unused_leave_payout,
+           unused_leave_amount_override = EXCLUDED.unused_leave_amount_override,
+           required_hours = EXCLUDED.required_hours,
+           overtime_amount_override = EXCLUDED.overtime_amount_override,
+           delay_deduction_override = EXCLUDED.delay_deduction_override,
+           absent_days_override = EXCLUDED.absent_days_override,
+           leave_days_override = EXCLUDED.leave_days_override,
+           half_days_override = EXCLUDED.half_days_override,
+           penalty_days = EXCLUDED.penalty_days,
+           manual_deductions_override = EXCLUDED.manual_deductions_override,
+           manual_bonuses_override = EXCLUDED.manual_bonuses_override,
+           commissions = EXCLUDED.commissions,
+           transportation_allowance = EXCLUDED.transportation_allowance,
+           old_advances = EXCLUDED.old_advances,
+           previous_dues = EXCLUDED.previous_dues,
+           external_debts = EXCLUDED.external_debts,
+           notes = EXCLUDED.notes,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = CURRENT_TIMESTAMP,
+           offline_uuid = COALESCE(EXCLUDED.offline_uuid, employee_payroll_adjustments.offline_uuid)`,
+        [
+          empId,
+          payload.month,
+          payload.basic_salary_override ?? null,
+          payload.work_days ?? null,
+          payload.allowed_leave_days ?? null,
+          includeUnused,
+          payload.unused_leave_amount_override ?? null,
+          payload.required_hours ?? null,
+          payload.overtime_amount_override ?? null,
+          payload.delay_deduction_override ?? null,
+          payload.absent_days_override ?? null,
+          payload.leave_days_override ?? null,
+          payload.half_days_override ?? null,
+          Number(payload.penalty_days || 0),
+          payload.manual_deductions_override ?? null,
+          payload.manual_bonuses_override ?? null,
+          Number(payload.commissions || 0),
+          Number(payload.transportation_allowance || 0),
+          Number(payload.old_advances || 0),
+          Number(payload.previous_dues || 0),
+          Number(payload.external_debts || 0),
+          payload.notes || null,
+          payload.updated_by || null,
+          payload.offline_uuid || null,
         ]
       );
       return;
@@ -2418,8 +2515,10 @@ async function applyOperation(operation) {
                  status = COALESCE($8, status),
                  offline_uuid = COALESCE($9, offline_uuid),
                  branch_scope = COALESCE($10, branch_scope),
-                 branch_ids = COALESCE($11, branch_ids)
-             WHERE id = $12`,
+                 branch_ids = COALESCE($11, branch_ids),
+                 join_date = COALESCE($12::date, join_date),
+                 end_date = COALESCE($13::date, end_date)
+             WHERE id = $14`,
             [
               payload.name || null,
               payload.position || null,
@@ -2432,13 +2531,15 @@ async function applyOperation(operation) {
               empUuid,
               payload.branch_scope || null,
               empBranchIdsJson,
+              payload.join_date || null,
+              payload.end_date || null,
               existing.id,
             ]
           );
         } else {
           await tx.query(
-            `INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid)
-             VALUES ($1, $2, $3, COALESCE($4, 'single'), COALESCE($5, '[]'::jsonb), $6, $7, COALESCE($8::date, CURRENT_DATE), COALESCE($9, 'active'), $10, $11, $12)`,
+            `INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, end_date, status, shift_start, shift_end, offline_uuid)
+             VALUES ($1, $2, $3, COALESCE($4, 'single'), COALESCE($5, '[]'::jsonb), $6, $7, COALESCE($8::date, CURRENT_DATE), $9::date, COALESCE($10, 'active'), $11, $12, $13)`,
             [
               payload.name,
               payload.position || null,
@@ -2448,6 +2549,7 @@ async function applyOperation(operation) {
               payload.basic_salary || 0,
               payload.phone || null,
               payload.join_date || null,
+              payload.end_date || null,
               payload.status || 'active',
               payload.shift_start || null,
               payload.shift_end || null,
@@ -2485,8 +2587,10 @@ async function applyOperation(operation) {
                  status = COALESCE($8, status),
                  offline_uuid = COALESCE($9, offline_uuid),
                  branch_scope = COALESCE($10, branch_scope),
-                 branch_ids = COALESCE($11, branch_ids)
-             WHERE id = $12`,
+                 branch_ids = COALESCE($11, branch_ids),
+                 join_date = COALESCE($12::date, join_date),
+                 end_date = CASE WHEN $13::boolean THEN $14::date ELSE COALESCE($14::date, end_date) END
+             WHERE id = $15`,
             [
               payload.name || null,
               payload.position || null,
@@ -2499,6 +2603,9 @@ async function applyOperation(operation) {
               empUuid,
               payload.branch_scope || null,
               empBranchIdsJson,
+              payload.join_date || null,
+              payload.clear_end_date === true,
+              payload.end_date || null,
               empId,
             ]
           );
@@ -2518,7 +2625,7 @@ async function applyOperation(operation) {
           if (byId.rows.length) empId = byId.rows[0].id;
         }
         if (empId) {
-          await tx.query("UPDATE employees SET status = 'inactive' WHERE id = $1", [empId]);
+          await tx.query("UPDATE employees SET status = 'inactive', end_date = COALESCE($2::date, end_date, CURRENT_DATE) WHERE id = $1", [empId, payload.end_date || null]);
         }
       }
       return { success: true };
@@ -3587,6 +3694,7 @@ async function runSync(requestedLimit = 50) {
           customer: 'customers',
           expense: 'expenses',
           employee_transaction: 'employee_transactions',
+          employee_payroll_adjustment: 'employee_payroll_adjustments',
           tailoring_order: 'tailoring_orders',
           order: 'orders',
           sale: 'orders',
@@ -3718,7 +3826,11 @@ async function exportCatalogForBranch(branchId = null) {
   );
 
   const employeesPromise = db.query(
-    'SELECT id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid FROM employees'
+    `SELECT id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone,
+            TO_CHAR(join_date, 'YYYY-MM-DD') AS join_date,
+            TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date,
+            status, shift_start, shift_end, offline_uuid
+     FROM employees`
   );
 
   const customersPromise = db.query(
@@ -3756,6 +3868,7 @@ async function exportCatalogForBranch(branchId = null) {
     expensesRes,
     attendanceRes,
     empTransRes,
+    empPayrollAdjRes,
     tailoringOrdersRes,
     tailoringPaymentsRes,
     alterationsRes,
@@ -3800,8 +3913,21 @@ async function exportCatalogForBranch(branchId = null) {
       FROM attendance
     `),
     db.query(`
-      SELECT id, employee_id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') AS transaction_date, notes, offline_uuid
+      SELECT id, employee_id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') AS transaction_date, notes,
+             COALESCE(payment_method, 'cash') AS payment_method,
+             COALESCE(paid_from_drawer, FALSE) AS paid_from_drawer,
+             offline_uuid
       FROM employee_transactions
+    `),
+    db.query(`
+      SELECT id, employee_id, month, basic_salary_override, work_days, allowed_leave_days, include_unused_leave_payout,
+             unused_leave_amount_override, required_hours, overtime_amount_override, delay_deduction_override,
+             absent_days_override, leave_days_override, half_days_override, COALESCE(penalty_days, 0) AS penalty_days,
+             manual_deductions_override, manual_bonuses_override, COALESCE(commissions, 0) AS commissions,
+             COALESCE(transportation_allowance, 0) AS transportation_allowance,
+             COALESCE(old_advances, 0) AS old_advances, COALESCE(previous_dues, 0) AS previous_dues,
+             COALESCE(external_debts, 0) AS external_debts, notes, updated_by, updated_at, offline_uuid
+      FROM employee_payroll_adjustments
     `),
     db.query(`
       SELECT id, invoice_number, customer_name, customer_phone, product_description, measurements,
@@ -3926,6 +4052,7 @@ async function exportCatalogForBranch(branchId = null) {
     expenses: expensesRes.rows,
     attendance: attendanceRes.rows,
     employee_transactions: empTransRes.rows,
+    employee_payroll_adjustments: empPayrollAdjRes.rows,
     tailoring_orders: tailoringOrdersRes.rows,
     tailoring_payments: tailoringPaymentsRes.rows,
     alterations: alterationsRes.rows,
@@ -3966,7 +4093,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         const tablesToWipe = [
           'orders', 'order_items', 'order_payments', 'returns', 'return_items',
           'rentals', 'rental_payments', 'tailoring_orders', 'tailoring_payments', 'alterations',
-          'expenses', 'attendance', 'employee_transactions', 'stock_transfers',
+          'expenses', 'attendance', 'employee_payroll_adjustments', 'employee_transactions', 'stock_transfers',
           'supplier_transactions', 'supply_records', 'worn_products', 'sync_queue', 'notification_reads'
         ];
         for (const t of tablesToWipe) {
@@ -4555,13 +4682,14 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // 10. Employees
     if (Array.isArray(catalog.employees)) {
       ensureCol('employees', 'offline_uuid', 'TEXT');
+      ensureCol('employees', 'end_date', 'TEXT');
       try { sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_offline_uuid ON employees (offline_uuid) WHERE offline_uuid IS NOT NULL'); } catch {}
       const pendingEmps = getPendingSyncTracker('employee');
       const findEmpByUuidStmt = sqlite.prepare('SELECT id FROM employees WHERE offline_uuid = ? AND id != ?');
 
       const empStmt = sqlite.prepare(`
-        INSERT INTO employees (id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, status, shift_start, shift_end, offline_uuid)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, end_date, status, shift_start, shift_end, offline_uuid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           position = COALESCE(excluded.position, employees.position),
@@ -4571,6 +4699,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           basic_salary = excluded.basic_salary,
           phone = excluded.phone,
           join_date = COALESCE(excluded.join_date, employees.join_date),
+          end_date = excluded.end_date,
           status = excluded.status,
           shift_start = excluded.shift_start,
           shift_end = excluded.shift_end,
@@ -4586,6 +4715,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
               sqlite.prepare('UPDATE attendance SET employee_id = ? WHERE employee_id = ?').run(emp.id, dupEmp.id);
             } catch {}
             try { sqlite.prepare('UPDATE employee_transactions SET employee_id = ? WHERE employee_id = ?').run(emp.id, dupEmp.id); } catch {}
+            try { sqlite.prepare('UPDATE employee_payroll_adjustments SET employee_id = ? WHERE employee_id = ?').run(emp.id, dupEmp.id); } catch {}
             try { sqlite.prepare('UPDATE orders SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
             try { sqlite.prepare('UPDATE returns SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
             try { sqlite.prepare('UPDATE rentals SET seller_id = ? WHERE seller_id = ?').run(emp.id, dupEmp.id); } catch {}
@@ -4608,6 +4738,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           Number(emp.basic_salary || 0),
           emp.phone || null,
           toSqliteDate(emp.join_date),
+          emp.end_date ? toSqliteDate(emp.end_date) : null,
           emp.status || 'active',
           emp.shift_start || null,
           emp.shift_end || null,
@@ -4866,18 +4997,22 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // 14. Employee Transactions
     if (Array.isArray(catalog.employee_transactions)) {
       ensureCol('employee_transactions', 'pending_sync', 'INTEGER DEFAULT 1');
+      ensureCol('employee_transactions', 'payment_method', "TEXT DEFAULT 'cash'");
+      ensureCol('employee_transactions', 'paid_from_drawer', 'INTEGER DEFAULT 0');
       const pendingEmpTx = getPendingSyncTracker('employee_transaction');
       const pendingBonusExps = getPendingSyncTracker('expense');
       const cleanStaleEtStmt = sqlite.prepare('DELETE FROM employee_transactions WHERE offline_uuid = ? AND id != ?');
       const etStmt = sqlite.prepare(`
-        INSERT INTO employee_transactions (id, employee_id, type, amount, transaction_date, notes, offline_uuid, pending_sync)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+        INSERT INTO employee_transactions (id, employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, offline_uuid, pending_sync)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(id) DO UPDATE SET
           employee_id = excluded.employee_id,
           type = excluded.type,
           amount = excluded.amount,
           transaction_date = excluded.transaction_date,
           notes = excluded.notes,
+          payment_method = excluded.payment_method,
+          paid_from_drawer = excluded.paid_from_drawer,
           offline_uuid = COALESCE(excluded.offline_uuid, employee_transactions.offline_uuid),
           pending_sync = 0
       `);
@@ -4890,6 +5025,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         if (et.offline_uuid) {
           cleanStaleEtStmt.run(et.offline_uuid, et.id);
         }
+        const etPaidFromDrawer = (et.paid_from_drawer === true || et.paid_from_drawer === 1) ? 1 : 0;
         etStmt.run(
           et.id,
           et.employee_id,
@@ -4897,6 +5033,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           Number(et.amount || 0),
           toSqliteDate(et.transaction_date),
           et.notes || null,
+          et.payment_method || 'cash',
+          etPaidFromDrawer,
           et.offline_uuid || null
         );
       }
@@ -4909,6 +5047,94 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
             || (letRow.offline_uuid && (pendingEmpTx.uuids.has(String(letRow.offline_uuid)) || pendingBonusExps.uuids.has(String(letRow.offline_uuid))));
           if (!isPending && !incomingEtIds.has(Number(letRow.id))) {
             delEtStmt.run(letRow.id);
+          }
+        }
+      } catch {}
+    }
+
+    // 14b. Employee Payroll Adjustments
+    if (Array.isArray(catalog.employee_payroll_adjustments)) {
+      ensureCol('employee_payroll_adjustments', 'basic_salary_override', 'REAL');
+      const pendingAdj = getPendingSyncTracker('employee_payroll_adjustment');
+      const adjStmt = sqlite.prepare(`
+        INSERT INTO employee_payroll_adjustments (
+          id, employee_id, month, basic_salary_override, work_days, allowed_leave_days, include_unused_leave_payout,
+          unused_leave_amount_override, required_hours, overtime_amount_override, delay_deduction_override,
+          absent_days_override, leave_days_override, half_days_override, penalty_days,
+          manual_deductions_override, manual_bonuses_override, commissions, transportation_allowance,
+          old_advances, previous_dues, external_debts, notes, updated_by, updated_at, offline_uuid, pending_sync
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(employee_id, month) DO UPDATE SET
+          basic_salary_override = excluded.basic_salary_override,
+          work_days = excluded.work_days,
+          allowed_leave_days = excluded.allowed_leave_days,
+          include_unused_leave_payout = excluded.include_unused_leave_payout,
+          unused_leave_amount_override = excluded.unused_leave_amount_override,
+          required_hours = excluded.required_hours,
+          overtime_amount_override = excluded.overtime_amount_override,
+          delay_deduction_override = excluded.delay_deduction_override,
+          absent_days_override = excluded.absent_days_override,
+          leave_days_override = excluded.leave_days_override,
+          half_days_override = excluded.half_days_override,
+          penalty_days = excluded.penalty_days,
+          manual_deductions_override = excluded.manual_deductions_override,
+          manual_bonuses_override = excluded.manual_bonuses_override,
+          commissions = excluded.commissions,
+          transportation_allowance = excluded.transportation_allowance,
+          old_advances = excluded.old_advances,
+          previous_dues = excluded.previous_dues,
+          external_debts = excluded.external_debts,
+          notes = excluded.notes,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at,
+          offline_uuid = COALESCE(excluded.offline_uuid, employee_payroll_adjustments.offline_uuid),
+          pending_sync = 0
+      `);
+      const incomingAdjKeys = new Set();
+      for (const adj of catalog.employee_payroll_adjustments) {
+        incomingAdjKeys.add(`${adj.employee_id}_${adj.month}`);
+        if (pendingAdj.ids.has(Number(adj.id)) || (adj.offline_uuid && pendingAdj.uuids.has(String(adj.offline_uuid)))) continue;
+        const incUnused = adj.include_unused_leave_payout === null || adj.include_unused_leave_payout === undefined
+          ? null
+          : ((adj.include_unused_leave_payout === true || adj.include_unused_leave_payout === 1) ? 1 : 0);
+        adjStmt.run(
+          adj.id,
+          adj.employee_id,
+          adj.month,
+          adj.basic_salary_override ?? null,
+          adj.work_days ?? null,
+          adj.allowed_leave_days ?? null,
+          incUnused,
+          adj.unused_leave_amount_override ?? null,
+          adj.required_hours ?? null,
+          adj.overtime_amount_override ?? null,
+          adj.delay_deduction_override ?? null,
+          adj.absent_days_override ?? null,
+          adj.leave_days_override ?? null,
+          adj.half_days_override ?? null,
+          Number(adj.penalty_days || 0),
+          adj.manual_deductions_override ?? null,
+          adj.manual_bonuses_override ?? null,
+          Number(adj.commissions || 0),
+          Number(adj.transportation_allowance || 0),
+          Number(adj.old_advances || 0),
+          Number(adj.previous_dues || 0),
+          Number(adj.external_debts || 0),
+          adj.notes || null,
+          adj.updated_by || null,
+          adj.updated_at || null,
+          adj.offline_uuid || null
+        );
+      }
+
+      try {
+        const localAdjs = sqlite.prepare('SELECT id, employee_id, month, offline_uuid FROM employee_payroll_adjustments').all();
+        const delAdjStmt = sqlite.prepare('DELETE FROM employee_payroll_adjustments WHERE id = ?');
+        for (const la of localAdjs) {
+          const isPending = pendingAdj.ids.has(Number(la.id)) || (la.offline_uuid && pendingAdj.uuids.has(String(la.offline_uuid)));
+          if (!isPending && !incomingAdjKeys.has(`${la.employee_id}_${la.month}`)) {
+            delAdjStmt.run(la.id);
           }
         }
       } catch {}
@@ -6006,6 +6232,7 @@ async function wipeBranchLocalData(newResetToken = null, targetSqlite = null) {
       'alterations',
       'expenses',
       'attendance',
+      'employee_payroll_adjustments',
       'employee_transactions',
       'stock_transfers',
       'supplier_transactions',

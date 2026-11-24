@@ -1,3 +1,5 @@
+const path = require('path');
+const fs = require('fs');
 const authService = require('./auth.service');
 const sensitiveService = require('./sensitivePassword.service');
 const config = require('../../config/env');
@@ -471,13 +473,31 @@ async function deleteBranchUser(req, res, next) {
   }
 }
 
-const pkgVersion = (() => {
+function resolveAppVersion() {
+  if (process.env.APP_VERSION && String(process.env.APP_VERSION).trim()) {
+    return String(process.env.APP_VERSION).trim();
+  }
+  const candidates = [
+    path.join(config.appRoot || '', 'package.json'),
+    path.resolve(__dirname, '../../../../package.json'),
+    path.resolve(__dirname, '../../../package.json'),
+  ];
+  for (const pkgPath of candidates) {
+    try {
+      if (pkgPath && fs.existsSync(pkgPath)) {
+        const parsed = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (parsed?.version) return String(parsed.version);
+      }
+    } catch {}
+  }
   try {
     return require('../../../../package.json').version || '1.0.0';
   } catch {
     return '1.0.0';
   }
-})();
+}
+
+const pkgVersion = resolveAppVersion();
 
 async function getServerTime(req, res) {
   const edition = config.IS_BRANCH_MODE ? 'branch' : 'master';

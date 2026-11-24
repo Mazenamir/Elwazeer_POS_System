@@ -21,28 +21,40 @@ async function fetchRuntimeVersionInfo() {
 
     try {
       if (typeof window !== 'undefined' && window.electronAPI?.updater?.getStatus) {
-        const status = await window.electronAPI.updater.getStatus();
+        const raw = await window.electronAPI.updater.getStatus();
+        const status = raw?.status || raw;
         if (status?.currentVersion) version = String(status.currentVersion);
         if (status?.edition) edition = String(status.edition).toLowerCase();
       }
     } catch {}
 
-    if (!edition) {
+    let fetchedServerMeta = false;
+    if (!edition || version === '1.0.0') {
       try {
         const res = await fetch('/api/server-time', { credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
-          if (data?.app_version && version === BUILD_VERSION) {
-            version = String(data.app_version);
+          fetchedServerMeta = true;
+          if (data?.app_version) {
+            const serverVer = String(data.app_version).trim();
+            if (serverVer && (serverVer !== '1.0.0' || BUILD_VERSION === '1.0.0')) {
+              if (version === BUILD_VERSION || version === '1.0.0') {
+                version = serverVer;
+              }
+            }
           }
-          if (data?.edition) {
+          if (data?.edition && !edition) {
             edition = String(data.edition).toLowerCase();
           }
         }
       } catch {}
     }
 
-    cachedInfo = { version, edition, resolved: true };
+    cachedInfo = {
+      version,
+      edition,
+      resolved: Boolean(edition || fetchedServerMeta),
+    };
     return cachedInfo;
   })();
 

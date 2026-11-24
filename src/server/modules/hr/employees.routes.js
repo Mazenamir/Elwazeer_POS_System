@@ -41,6 +41,7 @@ router.get('/employees', requirePermission('employees.list.view'), employeesCont
 router.post('/employees', requirePermission('employees.create'), employeesController.createEmployee);
 router.put('/employees/:id', requirePermission('employees.edit'), employeesController.updateEmployee);
 router.post('/employees/:id/transfer', requirePermission('employees.edit'), employeesController.transferEmployee);
+router.post('/employees/:id/deactivate', requirePermission('employees.edit'), employeesController.deactivateEmployee);
 router.delete('/employees/:id', requirePermission('employees.edit'), employeesController.deleteEmployee);
 
 // Attendance endpoints
@@ -71,6 +72,11 @@ function requireTransactionPermission(req, res, next) {
   return res.status(403).json({ error: 'Forbidden' });
 }
 router.post('/employee_transactions', requireTransactionPermission, employeesController.createEmployeeTransaction);
+router.delete(
+  '/employee_transactions/:id',
+  requirePermission('employees.advances.create', 'employees.payroll.execute'),
+  employeesController.deleteEmployeeTransaction
+);
 
 async function requireSalaryAccess(req, res, next) {
   if (!req.user) {
@@ -126,9 +132,11 @@ async function requireSalaryAccess(req, res, next) {
   return res.status(403).json({ error: 'كلمة سر الرواتب مطلوبة للاطلاع على هذا التقرير' });
 }
 
-// Summary, Payslip, and Sales Report
+// Summary, Payslip, Adjustments, and Sales Report
 router.get('/employees/:id/summary', requireSalaryAccess, employeesController.getEmployeeSummary);
 router.get('/employees/:id/payslip', requireSalaryAccess, employeesController.getEmployeePayslip);
+router.put('/employees/:id/payslip-adjustments', requirePermission('employees.payroll.execute'), employeesController.saveEmployeePayrollAdjustment);
+router.post('/employees/payroll/bulk-required-hours', requirePermission('employees.payroll.execute'), employeesController.setBulkMonthlyRequiredHours);
 router.get('/employees/:id/sales-report', requirePermission('employees.list.view', 'reports.sales.view'), employeesController.getEmployeeSalesReport);
 
 router.requireSalaryAccess = requireSalaryAccess;

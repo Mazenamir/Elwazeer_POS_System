@@ -618,6 +618,12 @@ function buildDaily20ColumnRows(d, options = {}) {
       amount: Number(sp.amount || 0),
     });
   });
+  (d?.salary_drawer_payments || []).forEach(sp => {
+    deductionItems.push({
+      description: `صرف راتب (كاش من الدرج): ${sp.employee_name}${sp.notes ? ` - ${sp.notes}` : ''}`,
+      amount: Number(sp.amount || 0),
+    });
+  });
 
   const electronicPayments = [];
   (d?.sales_invoices || []).forEach(inv => {
@@ -728,7 +734,7 @@ function buildDaily20ColumnRows(d, options = {}) {
   const totalD76 = d?.summary?.total_sales || 0;
   const totalE76 = d?.summary?.total_paid || 0;
   const totalJ76 = d?.summary?.total_advances || 0;
-  const totalL76 = (d?.summary?.total_expenses || 0) + (d?.summary?.total_supplier_cash_payments || 0);
+  const totalL76 = (d?.summary?.total_expenses || 0) + (d?.summary?.total_supplier_cash_payments || 0) + (d?.summary?.total_salary_cash_payments || 0);
   const totalO76 = Number(d?.summary?.electronic_collections || 0);
   const totalK77 = totalJ76 + totalL76 + totalO76;
   const totalD77 = totalE76 - totalK77;

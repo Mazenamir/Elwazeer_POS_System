@@ -64,9 +64,21 @@ async function transferEmployee(req, res, next) {
   }
 }
 
+async function deactivateEmployee(req, res, next) {
+  try {
+    const result = await employeesService.deactivateEmployee(req.params.id, req.body, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function deleteEmployee(req, res, next) {
   try {
-    const result = await employeesService.deleteEmployee(req.params.id, req.user);
+    const result = await employeesService.deleteEmployee(req.params.id, req.user, {
+      end_date: req.query?.end_date || req.body?.end_date,
+      force_hard_delete: req.query?.force === 'true' || req.body?.force_hard_delete === true,
+    });
     res.json(result);
   } catch (err) {
     next(err);
@@ -127,6 +139,15 @@ async function createEmployeeTransaction(req, res, next) {
   }
 }
 
+async function deleteEmployeeTransaction(req, res, next) {
+  try {
+    const result = await employeesService.deleteEmployeeTransaction(req.params.id, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getEmployeeSummary(req, res, next) {
   try {
     const userWithAccess = {
@@ -153,6 +174,24 @@ async function getEmployeePayslip(req, res, next) {
   }
 }
 
+async function saveEmployeePayrollAdjustment(req, res, next) {
+  try {
+    const result = await employeesService.saveEmployeePayrollAdjustment(req.params.id, req.body, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function setBulkMonthlyRequiredHours(req, res, next) {
+  try {
+    const result = await employeesService.setBulkMonthlyRequiredHours(req.body, req.user);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getEmployeeSalesReport(req, res, next) {
   try {
     const result = await employeesService.getEmployeeSalesReport(req.params.id, req.query, req.user);
@@ -170,6 +209,7 @@ module.exports = {
   createEmployee,
   updateEmployee,
   transferEmployee,
+  deactivateEmployee,
   deleteEmployee,
   recordAttendance,
   toggleAttendance,
@@ -177,7 +217,10 @@ module.exports = {
   recordManualAttendance,
   getAttendanceReport,
   createEmployeeTransaction,
+  deleteEmployeeTransaction,
   getEmployeeSummary,
   getEmployeePayslip,
+  saveEmployeePayrollAdjustment,
+  setBulkMonthlyRequiredHours,
   getEmployeeSalesReport,
 };

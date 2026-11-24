@@ -494,6 +494,7 @@ app.on('ready', async () => {
       serverScript,
       port,
       logFile: logPath,
+      appVersion: app.getVersion(),
     });
 
     let hasLaunched = false;

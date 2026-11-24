@@ -362,10 +362,11 @@ async function runAllTests() {
     // 2. 4 free leaves (Math.max(0, leaveDays - 4) * dailyRate)
     // 3. half-day deductions (halfDays * (dailyRate / 2))
     // 4. late deduction based on dailyRate / 10
-    const employeesServiceCode = require('fs').readFileSync(
-      path.resolve(__dirname, '../src/server/modules/hr/employees.service.js'),
-      'utf8'
-    );
+    const fsMod = require('fs');
+    const employeesServiceCode =
+      fsMod.readFileSync(path.resolve(__dirname, '../src/server/modules/hr/employees.service.js'), 'utf8') +
+      '\n' +
+      fsMod.readFileSync(path.resolve(__dirname, '../src/server/modules/hr/payroll.calculator.js'), 'utf8');
 
     const hasDoubleAbsence = employeesServiceCode.includes('absentDays * dailyRate * 2') ||
                              employeesServiceCode.includes('absenceDeduction = Math.round(absentDays * dailyRate * 2)');

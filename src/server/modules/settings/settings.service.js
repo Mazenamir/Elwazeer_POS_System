@@ -319,7 +319,7 @@ async function resetSystem({ password, full_wipe }, user) {
   await db.transaction(async (tx) => {
     await tx.query(`
       TRUNCATE TABLE
-        tailoring_orders, alterations, attendance, employee_transactions, employees,
+        tailoring_orders, alterations, attendance, employee_payroll_adjustments, employee_transactions, employees,
         expenses, inventory_branches, inventory, order_items, orders,
         rentals, stock_transfers, supplier_transactions, supply_records,
         suppliers, customers, returns, return_items, rental_inventory,
