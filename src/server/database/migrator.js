@@ -1104,6 +1104,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec('ALTER TABLE employees ADD COLUMN end_date TEXT'); } catch {}
   try { sqlite.exec("ALTER TABLE employee_transactions ADD COLUMN payment_method TEXT DEFAULT 'cash'"); } catch {}
   try { sqlite.exec('ALTER TABLE employee_transactions ADD COLUMN paid_from_drawer INTEGER DEFAULT 0'); } catch {}
+  try { sqlite.exec('ALTER TABLE employee_transactions ADD COLUMN branch_id INTEGER'); } catch {}
 
   try {
     sqlite.exec(`

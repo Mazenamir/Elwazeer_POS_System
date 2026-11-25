@@ -706,6 +706,7 @@ export function Employees() {
     }
 
     try {
+      const txBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : undefined;
       await client.post('/employee_transactions', {
         employee_id: summaryEmp.id,
         type: txForm.type,
@@ -714,6 +715,7 @@ export function Employees() {
         transaction_date: txForm.transaction_date,
         payment_method: txForm.type === 'salary_payment' ? (txForm.payment_method || 'cash') : 'cash',
         paid_from_drawer: txForm.type === 'salary_payment' && txForm.payment_method === 'cash' ? Boolean(txForm.paid_from_drawer) : false,
+        ...(txBranchId ? { branch_id: txBranchId } : {}),
       });
 
       toast({
@@ -1061,6 +1063,7 @@ export function Employees() {
     }
     try {
       setQuickPaySubmitting(true);
+      const txBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : undefined;
       await client.post('/employee_transactions', {
         employee_id: payslipEmp.id,
         type: 'salary_payment',
@@ -1069,6 +1072,7 @@ export function Employees() {
         paid_from_drawer: quickPayMethod === 'cash' ? Boolean(quickPayFromDrawer) : false,
         transaction_date: new Date().toISOString().split('T')[0],
         notes: quickPayNotes?.trim() || `صرف راتب شهر ${payslipMonth}`,
+        ...(txBranchId ? { branch_id: txBranchId } : {}),
       });
       toast({ title: 'تم الصرف', message: 'تم تسجيل صرف الراتب بنجاح', variant: 'success' });
       setQuickPayOpen(false);

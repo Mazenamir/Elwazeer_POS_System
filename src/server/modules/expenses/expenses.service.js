@@ -453,8 +453,8 @@ async function createExpense(body, user, req) {
       );
       if (!existingBonus.rows.length) {
         await tx.query(
-          'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6)',
-          [bonusEmployeeId, 'bonus', final_amount, expense_date || cairoDate, finalNotes, offlineUuid]
+          'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, branch_id, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [bonusEmployeeId, 'bonus', final_amount, expense_date || cairoDate, finalNotes, final_branch_id, offlineUuid]
         );
       }
     }

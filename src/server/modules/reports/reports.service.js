@@ -675,14 +675,14 @@ async function getProfitReport(query = {}, user = null) {
       [branchIds]
     ),
     db.query(
-      `SELECT e.branch_id, COALESCE(SUM(et.amount), 0) as total
+      `SELECT COALESCE(et.branch_id, e.branch_id) as branch_id, COALESCE(SUM(et.amount), 0) as total
        FROM employee_transactions et
        JOIN employees e ON e.id = et.employee_id
-       WHERE e.branch_id = ANY($1::int[])
+       WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
          AND et.type = 'advance'
          AND et.transaction_date >= $2::date
          AND et.transaction_date < $3::date
-       GROUP BY e.branch_id`,
+       GROUP BY COALESCE(et.branch_id, e.branch_id)`,
       reportParams
     ),
     db.query(
@@ -698,16 +698,16 @@ async function getProfitReport(query = {}, user = null) {
       reportParams
     ),
     db.query(
-      `SELECT e.branch_id, COALESCE(SUM(et.amount), 0) as total
+      `SELECT COALESCE(et.branch_id, e.branch_id) as branch_id, COALESCE(SUM(et.amount), 0) as total
        FROM employee_transactions et
        JOIN employees e ON e.id = et.employee_id
-       WHERE e.branch_id = ANY($1::int[])
+       WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
          AND et.type = 'salary_payment'
          AND COALESCE(et.paid_from_drawer, FALSE) IS TRUE
          AND COALESCE(et.payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
          AND et.transaction_date >= $2::date
          AND et.transaction_date < $3::date
-       GROUP BY e.branch_id`,
+       GROUP BY COALESCE(et.branch_id, e.branch_id)`,
       reportParams
     ),
   ]);
@@ -952,7 +952,7 @@ async function getProfitReport(query = {}, user = null) {
                 COALESCE(et.notes, '') as notes,
                 e.basic_salary,
                 e.name as employee_name,
-                e.branch_id,
+                COALESCE(et.branch_id, e.branch_id) as branch_id,
                 COALESCE(b.name, '-') as branch_name,
                 ${employeeTransactionReportAmountSql('et')} as report_amount,
                 ${employeeTransactionRemainingDeltaSql('et')} as remaining_delta
@@ -1924,14 +1924,14 @@ async function getDailyReport(query = {}, user = null) {
         [branchIds]
       ),
       db.query(
-        `SELECT e.branch_id, COALESCE(SUM(et.amount), 0) as total
+        `SELECT COALESCE(et.branch_id, e.branch_id) as branch_id, COALESCE(SUM(et.amount), 0) as total
          FROM employee_transactions et
          JOIN employees e ON e.id = et.employee_id
-         WHERE e.branch_id = ANY($1::int[])
+         WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
            AND et.type = 'advance'
            AND et.transaction_date >= $2::date
            AND et.transaction_date < $3::date
-         GROUP BY e.branch_id`,
+         GROUP BY COALESCE(et.branch_id, e.branch_id)`,
         reportParams
       ),
       db.query(
@@ -1947,16 +1947,16 @@ async function getDailyReport(query = {}, user = null) {
         reportParams
       ),
       db.query(
-        `SELECT e.branch_id, COALESCE(SUM(et.amount), 0) as total
+        `SELECT COALESCE(et.branch_id, e.branch_id) as branch_id, COALESCE(SUM(et.amount), 0) as total
          FROM employee_transactions et
          JOIN employees e ON e.id = et.employee_id
-         WHERE e.branch_id = ANY($1::int[])
+         WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
            AND et.type = 'salary_payment'
            AND COALESCE(et.paid_from_drawer, FALSE) IS TRUE
            AND COALESCE(et.payment_method, 'cash') IN ('cash', 'نقدي', 'كاش')
            AND et.transaction_date >= $2::date
            AND et.transaction_date < $3::date
-         GROUP BY e.branch_id`,
+         GROUP BY COALESCE(et.branch_id, e.branch_id)`,
         reportParams
       ),
     ]);
@@ -2164,7 +2164,7 @@ async function getDailyReport(query = {}, user = null) {
                 COALESCE(et.notes, '') as notes,
                 e.basic_salary,
                 e.name as employee_name,
-                e.branch_id,
+                COALESCE(et.branch_id, e.branch_id) as branch_id,
                 COALESCE(b.name, '-') as branch_name,
                 ${employeeTransactionReportAmountSql('et')} as report_amount,
                 ${employeeTransactionRemainingDeltaSql('et')} as remaining_delta
@@ -2929,7 +2929,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
   const branchFilterRentals = reportBranchId ? 'AND r.branch_id = $3' : '';
   const branchFilterTailoring = reportBranchId ? 'AND tp.branch_id = $3' : '';
   const branchFilterReturns = reportBranchId ? 'AND ret.branch_id = $3' : '';
-  const branchFilterEmp = reportBranchId ? 'AND e.branch_id = $3' : '';
+  const branchFilterEmp = reportBranchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $3' : '';
   const branchFilterExp = reportBranchId ? 'AND e.branch_id = $3' : '';
   const branchFilterSupplierPayment = reportBranchId ? (user && isBranchScopedUser(user) ? 'AND st.branch_id = $3' : 'AND (st.branch_id = $3 OR st.branch_id IS NULL)') : '';
   const branchFilterOrderPayments = reportBranchId ? 'AND op.branch_id = $3' : '';
@@ -3315,7 +3315,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
         e.name as employee_name,
         et.amount,
         COALESCE(NULLIF(et.notes, ''), 'صرف راتب من الدرج') as notes,
-        e.branch_id,
+        COALESCE(et.branch_id, e.branch_id) as branch_id,
         COALESCE(et.payment_method, 'cash') as payment_method,
         COALESCE(et.paid_from_drawer, FALSE) as paid_from_drawer,
         TO_CHAR(et.transaction_date, 'YYYY-MM-DD') as transaction_date

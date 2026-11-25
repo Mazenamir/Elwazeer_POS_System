@@ -50,7 +50,7 @@ router.get('/products', requirePermission('inventory_admin', 'inventory.products
 router.get('/inventory/:id/branch-availability', requirePermission('inventory_admin', 'inventory.products.view', 'pos.sales.view', 'inventory.transfers.request'), controller.getBranchAvailability);
 router.get('/inventory/:id', requirePermission('inventory_admin', 'inventory.products.view', 'pos.sales.view'), controller.getInventoryById);
 router.post('/inventory', requirePermission('inventory_admin', 'inventory.products.create', 'inventory.products.edit'), productUploadMiddleware, controller.createProduct);
-router.put('/inventory/:id', requirePermission('inventory_admin', 'inventory.products.edit'), requireInventoryPassword, productUploadMiddleware, controller.updateProduct);
+router.put('/inventory/:id', requirePermission('inventory_admin', 'inventory.products.edit'), productUploadMiddleware, requireInventoryPassword, controller.updateProduct);
 router.delete('/inventory/:id', requirePermission('inventory_admin', 'inventory.products.delete'), requireInventoryPassword, controller.deleteProduct);
 router.post('/inventory/:id/duplicate', requirePermission('inventory_admin', 'inventory.products.duplicate', 'inventory.products.create'), requireInventoryPassword, controller.duplicateProduct);
 

@@ -1382,12 +1382,16 @@ async function createEmployeeTransaction(body, user) {
 
   const offlineUuid = newUuid(body?.offline_uuid);
   const cairoNow = await getDatabaseCairoNow();
+  const rawBranchId = body?.branch_id ? Number(body.branch_id) : null;
+  const branchId = (Number.isFinite(rawBranchId) && rawBranchId > 0 && hasBranchAccess(user, rawBranchId))
+    ? rawBranchId
+    : (user?.branch_id || (config.IS_BRANCH_MODE ? config.BRANCH_ID : null) || empRow.branch_id || 1);
+
   const result = await db.query(
-    'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-    [employee_id, type, amount, transaction_date || cairoNow.date, notes || null, paymentMethod, dbPaidFromDrawer, offlineUuid]
+    'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, branch_id, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+    [employee_id, type, amount, transaction_date || cairoNow.date, notes || null, paymentMethod, dbPaidFromDrawer, branchId, offlineUuid]
   );
   const transRow = result.rows[0];
-  const branchId = empRow.branch_id || user?.branch_id || config.BRANCH_ID || 1;
   await queueSyncOperation(db, null, 'employee_transaction', 'create', transRow.id, branchId, {
     id: transRow.id,
     employee_id: transRow.employee_id,

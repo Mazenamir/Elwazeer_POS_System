@@ -663,18 +663,19 @@ async function applyOperation(operation) {
           "SELECT id FROM employee_transactions WHERE (offline_uuid = $1 OR notes LIKE $2) AND type = 'bonus' LIMIT 1",
           [payload.offline_uuid, `%${marker}%`]
         );
+        const bonusBranchId = payload.branch_id || operation.branch_id || null;
         if (existingBonus.rows.length) {
           await tx.query(
-            `UPDATE employee_transactions SET amount = $1, transaction_date = COALESCE($2::date, transaction_date), notes = $3, offline_uuid = COALESCE(offline_uuid, $4) WHERE id = $5`,
-            [payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, payload.offline_uuid, existingBonus.rows[0].id]
+            `UPDATE employee_transactions SET amount = $1, transaction_date = COALESCE($2::date, transaction_date), notes = $3, branch_id = COALESCE($4, branch_id), offline_uuid = COALESCE(offline_uuid, $5) WHERE id = $6`,
+            [payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, bonusBranchId, payload.offline_uuid, existingBonus.rows[0].id]
           );
         } else if (payload.employee_id) {
           const bonusEmpId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
           if (bonusEmpId) {
             await tx.query(
-              `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, offline_uuid)
-               VALUES ($1, 'bonus', $2, COALESCE($3::date, CURRENT_DATE), $4, $5)`,
-              [bonusEmpId, payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, payload.offline_uuid]
+              `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, branch_id, offline_uuid)
+               VALUES ($1, 'bonus', $2, COALESCE($3::date, CURRENT_DATE), $4, $5, $6)`,
+              [bonusEmpId, payload.amount || 0, payload.expense_date || null, payload.notes || `مكسرات ${marker}`, bonusBranchId, payload.offline_uuid]
             );
           }
         }
@@ -743,9 +744,10 @@ async function applyOperation(operation) {
         return;
       }
       const paidFromDrawerBool = payload.paid_from_drawer === true || payload.paid_from_drawer === 1 || payload.paid_from_drawer === '1' || payload.paid_from_drawer === 'true';
+      const txBranchId = payload.branch_id || operation.branch_id || null;
       await tx.query(
-        `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, offline_uuid)
-         VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6, $7, $8)
+        `INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, branch_id, offline_uuid)
+         VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5, $6, $7, $8, $9)
          ON CONFLICT (offline_uuid) DO UPDATE SET
            employee_id = EXCLUDED.employee_id,
            type = EXCLUDED.type,
@@ -753,7 +755,8 @@ async function applyOperation(operation) {
            transaction_date = EXCLUDED.transaction_date,
            notes = EXCLUDED.notes,
            payment_method = EXCLUDED.payment_method,
-           paid_from_drawer = EXCLUDED.paid_from_drawer`,
+           paid_from_drawer = EXCLUDED.paid_from_drawer,
+           branch_id = COALESCE(EXCLUDED.branch_id, employee_transactions.branch_id)`,
         [
           empId,
           payload.type,
@@ -762,6 +765,7 @@ async function applyOperation(operation) {
           payload.notes || null,
           payload.payment_method || 'cash',
           paidFromDrawerBool,
+          txBranchId,
           payload.offline_uuid,
         ]
       );
@@ -3916,6 +3920,7 @@ async function exportCatalogForBranch(branchId = null) {
       SELECT id, employee_id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') AS transaction_date, notes,
              COALESCE(payment_method, 'cash') AS payment_method,
              COALESCE(paid_from_drawer, FALSE) AS paid_from_drawer,
+             branch_id,
              offline_uuid
       FROM employee_transactions
     `),
@@ -4999,12 +5004,13 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       ensureCol('employee_transactions', 'pending_sync', 'INTEGER DEFAULT 1');
       ensureCol('employee_transactions', 'payment_method', "TEXT DEFAULT 'cash'");
       ensureCol('employee_transactions', 'paid_from_drawer', 'INTEGER DEFAULT 0');
+      ensureCol('employee_transactions', 'branch_id', 'INTEGER');
       const pendingEmpTx = getPendingSyncTracker('employee_transaction');
       const pendingBonusExps = getPendingSyncTracker('expense');
       const cleanStaleEtStmt = sqlite.prepare('DELETE FROM employee_transactions WHERE offline_uuid = ? AND id != ?');
       const etStmt = sqlite.prepare(`
-        INSERT INTO employee_transactions (id, employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, offline_uuid, pending_sync)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        INSERT INTO employee_transactions (id, employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, branch_id, offline_uuid, pending_sync)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(id) DO UPDATE SET
           employee_id = excluded.employee_id,
           type = excluded.type,
@@ -5013,6 +5019,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           notes = excluded.notes,
           payment_method = excluded.payment_method,
           paid_from_drawer = excluded.paid_from_drawer,
+          branch_id = COALESCE(excluded.branch_id, employee_transactions.branch_id),
           offline_uuid = COALESCE(excluded.offline_uuid, employee_transactions.offline_uuid),
           pending_sync = 0
       `);
@@ -5035,6 +5042,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           et.notes || null,
           et.payment_method || 'cash',
           etPaidFromDrawer,
+          et.branch_id || null,
           et.offline_uuid || null
         );
       }
