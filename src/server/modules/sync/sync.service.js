@@ -6,6 +6,7 @@ const config = require('../../config/env');
 const { getInitialsFromName, newUuid } = require('../../../shared/utils/string');
 const { CAIRO_DATE_SQL } = require('../../../shared/constants/system');
 const { parsePositiveInt } = require('../../../shared/utils/numbers');
+const { sanitizeSyncPayload } = require('../../../shared/utils/sanitize');
 const { logActivity, queueSyncOperation, getSupplierSyncRef } = require('../../database/sync.helpers');
 const offlineStore = require('./offline.store');
 const uploadSyncHelpers = require('./upload-sync.helpers');
@@ -460,6 +461,7 @@ async function repairAndReviveDeadLetterOperations() {
         try { p = JSON.parse(p); } catch { p = null; }
       }
       if (p && typeof p === 'object') {
+        p = sanitizeSyncPayload(op.entity_type, p);
         if (op.entity_type === 'product' || op.entity_type === 'inventory') {
           p.size_id = null;
           p.color_id = null;
@@ -482,10 +484,18 @@ async function repairAndReviveDeadLetterOperations() {
           if (p.rating !== undefined) p.rating = parseInt(p.rating, 10) || 5;
         }
         if (op.entity_type === 'attendance') {
-          if (p.late_minutes !== undefined) p.late_minutes = Math.round(Number(p.late_minutes) || 0);
-          if (p.early_departure_minutes !== undefined) p.early_departure_minutes = Math.round(Number(p.early_departure_minutes) || 0);
-          if (p.overtime_minutes !== undefined) p.overtime_minutes = Math.round(Number(p.overtime_minutes) || 0);
-          if (p.total_hours !== undefined) p.total_hours = Math.round((Number(p.total_hours) || 0) * 100) / 100;
+          const { normalizeDateStr, normalizeTimeString, computeWorkedHours } = require('../hr/payroll.calculator');
+          if (p.date !== undefined) p.date = normalizeDateStr(p.date) || p.date;
+          if (p.check_in !== undefined) p.check_in = normalizeTimeString(p.check_in);
+          if (p.check_out !== undefined) p.check_out = normalizeTimeString(p.check_out);
+          if (p.late_minutes !== undefined) p.late_minutes = Math.max(0, Math.round(Number(p.late_minutes) || 0));
+          if (p.early_departure_minutes !== undefined) p.early_departure_minutes = Math.max(0, Math.round(Number(p.early_departure_minutes) || 0));
+          if (p.overtime_minutes !== undefined) p.overtime_minutes = Math.max(0, Math.round(Number(p.overtime_minutes) || 0));
+          let repairedHours = Math.round((Number(p.total_hours) || 0) * 100) / 100;
+          if ((!Number.isFinite(repairedHours) || repairedHours <= 0) && p.check_in && p.check_out && p.status !== 'absent' && p.status !== 'leave') {
+            repairedHours = computeWorkedHours(p.check_in, p.check_out);
+          }
+          p.total_hours = Number.isFinite(repairedHours) ? Math.max(0, Math.min(24, repairedHours)) : 0;
           if (!p.employee_ref && p.employee_id) {
             try {
               const empRef = await db.query('SELECT name, phone, offline_uuid FROM employees WHERE id = $1', [p.employee_id]);
@@ -514,6 +524,7 @@ async function applyOperation(operation) {
   } else if (rawPayload && typeof rawPayload === 'object') {
     payload = rawPayload;
   }
+  payload = sanitizeSyncPayload(operation.entity_type, payload);
   const txResult = await db.transaction(async (tx) => {
     if (operation.entity_type === 'color') {
       if (payload.name) {
@@ -684,15 +695,30 @@ async function applyOperation(operation) {
     }
 
     if (operation.entity_type === 'attendance') {
+      const { normalizeDateStr, normalizeTimeString, computeWorkedHours } = require('../hr/payroll.calculator');
       const empId = await resolveEmployeeForSync(tx, payload.employee_id, payload.employee_ref);
       if (!empId) {
         console.warn(`[Sync] Attendance skipped: cannot resolve employee #${payload.employee_id}`);
         return;
       }
-      const lateMinutes = Math.round(Number(payload.late_minutes) || 0);
-      const earlyDepartureMinutes = Math.round(Number(payload.early_departure_minutes) || 0);
-      const overtimeMinutes = Math.round(Number(payload.overtime_minutes) || 0);
-      const totalHours = Math.round((Number(payload.total_hours) || 0) * 100) / 100;
+      const cleanDate = normalizeDateStr(payload.date);
+      const cleanCheckIn = normalizeTimeString(payload.check_in);
+      const cleanCheckOut = normalizeTimeString(payload.check_out);
+      const cleanStatus = payload.status ? String(payload.status).trim() : 'present';
+      const cleanNotes = payload.notes ? String(payload.notes) : null;
+      const isAbsentOrLeave = cleanStatus === 'absent' || cleanStatus === 'leave' || (cleanNotes && (cleanNotes.includes('غياب') || cleanNotes.includes('إجازة') || cleanNotes.includes('جاز')));
+
+      const lateMinutes = Math.max(0, Math.round(Number(payload.late_minutes) || 0));
+      const earlyDepartureMinutes = Math.max(0, Math.round(Number(payload.early_departure_minutes) || 0));
+      const overtimeMinutes = Math.max(0, Math.round(Number(payload.overtime_minutes) || 0));
+      let totalHours = Math.round((Number(payload.total_hours) || 0) * 100) / 100;
+      if (isAbsentOrLeave) {
+        totalHours = 0;
+      } else if ((!Number.isFinite(totalHours) || totalHours <= 0) && cleanCheckIn && cleanCheckOut) {
+        totalHours = computeWorkedHours(cleanCheckIn, cleanCheckOut);
+      }
+      if (!Number.isFinite(totalHours) || totalHours < 0) totalHours = 0;
+      if (totalHours > 24) totalHours = 24;
 
       await tx.query(
         `INSERT INTO attendance
@@ -710,11 +736,11 @@ async function applyOperation(operation) {
            overtime_minutes = EXCLUDED.overtime_minutes`,
         [
           empId,
-          payload.date || null,
-          payload.check_in || null,
-          payload.check_out || null,
-          payload.status || 'present',
-          payload.notes || null,
+          cleanDate,
+          cleanCheckIn,
+          cleanCheckOut,
+          cleanStatus,
+          cleanNotes,
           totalHours,
           lateMinutes,
           earlyDepartureMinutes,
@@ -2513,21 +2539,23 @@ async function applyOperation(operation) {
                  position = COALESCE($2, position),
                  branch_id = COALESCE($3, branch_id),
                  basic_salary = COALESCE($4, basic_salary),
-                 phone = COALESCE($5, phone),
-                 shift_start = COALESCE($6, shift_start),
-                 shift_end = COALESCE($7, shift_end),
-                 status = COALESCE($8, status),
-                 offline_uuid = COALESCE($9, offline_uuid),
-                 branch_scope = COALESCE($10, branch_scope),
-                 branch_ids = COALESCE($11, branch_ids),
-                 join_date = COALESCE($12::date, join_date),
-                 end_date = COALESCE($13::date, end_date)
-             WHERE id = $14`,
+                 commission_rate = COALESCE($5, commission_rate),
+                 phone = COALESCE($6, phone),
+                 shift_start = COALESCE($7, shift_start),
+                 shift_end = COALESCE($8, shift_end),
+                 status = COALESCE($9, status),
+                 offline_uuid = COALESCE($10, offline_uuid),
+                 branch_scope = COALESCE($11, branch_scope),
+                 branch_ids = COALESCE($12, branch_ids),
+                 join_date = COALESCE($13::date, join_date),
+                 end_date = COALESCE($14::date, end_date)
+             WHERE id = $15`,
             [
               payload.name || null,
               payload.position || null,
               branchId,
               payload.basic_salary !== undefined ? payload.basic_salary : null,
+              payload.commission_rate !== undefined ? Number(payload.commission_rate || 0) : null,
               payload.phone || null,
               payload.shift_start || null,
               payload.shift_end || null,
@@ -2542,8 +2570,8 @@ async function applyOperation(operation) {
           );
         } else {
           await tx.query(
-            `INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, end_date, status, shift_start, shift_end, offline_uuid)
-             VALUES ($1, $2, $3, COALESCE($4, 'single'), COALESCE($5, '[]'::jsonb), $6, $7, COALESCE($8::date, CURRENT_DATE), $9::date, COALESCE($10, 'active'), $11, $12, $13)`,
+            `INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, commission_rate, phone, join_date, end_date, status, shift_start, shift_end, offline_uuid)
+             VALUES ($1, $2, $3, COALESCE($4, 'single'), COALESCE($5, '[]'::jsonb), $6, COALESCE($7, 0), $8, COALESCE($9::date, CURRENT_DATE), $10::date, COALESCE($11, 'active'), $12, $13, $14)`,
             [
               payload.name,
               payload.position || null,
@@ -2551,6 +2579,7 @@ async function applyOperation(operation) {
               payload.branch_scope || 'single',
               empBranchIdsJson || '[]',
               payload.basic_salary || 0,
+              payload.commission_rate !== undefined ? Number(payload.commission_rate || 0) : 0,
               payload.phone || null,
               payload.join_date || null,
               payload.end_date || null,
@@ -2585,21 +2614,23 @@ async function applyOperation(operation) {
                  position = COALESCE($2, position),
                  branch_id = COALESCE($3, branch_id),
                  basic_salary = COALESCE($4, basic_salary),
-                 phone = COALESCE($5, phone),
-                 shift_start = COALESCE($6, shift_start),
-                 shift_end = COALESCE($7, shift_end),
-                 status = COALESCE($8, status),
-                 offline_uuid = COALESCE($9, offline_uuid),
-                 branch_scope = COALESCE($10, branch_scope),
-                 branch_ids = COALESCE($11, branch_ids),
-                 join_date = COALESCE($12::date, join_date),
-                 end_date = CASE WHEN $13::boolean THEN $14::date ELSE COALESCE($14::date, end_date) END
-             WHERE id = $15`,
+                 commission_rate = COALESCE($5, commission_rate),
+                 phone = COALESCE($6, phone),
+                 shift_start = COALESCE($7, shift_start),
+                 shift_end = COALESCE($8, shift_end),
+                 status = COALESCE($9, status),
+                 offline_uuid = COALESCE($10, offline_uuid),
+                 branch_scope = COALESCE($11, branch_scope),
+                 branch_ids = COALESCE($12, branch_ids),
+                 join_date = COALESCE($13::date, join_date),
+                 end_date = CASE WHEN $14::boolean THEN $15::date ELSE COALESCE($15::date, end_date) END
+             WHERE id = $16`,
             [
               payload.name || null,
               payload.position || null,
               payload.branch_id || null,
               payload.basic_salary !== undefined ? payload.basic_salary : null,
+              payload.commission_rate !== undefined ? Number(payload.commission_rate || 0) : null,
               payload.phone || null,
               payload.shift_start || null,
               payload.shift_end || null,
@@ -3830,7 +3861,7 @@ async function exportCatalogForBranch(branchId = null) {
   );
 
   const employeesPromise = db.query(
-    `SELECT id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone,
+    `SELECT id, name, position, branch_id, branch_scope, branch_ids, basic_salary, COALESCE(commission_rate, 0) AS commission_rate, phone,
             TO_CHAR(join_date, 'YYYY-MM-DD') AS join_date,
             TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date,
             status, shift_start, shift_end, offline_uuid
@@ -4688,13 +4719,14 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     if (Array.isArray(catalog.employees)) {
       ensureCol('employees', 'offline_uuid', 'TEXT');
       ensureCol('employees', 'end_date', 'TEXT');
+      ensureCol('employees', 'commission_rate', 'REAL DEFAULT 0');
       try { sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_offline_uuid ON employees (offline_uuid) WHERE offline_uuid IS NOT NULL'); } catch {}
       const pendingEmps = getPendingSyncTracker('employee');
       const findEmpByUuidStmt = sqlite.prepare('SELECT id FROM employees WHERE offline_uuid = ? AND id != ?');
 
       const empStmt = sqlite.prepare(`
-        INSERT INTO employees (id, name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, end_date, status, shift_start, shift_end, offline_uuid)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (id, name, position, branch_id, branch_scope, branch_ids, basic_salary, commission_rate, phone, join_date, end_date, status, shift_start, shift_end, offline_uuid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           position = COALESCE(excluded.position, employees.position),
@@ -4702,6 +4734,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           branch_scope = COALESCE(excluded.branch_scope, employees.branch_scope),
           branch_ids = COALESCE(excluded.branch_ids, employees.branch_ids),
           basic_salary = excluded.basic_salary,
+          commission_rate = excluded.commission_rate,
           phone = excluded.phone,
           join_date = COALESCE(excluded.join_date, employees.join_date),
           end_date = excluded.end_date,
@@ -4741,6 +4774,7 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           emp.branch_scope || 'single',
           empBIds,
           Number(emp.basic_salary || 0),
+          Number(emp.commission_rate || 0),
           emp.phone || null,
           toSqliteDate(emp.join_date),
           emp.end_date ? toSqliteDate(emp.end_date) : null,

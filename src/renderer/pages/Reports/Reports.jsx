@@ -3439,7 +3439,7 @@ export function Reports() {
                     <td className="py-3 px-2 text-center">-</td>
                     <td className="py-3 px-2 text-center">-</td>
                     <td className="py-3 px-2.5 text-center font-mono">
-                      {Math.round(salaryReport.employees.reduce((sum, e) => sum + (e.actual_hours || 0), 0))} س
+                      {Math.round(salaryReport.employees.reduce((sum, e) => sum + (e.actual_hours || 0), 0) * 100) / 100} س
                     </td>
                     <td className="py-3 px-2 text-center font-mono text-rose-700">
                       {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.delay_deduction || 0), 0))}

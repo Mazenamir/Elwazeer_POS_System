@@ -523,7 +523,12 @@ export function Employees() {
     setLoadingAttendance(true);
     try {
       const res = await client.get(`/employees/${emp.id}/attendance-report`);
-      setAttendanceLogs(res.data?.logs || (Array.isArray(res.data) ? res.data : []));
+      const payload = res?.data || res || {};
+      setAttendanceLogs(
+        payload.daily_attendance ||
+        payload.logs ||
+        (Array.isArray(payload) ? payload : [])
+      );
     } catch {
       setAttendanceLogs([]);
     } finally {
@@ -589,11 +594,15 @@ export function Employees() {
   // Open Manual Attendance Modal
   const openManualAttendance = (emp) => {
     setManualEmp(emp);
+    const cairoToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo' }).format(new Date());
+    const normalizedStatus = emp.today_attendance_status === 'completed'
+      ? 'present'
+      : (emp.today_attendance_status || 'present');
     setManualForm({
-      date: new Date().toISOString().split('T')[0],
-      status: emp.today_attendance_status || 'present',
-      check_in: emp.today_check_in || emp.shift_start || '10:00',
-      check_out: emp.today_check_out || '',
+      date: cairoToday,
+      status: normalizedStatus,
+      check_in: (emp.today_check_in || emp.shift_start || '10:00').slice(0, 5),
+      check_out: emp.today_check_out ? String(emp.today_check_out).slice(0, 5) : '',
       notes: '',
     });
     setShowManualAttendanceModal(true);
@@ -1850,7 +1859,7 @@ export function Employees() {
                 type="number"
                 min="0"
                 max="100"
-                step="0.1"
+                step="any"
                 placeholder="0"
                 value={empForm.commission_rate}
                 onChange={(e) => setEmpForm({ ...empForm, commission_rate: e.target.value })}
@@ -2187,10 +2196,24 @@ export function Employees() {
                     </td>
                   </tr>
                 ) : (
-                  attendanceLogs.map((log, idx) => (
+                  attendanceLogs.map((log, idx) => {
+                    const rawDate = log.day || log.date || '';
+                    const parsedDate = rawDate ? new Date(`${String(rawDate).slice(0, 10)}T12:00:00`) : null;
+                    const formattedDate = parsedDate && !Number.isNaN(parsedDate.getTime())
+                      ? parsedDate.toLocaleDateString('ar-EG-u-nu-latn')
+                      : (rawDate || '-');
+                    const statusLabelMap = {
+                      present: 'حاضر',
+                      completed: 'مكتمل',
+                      absent: 'غائب',
+                      leave: 'إجازة',
+                      late: 'متأخر',
+                      half_day: 'نصف يوم',
+                    };
+                    return (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="py-2.5 px-3 text-slate-800">
-                        {new Date(log.date || log.check_in).toLocaleDateString('ar-EG-u-nu-latn')}
+                        {formattedDate}
                       </td>
                       <td className="py-2.5 px-3 text-emerald-600">
                         {formatTime(log.check_in_time || log.check_in)}
@@ -2199,18 +2222,19 @@ export function Employees() {
                         {formatTime(log.check_out_time || log.check_out)}
                       </td>
                       <td className="py-2.5 px-3 text-slate-700">
-                        {log.total_hours ? `${log.total_hours} س` : '-'}
+                        {Number(log.total_hours) > 0 ? `${log.total_hours} س` : '-'}
                       </td>
                       <td className="py-2.5 px-3 text-amber-600">
                         {log.late_minutes ? `${log.late_minutes} د` : '0'}
                       </td>
                       <td className="py-2.5 px-3">
                         <span className="px-2 py-0.5 rounded text-[10px] font-black bg-slate-100 text-slate-700">
-                          {log.status === 'present' ? 'حاضر' : log.status || 'مكتمل'}
+                          {statusLabelMap[log.status] || log.status || 'مكتمل'}
                         </span>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -3000,7 +3024,9 @@ export function Employees() {
             {/* Printable Area - Clean separated rows */}
             <div className={`p-6 rounded-2xl bg-white border-2 border-slate-200 space-y-4 ${isEditingPayslip ? 'opacity-50 pointer-events-none' : ''}`} id="payslip-print-area">
               <div className="text-center border-b border-slate-100 pb-3">
-                <h3 className="text-lg font-black text-slate-900">مركز الببيون - كشف راتب شهري ({payslipMonth})</h3>
+                <h3 className="text-lg font-black text-slate-900">
+                  كشف راتب شهري ({payslipMonth})
+                </h3>
                 <p className="text-xs font-bold text-slate-500 mt-1">
                   الموظف: {payslipEmp?.name} | الوظيفة: {payslipEmp?.position || 'موظف'} | الفرع: {livePayslipPreview.employee?.branch_name || payslipEmp?.branch_name || 'الرئيسي'}
                 </p>
@@ -3399,6 +3425,7 @@ export function Employees() {
               onChange={(e) => setManualForm({ ...manualForm, status: e.target.value })}
             >
               <option value="present">حاضر (يوم عمل كامل)</option>
+              <option value="half_day">نصف يوم</option>
               <option value="absent">غائب</option>
               <option value="late">متأخر</option>
               <option value="leave">إجازة رسمية / إذن</option>

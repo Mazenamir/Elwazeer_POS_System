@@ -116,6 +116,117 @@ function shouldIncludeEmployeeInMonth(employee, month, hasActivityInMonth = fals
   return false;
 }
 
+function parseTimeToMinutes(timeVal) {
+  if (timeVal === null || timeVal === undefined) return null;
+  const raw = String(timeVal).trim();
+  if (!raw) return null;
+
+  // Match HH:MM, H:MM, HH:MM:SS, optional fractional seconds, optional AM/PM or Arabic ص/م
+  const timeMatch = raw.match(/(?:^|T|\s)(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(AM|PM|ص|م)?$/i);
+  if (!timeMatch) return null;
+
+  let hours = parseInt(timeMatch[1], 10);
+  const minutes = parseInt(timeMatch[2], 10);
+  const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+  const rawMeridiem = timeMatch[4] ? timeMatch[4].toUpperCase() : null;
+  const meridiem = rawMeridiem === 'ص' ? 'AM' : (rawMeridiem === 'م' ? 'PM' : rawMeridiem);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
+  if (minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return null;
+
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return null;
+    if (meridiem === 'PM' && hours !== 12) hours += 12;
+    if (meridiem === 'AM' && hours === 12) hours = 0;
+  } else {
+    if (hours === 24) hours = 0;
+    if (hours < 0 || hours > 23) return null;
+  }
+
+  return hours * 60 + minutes + seconds / 60;
+}
+
+function normalizeTimeString(timeVal) {
+  const mins = parseTimeToMinutes(timeVal);
+  if (mins === null) return null;
+  const totalSeconds = Math.round(mins * 60);
+  const hh = Math.floor(totalSeconds / 3600) % 24;
+  const mm = Math.floor((totalSeconds % 3600) / 60);
+  const ss = totalSeconds % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
+function computeWorkedHours(checkIn, checkOut) {
+  const inMin = parseTimeToMinutes(checkIn);
+  const outMin = parseTimeToMinutes(checkOut);
+  if (inMin === null || outMin === null) return 0;
+  let diffMin = outMin - inMin;
+  if (diffMin < 0) diffMin += 24 * 60;
+  return round2(Math.max(0, Math.min(24, diffMin / 60)));
+}
+
+function computeAttendanceMetrics({ checkIn, checkOut, shiftStart, shiftEnd, status = 'present', notes = '' } = {}) {
+  const statusStr = String(status || '').toLowerCase();
+  const notesStr = String(notes || '');
+  const isAbsent = statusStr === 'absent' || notesStr.includes('غياب');
+  const isLeave = statusStr === 'leave' || notesStr.includes('جاز') || notesStr.includes('إجازة');
+
+  const normIn = normalizeTimeString(checkIn);
+  const normOut = normalizeTimeString(checkOut);
+
+  if (isAbsent || isLeave) {
+    return {
+      check_in: normIn,
+      check_out: normOut,
+      total_hours: 0,
+      late_minutes: 0,
+      early_departure_minutes: 0,
+      overtime_minutes: 0,
+    };
+  }
+
+  const inMin = parseTimeToMinutes(normIn);
+  const outMin = parseTimeToMinutes(normOut);
+  const shiftStartMin = parseTimeToMinutes(shiftStart);
+  const shiftEndMin = parseTimeToMinutes(shiftEnd);
+
+  let lateMinutes = 0;
+  if (shiftStartMin !== null && inMin !== null) {
+    let diff = inMin - shiftStartMin;
+    if (diff < -12 * 60) diff += 24 * 60;
+    if (diff > 0) lateMinutes = Math.floor(diff);
+  }
+
+  let earlyDepartureMinutes = 0;
+  let overtimeMinutes = 0;
+  if (shiftEndMin !== null && outMin !== null) {
+    let effShiftEnd = shiftEndMin;
+    let effOut = outMin;
+    if (shiftStartMin !== null && shiftEndMin < shiftStartMin) {
+      effShiftEnd += 24 * 60;
+      if (effOut <= shiftEndMin) effOut += 24 * 60;
+    } else if (inMin !== null && effOut < inMin) {
+      effOut += 24 * 60;
+    }
+    if (effOut < effShiftEnd) {
+      earlyDepartureMinutes = Math.floor(effShiftEnd - effOut);
+    } else if (effOut > effShiftEnd) {
+      overtimeMinutes = Math.floor(effOut - effShiftEnd);
+    }
+  }
+
+  const totalHours = (inMin !== null && outMin !== null) ? computeWorkedHours(normIn, normOut) : 0;
+
+  return {
+    check_in: normIn,
+    check_out: normOut,
+    total_hours: totalHours,
+    late_minutes: lateMinutes,
+    early_departure_minutes: earlyDepartureMinutes,
+    overtime_minutes: overtimeMinutes,
+  };
+}
+
 function summarizeAttendanceRows(attendanceRows = []) {
   let totalHours = 0;
   let absentCount = 0;
@@ -124,17 +235,26 @@ function summarizeAttendanceRows(attendanceRows = []) {
   let presentCount = 0;
 
   for (const r of attendanceRows || []) {
-    totalHours += Number(r.total_hours || 0);
     const notes = String(r.notes || '');
     const status = String(r.status || '');
     const isAbsent = notes.includes('غياب') || status === 'absent';
     const isLeave = notes.includes('جاز') || notes.includes('إجازة') || status === 'leave';
     const isHalf = notes.includes('نص يوم') || status === 'half_day';
 
+    let rowHours = Number(r.total_hours || 0);
+    if (isAbsent || isLeave) {
+      rowHours = 0;
+    } else if ((!Number.isFinite(rowHours) || rowHours <= 0) && r.check_in && r.check_out) {
+      rowHours = computeWorkedHours(r.check_in, r.check_out);
+    }
+    if (Number.isFinite(rowHours) && rowHours > 0) {
+      totalHours += rowHours;
+    }
+
     if (isAbsent) absentCount += 1;
     if (isLeave) leaveCount += 1;
     if (isHalf) halfDayCount += 1;
-    if (!isAbsent && !isLeave && (status === 'present' || Number(r.total_hours || 0) > 0 || r.check_in)) {
+    if (!isAbsent && !isLeave && (status === 'present' || status === 'completed' || status === 'late' || rowHours > 0 || r.check_in)) {
       presentCount += 1;
     }
   }
@@ -180,6 +300,7 @@ function calculateEmployeeMonthlyPayroll({
   attendanceRows = [],
   transactionRows = [],
   adjustment = null,
+  monthlySalesAmount = 0,
 }) {
   const adj = adjustment || {};
   const masterBasicSalary = Number(employee?.basic_salary || 0);
@@ -258,7 +379,11 @@ function calculateEmployeeMonthlyPayroll({
   const manualBonuses = manualBonusesOverride !== null ? manualBonusesOverride : tx.bonuses;
   const manualDeductions = manualDeductionsOverride !== null ? manualDeductionsOverride : tx.deductions;
 
-  const commissions = numOrNull(adj.commissions) ?? 0;
+  const commissionRate = Math.max(0, Number(employee?.commission_rate || 0));
+  const monthlySales = Math.max(0, round2(monthlySalesAmount));
+  const calcCommissions = commissionRate > 0 ? round2((monthlySales * commissionRate) / 100) : 0;
+  const commissionsOverride = numOrNull(adj.commissions);
+  const commissions = commissionsOverride !== null ? commissionsOverride : calcCommissions;
   const transportationAllowance = numOrNull(adj.transportation_allowance) ?? 0;
   const oldAdvances = numOrNull(adj.old_advances) ?? 0;
   const previousDues = numOrNull(adj.previous_dues) ?? 0;
@@ -320,6 +445,10 @@ function calculateEmployeeMonthlyPayroll({
     manual_deductions: manualDeductions,
     tx_deductions: tx.deductions,
     commissions,
+    calc_commissions: calcCommissions,
+    has_commissions_override: commissionsOverride !== null,
+    commission_rate: commissionRate,
+    monthly_sales: monthlySales,
     transportation_allowance: transportationAllowance,
     previous_dues: previousDues,
 
@@ -346,6 +475,10 @@ module.exports = {
   numOrNull,
   boolOrNull,
   normalizeDateStr,
+  parseTimeToMinutes,
+  normalizeTimeString,
+  computeWorkedHours,
+  computeAttendanceMetrics,
   getPreviousMonthKey,
   getMonthLastDayStr,
   computeDefaultWorkDays,

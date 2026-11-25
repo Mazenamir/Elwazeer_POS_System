@@ -311,6 +311,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       join_date TEXT DEFAULT CURRENT_DATE,
       shift_start TEXT,
       shift_end TEXT,
+      commission_rate REAL DEFAULT 0,
       status TEXT DEFAULT 'active',
       offline_uuid TEXT UNIQUE
     );
@@ -1102,6 +1103,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec('ALTER TABLE rentals ADD COLUMN actual_pickup_date TEXT'); } catch {}
   try { sqlite.exec('ALTER TABLE customers ADD COLUMN wallet_balance REAL DEFAULT 0'); } catch {}
   try { sqlite.exec('ALTER TABLE employees ADD COLUMN end_date TEXT'); } catch {}
+  try { sqlite.exec('ALTER TABLE employees ADD COLUMN commission_rate REAL DEFAULT 0'); } catch {}
   try { sqlite.exec("ALTER TABLE employee_transactions ADD COLUMN payment_method TEXT DEFAULT 'cash'"); } catch {}
   try { sqlite.exec('ALTER TABLE employee_transactions ADD COLUMN paid_from_drawer INTEGER DEFAULT 0'); } catch {}
   try { sqlite.exec('ALTER TABLE employee_transactions ADD COLUMN branch_id INTEGER'); } catch {}

@@ -223,6 +223,20 @@ function registerSqliteFunctions(dbInstance) {
     if (typeof val === 'number' && typeof fmt === 'string' && !fmt.startsWith('YY') && !fmt.startsWith('HH') && !fmt.startsWith('DD') && fmt !== 'Day') {
       return String(val);
     }
+    const rawStr = String(val).trim();
+    const timeOnlyMatch = rawStr.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/);
+    if (timeOnlyMatch) {
+      const hours = parseInt(timeOnlyMatch[1], 10);
+      const minutes = parseInt(timeOnlyMatch[2], 10);
+      if (fmt === 'HH24:00') return `${String(hours).padStart(2, '0')}:00`;
+      if (fmt === 'HH24:MI') return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      if (fmt === 'HH12:MI AM') {
+        const h12 = hours % 12 || 12;
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        return `${String(h12).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${ampm}`;
+      }
+      return rawStr;
+    }
     const d = new Date(val);
     if (isNaN(d.getTime())) return String(val);
     if (fmt === 'YYYY-MM-DD') return d.toISOString().slice(0, 10);

@@ -6,12 +6,16 @@ const { normalizePermissions, defaultPermissionsForRole, hasPermission } = requi
 const { getCairoDateTimeParts, getMonthRange, getMonthKey, getDatabaseCairoNow, addDays } = require('../../../shared/utils/date');
 const { likePattern, newUuid } = require('../../../shared/utils/string');
 const { clampInt } = require('../../../shared/utils/numbers');
+const { sanitizeDate, sanitizeTime } = require('../../../shared/utils/sanitize');
 const { parsePagination, appendPagination, paginatedPayload } = require('../../../shared/utils/pagination');
 const { queueSyncOperation } = require('../../database/sync.helpers');
 const { hasBranchAccess, getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
 const {
   getPreviousMonthKey,
   calculateEmployeeMonthlyPayroll,
+  computeAttendanceMetrics,
+  computeWorkedHours,
+  normalizeTimeString,
   numOrNull,
   boolOrNull,
 } = require('./payroll.calculator');
@@ -430,9 +434,9 @@ async function listEmployees(query = {}, user = null, req = null) {
 
     const idListSql = empIds.join(',');
     const currentCairoMonth = todayDate.substring(0, 7);
-    const [attRes, txRes, adjRes] = await Promise.all([
+    const [attRes, txRes, adjRes, salesRes] = await Promise.all([
       db.query(
-        `SELECT employee_id, status, notes, check_in, COALESCE(total_hours, 0) AS total_hours
+        `SELECT employee_id, status, notes, check_in, check_out, COALESCE(total_hours, 0) AS total_hours
          FROM attendance
          WHERE employee_id IN (${idListSql}) AND date >= $1::date AND date < $2::date`,
         [monthRange.start, monthRange.end]
@@ -448,6 +452,15 @@ async function listEmployees(query = {}, user = null, req = null) {
          FROM employee_payroll_adjustments
          WHERE employee_id IN (${idListSql}) AND month = $1`,
         [selectedMonth]
+      ),
+      db.query(
+        `SELECT seller_id AS employee_id, COALESCE(SUM(total_amount), 0) AS total_sales
+         FROM orders
+         WHERE seller_id IN (${idListSql})
+           AND order_date >= $1::date AND order_date < $2::date
+           AND COALESCE(status, 'completed') NOT IN ('cancelled', 'canceled', 'returned', 'ملغاة', 'ملغي')
+         GROUP BY seller_id`,
+        [monthRange.start, monthRange.end]
       ),
     ]);
 
@@ -467,6 +480,10 @@ async function listEmployees(query = {}, user = null, req = null) {
     adjRes.rows.forEach((row) => {
       adjByEmp.set(Number(row.employee_id), row);
     });
+    const salesByEmp = new Map();
+    salesRes.rows.forEach((row) => {
+      salesByEmp.set(Number(row.employee_id), Number(row.total_sales || 0));
+    });
 
     return rows.map((r) => {
       const k = Number(r.id);
@@ -477,6 +494,7 @@ async function listEmployees(query = {}, user = null, req = null) {
         attendanceRows: attByEmp.get(k) || [],
         transactionRows: txByEmp.get(k) || [],
         adjustment: adjByEmp.get(k) || null,
+        monthlySalesAmount: salesByEmp.get(k) || 0,
       });
       const totalAdditionsForMonth = Math.round((calc.total_additions || 0) * 100) / 100;
       return {
@@ -530,8 +548,11 @@ async function createEmployee(body, user) {
     branch_scope,
     branch_ids,
     basic_salary,
+    commission_rate,
     phone,
     join_date,
+    end_date,
+    status,
     create_account,
     username,
     password,
@@ -552,14 +573,23 @@ async function createEmployee(body, user) {
   let normalizedPerms = normalizePermissions(permissions);
   if (normalizedPerms.length === 0) normalizedPerms = defaultPermissionsForRole(role);
 
+  const cleanCommissionRate = Number.isFinite(Number(commission_rate))
+    ? Math.max(0, Math.min(100, Math.round(Number(commission_rate) * 100) / 100))
+    : 0;
+
   const employee = await db.transaction(async (tx) => {
     const cairoNow = await getDatabaseCairoNow(tx);
     const cleanBranchId = (branch_id && Number(branch_id) > 0) ? Number(branch_id) : null;
     const scopeInfo = normalizeEmployeeBranchScope(branch_scope, branch_ids, cleanBranchId);
     const empUuid = body.offline_uuid || (require('crypto').randomUUID ? require('crypto').randomUUID() : ('emp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9)));
+    const cleanStatus = status === 'inactive' ? 'inactive' : 'active';
+    const cleanJoinDate = sanitizeDate(join_date) || cairoNow.date;
+    const cleanEndDate = cleanStatus === 'inactive' ? (sanitizeDate(end_date) || cairoNow.date) : null;
+    const cleanShiftStart = sanitizeTime(shift_start);
+    const cleanShiftEnd = sanitizeTime(shift_end);
     const empResult = await tx.query(
-      'INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, phone, join_date, shift_start, shift_end, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
-      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, phone, join_date || cairoNow.date, shift_start || null, shift_end || null, empUuid]
+      'INSERT INTO employees (name, position, branch_id, branch_scope, branch_ids, basic_salary, commission_rate, phone, join_date, end_date, status, shift_start, shift_end, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *',
+      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, cleanCommissionRate, phone, cleanJoinDate, cleanEndDate, cleanStatus, cleanShiftStart, cleanShiftEnd, empUuid]
     );
 
     let createdUser = null;
@@ -626,6 +656,7 @@ async function updateEmployee(id, body, user) {
     branch_scope,
     branch_ids,
     basic_salary,
+    commission_rate,
     phone,
     join_date,
     end_date,
@@ -640,7 +671,7 @@ async function updateEmployee(id, body, user) {
   } = body || {};
 
   const employee = await db.transaction(async (tx) => {
-    const existingRes = await tx.query('SELECT branch_id, branch_scope, branch_ids, status, end_date FROM employees WHERE id = $1', [id]);
+    const existingRes = await tx.query('SELECT branch_id, branch_scope, branch_ids, status, end_date, commission_rate FROM employees WHERE id = $1', [id]);
     if (existingRes.rows.length === 0) {
       const err = new Error('Employee not found');
       err.statusCode = 404;
@@ -666,13 +697,19 @@ async function updateEmployee(id, body, user) {
       cleanBranchId
     );
     const nextStatus = status || existingRes.rows[0].status || 'active';
+    const nextJoinDate = sanitizeDate(join_date);
     const nextEndDate = end_date !== undefined
-      ? (end_date || null)
-      : (nextStatus === 'active' ? null : (existingRes.rows[0].end_date || null));
+      ? sanitizeDate(end_date)
+      : (nextStatus === 'active' ? null : (sanitizeDate(existingRes.rows[0].end_date) || null));
+    const nextShiftStart = sanitizeTime(shift_start);
+    const nextShiftEnd = sanitizeTime(shift_end);
+    const nextCommissionRate = commission_rate !== undefined && commission_rate !== null && commission_rate !== ''
+      ? (Number.isFinite(Number(commission_rate)) ? Math.max(0, Math.min(100, Math.round(Number(commission_rate) * 100) / 100)) : 0)
+      : Number(existingRes.rows[0].commission_rate || 0);
 
     const result = await tx.query(
-      'UPDATE employees SET name = $1, position = $2, branch_id = $3, branch_scope = $4, branch_ids = $5, basic_salary = $6, phone = $7, join_date = COALESCE($8, join_date), end_date = $9, status = $10, shift_start = $11, shift_end = $12 WHERE id = $13 RETURNING *',
-      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, phone, join_date || null, nextEndDate, nextStatus, shift_start || null, shift_end || null, id]
+      'UPDATE employees SET name = $1, position = $2, branch_id = $3, branch_scope = $4, branch_ids = $5, basic_salary = $6, commission_rate = $7, phone = $8, join_date = COALESCE($9, join_date), end_date = $10, status = $11, shift_start = $12, shift_end = $13 WHERE id = $14 RETURNING *',
+      [name, position, cleanBranchId, scopeInfo.branch_scope, JSON.stringify(scopeInfo.branch_ids), basic_salary || 0, nextCommissionRate, phone, nextJoinDate, nextEndDate, nextStatus, nextShiftStart, nextShiftEnd, id]
     );
 
     if (result.rows.length === 0) {
@@ -681,11 +718,20 @@ async function updateEmployee(id, body, user) {
       throw err;
     }
 
-    const userCheck = await tx.query('SELECT id FROM users WHERE employee_id = $1', [id]);
+    const userCheck = await tx.query('SELECT id, username, role, branch_id, permissions FROM users WHERE employee_id = $1', [id]);
+    const hasAccountFields = username !== undefined || role !== undefined || permissions !== undefined || Boolean(password);
 
-    if (userCheck.rows.length > 0) {
+    if (userCheck.rows.length > 0 && hasAccountFields) {
+      const existingUser = userCheck.rows[0];
+      const nextUsername = username || existingUser.username;
+      const nextRole = role || existingUser.role || 'branch_user';
+      const nextUserBranchId = branch_id !== undefined ? (cleanBranchId || null) : existingUser.branch_id;
+      const nextPermsJson = permissions !== undefined
+        ? (typeof permissions === 'string' ? permissions : JSON.stringify(permissions || []))
+        : (typeof existingUser.permissions === 'string' ? existingUser.permissions : JSON.stringify(existingUser.permissions || []));
+
       let updateQuery = 'UPDATE users SET username = $1, role = $2, branch_id = $3, permissions = $4';
-      const params = [username, role || 'branch_user', branch_id || null, JSON.stringify(permissions)];
+      const params = [nextUsername, nextRole, nextUserBranchId, nextPermsJson];
 
       let newPassHash = null;
       if (password) {
@@ -701,12 +747,12 @@ async function updateEmployee(id, body, user) {
 
       if (config.IS_BRANCH_MODE) {
         try {
-          await queueSyncOperation(tx, null, 'user', 'update', userCheck.rows[0].id, branch_id || user?.branch_id || 1, {
-            id: userCheck.rows[0].id,
-            username,
-            role: role || 'branch_user',
-            branch_id: branch_id || null,
-            permissions,
+          await queueSyncOperation(tx, null, 'user', 'update', existingUser.id, nextUserBranchId || user?.branch_id || 1, {
+            id: existingUser.id,
+            username: nextUsername,
+            role: nextRole,
+            branch_id: nextUserBranchId,
+            permissions: nextPermsJson,
             employee_id: id,
             employee_offline_uuid: result.rows[0].offline_uuid,
             full_name: name || result.rows[0].name,
@@ -716,7 +762,7 @@ async function updateEmployee(id, body, user) {
           console.warn('Failed to queue user update sync during employee update:', e.message);
         }
       }
-    } else if (create_account && username && password) {
+    } else if (userCheck.rows.length === 0 && create_account && username && password) {
       const usernameExists = await tx.query('SELECT id FROM users WHERE username = $1', [username]);
       if (usernameExists.rows.length > 0) {
         const err = new Error('Username already exists');
@@ -971,26 +1017,58 @@ async function recordAttendance(body, user) {
     throw err;
   }
 
-  if (isBranchUser) {
-    const check = await db.query('SELECT branch_id, branch_scope, branch_ids FROM employees WHERE id = $1', [employee_id]);
-    if (check.rows.length === 0 || !hasEmployeeBranchAccess(user, check.rows[0])) {
-      const err = new Error('Unauthorized access to this employee');
-      err.statusCode = 403;
-      throw err;
-    }
+  const empRes = await db.query('SELECT branch_id, branch_scope, branch_ids, shift_start, shift_end FROM employees WHERE id = $1', [employee_id]);
+  if (empRes.rows.length === 0) {
+    const err = new Error('Employee not found');
+    err.statusCode = 404;
+    throw err;
   }
 
+  if (isBranchUser && !hasEmployeeBranchAccess(user, empRes.rows[0])) {
+    const err = new Error('Unauthorized access to this employee');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const resolvedStatus = status || (check_in && check_out ? 'completed' : 'present');
+  const metrics = computeAttendanceMetrics({
+    checkIn: check_in,
+    checkOut: check_out,
+    shiftStart: empRes.rows[0].shift_start,
+    shiftEnd: empRes.rows[0].shift_end,
+    status: resolvedStatus,
+    notes,
+  });
+
   const result = await db.query(
-    `INSERT INTO attendance (employee_id, date, check_in, check_out, status, notes) 
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO attendance (employee_id, date, check_in, check_out, status, notes, total_hours, late_minutes, early_departure_minutes, overtime_minutes) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (employee_id, date) 
-     DO UPDATE SET check_in = EXCLUDED.check_in, check_out = EXCLUDED.check_out, status = EXCLUDED.status, notes = EXCLUDED.notes
+     DO UPDATE SET
+       check_in = EXCLUDED.check_in,
+       check_out = EXCLUDED.check_out,
+       status = EXCLUDED.status,
+       notes = EXCLUDED.notes,
+       total_hours = EXCLUDED.total_hours,
+       late_minutes = EXCLUDED.late_minutes,
+       early_departure_minutes = EXCLUDED.early_departure_minutes,
+       overtime_minutes = EXCLUDED.overtime_minutes
      RETURNING *`,
-    [employee_id, date, check_in, check_out, status || 'present', notes]
+    [
+      employee_id,
+      date,
+      metrics.check_in,
+      metrics.check_out,
+      resolvedStatus,
+      notes || null,
+      metrics.total_hours,
+      metrics.late_minutes,
+      metrics.early_departure_minutes,
+      metrics.overtime_minutes,
+    ]
   );
   const row = result.rows[0];
-  const empBranchRes = await db.query('SELECT branch_id FROM employees WHERE id = $1', [employee_id]);
-  const branchId = empBranchRes.rows[0]?.branch_id || user?.branch_id || config.BRANCH_ID || 1;
+  const branchId = empRes.rows[0]?.branch_id || user?.branch_id || config.BRANCH_ID || 1;
   await queueSyncOperation(db, null, 'attendance', 'upsert', row.id, branchId, {
     employee_id: row.employee_id,
     date: row.date,
@@ -1037,14 +1115,15 @@ async function toggleAttendance(id, manualTime, user) {
   );
 
   if (existingRes.rows.length === 0 || !existingRes.rows[0].check_in) {
-    let lateMinutes = 0;
-    if (empRes.rows[0].shift_start) {
-      const checkInDate = new Date(`${date}T${time}`);
-      const shiftStartDate = new Date(`${date}T${empRes.rows[0].shift_start}`);
-      if (checkInDate > shiftStartDate) {
-        lateMinutes = Math.floor((checkInDate - shiftStartDate) / 60000);
-      }
-    }
+    const metrics = computeAttendanceMetrics({
+      checkIn: time,
+      checkOut: null,
+      shiftStart: empRes.rows[0].shift_start,
+      shiftEnd: empRes.rows[0].shift_end,
+      status: 'present',
+    });
+    const cleanCheckIn = metrics.check_in || time;
+    const lateMinutes = metrics.late_minutes;
 
     const result = await db.query(
       `INSERT INTO attendance (employee_id, date, check_in, status, late_minutes)
@@ -1052,7 +1131,7 @@ async function toggleAttendance(id, manualTime, user) {
        ON CONFLICT (employee_id, date)
        DO UPDATE SET check_in = EXCLUDED.check_in, status = 'present', late_minutes = EXCLUDED.late_minutes
        RETURNING *`,
-      [id, date, time, lateMinutes]
+      [id, date, cleanCheckIn, lateMinutes]
     );
     const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
     await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
@@ -1071,22 +1150,17 @@ async function toggleAttendance(id, manualTime, user) {
   }
 
   if (!existingRes.rows[0].check_out) {
-    let earlyDepartureMinutes = 0;
-    let overtimeMinutes = 0;
-    if (empRes.rows[0].shift_end) {
-      const checkOutDate = new Date(`${date}T${time}`);
-      const shiftEndDate = new Date(`${date}T${empRes.rows[0].shift_end}`);
-      if (checkOutDate < shiftEndDate) {
-        earlyDepartureMinutes = Math.floor((shiftEndDate - checkOutDate) / 60000);
-      } else if (checkOutDate > shiftEndDate) {
-        overtimeMinutes = Math.floor((checkOutDate - shiftEndDate) / 60000);
-      }
-    }
-
-    const checkInDate = new Date(`${date}T${existingRes.rows[0].check_in}`);
-    const checkOutDate = new Date(`${date}T${time}`);
-    if (checkOutDate < checkInDate) checkOutDate.setDate(checkOutDate.getDate() + 1);
-    const totalHours = Math.round(((checkOutDate - checkInDate) / 3600000) * 100) / 100;
+    const metrics = computeAttendanceMetrics({
+      checkIn: existingRes.rows[0].check_in,
+      checkOut: time,
+      shiftStart: empRes.rows[0].shift_start,
+      shiftEnd: empRes.rows[0].shift_end,
+      status: 'completed',
+    });
+    const cleanCheckOut = metrics.check_out || time;
+    const earlyDepartureMinutes = metrics.early_departure_minutes;
+    const overtimeMinutes = metrics.overtime_minutes;
+    const totalHours = metrics.total_hours;
 
     const result = await db.query(
       `UPDATE attendance
@@ -1097,7 +1171,7 @@ async function toggleAttendance(id, manualTime, user) {
            overtime_minutes = $5
        WHERE employee_id = $2 AND date = $3
        RETURNING *`,
-      [time, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours]
+      [cleanCheckOut, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours]
     );
     const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
     await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
@@ -1160,29 +1234,17 @@ async function handleCheckoutReminder(id, attendanceDate, user) {
     return { action: 'already_completed', attendance };
   }
 
-  let earlyDepartureMinutes = 0;
-  let overtimeMinutes = 0;
-  if (employee.shift_end) {
-    const shiftStart = String(employee.shift_start || '00:00');
-    const shiftEnd = String(employee.shift_end);
-    const checkOutTime = String(time);
-    const shiftEndDate = new Date(`${date}T${shiftEnd}`);
-    const checkOutDate = new Date(`${date}T${checkOutTime}`);
-    if (employee.shift_start && shiftEnd < shiftStart) {
-      shiftEndDate.setDate(shiftEndDate.getDate() + 1);
-      if (checkOutTime <= shiftEnd) checkOutDate.setDate(checkOutDate.getDate() + 1);
-    }
-    if (checkOutDate < shiftEndDate) {
-      earlyDepartureMinutes = Math.floor((shiftEndDate - checkOutDate) / 60000);
-    } else if (checkOutDate > shiftEndDate) {
-      overtimeMinutes = Math.floor((checkOutDate - shiftEndDate) / 60000);
-    }
-  }
-
-  const checkInDate = new Date(`${date}T${attendance.check_in}`);
-  const checkOutDate = new Date(`${date}T${time}`);
-  if (checkOutDate < checkInDate) checkOutDate.setDate(checkOutDate.getDate() + 1);
-  const totalHours = Math.round(((checkOutDate - checkInDate) / 3600000) * 100) / 100;
+  const metrics = computeAttendanceMetrics({
+    checkIn: attendance.check_in,
+    checkOut: time,
+    shiftStart: employee.shift_start,
+    shiftEnd: employee.shift_end,
+    status: 'completed',
+  });
+  const cleanCheckOut = metrics.check_out || time;
+  const earlyDepartureMinutes = metrics.early_departure_minutes;
+  const overtimeMinutes = metrics.overtime_minutes;
+  const totalHours = metrics.total_hours;
 
   const result = await db.query(
     `UPDATE attendance
@@ -1193,7 +1255,7 @@ async function handleCheckoutReminder(id, attendanceDate, user) {
          overtime_minutes = $5
      WHERE employee_id = $2 AND date = $3
      RETURNING *`,
-    [time, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours]
+    [cleanCheckOut, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours]
   );
   if (result.rows.length > 0) {
     const branchId = employee.branch_id || config.BRANCH_ID || 1;
@@ -1243,35 +1305,14 @@ async function recordManualAttendance(id, body, user) {
     throw err;
   }
 
-  let lateMinutes = 0;
-  let earlyDepartureMinutes = 0;
-  let overtimeMinutes = 0;
-  let totalHours = 0;
-
-  if (status === 'present') {
-    if (empRes.rows[0].shift_start && check_in) {
-      const checkInDate = new Date(`${date}T${check_in}`);
-      const shiftStartDate = new Date(`${date}T${empRes.rows[0].shift_start}`);
-      if (checkInDate > shiftStartDate) {
-        lateMinutes = Math.floor((checkInDate - shiftStartDate) / 60000);
-      }
-    }
-    if (empRes.rows[0].shift_end && check_out) {
-      const checkOutDate = new Date(`${date}T${check_out}`);
-      const shiftEndDate = new Date(`${date}T${empRes.rows[0].shift_end}`);
-      if (checkOutDate < shiftEndDate) {
-        earlyDepartureMinutes = Math.floor((shiftEndDate - checkOutDate) / 60000);
-      } else if (checkOutDate > shiftEndDate) {
-        overtimeMinutes = Math.floor((checkOutDate - shiftEndDate) / 60000);
-      }
-    }
-    if (check_in && check_out) {
-      const checkInDate = new Date(`${date}T${check_in}`);
-      const checkOutDate = new Date(`${date}T${check_out}`);
-      if (checkOutDate < checkInDate) checkOutDate.setDate(checkOutDate.getDate() + 1);
-      totalHours = (checkOutDate - checkInDate) / 3600000;
-    }
-  }
+  const metrics = computeAttendanceMetrics({
+    checkIn: check_in,
+    checkOut: check_out,
+    shiftStart: empRes.rows[0].shift_start,
+    shiftEnd: empRes.rows[0].shift_end,
+    status,
+    notes,
+  });
 
   const result = await db.query(
     `INSERT INTO attendance (employee_id, date, status, notes, check_in, check_out, total_hours, late_minutes, early_departure_minutes, overtime_minutes)
@@ -1279,7 +1320,18 @@ async function recordManualAttendance(id, body, user) {
      ON CONFLICT (employee_id, date)
      DO UPDATE SET status = EXCLUDED.status, notes = EXCLUDED.notes, check_in = EXCLUDED.check_in, check_out = EXCLUDED.check_out, total_hours = EXCLUDED.total_hours, late_minutes = EXCLUDED.late_minutes, early_departure_minutes = EXCLUDED.early_departure_minutes, overtime_minutes = EXCLUDED.overtime_minutes
      RETURNING *`,
-    [id, date, status, notes || null, check_in || null, check_out || null, totalHours, lateMinutes, earlyDepartureMinutes, overtimeMinutes]
+    [
+      id,
+      date,
+      status,
+      notes || null,
+      metrics.check_in,
+      metrics.check_out,
+      metrics.total_hours,
+      metrics.late_minutes,
+      metrics.early_departure_minutes,
+      metrics.overtime_minutes,
+    ]
   );
 
   const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
@@ -1339,9 +1391,27 @@ async function getAttendanceReport(id, user) {
     [id]
   );
 
+  const healedRows = (attendanceRes.rows || []).map((row) => {
+    const notesStr = String(row.notes || '');
+    const statusStr = String(row.status || '');
+    const isAbsentOrLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
+    let hours = Number(row.total_hours || 0);
+    if (isAbsentOrLeave) {
+      hours = 0;
+    } else if ((!Number.isFinite(hours) || hours <= 0) && row.check_in && row.check_out) {
+      hours = computeWorkedHours(row.check_in, row.check_out);
+    }
+    return {
+      ...row,
+      date: row.day,
+      total_hours: Math.round((Number(hours) || 0) * 100) / 100,
+    };
+  });
+
   return {
     employee_name: empRes.rows[0].name,
-    daily_attendance: attendanceRes.rows,
+    daily_attendance: healedRows,
+    logs: healedRows,
   };
 }
 
@@ -1556,7 +1626,7 @@ async function getEmployeeSummary(id, monthParam, user, options = {}) {
       [id, windowStart, windowEnd]
     ),
     db.query(
-      `SELECT TO_CHAR(date, 'YYYY-MM') as month, status, notes, check_in, COALESCE(total_hours, 0) as total_hours
+      `SELECT TO_CHAR(date, 'YYYY-MM') as month, status, notes, check_in, check_out, COALESCE(total_hours, 0) as total_hours
        FROM attendance
        WHERE employee_id = $1 AND date >= $2::date AND date < $3::date`,
       [id, windowStart, windowEnd]
@@ -1764,7 +1834,7 @@ async function getEmployeePayslip(id, monthParam, user) {
   const prevMonth = getPreviousMonthKey(month);
   const prevRange = prevMonth ? getMonthRange(prevMonth) : null;
 
-  const [txRes, attRes, adjRes, prevTxRes, prevAttRes, prevAdjRes] = await Promise.all([
+  const [txRes, attRes, adjRes, salesRes, prevTxRes, prevAttRes, prevAdjRes, prevSalesRes] = await Promise.all([
     db.query(
       `SELECT id, type, amount, TO_CHAR(transaction_date, 'YYYY-MM-DD') AS transaction_date, notes,
               COALESCE(payment_method, 'cash') AS payment_method,
@@ -1775,7 +1845,7 @@ async function getEmployeePayslip(id, monthParam, user) {
       [id, monthRange.start, monthRange.end]
     ),
     db.query(
-      `SELECT status, notes, check_in,
+      `SELECT status, notes, check_in, check_out,
               COALESCE(late_minutes, 0) as late_minutes,
               COALESCE(early_departure_minutes, 0) as early_minutes,
               COALESCE(overtime_minutes, 0) as overtime_minutes,
@@ -1788,6 +1858,14 @@ async function getEmployeePayslip(id, monthParam, user) {
       'SELECT * FROM employee_payroll_adjustments WHERE employee_id = $1 AND month = $2 LIMIT 1',
       [id, month]
     ),
+    db.query(
+      `SELECT COALESCE(SUM(total_amount), 0) AS total_sales
+       FROM orders
+       WHERE seller_id = $1
+         AND order_date >= $2::date AND order_date < $3::date
+         AND COALESCE(status, 'completed') NOT IN ('cancelled', 'canceled', 'returned', 'ملغاة', 'ملغي')`,
+      [id, monthRange.start, monthRange.end]
+    ),
     prevRange
       ? db.query(
           `SELECT id, type, amount
@@ -1798,7 +1876,7 @@ async function getEmployeePayslip(id, monthParam, user) {
       : Promise.resolve({ rows: [] }),
     prevRange
       ? db.query(
-          `SELECT status, notes, check_in, COALESCE(total_hours, 0) as total_hours
+          `SELECT status, notes, check_in, check_out, COALESCE(total_hours, 0) as total_hours
            FROM attendance
            WHERE employee_id = $1 AND date >= $2::date AND date < $3::date`,
           [id, prevRange.start, prevRange.end]
@@ -1810,6 +1888,16 @@ async function getEmployeePayslip(id, monthParam, user) {
           [id, prevMonth]
         )
       : Promise.resolve({ rows: [] }),
+    prevRange
+      ? db.query(
+          `SELECT COALESCE(SUM(total_amount), 0) AS total_sales
+           FROM orders
+           WHERE seller_id = $1
+             AND order_date >= $2::date AND order_date < $3::date
+             AND COALESCE(status, 'completed') NOT IN ('cancelled', 'canceled', 'returned', 'ملغاة', 'ملغي')`,
+          [id, prevRange.start, prevRange.end]
+        )
+      : Promise.resolve({ rows: [{ total_sales: 0 }] }),
   ]);
 
   const txRows = txRes.rows;
@@ -1820,6 +1908,7 @@ async function getEmployeePayslip(id, monthParam, user) {
     attendanceRows: attRes.rows,
     transactionRows: txRows,
     adjustment: adjRes.rows[0] || null,
+    monthlySalesAmount: Number(salesRes.rows[0]?.total_sales || 0),
   });
 
   let carryoverSuggestion = {
@@ -1839,6 +1928,7 @@ async function getEmployeePayslip(id, monthParam, user) {
         attendanceRows: prevAttRes.rows,
         transactionRows: prevTxRes.rows,
         adjustment: prevAdjRes.rows[0] || null,
+        monthlySalesAmount: Number(prevSalesRes.rows[0]?.total_sales || 0),
       });
       carryoverSuggestion = {
         prev_month: prevMonth,
@@ -2056,7 +2146,7 @@ async function saveEmployeePayrollAdjustment(id, body = {}, user = null) {
   const penaltyDays = numOrNull(body.penalty_days) ?? 0;
   const manualDedOverride = numOrNull(body.manual_deductions_override);
   const manualBonusOverride = numOrNull(body.manual_bonuses_override);
-  const commissions = numOrNull(body.commissions) ?? 0;
+  const commissions = numOrNull(body.commissions);
   const transportationAllowance = numOrNull(body.transportation_allowance) ?? 0;
   const oldAdvances = numOrNull(body.old_advances) ?? 0;
   const previousDues = numOrNull(body.previous_dues) ?? 0;

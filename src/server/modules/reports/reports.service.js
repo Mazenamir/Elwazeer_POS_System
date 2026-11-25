@@ -22,7 +22,12 @@ const {
 const { hasPermission, isBranchScopedUser } = require('../../../shared/constants/permissions');
 const { hasBranchAccess } = require('../../middleware/branchScope.middleware');
 const { resolveCategoryQuery } = require('../inventory/inventory.helpers');
-const { calculateEmployeeMonthlyPayroll, shouldIncludeEmployeeInMonth } = require('../hr/payroll.calculator');
+const {
+  calculateEmployeeMonthlyPayroll,
+  shouldIncludeEmployeeInMonth,
+  computeAttendanceMetrics,
+  computeWorkedHours,
+} = require('../hr/payroll.calculator');
 
 async function getDashboard(query = {}, user = null) {
   if (!user) {
@@ -3393,11 +3398,22 @@ async function getExtendedDailyReport(query = {}, user = null) {
     amount: Number(row.amount || 0),
   }));
 
-  const attendance = attendanceRes.rows.map(row => ({
-    ...row,
-    total_hours: Number(row.total_hours || 0),
-    basic_salary: Number(row.basic_salary || 0),
-  }));
+  const attendance = attendanceRes.rows.map(row => {
+    const notesStr = String(row.notes || '');
+    const statusStr = String(row.status || '');
+    const isAbsentOrLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
+    let hours = Number(row.total_hours || 0);
+    if (isAbsentOrLeave) {
+      hours = 0;
+    } else if ((!Number.isFinite(hours) || hours <= 0) && row.check_in_24 && row.check_out_24) {
+      hours = computeWorkedHours(row.check_in_24, row.check_out_24);
+    }
+    return {
+      ...row,
+      total_hours: Math.round((Number(hours) || 0) * 100) / 100,
+      basic_salary: Number(row.basic_salary || 0),
+    };
+  });
 
   const supplierPayments = ((supplierPaymentsRes && supplierPaymentsRes.rows) || []).map(row => ({
     ...row,
@@ -3552,6 +3568,8 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
         TO_CHAR(a.date, 'YYYY-MM-DD') as date,
         a.status,
         a.notes,
+        a.check_in,
+        a.check_out,
         a.total_hours
       FROM attendance a
       JOIN employees e ON a.employee_id = e.id
@@ -3667,12 +3685,24 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
         else advances21toEnd += adv;
       }
 
+      const isDayAbsentOrLeave = att && (
+        att.status === 'absent' ||
+        att.status === 'leave' ||
+        (att.notes && (att.notes.includes('غياب') || att.notes.includes('إجازة') || att.notes.includes('جاز')))
+      );
+      let dayHours = Number(att?.total_hours || 0);
+      if (isDayAbsentOrLeave) {
+        dayHours = 0;
+      } else if ((!Number.isFinite(dayHours) || dayHours <= 0) && att?.check_in && att?.check_out) {
+        dayHours = computeWorkedHours(att.check_in, att.check_out);
+      }
+
       days.push({
         day: d,
         attendance: isPresent,
         advance: adv,
         notes: att?.notes || '',
-        total_hours: Number(att?.total_hours || 0),
+        total_hours: Math.round((Number(dayHours) || 0) * 100) / 100,
       });
     }
 
@@ -3754,9 +3784,9 @@ async function getMonthlySalarySheet(query = {}, user = null) {
   const empWhere = reportBranchId ? 'WHERE e.branch_id = $1' : '';
   const empParams = reportBranchId ? [reportBranchId] : [];
 
-  const [employeesRes, attendanceRes, transactionsRes, adjustmentsRes] = await Promise.all([
+  const [employeesRes, attendanceRes, transactionsRes, adjustmentsRes, salesRes] = await Promise.all([
     db.query(`
-      SELECT e.id, e.name, e.basic_salary, e.branch_id, e.status, e.join_date, e.end_date, b.name as branch_name
+      SELECT e.id, e.name, e.basic_salary, COALESCE(e.commission_rate, 0) as commission_rate, e.branch_id, e.status, e.join_date, e.end_date, b.name as branch_name
       FROM employees e
       LEFT JOIN branches b ON e.branch_id = b.id
       ${empWhere}
@@ -3769,6 +3799,7 @@ async function getMonthlySalarySheet(query = {}, user = null) {
         a.status,
         a.notes,
         a.check_in,
+        a.check_out,
         COALESCE(a.total_hours, 0) as total_hours
       FROM attendance a
       JOIN employees e ON a.employee_id = e.id
@@ -3795,6 +3826,16 @@ async function getMonthlySalarySheet(query = {}, user = null) {
       WHERE adj.month = $1
         ${reportBranchId ? 'AND e.branch_id = $2' : ''}
     `, [month, ...(reportBranchId ? [reportBranchId] : [])]),
+
+    db.query(`
+      SELECT o.seller_id AS employee_id, COALESCE(SUM(o.total_amount), 0) AS total_sales
+      FROM orders o
+      JOIN employees e ON o.seller_id = e.id
+      WHERE o.order_date >= $1::date AND o.order_date < $2::date
+        AND COALESCE(o.status, 'completed') NOT IN ('cancelled', 'canceled', 'returned', 'ملغاة', 'ملغي')
+        ${reportBranchId ? 'AND e.branch_id = $3' : ''}
+      GROUP BY o.seller_id
+    `, [monthStart, monthEnd, ...(reportBranchId ? [reportBranchId] : [])]),
   ]);
 
   const attByEmp = new Map();
@@ -3816,10 +3857,15 @@ async function getMonthlySalarySheet(query = {}, user = null) {
     adjByEmp.set(Number(r.employee_id), r);
   });
 
+  const salesByEmp = new Map();
+  salesRes.rows.forEach((r) => {
+    salesByEmp.set(Number(r.employee_id), Number(r.total_sales || 0));
+  });
+
   const salarySheet = employeesRes.rows
     .filter((emp) => {
       const k = Number(emp.id);
-      const hasActivity = attByEmp.has(k) || txByEmp.has(k) || adjByEmp.has(k);
+      const hasActivity = attByEmp.has(k) || txByEmp.has(k) || adjByEmp.has(k) || salesByEmp.has(k);
       return shouldIncludeEmployeeInMonth(emp, month, hasActivity);
     })
     .map((emp) => {
@@ -3831,6 +3877,7 @@ async function getMonthlySalarySheet(query = {}, user = null) {
         attendanceRows: attByEmp.get(k) || [],
         transactionRows: txByEmp.get(k) || [],
         adjustment: adjByEmp.get(k) || null,
+        monthlySalesAmount: salesByEmp.get(k) || 0,
       });
 
       return {
@@ -4084,7 +4131,7 @@ async function updateDailyAttendanceQuick(data = {}, user = null) {
     throw err;
   }
 
-  const empRes = await db.query('SELECT branch_id, name FROM employees WHERE id = $1', [employee_id]);
+  const empRes = await db.query('SELECT branch_id, name, shift_start, shift_end FROM employees WHERE id = $1', [employee_id]);
   if (empRes.rows.length === 0) {
     const err = new Error('Employee not found');
     err.statusCode = 404;
@@ -4103,53 +4150,71 @@ async function updateDailyAttendanceQuick(data = {}, user = null) {
   );
   const existingAtt = existingAttRes.rows[0];
 
-  const effectiveCheckIn = (check_in !== undefined && check_in !== null && check_in !== '')
-    ? check_in
-    : (existingAtt?.check_in ? String(existingAtt.check_in).slice(0, 5) : null);
+  const hasCheckInField = Object.prototype.hasOwnProperty.call(data || {}, 'check_in');
+  const hasCheckOutField = Object.prototype.hasOwnProperty.call(data || {}, 'check_out');
 
-  const effectiveCheckOut = (check_out !== undefined && check_out !== null && check_out !== '')
-    ? check_out
-    : (existingAtt?.check_out ? String(existingAtt.check_out).slice(0, 5) : null);
+  const effectiveCheckIn = hasCheckInField
+    ? (check_in !== null && check_in !== '' ? check_in : null)
+    : (existingAtt?.check_in ? String(existingAtt.check_in).slice(0, 8) : null);
 
-  let totalHours = Number(data.total_hours);
-  if (!Number.isFinite(totalHours) || totalHours === 0) {
-    if (effectiveCheckIn && effectiveCheckOut) {
-      const inTime = new Date(`${date}T${effectiveCheckIn}`);
-      const outTime = new Date(`${date}T${effectiveCheckOut}`);
-      if (!isNaN(inTime) && !isNaN(outTime)) {
-        if (outTime < inTime) outTime.setDate(outTime.getDate() + 1);
-        totalHours = Math.round(((outTime - inTime) / 3600000) * 100) / 100;
-      }
-    } else if (existingAtt?.total_hours && (check_in === undefined || check_in === null || check_in === '') && (check_out === undefined || check_out === null || check_out === '')) {
-      totalHours = Number(existingAtt.total_hours);
-    }
-  }
-  if (!Number.isFinite(totalHours)) totalHours = 0;
+  const effectiveCheckOut = hasCheckOutField
+    ? (check_out !== null && check_out !== '' ? check_out : null)
+    : (existingAtt?.check_out ? String(existingAtt.check_out).slice(0, 8) : null);
 
   let resolvedStatus = status || (existingAtt?.status || 'present');
   const notesStr = String(notes !== undefined && notes !== null ? notes : (existingAtt?.notes || ''));
   if (notesStr.includes('غياب')) resolvedStatus = 'absent';
   else if (notesStr.includes('جاز') || notesStr.includes('إجازة')) resolvedStatus = 'leave';
   else if (notesStr.includes('نص يوم')) resolvedStatus = 'half_day';
-  else if (effectiveCheckIn || totalHours > 0) resolvedStatus = 'present';
+  else if (effectiveCheckIn && effectiveCheckOut) resolvedStatus = 'completed';
+  else if (effectiveCheckIn) resolvedStatus = 'present';
+
+  const metrics = computeAttendanceMetrics({
+    checkIn: effectiveCheckIn,
+    checkOut: effectiveCheckOut,
+    shiftStart: emp.shift_start,
+    shiftEnd: emp.shift_end,
+    status: resolvedStatus,
+    notes: notesStr,
+  });
+
+  let totalHours = metrics.total_hours;
+  const explicitHours = data.total_hours !== undefined && data.total_hours !== null && data.total_hours !== ''
+    ? Number(data.total_hours)
+    : null;
+  if (resolvedStatus !== 'absent' && resolvedStatus !== 'leave') {
+    if (explicitHours !== null && Number.isFinite(explicitHours) && explicitHours > 0 && (!effectiveCheckIn || !effectiveCheckOut)) {
+      totalHours = Math.round(explicitHours * 100) / 100;
+    } else if (!effectiveCheckIn && !effectiveCheckOut && !hasCheckInField && !hasCheckOutField && existingAtt?.total_hours) {
+      totalHours = Math.round((Number(existingAtt.total_hours) || 0) * 100) / 100;
+    }
+  } else {
+    totalHours = 0;
+  }
 
   const res = await db.query(`
-    INSERT INTO attendance (employee_id, date, check_in, check_out, total_hours, notes, status)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO attendance (employee_id, date, check_in, check_out, total_hours, late_minutes, early_departure_minutes, overtime_minutes, notes, status)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (employee_id, date)
     DO UPDATE SET
       check_in = EXCLUDED.check_in,
       check_out = EXCLUDED.check_out,
       total_hours = EXCLUDED.total_hours,
+      late_minutes = EXCLUDED.late_minutes,
+      early_departure_minutes = EXCLUDED.early_departure_minutes,
+      overtime_minutes = EXCLUDED.overtime_minutes,
       notes = EXCLUDED.notes,
       status = EXCLUDED.status
     RETURNING *
   `, [
     employee_id,
     date,
-    effectiveCheckIn || null,
-    effectiveCheckOut || null,
+    metrics.check_in,
+    metrics.check_out,
     totalHours,
+    metrics.late_minutes,
+    metrics.early_departure_minutes,
+    metrics.overtime_minutes,
     notesStr || null,
     resolvedStatus
   ]);
