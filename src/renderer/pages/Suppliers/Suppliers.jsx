@@ -61,6 +61,7 @@ import SmartStockRequestModal from '../../components/inventory/SmartStockRequest
 import ProductVariantsCell from '../../components/inventory/ProductVariantsCell';
 import VariantMatrixModal from '../../components/inventory/VariantMatrixModal';
 import SupplierReturnModal from '../../components/suppliers/SupplierReturnModal';
+import ImageLightboxModal from '../../components/modals/ImageLightboxModal';
 
 const CATEGORY_DISPLAY_MAP = {
   'الكل': 'كل التصنيفات',
@@ -537,6 +538,24 @@ total: 0,
   const openVariantMatrix = useCallback((product, initialColor = '') => {
     setVariantMatrixState({ open: true, product, initialColor });
   }, []);
+
+  // Image Lightbox Modal
+  const [lightboxState, setLightboxState] = useState({ open: false, items: [], index: 0 });
+  const openProductLightbox = useCallback((clickedProduct) => {
+    if (!clickedProduct?.image_url) return;
+    const withImages = (products || []).filter((item) => Boolean(item?.image_url));
+    const list = withImages.length > 0 ? withImages : [clickedProduct];
+    const idx = Math.max(0, list.findIndex((item) => item.id === clickedProduct.id));
+    setLightboxState({
+      open: true,
+      items: list.map((item) => ({
+        src: item.image_url,
+        title: item.name,
+        subtitle: [item.category, item.barcode ? `باركود: ${item.barcode}` : null, item.price ? `${Number(item.price).toLocaleString()} ج.م` : null].filter(Boolean).join(' | '),
+      })),
+      index: idx,
+    });
+  }, [products]);
 
   // Incoming Shipments (Pending receiving)
   const [incomingShipments, setIncomingShipments] = useState([]);
@@ -2957,7 +2976,13 @@ total: 0,
                       return (
                         <tr key={p.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                           <td className="py-3 pr-4">
-                            <div className="w-10 h-10 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] overflow-hidden flex items-center justify-center">
+                            <div
+                              onClick={() => p.image_url && openProductLightbox(p)}
+                              title={p.image_url ? 'اضغط لتكبير الصورة' : undefined}
+                              className={`w-10 h-10 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] overflow-hidden flex items-center justify-center ${
+                                p.image_url ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400 hover:scale-105 transition-all' : ''
+                              }`}
+                            >
                               {p.image_url ? (
                                 <img
                                   src={p.image_url}
@@ -5406,6 +5431,14 @@ total: 0,
           setIsBarcodeNewlyCreated(false);
           setShowBarcodePrintModal(true);
         }}
+      />
+
+      {/* IMAGE LIGHTBOX MODAL */}
+      <ImageLightboxModal
+        isOpen={lightboxState.open}
+        items={lightboxState.items}
+        initialIndex={lightboxState.index}
+        onClose={() => setLightboxState((prev) => ({ ...prev, open: false }))}
       />
     </div>
   );

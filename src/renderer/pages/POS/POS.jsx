@@ -38,6 +38,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Eye,
 } from 'lucide-react';
 import ExpensesManager from '../../components/expenses/ExpensesManager';
 import { useAuth } from '../../context/AuthContext';
@@ -54,6 +55,7 @@ import { printElement } from '../../utils/print';
 import { ThermalReceipt } from '../../components/receipts';
 import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
 import SmartStockRequestModal from '../../components/inventory/SmartStockRequestModal';
+import ImageLightboxModal from '../../components/modals/ImageLightboxModal';
 
 
 function playBeep() {
@@ -111,6 +113,19 @@ export function POS() {
   const transferBranches = Array.isArray(allBranches) && allBranches.length > 0 ? allBranches : branches;
   const toast = useToast();
   const [searchParams] = useSearchParams();
+  const [lightboxState, setLightboxState] = useState({ open: false, items: [], index: 0 });
+  const openPosProductLightbox = useCallback((clickedProduct) => {
+    if (!clickedProduct?.image_url) return;
+    setLightboxState({
+      open: true,
+      items: [{
+        src: clickedProduct.image_url,
+        title: clickedProduct.name,
+        subtitle: [clickedProduct.category, clickedProduct.barcode ? `باركود: ${clickedProduct.barcode}` : null, clickedProduct.price ? `${Number(clickedProduct.price).toLocaleString()} ج.م` : null].filter(Boolean).join(' | '),
+      }],
+      index: 0,
+    });
+  }, []);
 
   // Granular Tab Permissions Gating
   const canAccessSales = Boolean(isAdmin || hasPermission('pos.sales.view') || hasPermission('pos.sales.create'));
@@ -2774,6 +2789,19 @@ export function POS() {
                           <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md backdrop-blur-sm">
                             {product.category || 'ملابس'}
                           </span>
+                          {product.image_url && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openPosProductLightbox(product);
+                              }}
+                              title="تكبير الصورة"
+                              className="absolute top-2 left-2 z-10 w-7 h-7 rounded-lg bg-slate-900/75 hover:bg-indigo-600 text-white flex items-center justify-center shadow-sm backdrop-blur-sm transition-colors cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           {isOutOfStock && (
                             <div className="absolute inset-0 bg-slate-900/30 flex items-center justify-center backdrop-blur-[1px]">
                               <span className="bg-rose-600 text-white text-[11px] font-black px-2.5 py-1 rounded-lg shadow-md border border-rose-400">
@@ -5557,6 +5585,14 @@ export function POS() {
           />
         )}
       </Modal>
+
+      {/* IMAGE LIGHTBOX MODAL */}
+      <ImageLightboxModal
+        isOpen={lightboxState.open}
+        items={lightboxState.items}
+        initialIndex={lightboxState.index}
+        onClose={() => setLightboxState((prev) => ({ ...prev, open: false }))}
+      />
     </div>
   );
 }

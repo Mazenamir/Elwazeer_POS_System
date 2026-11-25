@@ -328,6 +328,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
       late_minutes INTEGER DEFAULT 0,
       early_departure_minutes INTEGER DEFAULT 0,
       overtime_minutes INTEGER DEFAULT 0,
+      branch_id INTEGER,
       UNIQUE (employee_id, date)
     );
 
@@ -1107,6 +1108,7 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
   try { sqlite.exec("ALTER TABLE employee_transactions ADD COLUMN payment_method TEXT DEFAULT 'cash'"); } catch {}
   try { sqlite.exec('ALTER TABLE employee_transactions ADD COLUMN paid_from_drawer INTEGER DEFAULT 0'); } catch {}
   try { sqlite.exec('ALTER TABLE employee_transactions ADD COLUMN branch_id INTEGER'); } catch {}
+  try { sqlite.exec('ALTER TABLE attendance ADD COLUMN branch_id INTEGER'); } catch {}
 
   try {
     sqlite.exec(`

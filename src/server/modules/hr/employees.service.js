@@ -43,6 +43,20 @@ function normalizeEmployeeBranchScope(scope, branchIds, primaryBranchId) {
   return { branch_scope: 'selected', branch_ids: Array.from(set) };
 }
 
+function resolveOperationBranchId(requestedBranchId, user, empRow) {
+  const rawBranchId = requestedBranchId ? Number(requestedBranchId) : null;
+  if (Number.isFinite(rawBranchId) && rawBranchId > 0 && hasBranchAccess(user, rawBranchId)) {
+    return rawBranchId;
+  }
+  const userBranchId = user?.branch_id ? Number(user.branch_id) : null;
+  if (Number.isFinite(userBranchId) && userBranchId > 0) return userBranchId;
+  const envBranchId = config.IS_BRANCH_MODE && Number(config.BRANCH_ID) > 0 ? Number(config.BRANCH_ID) : null;
+  if (envBranchId) return envBranchId;
+  const empBranchId = empRow?.branch_id ? Number(empRow.branch_id) : null;
+  if (Number.isFinite(empBranchId) && empBranchId > 0) return empBranchId;
+  return 1;
+}
+
 function hasEmployeeBranchAccess(user, employee) {
   if (!user || !employee) return false;
   if (user.role === 'admin' || user.branch_scope === 'all' || user.role === 'accountant') return true;
@@ -1040,9 +1054,10 @@ async function recordAttendance(body, user) {
     notes,
   });
 
+  const branchId = resolveOperationBranchId(body?.branch_id, user, empRes.rows[0]);
   const result = await db.query(
-    `INSERT INTO attendance (employee_id, date, check_in, check_out, status, notes, total_hours, late_minutes, early_departure_minutes, overtime_minutes) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO attendance (employee_id, date, check_in, check_out, status, notes, total_hours, late_minutes, early_departure_minutes, overtime_minutes, branch_id) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (employee_id, date) 
      DO UPDATE SET
        check_in = EXCLUDED.check_in,
@@ -1052,7 +1067,8 @@ async function recordAttendance(body, user) {
        total_hours = EXCLUDED.total_hours,
        late_minutes = EXCLUDED.late_minutes,
        early_departure_minutes = EXCLUDED.early_departure_minutes,
-       overtime_minutes = EXCLUDED.overtime_minutes
+       overtime_minutes = EXCLUDED.overtime_minutes,
+       branch_id = COALESCE(EXCLUDED.branch_id, attendance.branch_id)
      RETURNING *`,
     [
       employee_id,
@@ -1065,10 +1081,10 @@ async function recordAttendance(body, user) {
       metrics.late_minutes,
       metrics.early_departure_minutes,
       metrics.overtime_minutes,
+      branchId,
     ]
   );
   const row = result.rows[0];
-  const branchId = empRes.rows[0]?.branch_id || user?.branch_id || config.BRANCH_ID || 1;
   await queueSyncOperation(db, null, 'attendance', 'upsert', row.id, branchId, {
     employee_id: row.employee_id,
     date: row.date,
@@ -1080,11 +1096,12 @@ async function recordAttendance(body, user) {
     late_minutes: Math.round(Number(row.late_minutes) || 0),
     early_departure_minutes: Math.round(Number(row.early_departure_minutes) || 0),
     overtime_minutes: Math.round(Number(row.overtime_minutes) || 0),
+    branch_id: row.branch_id || branchId,
   });
   return row;
 }
 
-async function toggleAttendance(id, manualTime, user) {
+async function toggleAttendance(id, manualTime, user, requestedBranchId = null) {
   const isAdmin = user && user.role === 'admin';
   const isBranchUser = user && user.role !== 'admin';
 
@@ -1125,15 +1142,15 @@ async function toggleAttendance(id, manualTime, user) {
     const cleanCheckIn = metrics.check_in || time;
     const lateMinutes = metrics.late_minutes;
 
+    const branchId = resolveOperationBranchId(requestedBranchId, user, empRes.rows[0]);
     const result = await db.query(
-      `INSERT INTO attendance (employee_id, date, check_in, status, late_minutes)
-       VALUES ($1, $2, $3, 'present', $4)
+      `INSERT INTO attendance (employee_id, date, check_in, status, late_minutes, branch_id)
+       VALUES ($1, $2, $3, 'present', $4, $5)
        ON CONFLICT (employee_id, date)
-       DO UPDATE SET check_in = EXCLUDED.check_in, status = 'present', late_minutes = EXCLUDED.late_minutes
+       DO UPDATE SET check_in = EXCLUDED.check_in, status = 'present', late_minutes = EXCLUDED.late_minutes, branch_id = COALESCE(EXCLUDED.branch_id, attendance.branch_id)
        RETURNING *`,
-      [id, date, cleanCheckIn, lateMinutes]
+      [id, date, cleanCheckIn, lateMinutes, branchId]
     );
-    const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
     await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
       employee_id: result.rows[0].employee_id,
       date: result.rows[0].date,
@@ -1145,6 +1162,7 @@ async function toggleAttendance(id, manualTime, user) {
       late_minutes: Math.round(Number(result.rows[0].late_minutes) || 0),
       early_departure_minutes: Math.round(Number(result.rows[0].early_departure_minutes) || 0),
       overtime_minutes: Math.round(Number(result.rows[0].overtime_minutes) || 0),
+      branch_id: result.rows[0].branch_id || branchId,
     });
     return { action: 'check_in', attendance: result.rows[0] };
   }
@@ -1162,18 +1180,19 @@ async function toggleAttendance(id, manualTime, user) {
     const overtimeMinutes = metrics.overtime_minutes;
     const totalHours = metrics.total_hours;
 
+    const branchId = existingRes.rows[0].branch_id || resolveOperationBranchId(requestedBranchId, user, empRes.rows[0]);
     const result = await db.query(
       `UPDATE attendance
        SET check_out = $1, 
            status = 'completed',
            total_hours = $6,
            early_departure_minutes = $4,
-           overtime_minutes = $5
+           overtime_minutes = $5,
+           branch_id = COALESCE(branch_id, $7)
        WHERE employee_id = $2 AND date = $3
        RETURNING *`,
-      [cleanCheckOut, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours]
+      [cleanCheckOut, id, date, earlyDepartureMinutes, overtimeMinutes, totalHours, branchId]
     );
-    const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
     await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
       employee_id: result.rows[0].employee_id,
       date: result.rows[0].date,
@@ -1185,6 +1204,7 @@ async function toggleAttendance(id, manualTime, user) {
       late_minutes: Math.round(Number(result.rows[0].late_minutes) || 0),
       early_departure_minutes: Math.round(Number(result.rows[0].early_departure_minutes) || 0),
       overtime_minutes: Math.round(Number(result.rows[0].overtime_minutes) || 0),
+      branch_id: result.rows[0].branch_id || branchId,
     });
     return { action: 'check_out', attendance: result.rows[0] };
   }
@@ -1314,11 +1334,12 @@ async function recordManualAttendance(id, body, user) {
     notes,
   });
 
+  const branchId = resolveOperationBranchId(body?.branch_id, user, empRes.rows[0]);
   const result = await db.query(
-    `INSERT INTO attendance (employee_id, date, status, notes, check_in, check_out, total_hours, late_minutes, early_departure_minutes, overtime_minutes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO attendance (employee_id, date, status, notes, check_in, check_out, total_hours, late_minutes, early_departure_minutes, overtime_minutes, branch_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (employee_id, date)
-     DO UPDATE SET status = EXCLUDED.status, notes = EXCLUDED.notes, check_in = EXCLUDED.check_in, check_out = EXCLUDED.check_out, total_hours = EXCLUDED.total_hours, late_minutes = EXCLUDED.late_minutes, early_departure_minutes = EXCLUDED.early_departure_minutes, overtime_minutes = EXCLUDED.overtime_minutes
+     DO UPDATE SET status = EXCLUDED.status, notes = EXCLUDED.notes, check_in = EXCLUDED.check_in, check_out = EXCLUDED.check_out, total_hours = EXCLUDED.total_hours, late_minutes = EXCLUDED.late_minutes, early_departure_minutes = EXCLUDED.early_departure_minutes, overtime_minutes = EXCLUDED.overtime_minutes, branch_id = COALESCE(EXCLUDED.branch_id, attendance.branch_id)
      RETURNING *`,
     [
       id,
@@ -1331,10 +1352,10 @@ async function recordManualAttendance(id, body, user) {
       metrics.late_minutes,
       metrics.early_departure_minutes,
       metrics.overtime_minutes,
+      branchId,
     ]
   );
 
-  const branchId = empRes.rows[0].branch_id || config.BRANCH_ID || 1;
   await queueSyncOperation(db, null, 'attendance', 'upsert', result.rows[0].id, branchId, {
     employee_id: result.rows[0].employee_id,
     date: result.rows[0].date,
@@ -1346,6 +1367,7 @@ async function recordManualAttendance(id, body, user) {
     late_minutes: Math.round(Number(result.rows[0].late_minutes) || 0),
     early_departure_minutes: Math.round(Number(result.rows[0].early_departure_minutes) || 0),
     overtime_minutes: Math.round(Number(result.rows[0].overtime_minutes) || 0),
+    branch_id: result.rows[0].branch_id || branchId,
   });
   return { action: 'manual_update', attendance: result.rows[0] };
 }
@@ -1452,10 +1474,7 @@ async function createEmployeeTransaction(body, user) {
 
   const offlineUuid = newUuid(body?.offline_uuid);
   const cairoNow = await getDatabaseCairoNow();
-  const rawBranchId = body?.branch_id ? Number(body.branch_id) : null;
-  const branchId = (Number.isFinite(rawBranchId) && rawBranchId > 0 && hasBranchAccess(user, rawBranchId))
-    ? rawBranchId
-    : (user?.branch_id || (config.IS_BRANCH_MODE ? config.BRANCH_ID : null) || empRow.branch_id || 1);
+  const branchId = resolveOperationBranchId(body?.branch_id, user, empRow);
 
   const result = await db.query(
     'INSERT INTO employee_transactions (employee_id, type, amount, transaction_date, notes, payment_method, paid_from_drawer, branch_id, offline_uuid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',

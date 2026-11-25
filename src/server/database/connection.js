@@ -110,6 +110,7 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'employee_transactions', 'payment_method', "TEXT DEFAULT 'cash'");
   ensureSqliteColumn(sqlite, 'employee_transactions', 'paid_from_drawer', 'INTEGER DEFAULT 0');
   ensureSqliteColumn(sqlite, 'employee_transactions', 'branch_id', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'attendance', 'branch_id', 'INTEGER');
   ensureSqliteColumn(sqlite, 'employee_payroll_adjustments', 'basic_salary_override', 'REAL');
   ensureSqliteColumn(sqlite, 'users', 'full_name', 'TEXT');
   ensureSqliteColumn(sqlite, 'users', 'branch_scope', "TEXT DEFAULT 'single'");

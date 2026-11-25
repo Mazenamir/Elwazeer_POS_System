@@ -105,7 +105,7 @@ async function getDashboard(query = {}, user = null) {
     db.query(`SELECT COALESCE(SUM(oi.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM order_items oi JOIN orders o ON oi.order_id = o.id LEFT JOIN inventory i ON oi.inventory_id = i.id WHERE o.status <> 'cancelled' ${branchId ? 'AND o.branch_id = $1' : ''} AND o.order_date >= ${startSql} AND o.order_date < ${endSql}`, params),
     db.query(`SELECT COALESCE(SUM(ri.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM return_items ri JOIN returns r ON ri.return_id = r.id LEFT JOIN inventory i ON ri.inventory_id = i.id ${branchId ? 'WHERE r.branch_id = $1 AND' : 'WHERE'} r.return_date >= ${startSql} AND r.return_date < ${endSql}`, params),
     db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM expenses ${whereAnd} category <> 'bonus' AND expense_date >= ${dateOnlyStartSql} AND expense_date <= ${dateOnlyEndSql} AND is_deleted IS NOT TRUE`, params),
-    db.query(`SELECT COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance', 'deduction', 'bonus') AND et.transaction_date >= ${dateOnlyStartSql} AND et.transaction_date <= ${dateOnlyEndSql} ${branchId ? 'AND e.branch_id = $1' : ''}`, params),
+    db.query(`SELECT COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance', 'deduction', 'bonus') AND et.transaction_date >= ${dateOnlyStartSql} AND et.transaction_date <= ${dateOnlyEndSql} ${branchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $1' : ''}`, params),
     db.query(`SELECT COUNT(*) as count FROM orders ${whereAnd} status <> 'cancelled' AND order_date >= ${startSql} AND order_date < ${endSql}`, params),
     db.query(`SELECT COUNT(*) as count FROM customers ${whereAnd} join_date >= ${dateOnlyStartSql} AND join_date <= ${dateOnlyEndSql}`, params),
   ]);
@@ -544,14 +544,14 @@ async function getProfitReport(query = {}, user = null) {
       reportParams
     ),
     db.query(
-      `SELECT e.branch_id, COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total
+      `SELECT COALESCE(et.branch_id, e.branch_id) as branch_id, COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total
        FROM employee_transactions et
        JOIN employees e ON e.id = et.employee_id
-       WHERE e.branch_id = ANY($1::int[])
+       WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
          AND et.type IN ('salary_payment', 'advance', 'deduction', 'bonus')
          AND et.transaction_date >= $2::date
          AND et.transaction_date < $3::date
-       GROUP BY e.branch_id`,
+       GROUP BY COALESCE(et.branch_id, e.branch_id)`,
       reportParams
     ),
     db.query(
@@ -963,8 +963,8 @@ async function getProfitReport(query = {}, user = null) {
                 ${employeeTransactionRemainingDeltaSql('et')} as remaining_delta
          FROM employee_transactions et
          JOIN employees e ON e.id = et.employee_id
-         LEFT JOIN branches b ON b.id = e.branch_id
-         WHERE e.branch_id = ANY($1::int[])
+         LEFT JOIN branches b ON b.id = COALESCE(et.branch_id, e.branch_id)
+         WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
            AND et.type IN ('salary_payment', 'advance', 'deduction', 'bonus')
            AND et.transaction_date >= DATE_TRUNC('month', $2::date)::date
            AND et.transaction_date < $3::date
@@ -1048,8 +1048,8 @@ async function getProfitReport(query = {}, user = null) {
       `SELECT a.employee_id, e.name as employee_name, b.name as branch_name, TO_CHAR(a.date, 'YYYY-MM-DD') as date, TO_CHAR(a.check_in, 'HH12:MI AM') as check_in, TO_CHAR(a.check_out, 'HH12:MI AM') as check_out, a.total_hours, a.notes
        FROM attendance a
        JOIN employees e ON a.employee_id = e.id
-       LEFT JOIN branches b ON e.branch_id = b.id
-       WHERE e.branch_id = ANY($1::int[]) AND a.date >= $2::date AND a.date < $3::date
+       LEFT JOIN branches b ON COALESCE(a.branch_id, e.branch_id) = b.id
+       WHERE COALESCE(a.branch_id, e.branch_id) = ANY($1::int[]) AND a.date >= $2::date AND a.date < $3::date
        ORDER BY a.date DESC`,
       reportParams
     ),
@@ -1089,10 +1089,10 @@ async function getProfitReport(query = {}, user = null) {
   const [tOrders, tExpenses, tSalaries, mOrders, mExpenses, mSalaries] = await Promise.all([
     db.query(`SELECT COALESCE(SUM(total_amount), 0) as rev, COALESCE(SUM(total_cost_price), 0) as cogs FROM orders WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ rev: 0, cogs: 0 }] })),
     db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM expenses WHERE is_deleted IS NOT TRUE AND category <> 'bonus' AND expense_date >= $1::date AND expense_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
-    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance') AND et.transaction_date >= $1::date AND et.transaction_date < $2::date ${reportBranchId ? 'AND e.branch_id = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
+    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance') AND et.transaction_date >= $1::date AND et.transaction_date < $2::date ${reportBranchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
     db.query(`SELECT COALESCE(SUM(total_amount), 0) as rev, COALESCE(SUM(total_cost_price), 0) as cogs FROM orders WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ rev: 0, cogs: 0 }] })),
     db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM expenses WHERE is_deleted IS NOT TRUE AND category <> 'bonus' AND expense_date >= $1::date AND expense_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
-    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance') AND et.transaction_date >= $1::date AND et.transaction_date < $2::date ${reportBranchId ? 'AND e.branch_id = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
+    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance') AND et.transaction_date >= $1::date AND et.transaction_date < $2::date ${reportBranchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
   ]);
 
   const todayRev = Number(tOrders.rows[0]?.rev || 0);
@@ -1226,7 +1226,7 @@ async function getMonthlyHistory(query = {}, user = null) {
     orderBranchFilter = 'AND o.branch_id = $1';
     rentalBranchFilter = 'AND r.branch_id = $1';
     returnBranchFilter = 'AND r.branch_id = $1';
-    employeeBranchFilter = 'AND e.branch_id = $1';
+    employeeBranchFilter = 'AND COALESCE(et.branch_id, e.branch_id) = $1';
     params.push(reportBranchId);
   }
 
@@ -1294,7 +1294,7 @@ async function getMonthlyHistory(query = {}, user = null) {
              COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total
       FROM employee_transactions et
       JOIN employees e ON e.id = et.employee_id
-      JOIN branches eb ON eb.id = e.branch_id
+      LEFT JOIN branches eb ON eb.id = COALESCE(et.branch_id, e.branch_id)
       CROSS JOIN bounds
       WHERE et.type IN ('salary_payment', 'advance', 'deduction', 'bonus')
         AND et.transaction_date >= bounds.start_month
@@ -1415,7 +1415,7 @@ async function getDailyHistory(query = {}, user = null) {
     orderBranchFilter = 'AND o.branch_id = $1';
     rentalBranchFilter = 'AND r.branch_id = $1';
     returnBranchFilter = 'AND r.branch_id = $1';
-    employeeBranchFilter = 'AND e.branch_id = $1';
+    employeeBranchFilter = 'AND COALESCE(et.branch_id, e.branch_id) = $1';
     params.push(reportBranchId);
   }
 
@@ -1483,7 +1483,7 @@ async function getDailyHistory(query = {}, user = null) {
              COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total
       FROM employee_transactions et
       JOIN employees e ON e.id = et.employee_id
-      JOIN branches eb ON eb.id = e.branch_id
+      LEFT JOIN branches eb ON eb.id = COALESCE(et.branch_id, e.branch_id)
       CROSS JOIN bounds
       WHERE et.type IN ('salary_payment', 'advance', 'deduction', 'bonus')
         AND et.transaction_date >= bounds.start_day
@@ -1793,14 +1793,14 @@ async function getDailyReport(query = {}, user = null) {
         reportParams
       ),
       db.query(
-        `SELECT e.branch_id, COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total
+        `SELECT COALESCE(et.branch_id, e.branch_id) as branch_id, COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total
          FROM employee_transactions et
          JOIN employees e ON e.id = et.employee_id
-         WHERE e.branch_id = ANY($1::int[])
+         WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
            AND et.type IN ('salary_payment', 'advance', 'deduction', 'bonus')
            AND et.transaction_date >= $2::date
            AND et.transaction_date < $3::date
-         GROUP BY e.branch_id`,
+         GROUP BY COALESCE(et.branch_id, e.branch_id)`,
         reportParams
       ),
       db.query(
@@ -2175,8 +2175,8 @@ async function getDailyReport(query = {}, user = null) {
                 ${employeeTransactionRemainingDeltaSql('et')} as remaining_delta
          FROM employee_transactions et
          JOIN employees e ON e.id = et.employee_id
-         LEFT JOIN branches b ON b.id = e.branch_id
-         WHERE e.branch_id = ANY($1::int[])
+         LEFT JOIN branches b ON b.id = COALESCE(et.branch_id, e.branch_id)
+         WHERE COALESCE(et.branch_id, e.branch_id) = ANY($1::int[])
            AND et.type IN ('salary_payment', 'advance', 'deduction', 'bonus')
            AND et.transaction_date >= DATE_TRUNC('month', $2::date)::date
            AND et.transaction_date < $3::date
@@ -2347,14 +2347,14 @@ async function getDailyReport(query = {}, user = null) {
   ]);
 
   const canViewProfit = canViewReportProfit(user);
-  const branchFilterAttendance = reportBranchId ? 'AND e.branch_id = $3' : '';
+  const branchFilterAttendance = reportBranchId ? 'AND COALESCE(a.branch_id, e.branch_id) = $3' : '';
 
   const [attendanceRes, salesInvoicesRes, rentalInvoicesRes] = await Promise.all([
     db.query(
       `SELECT a.employee_id, e.name as employee_name, b.name as branch_name, TO_CHAR(a.date, 'YYYY-MM-DD') as date, TO_CHAR(a.check_in, 'HH12:MI AM') as check_in, TO_CHAR(a.check_out, 'HH12:MI AM') as check_out, a.total_hours, a.notes
        FROM attendance a
        JOIN employees e ON a.employee_id = e.id
-       LEFT JOIN branches b ON e.branch_id = b.id
+       LEFT JOIN branches b ON COALESCE(a.branch_id, e.branch_id) = b.id
        WHERE a.date >= $1::date AND a.date < $2::date ${branchFilterAttendance}
        ORDER BY a.date DESC`,
       topParams
@@ -3189,7 +3189,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
       FROM employees e
       LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = $1::date
       WHERE e.status = 'active'
-        ${reportBranchId ? 'AND e.branch_id = $2' : ''}
+        ${reportBranchId ? 'AND (e.branch_id = $2 OR a.branch_id = $2)' : ''}
       ORDER BY e.id ASC
     `, [range.start, ...(reportBranchId ? [reportBranchId] : [])]),
 
@@ -3549,8 +3549,22 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
   const monthStart = `${month}-01`;
   const monthEnd = addDays(`${month}-${String(daysInMonth).padStart(2, '0')}`, 1);
 
-  const empFilter = reportBranchId ? 'WHERE e.branch_id = $1' : '';
-  const empParams = reportBranchId ? [reportBranchId] : [];
+  const empFilter = reportBranchId
+    ? `WHERE (
+         e.branch_id = $1
+         OR EXISTS (
+           SELECT 1 FROM employee_transactions et
+           WHERE et.employee_id = e.id AND et.type = 'advance' AND et.branch_id = $1
+             AND et.transaction_date >= $2::date AND et.transaction_date < $3::date
+         )
+         OR EXISTS (
+           SELECT 1 FROM attendance a
+           WHERE a.employee_id = e.id AND a.branch_id = $1
+             AND a.date >= $2::date AND a.date < $3::date
+         )
+       )`
+    : '';
+  const empParams = reportBranchId ? [reportBranchId, monthStart, monthEnd] : [];
 
   const [cairoNow, employeesRes, attendanceRes, advancesRes, adjustmentsRes] = await Promise.all([
     getDatabaseCairoNow(db),
@@ -3574,7 +3588,7 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
       FROM attendance a
       JOIN employees e ON a.employee_id = e.id
       WHERE a.date >= $1::date AND a.date < $2::date
-        ${reportBranchId ? 'AND e.branch_id = $3' : ''}
+        ${reportBranchId ? 'AND COALESCE(a.branch_id, e.branch_id) = $3' : ''}
     `, [monthStart, monthEnd, ...(reportBranchId ? [reportBranchId] : [])]),
 
     db.query(`
@@ -3587,7 +3601,7 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
       JOIN employees e ON et.employee_id = e.id
       WHERE et.type = 'advance'
         AND et.transaction_date >= $1::date AND et.transaction_date < $2::date
-        ${reportBranchId ? 'AND e.branch_id = $3' : ''}
+        ${reportBranchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $3' : ''}
     `, [monthStart, monthEnd, ...(reportBranchId ? [reportBranchId] : [])]),
 
     db.query(`

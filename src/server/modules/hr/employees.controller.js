@@ -96,7 +96,7 @@ async function recordAttendance(req, res, next) {
 
 async function toggleAttendance(req, res, next) {
   try {
-    const result = await employeesService.toggleAttendance(req.params.id, req.body?.manual_time, req.user);
+    const result = await employeesService.toggleAttendance(req.params.id, req.body?.manual_time, req.user, req.body?.branch_id);
     res.json(result);
   } catch (err) {
     next(err);

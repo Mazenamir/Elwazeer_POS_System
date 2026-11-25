@@ -720,10 +720,11 @@ async function applyOperation(operation) {
       if (!Number.isFinite(totalHours) || totalHours < 0) totalHours = 0;
       if (totalHours > 24) totalHours = 24;
 
+      const attBranchId = payload.branch_id || operation.branch_id || null;
       await tx.query(
         `INSERT INTO attendance
-          (employee_id, date, check_in, check_out, status, notes, total_hours, late_minutes, early_departure_minutes, overtime_minutes)
-         VALUES ($1, COALESCE($2::date, CURRENT_DATE), $3::time, $4::time, COALESCE($5, 'present'), $6, COALESCE($7, 0), COALESCE($8, 0), COALESCE($9, 0), COALESCE($10, 0))
+          (employee_id, date, check_in, check_out, status, notes, total_hours, late_minutes, early_departure_minutes, overtime_minutes, branch_id)
+         VALUES ($1, COALESCE($2::date, CURRENT_DATE), $3::time, $4::time, COALESCE($5, 'present'), $6, COALESCE($7, 0), COALESCE($8, 0), COALESCE($9, 0), COALESCE($10, 0), $11)
          ON CONFLICT (employee_id, date)
          DO UPDATE SET
            check_in = EXCLUDED.check_in,
@@ -733,7 +734,8 @@ async function applyOperation(operation) {
            total_hours = EXCLUDED.total_hours,
            late_minutes = EXCLUDED.late_minutes,
            early_departure_minutes = EXCLUDED.early_departure_minutes,
-           overtime_minutes = EXCLUDED.overtime_minutes`,
+           overtime_minutes = EXCLUDED.overtime_minutes,
+           branch_id = COALESCE(EXCLUDED.branch_id, attendance.branch_id)`,
         [
           empId,
           cleanDate,
@@ -745,6 +747,7 @@ async function applyOperation(operation) {
           lateMinutes,
           earlyDepartureMinutes,
           overtimeMinutes,
+          attBranchId,
         ]
       );
       return;
@@ -3944,7 +3947,8 @@ async function exportCatalogForBranch(branchId = null) {
     db.query(`
       SELECT id, employee_id, TO_CHAR(date, 'YYYY-MM-DD') AS date, check_in::text AS check_in, check_out::text AS check_out,
              status, notes, COALESCE(total_hours, 0) AS total_hours, COALESCE(late_minutes, 0) AS late_minutes,
-             COALESCE(early_departure_minutes, 0) AS early_departure_minutes, COALESCE(overtime_minutes, 0) AS overtime_minutes
+             COALESCE(early_departure_minutes, 0) AS early_departure_minutes, COALESCE(overtime_minutes, 0) AS overtime_minutes,
+             branch_id
       FROM attendance
     `),
     db.query(`
@@ -4997,12 +5001,13 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
         }
       } catch {}
 
+      ensureCol('attendance', 'branch_id', 'INTEGER');
       const attStmt = sqlite.prepare(`
         INSERT INTO attendance (
           employee_id, date, check_in, check_out, status, notes,
-          total_hours, late_minutes, early_departure_minutes, overtime_minutes
+          total_hours, late_minutes, early_departure_minutes, overtime_minutes, branch_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(employee_id, date) DO UPDATE SET
           check_in = excluded.check_in,
           check_out = excluded.check_out,
@@ -5011,7 +5016,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           total_hours = excluded.total_hours,
           late_minutes = excluded.late_minutes,
           early_departure_minutes = excluded.early_departure_minutes,
-          overtime_minutes = excluded.overtime_minutes
+          overtime_minutes = excluded.overtime_minutes,
+          branch_id = COALESCE(excluded.branch_id, attendance.branch_id)
       `);
 
       for (const att of catalog.attendance) {
@@ -5028,7 +5034,8 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           Number(att.total_hours || 0),
           Math.round(Number(att.late_minutes || 0)),
           Math.round(Number(att.early_departure_minutes || 0)),
-          Math.round(Number(att.overtime_minutes || 0))
+          Math.round(Number(att.overtime_minutes || 0)),
+          att.branch_id || null
         );
       }
     }

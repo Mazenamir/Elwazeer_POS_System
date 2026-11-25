@@ -26,6 +26,7 @@ import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import { Card, CardHeader } from '../../components/ui/Card';
 import ProductBarcodePrintModal from '../../components/modals/ProductBarcodePrintModal';
+import ImageLightboxModal from '../../components/modals/ImageLightboxModal';
 
 const CATEGORY_DISPLAY_MAP = {
   'الكل': 'كل الأصناف',
@@ -70,6 +71,23 @@ export function RentalInventory() {
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [selectedRentalForBarcode, setSelectedRentalForBarcode] = useState(null);
   const [isBarcodeNewlyCreated, setIsBarcodeNewlyCreated] = useState(false);
+  const [lightboxState, setLightboxState] = useState({ open: false, items: [], index: 0 });
+
+  const openRentalLightbox = useCallback((clickedItem) => {
+    if (!clickedItem?.image_url) return;
+    const withImages = (items || []).filter((it) => Boolean(it?.image_url));
+    const list = withImages.length > 0 ? withImages : [clickedItem];
+    const idx = Math.max(0, list.findIndex((it) => it.id === clickedItem.id));
+    setLightboxState({
+      open: true,
+      items: list.map((it) => ({
+        src: it.image_url,
+        title: it.name,
+        subtitle: [it.category, it.barcode ? `باركود: ${it.barcode}` : null, it.price ? `${Number(it.price).toLocaleString()} ج.م` : null].filter(Boolean).join(' | '),
+      })),
+      index: idx,
+    });
+  }, [items]);
 
   // Form State
   const [name, setName] = useState('');
@@ -444,7 +462,13 @@ export function RentalInventory() {
                 {items.map((item) => (
                   <tr key={item.id} className="hover:bg-[#FAF6ED]/70 transition-colors">
                     <td className="py-3 pr-2">
-                      <div className="w-12 h-12 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] flex items-center justify-center overflow-hidden">
+                      <div
+                        onClick={() => item.image_url && openRentalLightbox(item)}
+                        title={item.image_url ? 'اضغط لتكبير الصورة' : undefined}
+                        className={`w-12 h-12 rounded-xl bg-[#FAF6ED] border border-[#E6DECD] flex items-center justify-center overflow-hidden ${
+                          item.image_url ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400 hover:scale-105 transition-all' : ''
+                        }`}
+                      >
                         {item.image_url ? (
                           <img
                             src={item.image_url}
@@ -786,6 +810,14 @@ export function RentalInventory() {
         branchLogo={branches?.find((b) => b.id?.toString() === activeBranchId?.toString())?.logo_url}
         branchId={activeBranchId}
         isNewlyCreated={isBarcodeNewlyCreated}
+      />
+
+      {/* IMAGE LIGHTBOX MODAL */}
+      <ImageLightboxModal
+        isOpen={lightboxState.open}
+        items={lightboxState.items}
+        initialIndex={lightboxState.index}
+        onClose={() => setLightboxState((prev) => ({ ...prev, open: false }))}
       />
     </div>
   );

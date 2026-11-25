@@ -169,6 +169,7 @@ export function Employees() {
     transaction_date: new Date().toISOString().split('T')[0],
     payment_method: 'cash',
     paid_from_drawer: false,
+    branch_id: '',
   }));
 
   useEffect(() => {
@@ -194,6 +195,7 @@ export function Employees() {
   const [quickPayMethod, setQuickPayMethod] = useState('cash');
   const [quickPayFromDrawer, setQuickPayFromDrawer] = useState(false);
   const [quickPayNotes, setQuickPayNotes] = useState('');
+  const [quickPayBranchId, setQuickPayBranchId] = useState('');
   const [quickPaySubmitting, setQuickPaySubmitting] = useState(false);
 
   // Sales Report Modal
@@ -539,7 +541,8 @@ export function Employees() {
   // Quick Attendance Toggle
   const handleToggleAttendance = async (emp) => {
     try {
-      const res = await client.post(`/employees/${emp.id}/attendance-toggle`, {});
+      const attBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : (user?.branch_id ? Number(user.branch_id) : undefined);
+      const res = await client.post(`/employees/${emp.id}/attendance-toggle`, attBranchId ? { branch_id: attBranchId } : {});
       const action = res?.action;
       let title = 'سجل الحضور والبصمة';
       let message = 'تم تحديث حالة الحضور بنجاح';
@@ -614,7 +617,11 @@ export function Employees() {
     if (!manualEmp) return;
     try {
       setManualSubmitting(true);
-      await client.post(`/employees/${manualEmp.id}/attendance-manual`, manualForm);
+      const attBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : (user?.branch_id ? Number(user.branch_id) : undefined);
+      await client.post(`/employees/${manualEmp.id}/attendance-manual`, {
+        ...manualForm,
+        ...(attBranchId ? { branch_id: attBranchId } : {}),
+      });
       toast({ title: 'تم الحفظ', message: 'تم تسجيل الحضور اليدوي بنجاح', variant: 'success' });
       setShowManualAttendanceModal(false);
       loadEmployees();
@@ -631,6 +638,9 @@ export function Employees() {
     setLoadingSummary(true);
     setShowSalaryInModal(false);
     const targetType = initialType || (canCreateAdvance ? 'advance' : 'deduction');
+    const defaultTxBranch = activeBranchId && activeBranchId !== 'all'
+      ? String(activeBranchId)
+      : (!isMultiBranch && user?.branch_id ? String(user.branch_id) : '');
     setTxForm({
       type: targetType,
       amount: '',
@@ -638,6 +648,7 @@ export function Employees() {
       transaction_date: new Date().toISOString().split('T')[0],
       payment_method: 'cash',
       paid_from_drawer: false,
+      branch_id: defaultTxBranch,
       salary_password: pwd,
     });
     try {
@@ -714,8 +725,17 @@ export function Employees() {
       return;
     }
 
+    const resolvedBranchId = txForm.branch_id
+      ? Number(txForm.branch_id)
+      : (activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : (user?.branch_id ? Number(user.branch_id) : null));
+    const needsBranchSelection = isMultiBranch && branches.length > 1 && (txForm.type === 'advance' || (txForm.type === 'salary_payment' && txForm.payment_method === 'cash' && txForm.paid_from_drawer));
+    if (needsBranchSelection && (!resolvedBranchId || !Number.isFinite(resolvedBranchId))) {
+      toast({ title: 'تنبيه', message: 'يرجى اختيار الفرع / الدرج المصروف منه المبلغ', variant: 'warning' });
+      return;
+    }
+
     try {
-      const txBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : undefined;
+      const txBranchId = resolvedBranchId || undefined;
       await client.post('/employee_transactions', {
         employee_id: summaryEmp.id,
         type: txForm.type,
@@ -1070,9 +1090,16 @@ export function Employees() {
       toast({ title: 'تنبيه', message: 'يرجى إدخال مبلغ صحيح للصرف', variant: 'warning' });
       return;
     }
+    const resolvedQuickBranchId = quickPayBranchId
+      ? Number(quickPayBranchId)
+      : (activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : (user?.branch_id ? Number(user.branch_id) : null));
+    if (isMultiBranch && branches.length > 1 && quickPayMethod === 'cash' && quickPayFromDrawer && (!resolvedQuickBranchId || !Number.isFinite(resolvedQuickBranchId))) {
+      toast({ title: 'تنبيه', message: 'يرجى اختيار الفرع / الدرج المصروف منه الراتب', variant: 'warning' });
+      return;
+    }
     try {
       setQuickPaySubmitting(true);
-      const txBranchId = activeBranchId && activeBranchId !== 'all' ? Number(activeBranchId) : undefined;
+      const txBranchId = resolvedQuickBranchId || undefined;
       await client.post('/employee_transactions', {
         employee_id: payslipEmp.id,
         type: 'salary_payment',
@@ -2351,6 +2378,25 @@ export function Employees() {
                     </div>
                   </div>
 
+                  {isMultiBranch && branches.length > 1 && (
+                    <div className="pt-1">
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        الفرع / الدرج المصروف منه {txForm.type === 'advance' ? '*' : ''}
+                      </label>
+                      <select
+                        className="w-full sm:w-72 h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
+                        value={txForm.branch_id || ''}
+                        onChange={(e) => setTxForm((prev) => ({ ...prev, branch_id: e.target.value }))}
+                        required={txForm.type === 'advance' || (txForm.type === 'salary_payment' && txForm.payment_method === 'cash' && txForm.paid_from_drawer)}
+                      >
+                        <option value="">-- اختر الفرع المصروف منه --</option>
+                        {branches.map((b) => (
+                          <option key={b.id} value={String(b.id)}>{b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   {txForm.type === 'salary_payment' && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200/70">
                       <div>
@@ -3221,6 +3267,24 @@ export function Employees() {
                     />
                     <span>خصم المبلغ من درج الكاشير اليومي بالفرع (يقلل صافي الدرج اليومي)</span>
                   </label>
+                )}
+                {isMultiBranch && branches.length > 1 && (
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      الفرع / الدرج المصروف منه {quickPayMethod === 'cash' && quickPayFromDrawer ? '*' : ''}
+                    </label>
+                    <select
+                      className="w-full sm:w-72 h-10 px-2.5 rounded-xl border border-slate-200 bg-white font-bold text-xs"
+                      value={quickPayBranchId || (activeBranchId && activeBranchId !== 'all' ? String(activeBranchId) : '')}
+                      onChange={(e) => setQuickPayBranchId(e.target.value)}
+                      required={quickPayMethod === 'cash' && quickPayFromDrawer}
+                    >
+                      <option value="">-- اختر الفرع المصروف منه --</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={String(b.id)}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
                 )}
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={() => setQuickPayOpen(false)}>
