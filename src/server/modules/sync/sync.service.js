@@ -492,7 +492,9 @@ async function repairAndReviveDeadLetterOperations() {
           if (p.early_departure_minutes !== undefined) p.early_departure_minutes = Math.max(0, Math.round(Number(p.early_departure_minutes) || 0));
           if (p.overtime_minutes !== undefined) p.overtime_minutes = Math.max(0, Math.round(Number(p.overtime_minutes) || 0));
           let repairedHours = Math.round((Number(p.total_hours) || 0) * 100) / 100;
-          if ((!Number.isFinite(repairedHours) || repairedHours <= 0) && p.check_in && p.check_out && p.status !== 'absent' && p.status !== 'leave') {
+          if (p.status === 'absent' || p.status === 'leave') {
+            repairedHours = 0;
+          } else if (p.check_in && p.check_out) {
             repairedHours = computeWorkedHours(p.check_in, p.check_out);
           }
           p.total_hours = Number.isFinite(repairedHours) ? Math.max(0, Math.min(24, repairedHours)) : 0;
@@ -714,7 +716,7 @@ async function applyOperation(operation) {
       let totalHours = Math.round((Number(payload.total_hours) || 0) * 100) / 100;
       if (isAbsentOrLeave) {
         totalHours = 0;
-      } else if ((!Number.isFinite(totalHours) || totalHours <= 0) && cleanCheckIn && cleanCheckOut) {
+      } else if (cleanCheckIn && cleanCheckOut) {
         totalHours = computeWorkedHours(cleanCheckIn, cleanCheckOut);
       }
       if (!Number.isFinite(totalHours) || totalHours < 0) totalHours = 0;
@@ -3618,28 +3620,46 @@ async function getCachedOrFreshConnectivity(maxAgeMs = 15000) {
 }
 
 async function getSyncStatus() {
-  const [countsRes, lastSyncedRes] = await Promise.all([
-    db.query(`
-      SELECT status, COUNT(*) AS count
-      FROM sync_queue
-      WHERE status IN ('pending', 'failed')
-      GROUP BY status
-    `),
-    db.query(`
-      SELECT synced_at AS last_synced_at
-      FROM sync_queue
-      WHERE synced_at IS NOT NULL
-      ORDER BY synced_at DESC
-      LIMIT 1
-    `),
-  ]);
-
-  const counts = Object.fromEntries(countsRes.rows.map(row => [row.status, Number(row.count || 0)]));
   const local = (config.IS_BRANCH_MODE && !config.IS_SYNC_TARGET) ? offlineStore.status() : { pending: 0, failed: 0, last_synced_at: null };
+
+  let counts = {};
+  let lastSyncedAt = null;
+  let dbAvailable = true;
+  let dbConnectivityOverride = null;
+
+  try {
+    const [countsRes, lastSyncedRes] = await Promise.all([
+      db.query(`
+        SELECT status, COUNT(*) AS count
+        FROM sync_queue
+        WHERE status IN ('pending', 'failed')
+        GROUP BY status
+      `),
+      db.query(`
+        SELECT synced_at AS last_synced_at
+        FROM sync_queue
+        WHERE synced_at IS NOT NULL
+        ORDER BY synced_at DESC
+        LIMIT 1
+      `),
+    ]);
+    counts = Object.fromEntries(countsRes.rows.map(row => [row.status, Number(row.count || 0)]));
+    lastSyncedAt = lastSyncedRes.rows[0]?.last_synced_at || null;
+  } catch (dbErr) {
+    dbAvailable = false;
+    const isAuthErr = dbErr?.code === '28P01' || dbErr?.code === '28000' || /password authentication failed/i.test(String(dbErr?.message || ''));
+    dbConnectivityOverride = {
+      online: false,
+      reason: isAuthErr ? 'db_auth_failed' : 'db_unavailable',
+      message: 'قاعدة البيانات غير متاحة مؤقتاً',
+    };
+  }
 
   let connectivity = { online: true, reason: 'master', message: '' };
   if (config.IS_BRANCH_MODE) {
     connectivity = await getCachedOrFreshConnectivity(15000);
+  } else if (dbConnectivityOverride) {
+    connectivity = dbConnectivityOverride;
   }
 
   return {
@@ -3647,12 +3667,13 @@ async function getSyncStatus() {
     configured: Boolean(config.SYNC_SERVER_URL),
     target: config.IS_BRANCH_MODE ? false : config.IS_SYNC_TARGET,
     server_url: config.SYNC_SERVER_URL || null,
+    db_available: dbAvailable,
     online: Boolean(connectivity.online),
     connectivity_reason: connectivity.reason,
     connectivity_message: connectivity.message,
     pending: Number(counts.pending || 0) + Number(local.pending || 0),
     failed: Number(counts.failed || 0) + Number(local.failed || 0),
-    last_synced_at: lastSyncedRes.rows[0]?.last_synced_at || local.last_synced_at || lastServerMutationAt,
+    last_synced_at: lastSyncedAt || local.last_synced_at || lastServerMutationAt,
     last_catalog_imported_at: lastCatalogImportedAt,
     last_server_activity_at: lastServerMutationAt,
     local_store_path: local.path,

@@ -14,7 +14,10 @@ const {
   getPreviousMonthKey,
   calculateEmployeeMonthlyPayroll,
   computeAttendanceMetrics,
+  computeWorkedMinutes,
   computeWorkedHours,
+  formatHoursAsHHMM,
+  formatTime12HourAmPm,
   normalizeTimeString,
   numOrNull,
   boolOrNull,
@@ -1417,16 +1420,23 @@ async function getAttendanceReport(id, user) {
     const notesStr = String(row.notes || '');
     const statusStr = String(row.status || '');
     const isAbsentOrLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
-    let hours = Number(row.total_hours || 0);
+    let workedMinutes = 0;
     if (isAbsentOrLeave) {
-      hours = 0;
-    } else if ((!Number.isFinite(hours) || hours <= 0) && row.check_in && row.check_out) {
-      hours = computeWorkedHours(row.check_in, row.check_out);
+      workedMinutes = 0;
+    } else if (row.check_in && row.check_out) {
+      workedMinutes = computeWorkedMinutes(row.check_in, row.check_out);
+    } else {
+      workedMinutes = Math.round(Math.max(0, Number(row.total_hours || 0)) * 60);
     }
+    const hours = Math.round((workedMinutes / 60) * 100) / 100;
     return {
       ...row,
       date: row.day,
-      total_hours: Math.round((Number(hours) || 0) * 100) / 100,
+      total_hours: hours,
+      worked_minutes: Math.round(workedMinutes),
+      hours_formatted: workedMinutes > 0 ? formatHoursAsHHMM(workedMinutes, { isMinutes: true }) : '',
+      check_in_12h: formatTime12HourAmPm(row.check_in),
+      check_out_12h: formatTime12HourAmPm(row.check_out),
     };
   });
 
@@ -1986,12 +1996,15 @@ async function getEmployeePayslip(id, monthParam, user) {
     has_unused_leave_override: calc.has_unused_leave_override,
 
     actual_hours: calc.actual_hours,
+    actual_hours_formatted: calc.actual_hours_formatted,
     required_hours: calc.required_hours,
     overtime_hours: calc.overtime_hours,
+    overtime_hours_formatted: calc.overtime_hours_formatted,
     overtime_amount: calc.overtime_amount,
     calc_overtime_amount: calc.calc_overtime_amount,
     has_overtime_override: calc.has_overtime_override,
     delay_hours: calc.delay_hours,
+    delay_hours_formatted: calc.delay_hours_formatted,
     delay_deduction: calc.delay_deduction,
     calc_delay_deduction: calc.calc_delay_deduction,
     has_delay_override: calc.has_delay_override,

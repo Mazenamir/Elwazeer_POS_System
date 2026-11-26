@@ -4,6 +4,7 @@ const syncService = require('./sync.service');
 const uploadSyncHelpers = require('./upload-sync.helpers');
 const notificationsService = require('../notifications/notifications.service');
 const errorLogger = require('../../core/error-logger');
+const { normalizeServerError } = require('../../middleware/error.middleware');
 
 async function ping(req, res) {
   const branchId = req.query?.branch_id || req.headers['x-branch-id'];
@@ -114,7 +115,35 @@ async function runCycle(req, res, next) {
     res.json(result);
   } catch (err) {
     console.error('Sync cycle failed:', err);
-    res.status(500).json({ ok: false, error: err.message, message: 'حدث خطأ غير متوقع أثناء المزامنة' });
+    const norm = normalizeServerError(err);
+    let errorId = null;
+    if (norm.shouldLog) {
+      errorId = errorLogger.logError({
+        source: 'server',
+        level: norm.statusCode >= 500 ? 'error' : 'warn',
+        code: norm.code,
+        statusCode: norm.statusCode,
+        message: norm.message,
+        rawMessage: err?.message || null,
+        method: req?.method || null,
+        path: req?.originalUrl || req?.url || '/api/sync/cycle',
+        userId: req?.user?.id || null,
+        username: req?.user?.username || null,
+        branchId: req?.user?.branch_id || null,
+        stack: err?.stack || null,
+        details: {
+          pgCode: err?.code || null,
+          pgDetail: err?.detail || null,
+        },
+      });
+    }
+    res.status(norm.statusCode).json({
+      ok: false,
+      code: norm.code,
+      error: norm.message,
+      message: norm.message,
+      ...(errorId ? { errorId } : {}),
+    });
   }
 }
 

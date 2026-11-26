@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { formatCairoDateTime } = require('./reports.helpers');
+const { formatHoursAsHHMM, formatTime12HourAmPm } = require('../hr/payroll.calculator');
 
 let localFontCss = '';
 try {
@@ -922,13 +923,16 @@ function generateDailyDetailsPdfHtml(dailyData, options = {}) {
 
   const stRows = attendanceList.slice(0, 100).map((st) => {
     const advAmt = advMap.get(st.employee_name) || 0;
+    const inStr = formatTime12HourAmPm(st.check_in_24 || st.check_in) || st.check_in || '-';
+    const outStr = formatTime12HourAmPm(st.check_out_24 || st.check_out) || st.check_out || '-';
+    const hrsStr = st.hours_formatted || (Number(st.total_hours) > 0 ? formatHoursAsHHMM(st.total_hours) : '-');
     return `
       <tr>
         <td class="font-bold">${st.employee_name || '-'}</td>
         <td>${st.branch_name || '-'}</td>
-        <td class="center font-mono">${st.check_in || '-'}</td>
-        <td class="center font-mono">${st.check_out || '-'}</td>
-        <td class="center font-bold">${Number(st.total_hours || 0).toFixed(1)} س</td>
+        <td class="center font-mono">${inStr}</td>
+        <td class="center font-mono">${outStr}</td>
+        <td class="center font-bold">${hrsStr}</td>
         <td class="num text-amber-700 font-bold">${advAmt > 0 ? formatMoney(advAmt) : '-'}</td>
         <td>${st.notes || (st.status === 'absent' ? 'غياب' : '-')}</td>
       </tr>

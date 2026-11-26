@@ -484,6 +484,7 @@ if (config.IS_BRANCH_MODE) {
       }
     },
     getLastDbError: () => null,
+    getLastDbErrorCode: () => null,
     translatePgToSqlite,
     close: async () => {
       try {
@@ -515,20 +516,40 @@ if (config.IS_BRANCH_MODE) {
   });
 
   let lastDbError = null;
+  let lastDbErrorCode = null;
+
+  function isTransientPgConnectionError(err) {
+    const code = String(err?.code || '');
+    const msg = String(err?.message || '');
+    if ([
+      'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT',
+      '57P01', '57P02', '57P03',
+      '08000', '08001', '08003', '08006', '08P01',
+    ].includes(code)) {
+      return true;
+    }
+    return /Connection terminated unexpectedly|terminating connection due to administrator command|the database system is starting up|the database system is in recovery mode|Client has encountered a connection error|read ECONNRESET/i.test(msg);
+  }
 
   async function isPrimaryDbAvailable() {
     try {
       const res = await pool.query('SELECT 1 AS ok');
       lastDbError = null;
+      lastDbErrorCode = null;
       return Boolean(res?.rows?.[0]?.ok);
     } catch (err) {
       lastDbError = err.message;
+      lastDbErrorCode = err.code || null;
       return false;
     }
   }
 
   function getLastDbError() {
     return lastDbError;
+  }
+
+  function getLastDbErrorCode() {
+    return lastDbErrorCode;
   }
 
   function executeSqliteQuery(targetDb, rawSql, params = []) {
@@ -581,14 +602,26 @@ if (config.IS_BRANCH_MODE) {
     _isBranchMode: false,
     pool,
     sqlite: null,
-    query: (text, params = []) => {
+    query: async (text, params = []) => {
       if (module.exports.sqlite && typeof text === 'string' && /sync_queue/i.test(text)) {
         return executeSqliteQuery(module.exports.sqlite, text, params);
       }
-      return pool.query(text, params);
+      try {
+        return await pool.query(text, params);
+      } catch (err) {
+        const isReadOnlySelect = typeof text === 'string'
+          && /^\s*(SELECT|WITH)\b/i.test(text)
+          && !/\b(INSERT|UPDATE|DELETE|INTO)\b/i.test(text);
+        if (isReadOnlySelect && isTransientPgConnectionError(err)) {
+          await new Promise((r) => setTimeout(r, 200));
+          return await pool.query(text, params);
+        }
+        throw err;
+      }
     },
     transaction: async (callback) => {
       const client = await pool.connect();
+      let releaseErr = false;
       try {
         await client.query('BEGIN');
         const result = await callback({
@@ -597,14 +630,20 @@ if (config.IS_BRANCH_MODE) {
         await client.query('COMMIT');
         return result;
       } catch (err) {
-        await client.query('ROLLBACK');
+        if (isTransientPgConnectionError(err)) {
+          releaseErr = err;
+        }
+        try {
+          await client.query('ROLLBACK');
+        } catch {}
         throw err;
       } finally {
-        client.release();
+        client.release(releaseErr);
       }
     },
     isPrimaryDbAvailable,
     getLastDbError,
+    getLastDbErrorCode,
     translatePgToSqlite,
     close: async () => {
       if (pool) {

@@ -25,6 +25,7 @@ const CACHE_TTL_MS = 30 * 1000; // 30 seconds freshness window
 
 // Set of explicitly revoked / deleted user IDs
 const revokedUserIds = new Set();
+let knownHasUsers = false;
 
 function isUserRevoked(userId) {
   if (!userId) return false;
@@ -41,14 +42,18 @@ function revokeUserId(userId) {
 async function hasAnyUser() {
   try {
     if (config.IS_BRANCH_MODE) {
-      if (!db.sqlite) return false;
+      if (!db.sqlite) return knownHasUsers;
       const row = db.sqlite.prepare('SELECT COUNT(*) as count FROM users').get();
-      return Number(row?.count || 0) > 0;
+      const exists = Number(row?.count || 0) > 0;
+      if (exists) knownHasUsers = true;
+      return exists;
     }
     const { rows } = await db.query('SELECT COUNT(*) as count FROM users');
-    return Number(rows[0]?.count || 0) > 0;
+    const exists = Number(rows[0]?.count || 0) > 0;
+    if (exists) knownHasUsers = true;
+    return exists;
   } catch {
-    return false;
+    return knownHasUsers;
   }
 }
 
@@ -106,6 +111,7 @@ async function getUserFreshData(userId) {
       user = rows[0] || null;
     }
   } catch {
+    if (cached) return cached;
     return null;
   }
 

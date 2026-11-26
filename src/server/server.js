@@ -71,6 +71,15 @@ function checkPgCtlStatus(pgCtl, pgData) {
   }
 }
 
+function isNonRecoverablePgConfigError(code, msg = '') {
+  const safeCode = String(code || '');
+  const safeMsg = String(msg || '');
+  if (['28P01', '28000', '3D000'].includes(safeCode)) {
+    return true;
+  }
+  return /password authentication failed|database .* does not exist/i.test(safeMsg);
+}
+
 async function waitForPostgresReady(timeoutMs = 120000, pollIntervalMs = 500) {
   const startTime = Date.now();
   let lastLogTime = startTime;
@@ -78,6 +87,11 @@ async function waitForPostgresReady(timeoutMs = 120000, pollIntervalMs = 500) {
   while (Date.now() - startTime < timeoutMs) {
     if (await db.isPrimaryDbAvailable()) {
       return true;
+    }
+    const errCode = db.getLastDbErrorCode ? db.getLastDbErrorCode() : null;
+    const errMsg = db.getLastDbError ? db.getLastDbError() : '';
+    if (isNonRecoverablePgConfigError(errCode, errMsg)) {
+      return false;
     }
 
     if (Date.now() - lastLogTime >= 5000) {
@@ -163,11 +177,27 @@ async function ensurePostgresRunning() {
   const portOpenInitially = await isPortOpen(dbPort, '127.0.0.1');
   if (portOpenInitially) {
     for (let i = 0; i < 8; i++) {
+      const errCode = db.getLastDbErrorCode ? db.getLastDbErrorCode() : null;
+      const errMsg = db.getLastDbError ? db.getLastDbError() : '';
+      if (isNonRecoverablePgConfigError(errCode, errMsg)) {
+        break;
+      }
       await new Promise((r) => setTimeout(r, 500));
       if (await db.isPrimaryDbAvailable()) {
         console.log(`[Database] PostgreSQL is ready and accepting queries on port ${dbPort}.`);
         return;
       }
+    }
+
+    const errCode = db.getLastDbErrorCode ? db.getLastDbErrorCode() : null;
+    const errMsg = db.getLastDbError ? db.getLastDbError() : '';
+    if (isNonRecoverablePgConfigError(errCode, errMsg)) {
+      const recordedPid = getPostmasterPid(pidPath);
+      const isOurPg = isPostgresProcessRunning(recordedPid);
+      if (!isOurPg) {
+        throw new Error(`[Database] Port ${dbPort} is occupied by another PostgreSQL instance with different credentials (${errCode || 'AUTH_FAILED'}). Stop the conflicting PostgreSQL service or change DB_PORT in .env.`);
+      }
+      throw new Error(`[Database] PostgreSQL authentication/database check failed on port ${dbPort} (${errCode || 'CONFIG_ERROR'}: ${errMsg}). Check DB_USER, DB_PASSWORD, and DB_NAME in .env.`);
     }
   }
 
@@ -328,19 +358,19 @@ async function startServer() {
       }
     }
 
-    // 0. Ensure PostgreSQL is active if in Master mode
-    await ensurePostgresRunning();
-
-    // 1. Run automated database migrations
-    await runMigrations();
-
-    // 2. Start HTTP listener
+    // 0. Abort before touching PostgreSQL if HTTP port is already bound by an active server
     if (await isPortOpen(config.PORT, '127.0.0.1')) {
       console.error(`\n❌ Error: Port ${config.PORT} is already in use by another process.`);
       console.error(`💡 Tip: An instance of Bebyoon Server is already running on port ${config.PORT}.`);
       console.error(`   If you want to restart it, please terminate the running process first.\n`);
       process.exit(1);
     }
+
+    // 1. Ensure PostgreSQL is active if in Master mode
+    await ensurePostgresRunning();
+
+    // 2. Run automated database migrations
+    await runMigrations();
 
     const server = app.listen(config.PORT, '0.0.0.0', () => {
       console.log(`✅ Server is running on http://127.0.0.1:${config.PORT}`);
@@ -378,13 +408,27 @@ async function startServer() {
     let isShuttingDown = false;
     let pgWatchdogTimer = null;
     let isHealingDb = false;
+    let watchdogAuthWarned = false;
 
     if (!config.IS_BRANCH_MODE && (config.DB_HOST === 'localhost' || config.DB_HOST === '127.0.0.1')) {
       pgWatchdogTimer = setInterval(async () => {
         if (isShuttingDown || isHealingDb) return;
         try {
           const alive = await db.isPrimaryDbAvailable();
-          if (!alive && !isShuttingDown) {
+          if (alive) {
+            watchdogAuthWarned = false;
+            return;
+          }
+          if (!isShuttingDown) {
+            const errCode = db.getLastDbErrorCode ? db.getLastDbErrorCode() : null;
+            const errMsg = db.getLastDbError ? db.getLastDbError() : '';
+            if (isNonRecoverablePgConfigError(errCode, errMsg)) {
+              if (!watchdogAuthWarned) {
+                watchdogAuthWarned = true;
+                console.error('[Database] Watchdog detected authentication/config error — skipping process restart:', errCode || 'CONFIG_ERROR', errMsg);
+              }
+              return;
+            }
             isHealingDb = true;
             console.warn('[Database] Watchdog: PostgreSQL became unreachable. Attempting auto-recovery...');
             await ensurePostgresRunning();

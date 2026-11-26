@@ -12,6 +12,12 @@ import client from '../../services/api/client';
 import reportsService from '../../services/api/reports.service';
 import { printHtml } from '../../utils/print';
 import {
+  to24HourTimeInput,
+  formatTimeAmPm,
+  computeWorkedHHMM,
+  formatHoursHHMM,
+} from '../../utils/date';
+import {
   BarChart3,
   Calendar,
   DollarSign,
@@ -912,8 +918,8 @@ export function Reports() {
         const initialAttendance = {};
         eData.attendance.forEach((att) => {
           initialAttendance[att.employee_id] = {
-            check_in: att.check_in_24 || (att.check_in ? att.check_in.replace(/\s*[AP]M/i, '').trim() : ''),
-            check_out: att.check_out_24 || (att.check_out ? att.check_out.replace(/\s*[AP]M/i, '').trim() : ''),
+            check_in: to24HourTimeInput(att.check_in_24 || att.check_in),
+            check_out: to24HourTimeInput(att.check_out_24 || att.check_out),
             notes: att.notes || '',
             saving: false,
           };
@@ -934,8 +940,8 @@ export function Reports() {
       const attRow = expandedDetails?.extended?.attendance?.find((a) => a.employee_id === employeeId);
       if (attRow) {
         edit = {
-          check_in: attRow.check_in_24 || (attRow.check_in ? attRow.check_in.replace(/\s*[AP]M/i, '').trim() : ''),
-          check_out: attRow.check_out_24 || (attRow.check_out ? attRow.check_out.replace(/\s*[AP]M/i, '').trim() : ''),
+          check_in: to24HourTimeInput(attRow.check_in_24 || attRow.check_in),
+          check_out: to24HourTimeInput(attRow.check_out_24 || attRow.check_out),
           notes: attRow.notes || '',
         };
       }
@@ -2241,11 +2247,18 @@ export function Reports() {
                                         ) : (
                                           expandedDetails.extended.attendance?.map((att) => {
                                             const edit = attendanceEditState[att.employee_id] || {
-                                              check_in: att.check_in_24 || '',
-                                              check_out: att.check_out_24 || '',
+                                              check_in: to24HourTimeInput(att.check_in_24 || att.check_in),
+                                              check_out: to24HourTimeInput(att.check_out_24 || att.check_out),
                                               notes: att.notes || '',
                                               saving: false,
                                             };
+                                            const notesText = String(edit.notes || '');
+                                            const isAbsOrLeave = att.status === 'absent' || att.status === 'leave' || notesText.includes('غياب') || notesText.includes('إجازة') || notesText.includes('جاز');
+                                            const liveHoursText = isAbsOrLeave
+                                              ? '-'
+                                              : ((edit.check_in && edit.check_out ? computeWorkedHHMM(edit.check_in, edit.check_out) : '') ||
+                                                 att.hours_formatted ||
+                                                 (Number(att.total_hours) > 0 ? formatHoursHHMM(att.total_hours) : '-'));
 
                                             return (
                                               <tr key={att.employee_id} className="hover:bg-slate-50/80">
@@ -2253,43 +2266,57 @@ export function Reports() {
                                                   {att.employee_name}
                                                 </td>
                                                 <td className="py-2 px-3">
-                                                  <input
-                                                    type="time"
-                                                    className="h-8 px-2 rounded-lg border border-slate-200 font-mono text-xs focus:ring-1 focus:ring-slate-900 focus:outline-none bg-white"
-                                                    value={edit.check_in || ''}
-                                                    onChange={(e) => {
-                                                      const val = e.target.value;
-                                                      setAttendanceEditState((prev) => {
-                                                        const cur = prev[att.employee_id] || {
-                                                          check_in: att.check_in_24 || '',
-                                                          check_out: att.check_out_24 || '',
-                                                          notes: att.notes || '',
-                                                        };
-                                                        return { ...prev, [att.employee_id]: { ...cur, check_in: val } };
-                                                      });
-                                                    }}
-                                                  />
+                                                  <div className="flex items-center gap-1.5">
+                                                    <input
+                                                      type="time"
+                                                      className="h-8 px-2 rounded-lg border border-slate-200 font-mono text-xs focus:ring-1 focus:ring-slate-900 focus:outline-none bg-white"
+                                                      value={edit.check_in || ''}
+                                                      onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setAttendanceEditState((prev) => {
+                                                          const cur = prev[att.employee_id] || {
+                                                            check_in: to24HourTimeInput(att.check_in_24 || att.check_in),
+                                                            check_out: to24HourTimeInput(att.check_out_24 || att.check_out),
+                                                            notes: att.notes || '',
+                                                          };
+                                                          return { ...prev, [att.employee_id]: { ...cur, check_in: val } };
+                                                        });
+                                                      }}
+                                                    />
+                                                    {edit.check_in && (
+                                                      <span className="text-[11px] font-mono font-black text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                                        {formatTimeAmPm(edit.check_in)}
+                                                      </span>
+                                                    )}
+                                                  </div>
                                                 </td>
                                                 <td className="py-2 px-3">
-                                                  <input
-                                                    type="time"
-                                                    className="h-8 px-2 rounded-lg border border-slate-200 font-mono text-xs focus:ring-1 focus:ring-slate-900 focus:outline-none bg-white"
-                                                    value={edit.check_out || ''}
-                                                    onChange={(e) => {
-                                                      const val = e.target.value;
-                                                      setAttendanceEditState((prev) => {
-                                                        const cur = prev[att.employee_id] || {
-                                                          check_in: att.check_in_24 || '',
-                                                          check_out: att.check_out_24 || '',
-                                                          notes: att.notes || '',
-                                                        };
-                                                        return { ...prev, [att.employee_id]: { ...cur, check_out: val } };
-                                                      });
-                                                    }}
-                                                  />
+                                                  <div className="flex items-center gap-1.5">
+                                                    <input
+                                                      type="time"
+                                                      className="h-8 px-2 rounded-lg border border-slate-200 font-mono text-xs focus:ring-1 focus:ring-slate-900 focus:outline-none bg-white"
+                                                      value={edit.check_out || ''}
+                                                      onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setAttendanceEditState((prev) => {
+                                                          const cur = prev[att.employee_id] || {
+                                                            check_in: to24HourTimeInput(att.check_in_24 || att.check_in),
+                                                            check_out: to24HourTimeInput(att.check_out_24 || att.check_out),
+                                                            notes: att.notes || '',
+                                                          };
+                                                          return { ...prev, [att.employee_id]: { ...cur, check_out: val } };
+                                                        });
+                                                      }}
+                                                    />
+                                                    {edit.check_out && (
+                                                      <span className="text-[11px] font-mono font-black text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                                        {formatTimeAmPm(edit.check_out)}
+                                                      </span>
+                                                    )}
+                                                  </div>
                                                 </td>
                                                 <td className="py-2.5 px-3 text-indigo-700 font-black font-mono">
-                                                  {att.total_hours ? `${att.total_hours} س` : '-'}
+                                                  {liveHoursText}
                                                 </td>
                                                 <td className="py-2 px-3">
                                                   <input
@@ -3018,9 +3045,9 @@ export function Reports() {
 
                             {/* Attendance */}
                             <td className="py-2 px-2 text-center text-slate-800">{r.col_p_attendance_emp || r.p_emp_name || '-'}</td>
-                            <td className="py-2 px-1.5 text-center font-mono text-slate-600">{r.col_q_check_in || '-'}</td>
-                            <td className="py-2 px-1.5 text-center font-mono text-slate-600">{r.col_r_check_out || '-'}</td>
-                            <td className="py-2 px-1.5 text-center font-mono text-indigo-700">{r.col_s_hours ? (typeof r.col_s_hours === 'number' ? `${r.col_s_hours} س` : r.col_s_hours) : '-'}</td>
+                            <td className="py-2 px-1.5 text-center font-mono text-slate-600 whitespace-nowrap">{r.col_q_check_in ? formatTimeAmPm(r.col_q_check_in) : '-'}</td>
+                            <td className="py-2 px-1.5 text-center font-mono text-slate-600 whitespace-nowrap">{r.col_r_check_out ? formatTimeAmPm(r.col_r_check_out) : '-'}</td>
+                            <td className="py-2 px-1.5 text-center font-mono text-indigo-700">{r.col_s_hours ? (typeof r.col_s_hours === 'number' ? formatHoursHHMM(r.col_s_hours) : r.col_s_hours) : '-'}</td>
                             <td className="py-2 px-2 text-slate-500">{r.col_t_notes || r.t_notes || '-'}</td>
                           </tr>
                         ))
@@ -3374,7 +3401,7 @@ export function Reports() {
                           {formatCurrency(emp.daily_rate)}
                         </td>
                         <td className="py-3 px-2.5 text-center font-mono text-indigo-700 whitespace-nowrap">
-                          {emp.actual_hours} / {emp.required_hours > 0 ? emp.required_hours : 'غير محدد'}
+                          {emp.actual_hours_formatted || formatHoursHHMM(emp.actual_hours)} / {emp.required_hours > 0 ? formatHoursHHMM(emp.required_hours) : 'غير محدد'}
                         </td>
                         <td className="py-3 px-2 text-center font-mono text-rose-600">
                           {emp.delay_deduction > 0 ? formatCurrency(emp.delay_deduction) : '-'}
@@ -3439,7 +3466,7 @@ export function Reports() {
                     <td className="py-3 px-2 text-center">-</td>
                     <td className="py-3 px-2 text-center">-</td>
                     <td className="py-3 px-2.5 text-center font-mono">
-                      {Math.round(salaryReport.employees.reduce((sum, e) => sum + (e.actual_hours || 0), 0) * 100) / 100} س
+                      {formatHoursHHMM(salaryReport.employees.reduce((sum, e) => sum + (e.actual_hours || 0), 0))}
                     </td>
                     <td className="py-3 px-2 text-center font-mono text-rose-700">
                       {formatCurrency(salaryReport.employees.reduce((sum, e) => sum + (e.delay_deduction || 0), 0))}

@@ -26,7 +26,10 @@ const {
   calculateEmployeeMonthlyPayroll,
   shouldIncludeEmployeeInMonth,
   computeAttendanceMetrics,
+  computeWorkedMinutes,
   computeWorkedHours,
+  formatHoursAsHHMM,
+  formatTime12HourAmPm,
 } = require('../hr/payroll.calculator');
 
 async function getDashboard(query = {}, user = null) {
@@ -1159,7 +1162,28 @@ async function getProfitReport(query = {}, user = null) {
     salaries_details: salaryDetails,
     tailoring_details: tailoringDetails,
     tailoring: tailoringDetails,
-    attendance: attendanceRes.rows,
+    attendance: (attendanceRes.rows || []).map((row) => {
+      const notesStr = String(row.notes || '');
+      const statusStr = String(row.status || '');
+      const isAbsentOrLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
+      let workedMinutes = 0;
+      if (isAbsentOrLeave) {
+        workedMinutes = 0;
+      } else if (row.check_in && row.check_out) {
+        workedMinutes = computeWorkedMinutes(row.check_in, row.check_out);
+      } else {
+        workedMinutes = Math.round(Math.max(0, Number(row.total_hours || 0)) * 60);
+      }
+      const hours = Math.round((workedMinutes / 60) * 100) / 100;
+      return {
+        ...row,
+        check_in: formatTime12HourAmPm(row.check_in) || row.check_in,
+        check_out: formatTime12HourAmPm(row.check_out) || row.check_out,
+        total_hours: hours,
+        worked_minutes: Math.round(workedMinutes),
+        hours_formatted: workedMinutes > 0 ? formatHoursAsHHMM(workedMinutes, { isMinutes: true }) : '',
+      };
+    }),
     sales_invoices: (salesInvoicesRes.rows || []).map((inv) => {
       let splits = typeof inv.payment_splits === 'string' ? (() => { try { return JSON.parse(inv.payment_splits); } catch { return null; } })() : inv.payment_splits;
       if ((!splits || splits.length === 0) && inv.payment_method === 'split') {
@@ -2474,7 +2498,28 @@ async function getDailyReport(query = {}, user = null) {
     salaries_details: salaryDetails,
     tailoring: tailoringDetails,
     tailoring_details: tailoringDetails,
-    attendance: attendanceRes.rows,
+    attendance: (attendanceRes.rows || []).map((row) => {
+      const notesStr = String(row.notes || '');
+      const statusStr = String(row.status || '');
+      const isAbsentOrLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
+      let workedMinutes = 0;
+      if (isAbsentOrLeave) {
+        workedMinutes = 0;
+      } else if (row.check_in && row.check_out) {
+        workedMinutes = computeWorkedMinutes(row.check_in, row.check_out);
+      } else {
+        workedMinutes = Math.round(Math.max(0, Number(row.total_hours || 0)) * 60);
+      }
+      const hours = Math.round((workedMinutes / 60) * 100) / 100;
+      return {
+        ...row,
+        check_in: formatTime12HourAmPm(row.check_in) || row.check_in,
+        check_out: formatTime12HourAmPm(row.check_out) || row.check_out,
+        total_hours: hours,
+        worked_minutes: Math.round(workedMinutes),
+        hours_formatted: workedMinutes > 0 ? formatHoursAsHHMM(workedMinutes, { isMinutes: true }) : '',
+      };
+    }),
     sales_invoices: (salesInvoicesRes.rows || []).map((inv) => {
       let splits = typeof inv.payment_splits === 'string' ? (() => { try { return JSON.parse(inv.payment_splits); } catch { return null; } })() : inv.payment_splits;
       if ((!splits || splits.length === 0) && inv.payment_method === 'split') {
@@ -2956,16 +3001,49 @@ async function getExtendedDailyReport(query = {}, user = null) {
           'فاتورة بيع'
         ) || COALESCE(' + ' || NULLIF(alt.description, ''), '') as description,
         o.total_amount,
-        o.paid_amount,
-        GREATEST(o.total_amount - o.paid_amount, 0) as remaining_amount,
+        GREATEST(0, o.paid_amount - COALESCE((
+          SELECT SUM(op_sub.amount)
+          FROM order_payments op_sub
+          WHERE op_sub.order_id = o.id
+        ), 0)) as paid_amount,
+        GREATEST(o.total_amount - GREATEST(0, o.paid_amount - COALESCE((
+          SELECT SUM(op_sub.amount)
+          FROM order_payments op_sub
+          WHERE op_sub.order_id = o.id
+        ), 0)), 0) as remaining_amount,
         COALESCE(e.name, 'غير محدد') as seller_name,
         TO_CHAR(COALESCE(alt.due_date, o.order_date::date), 'YYYY-MM-DD') as delivery_date,
         ${normalizedPaymentMethodSql('o.payment_method')} as payment_method,
         o.payment_method as raw_payment_method,
-        o.cash_amount,
-        o.card_amount,
-        o.bank_transfer_amount,
-        o.wallet_amount,
+        GREATEST(0, COALESCE(o.cash_amount, 0) - COALESCE((
+          SELECT SUM(op_sub.amount)
+          FROM order_payments op_sub
+          WHERE op_sub.order_id = o.id
+            AND ${normalizedPaymentMethodSql('op_sub.payment_method')} = 'cash'
+        ), 0)) as cash_amount,
+        GREATEST(0, COALESCE(o.card_amount, 0) - COALESCE((
+          SELECT SUM(op_sub.amount)
+          FROM order_payments op_sub
+          WHERE op_sub.order_id = o.id
+            AND ${normalizedPaymentMethodSql('op_sub.payment_method')} IN ('card', 'visa')
+        ), 0)) as card_amount,
+        GREATEST(0, COALESCE(o.bank_transfer_amount, 0) - COALESCE((
+          SELECT SUM(op_sub.amount)
+          FROM order_payments op_sub
+          WHERE op_sub.order_id = o.id
+            AND ${normalizedPaymentMethodSql('op_sub.payment_method')} IN ('bank_transfer', 'instapay')
+        ), 0)) as bank_transfer_amount,
+        GREATEST(0, COALESCE(o.wallet_amount, 0) - COALESCE((
+          SELECT SUM(op_sub.amount)
+          FROM order_payments op_sub
+          WHERE op_sub.order_id = o.id
+            AND ${normalizedPaymentMethodSql('op_sub.payment_method')} = 'wallet'
+        ), 0)) as wallet_amount,
+        COALESCE((
+          SELECT SUM(op_sub.amount)
+          FROM order_payments op_sub
+          WHERE op_sub.order_id = o.id
+        ), 0) as settled_total,
         o.payment_splits,
         'sale' as transaction_type,
         'بيع' as type_label
@@ -2994,16 +3072,49 @@ async function getExtendedDailyReport(query = {}, user = null) {
         '12:00 PM' as invoice_time,
         ('إيجار: ' || COALESCE(i.name, 'صنف مؤجر')) as description,
         r.total_price as total_amount,
-        COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0) as paid_amount,
-        GREATEST(r.total_price - COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0), 0) as remaining_amount,
+        GREATEST(0, COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0) - COALESCE((
+          SELECT SUM(rp_sub.amount)
+          FROM rental_payments rp_sub
+          WHERE rp_sub.rental_id = r.id
+        ), 0)) as paid_amount,
+        GREATEST(r.total_price - GREATEST(0, COALESCE(NULLIF(r.paid_amount, 0), r.deposit, 0) - COALESCE((
+          SELECT SUM(rp_sub.amount)
+          FROM rental_payments rp_sub
+          WHERE rp_sub.rental_id = r.id
+        ), 0)), 0) as remaining_amount,
         COALESCE(e.name, 'غير محدد') as seller_name,
         TO_CHAR(COALESCE(r.pickup_date, r.booking_date), 'YYYY-MM-DD') as delivery_date,
         ${normalizedPaymentMethodSql('r.payment_method')} as payment_method,
         r.payment_method as raw_payment_method,
-        r.cash_amount,
-        r.card_amount,
-        r.bank_transfer_amount,
-        r.wallet_amount,
+        GREATEST(0, COALESCE(r.cash_amount, 0) - COALESCE((
+          SELECT SUM(rp_sub.amount)
+          FROM rental_payments rp_sub
+          WHERE rp_sub.rental_id = r.id
+            AND ${normalizedPaymentMethodSql('rp_sub.payment_method')} = 'cash'
+        ), 0)) as cash_amount,
+        GREATEST(0, COALESCE(r.card_amount, 0) - COALESCE((
+          SELECT SUM(rp_sub.amount)
+          FROM rental_payments rp_sub
+          WHERE rp_sub.rental_id = r.id
+            AND ${normalizedPaymentMethodSql('rp_sub.payment_method')} IN ('card', 'visa')
+        ), 0)) as card_amount,
+        GREATEST(0, COALESCE(r.bank_transfer_amount, 0) - COALESCE((
+          SELECT SUM(rp_sub.amount)
+          FROM rental_payments rp_sub
+          WHERE rp_sub.rental_id = r.id
+            AND ${normalizedPaymentMethodSql('rp_sub.payment_method')} IN ('bank_transfer', 'instapay')
+        ), 0)) as bank_transfer_amount,
+        GREATEST(0, COALESCE(r.wallet_amount, 0) - COALESCE((
+          SELECT SUM(rp_sub.amount)
+          FROM rental_payments rp_sub
+          WHERE rp_sub.rental_id = r.id
+            AND ${normalizedPaymentMethodSql('rp_sub.payment_method')} = 'wallet'
+        ), 0)) as wallet_amount,
+        COALESCE((
+          SELECT SUM(rp_sub.amount)
+          FROM rental_payments rp_sub
+          WHERE rp_sub.rental_id = r.id
+        ), 0) as settled_total,
         r.payment_splits,
         'rental' as transaction_type,
         'إيجار' as type_label
@@ -3225,7 +3336,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
         TO_CHAR(op.payment_date, 'YYYY-MM-DD') as invoice_date,
         TO_CHAR(op.payment_date, 'HH12:MI AM') as invoice_time,
         ('سداد متبقي فاتورة #' || COALESCE(o.branch_invoice_number::text, o.id::text) || COALESCE(' - ' || c.name, '')) as description,
-        op.amount as total_amount,
+        0 as total_amount,
         op.amount as paid_amount,
         0 as remaining_amount,
         COALESCE(e.name, 'غير محدد') as seller_name,
@@ -3256,7 +3367,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
         TO_CHAR(rp.payment_date, 'YYYY-MM-DD') as invoice_date,
         TO_CHAR(rp.payment_date, 'HH12:MI AM') as invoice_time,
         ('سداد متبقي إيجار #' || r.id::text || COALESCE(' - ' || c.name, '')) as description,
-        rp.amount as total_amount,
+        0 as total_amount,
         rp.amount as paid_amount,
         0 as remaining_amount,
         COALESCE(e.name, 'غير محدد') as seller_name,
@@ -3342,12 +3453,24 @@ async function getExtendedDailyReport(query = {}, user = null) {
           ? (() => { try { return JSON.parse(row.payment_splits); } catch { return null; } })()
           : (row.payment_splits || null));
 
-    if ((!splits || splits.length === 0) && (row.payment_method === 'split' || row.raw_payment_method === 'split')) {
+    const settledTotal = Number(row.settled_total || 0);
+    if (Array.isArray(splits) && settledTotal > 0) {
+      const hadRemainingTag = splits.some((s) => s && s.type === 'remaining_payment');
+      if (hadRemainingTag) {
+        splits = splits.filter((s) => !s || s.type !== 'remaining_payment');
+      } else {
+        // Rebuild initial splits from the already-subtracted bucket columns
+        splits = [];
+      }
+    }
+
+    if ((!splits || splits.length === 0) && (row.payment_method === 'split' || row.raw_payment_method === 'split' || settledTotal > 0)) {
       splits = [];
       if (Number(row.cash_amount) > 0) splits.push({ method: 'cash', amount: Number(row.cash_amount) });
       if (Number(row.card_amount) > 0) splits.push({ method: 'card', amount: Number(row.card_amount) });
       if (Number(row.bank_transfer_amount) > 0) splits.push({ method: 'bank_transfer', amount: Number(row.bank_transfer_amount) });
       if (Number(row.wallet_amount) > 0) splits.push({ method: 'wallet', amount: Number(row.wallet_amount) });
+      if (splits.length === 0) splits = null;
     }
 
     return {
@@ -3402,15 +3525,24 @@ async function getExtendedDailyReport(query = {}, user = null) {
     const notesStr = String(row.notes || '');
     const statusStr = String(row.status || '');
     const isAbsentOrLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
-    let hours = Number(row.total_hours || 0);
+    let workedMinutes = 0;
     if (isAbsentOrLeave) {
-      hours = 0;
-    } else if ((!Number.isFinite(hours) || hours <= 0) && row.check_in_24 && row.check_out_24) {
-      hours = computeWorkedHours(row.check_in_24, row.check_out_24);
+      workedMinutes = 0;
+    } else if (row.check_in_24 && row.check_out_24) {
+      workedMinutes = computeWorkedMinutes(row.check_in_24, row.check_out_24);
+    } else if (row.check_in && row.check_out) {
+      workedMinutes = computeWorkedMinutes(row.check_in, row.check_out);
+    } else {
+      workedMinutes = Math.round(Math.max(0, Number(row.total_hours || 0)) * 60);
     }
+    const hours = Math.round((workedMinutes / 60) * 100) / 100;
     return {
       ...row,
-      total_hours: Math.round((Number(hours) || 0) * 100) / 100,
+      check_in: formatTime12HourAmPm(row.check_in_24 || row.check_in) || row.check_in,
+      check_out: formatTime12HourAmPm(row.check_out_24 || row.check_out) || row.check_out,
+      total_hours: hours,
+      worked_minutes: Math.round(workedMinutes),
+      hours_formatted: workedMinutes > 0 ? formatHoursAsHHMM(workedMinutes, { isMinutes: true }) : '',
       basic_salary: Number(row.basic_salary || 0),
     };
   });
@@ -3425,7 +3557,11 @@ async function getExtendedDailyReport(query = {}, user = null) {
     amount: Number(row.amount || 0),
   }));
 
-  const totalSales = Math.round(allDailyTransactions.reduce((sum, inv) => sum + inv.total_amount, 0) * 100) / 100;
+  const totalSales = Math.round(
+    allDailyTransactions
+      .filter(inv => !['order_payment', 'rental_payment', 'rental_pickup'].includes(inv.transaction_type))
+      .reduce((sum, inv) => sum + inv.total_amount, 0) * 100
+  ) / 100;
   const totalPaid = Math.round(allDailyTransactions.reduce((sum, inv) => sum + inv.paid_amount, 0) * 100) / 100;
   const totalAdvances = Math.round(advances.reduce((sum, adv) => sum + adv.amount, 0) * 100) / 100;
   const totalExpenses = Math.round(expenses.reduce((sum, exp) => sum + exp.amount, 0) * 100) / 100;
@@ -3704,19 +3840,24 @@ async function getMonthlyOhdaReport(query = {}, user = null) {
         att.status === 'leave' ||
         (att.notes && (att.notes.includes('غياب') || att.notes.includes('إجازة') || att.notes.includes('جاز')))
       );
-      let dayHours = Number(att?.total_hours || 0);
+      let dayMinutes = 0;
       if (isDayAbsentOrLeave) {
-        dayHours = 0;
-      } else if ((!Number.isFinite(dayHours) || dayHours <= 0) && att?.check_in && att?.check_out) {
-        dayHours = computeWorkedHours(att.check_in, att.check_out);
+        dayMinutes = 0;
+      } else if (att?.check_in && att?.check_out) {
+        dayMinutes = computeWorkedMinutes(att.check_in, att.check_out);
+      } else {
+        dayMinutes = Math.round(Math.max(0, Number(att?.total_hours || 0)) * 60);
       }
+      const dayHours = Math.round((dayMinutes / 60) * 100) / 100;
 
       days.push({
         day: d,
         attendance: isPresent,
         advance: adv,
         notes: att?.notes || '',
-        total_hours: Math.round((Number(dayHours) || 0) * 100) / 100,
+        total_hours: dayHours,
+        worked_minutes: Math.round(dayMinutes),
+        hours_formatted: dayMinutes > 0 ? formatHoursAsHHMM(dayMinutes, { isMinutes: true }) : '',
       });
     }
 
@@ -3902,11 +4043,14 @@ async function getMonthlySalarySheet(query = {}, user = null) {
         join_date: emp.join_date,
         end_date: emp.end_date,
         actual_hours: calc.actual_hours,
+        actual_hours_formatted: calc.actual_hours_formatted,
         required_hours: calc.required_hours,
         delay_hours: calc.delay_hours,
+        delay_hours_formatted: calc.delay_hours_formatted,
         delay_deduction: calc.delay_deduction,
         has_delay_override: calc.has_delay_override,
         overtime_hours: calc.overtime_hours,
+        overtime_hours_formatted: calc.overtime_hours_formatted,
         overtime_amount: calc.overtime_amount,
         has_overtime_override: calc.has_overtime_override,
         basic_salary: calc.basic_salary,

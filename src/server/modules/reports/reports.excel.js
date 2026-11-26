@@ -1,4 +1,5 @@
 const ExcelJS = require('exceljs');
+const { parseTimeToMinutes, computeWorkedMinutes } = require('../hr/payroll.calculator');
 const {
   sanitizeFormulaValue,
   formatCairoDateTime,
@@ -591,6 +592,47 @@ async function generateTopProductsExcel(data, options = {}) {
   return wb.xlsx.writeBuffer();
 }
 
+function populateDailyAttendanceCells(r, rowIdx, staff) {
+  const inMin = parseTimeToMinutes(staff.check_in_24 || staff.check_in);
+  const outMin = parseTimeToMinutes(staff.check_out_24 || staff.check_out);
+
+  r.getCell(16).value = staff.employee_name;
+  if (inMin !== null) {
+    r.getCell(17).value = inMin / 1440;
+    r.getCell(17).numFmt = 'h:mm AM/PM';
+  } else {
+    r.getCell(17).value = '';
+  }
+  if (outMin !== null) {
+    r.getCell(18).value = outMin / 1440;
+    r.getCell(18).numFmt = 'h:mm AM/PM';
+  } else {
+    r.getCell(18).value = '';
+  }
+
+  const notesStr = String(staff.notes || '');
+  const statusStr = String(staff.status || '');
+  const isAbsLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
+  const workedMins = isAbsLeave
+    ? 0
+    : (staff.worked_minutes !== undefined
+        ? Number(staff.worked_minutes)
+        : (inMin !== null && outMin !== null
+            ? computeWorkedMinutes(staff.check_in_24 || staff.check_in, staff.check_out_24 || staff.check_out)
+            : Math.round(Number(staff.total_hours || 0) * 60)));
+
+  if (workedMins > 0) {
+    r.getCell(19).value = {
+      formula: `IF(OR(Q${rowIdx}="",R${rowIdx}=""),"",MOD(R${rowIdx}-Q${rowIdx},1))`,
+      result: workedMins / 1440,
+    };
+    r.getCell(19).numFmt = 'h:mm';
+  } else {
+    r.getCell(19).value = '';
+  }
+  r.getCell(20).value = staff.notes || (staff.status === 'absent' ? 'غياب' : '');
+}
+
 /**
  * Builds the approved 4-track Daily Operations & Cash Drawer settlement worksheet
  * Track 1: Sales / Invoices (A..H)
@@ -849,7 +891,10 @@ function buildDailyOperationsSheet(ws, d, titleOrOptions, maybeOptions = {}) {
       r.getCell(3).value = desc;
       r.getCell(4).value = Number(inv.total_amount || 0);
       r.getCell(5).value = Number(inv.paid_amount || 0);
-      r.getCell(6).value = { formula: `D${rowIdx}-E${rowIdx}`, result: Number(inv.remaining_amount || 0) };
+      const isSettlementPayment = inv.transaction_type === 'order_payment' || inv.transaction_type === 'rental_payment';
+      r.getCell(6).value = isSettlementPayment
+        ? 0
+        : { formula: `D${rowIdx}-E${rowIdx}`, result: Number(inv.remaining_amount || 0) };
       r.getCell(7).value = inv.seller_name || '';
       r.getCell(8).value = inv.delivery_date || inv.invoice_date || '';
     } else if (i < maxRows) {
@@ -866,19 +911,7 @@ function buildDailyOperationsSheet(ws, d, titleOrOptions, maybeOptions = {}) {
         r.getCell(10).value = Number(adv.amount || 0);
       }
 
-      r.getCell(16).value = staff.employee_name;
-      r.getCell(17).value = staff.check_in_24 || (staff.check_in ? staff.check_in.replace(/\s*[AP]M/i, '').trim() : '');
-      r.getCell(18).value = staff.check_out_24 || (staff.check_out ? staff.check_out.replace(/\s*[AP]M/i, '').trim() : '');
-      if (staff.total_hours > 0) {
-        r.getCell(19).value = {
-          formula: `IF(OR(Q${rowIdx}="",R${rowIdx}=""),"",MOD(R${rowIdx}-Q${rowIdx},1))`,
-          result: staff.total_hours / 24,
-        };
-        r.getCell(19).numFmt = 'h:mm';
-      } else {
-        r.getCell(19).value = '';
-      }
-      r.getCell(20).value = staff.notes || (staff.status === 'absent' ? 'غياب' : '');
+      populateDailyAttendanceCells(r, rowIdx, staff);
     } else {
       r.getCell(9).value = { formula: `P${rowIdx}`, result: 0 };
     }
@@ -1204,20 +1237,37 @@ async function generateDailyReportExcel(dailyData, options = {}) {
       advByEmp.set(adv.employee_name, (advByEmp.get(adv.employee_name) || 0) + Number(adv.amount || 0));
     });
 
+    let totalWorkedMins = 0;
     staffAttendance.forEach((st, idx) => {
       const row = wsStaff.getRow(5 + idx);
       const advAmt = advByEmp.get(st.employee_name) || 0;
+      const inMin = parseTimeToMinutes(st.check_in_24 || st.check_in);
+      const outMin = parseTimeToMinutes(st.check_out_24 || st.check_out);
+      const notesStr = String(st.notes || '');
+      const statusStr = String(st.status || '');
+      const isAbsLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
+      const workedMins = isAbsLeave
+        ? 0
+        : (st.worked_minutes !== undefined
+            ? Number(st.worked_minutes)
+            : (inMin !== null && outMin !== null
+                ? computeWorkedMinutes(st.check_in_24 || st.check_in, st.check_out_24 || st.check_out)
+                : Math.round(Number(st.total_hours || 0) * 60)));
+      totalWorkedMins += workedMins;
+
       row.values = [
         sanitizeFormulaValue(st.employee_name || '-'),
         sanitizeFormulaValue(st.branch_name || '-'),
-        st.check_in || '-',
-        st.check_out || '-',
-        Number(st.total_hours || 0),
+        inMin !== null ? inMin / 1440 : '-',
+        outMin !== null ? outMin / 1440 : '-',
+        workedMins > 0 ? workedMins / 1440 : 0,
         advAmt,
         sanitizeFormulaValue(st.notes || (st.status === 'absent' ? 'غياب' : '-')),
       ];
       styleDataRow(row, idx % 2 === 1);
-      row.getCell(5).numFmt = '0.0';
+      if (inMin !== null) row.getCell(3).numFmt = 'h:mm AM/PM';
+      if (outMin !== null) row.getCell(4).numFmt = 'h:mm AM/PM';
+      row.getCell(5).numFmt = '[h]:mm';
       row.getCell(6).numFmt = '#,##0.00';
     });
 
@@ -1227,12 +1277,12 @@ async function generateDailyReportExcel(dailyData, options = {}) {
       '',
       '',
       '',
-      staffAttendance.reduce((s, st) => s + Number(st.total_hours || 0), 0),
+      totalWorkedMins / 1440,
       Array.from(advByEmp.values()).reduce((s, a) => s + a, 0),
       '',
     ];
     styleTotalRow(totStRow);
-    totStRow.getCell(5).numFmt = '0.0';
+    totStRow.getCell(5).numFmt = '[h]:mm';
     totStRow.getCell(6).numFmt = '#,##0.00';
 
     autoFitColumns(wsStaff);
@@ -2578,22 +2628,15 @@ function buildSalaryWorksheet(salWs, salaryData, branding = {}, month = '', isCo
       r.getCell(3).value = { formula: `SUMIF('MASTER SHEET'!P:P, B${rIdx}, 'MASTER SHEET'!S:S)`, result: (emp.actual_hours || 0) / 24 };
       r.getCell(3).numFmt = '[h]:mm';
     } else {
-      r.getCell(3).value = Number(emp.actual_hours || 0);
-      r.getCell(3).numFmt = '#,##0.00';
+      r.getCell(3).value = Number(emp.actual_hours || 0) / 24;
+      r.getCell(3).numFmt = '[h]:mm';
     }
 
     r.getCell(4).value = Number(emp.required_hours || 0);
-    if (isConsolidated) {
-      r.getCell(5).value = {
-        formula: `IF(AND(D${rIdx}>0,C${rIdx}*24<D${rIdx}),C${rIdx}*24-D${rIdx},0)`,
-        result: emp.delay_hours > 0 ? -emp.delay_hours : 0,
-      };
-    } else {
-      r.getCell(5).value = {
-        formula: `IF(AND(D${rIdx}>0,C${rIdx}<D${rIdx}),C${rIdx}-D${rIdx},0)`,
-        result: emp.delay_hours > 0 ? -emp.delay_hours : 0,
-      };
-    }
+    r.getCell(5).value = {
+      formula: `IF(AND(D${rIdx}>0,C${rIdx}*24<D${rIdx}),C${rIdx}*24-D${rIdx},0)`,
+      result: emp.delay_hours > 0 ? -emp.delay_hours : 0,
+    };
 
     if (emp.has_delay_override) {
       r.getCell(6).value = Number(emp.delay_deduction || 0);
@@ -2605,25 +2648,17 @@ function buildSalaryWorksheet(salWs, salaryData, branding = {}, month = '', isCo
     }
     r.getCell(6).numFmt = '#,##0.00';
 
-    if (isConsolidated) {
-      r.getCell(7).value = {
-        formula: `IF(AND(D${rIdx}>0,C${rIdx}>D${rIdx}/24),C${rIdx}-D${rIdx}/24,0)`,
-        result: (emp.overtime_hours || 0) / 24,
-      };
-      r.getCell(7).numFmt = '[h]:mm';
-    } else {
-      r.getCell(7).value = {
-        formula: `IF(AND(D${rIdx}>0,C${rIdx}>D${rIdx}),C${rIdx}-D${rIdx},0)`,
-        result: Number(emp.overtime_hours || 0),
-      };
-      r.getCell(7).numFmt = '#,##0.00';
-    }
+    r.getCell(7).value = {
+      formula: `IF(AND(D${rIdx}>0,C${rIdx}>D${rIdx}/24),C${rIdx}-D${rIdx}/24,0)`,
+      result: (emp.overtime_hours || 0) / 24,
+    };
+    r.getCell(7).numFmt = '[h]:mm';
 
     if (emp.has_overtime_override) {
       r.getCell(8).value = Number(emp.overtime_amount || 0);
     } else {
       r.getCell(8).value = {
-        formula: isConsolidated ? `((J${rIdx}/10)*1.35)*(G${rIdx}*24)` : `((J${rIdx}/10)*1.35)*G${rIdx}`,
+        formula: `((J${rIdx}/10)*1.35)*(G${rIdx}*24)`,
         result: Number(emp.overtime_amount || 0),
       };
     }
@@ -3054,7 +3089,10 @@ function buildMasterSheetWorksheet(masterWs, daysData, branding = {}) {
         r.getCell(3).value = desc;
         r.getCell(4).value = Number(inv.total_amount || 0);
         r.getCell(5).value = Number(inv.paid_amount || 0);
-        r.getCell(6).value = { formula: `D${rowIdx}-E${rowIdx}`, result: Number(inv.remaining_amount || 0) };
+        const isSettlementPayment = inv.transaction_type === 'order_payment' || inv.transaction_type === 'rental_payment';
+      r.getCell(6).value = isSettlementPayment
+        ? 0
+        : { formula: `D${rowIdx}-E${rowIdx}`, result: Number(inv.remaining_amount || 0) };
         r.getCell(7).value = inv.seller_name || '';
         r.getCell(8).value = inv.delivery_date || inv.invoice_date || '';
       } else if (i < maxRows) {
@@ -3070,19 +3108,7 @@ function buildMasterSheetWorksheet(masterWs, daysData, branding = {}) {
           r.getCell(10).value = Number(adv.amount || 0);
         }
 
-        r.getCell(16).value = staff.employee_name;
-        r.getCell(17).value = staff.check_in_24 || (staff.check_in ? staff.check_in.replace(/\s*[AP]M/i, '').trim() : '');
-        r.getCell(18).value = staff.check_out_24 || (staff.check_out ? staff.check_out.replace(/\s*[AP]M/i, '').trim() : '');
-        if (staff.total_hours > 0) {
-          r.getCell(19).value = {
-            formula: `IF(OR(Q${rowIdx}="",R${rowIdx}=""),"",MOD(R${rowIdx}-Q${rowIdx},1))`,
-            result: staff.total_hours / 24,
-          };
-          r.getCell(19).numFmt = 'h:mm';
-        } else {
-          r.getCell(19).value = '';
-        }
-        r.getCell(20).value = staff.notes || (staff.status === 'absent' ? 'غياب' : '');
+        populateDailyAttendanceCells(r, rowIdx, staff);
       } else {
         r.getCell(9).value = { formula: `P${rowIdx}`, result: 0 };
       }

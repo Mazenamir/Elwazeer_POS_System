@@ -11,6 +11,7 @@ import { useBranch } from '../../context/BranchContext';
 import { useToast } from '../../context/ToastContext';
 import client from '../../services/api/client';
 import { printElement } from '../../utils/print';
+import { formatTimeAmPm, formatHoursHHMM } from '../../utils/date';
 import {
   UserCheck,
   Plus,
@@ -505,18 +506,7 @@ export function Employees() {
     }
   };
 
-  const formatTime = (timeStr) => {
-    if (!timeStr) return '-';
-    try {
-      const [h, m] = timeStr.split(':');
-      const hour = parseInt(h, 10);
-      const ampm = hour >= 12 ? 'م' : 'ص';
-      const formattedHour = hour % 12 || 12;
-      return `${formattedHour}:${m} ${ampm}`;
-    } catch {
-      return timeStr;
-    }
-  };
+  const formatTime = (timeStr) => formatTimeAmPm(timeStr);
 
   // Open Attendance Modal
   const openAttendanceModal = async (emp) => {
@@ -2248,8 +2238,8 @@ export function Employees() {
                       <td className="py-2.5 px-3 text-rose-600">
                         {formatTime(log.check_out_time || log.check_out)}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-700">
-                        {Number(log.total_hours) > 0 ? `${log.total_hours} س` : '-'}
+                      <td className="py-2.5 px-3 text-slate-700 font-mono">
+                        {log.hours_formatted || (Number(log.total_hours) > 0 ? formatHoursHHMM(log.total_hours) : '-')}
                       </td>
                       <td className="py-2.5 px-3 text-amber-600">
                         {log.late_minutes ? `${log.late_minutes} د` : '0'}
@@ -2753,7 +2743,7 @@ export function Employees() {
           {payslipData && (
             <div className="text-[11px] font-bold text-slate-500">
               اليومية: <span className="font-black text-slate-900">{formatCurrency(payslipData.daily_rate)}</span> |
-              الساعات المحققة: <span className="font-black text-indigo-700">{payslipData.actual_hours} س</span>
+              الساعات المحققة: <span className="font-black text-indigo-700 font-mono">{payslipData.actual_hours_formatted || formatHoursHHMM(payslipData.actual_hours)}</span>
             </div>
           )}
         </div>
@@ -2934,7 +2924,7 @@ export function Employees() {
                   <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                     <span className="text-slate-700 font-black">حساب الساعات المتغيرة:</span>
                     <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-800 font-black">
-                      الساعات المحققة من الحضور: {payslipData.actual_hours} ساعة
+                      الساعات المحققة من الحضور: {payslipData.actual_hours_formatted || formatHoursHHMM(payslipData.actual_hours)}
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
@@ -3098,7 +3088,7 @@ export function Employees() {
                 )}
                 {Number(livePayslipPreview.overtime_amount || 0) > 0 && (
                   <div className="flex justify-between py-1 border-b border-dashed border-slate-100 text-emerald-700">
-                    <span>إضافي / أوفر تايم ({livePayslipPreview.overtime_hours} س × 1.35 +):</span>
+                    <span>إضافي / أوفر تايم ({formatHoursHHMM(livePayslipPreview.overtime_hours)} × 1.35 +):</span>
                     <span>+{formatCurrency(livePayslipPreview.overtime_amount)}</span>
                   </div>
                 )}
@@ -3136,7 +3126,7 @@ export function Employees() {
                           livePayslipPreview.attendance?.leave_deduction > 0 ? `إجازات زائدة: ${formatCurrency(livePayslipPreview.attendance.leave_deduction)}` : null,
                           livePayslipPreview.attendance?.half_day_deduction > 0 ? `نص يوم: ${formatCurrency(livePayslipPreview.attendance.half_day_deduction)}` : null,
                           livePayslipPreview.penalty_days_amount > 0 ? `جزاء (${livePayslipPreview.penalty_days}ي): ${formatCurrency(livePayslipPreview.penalty_days_amount)}` : null,
-                          livePayslipPreview.delay_deduction > 0 ? `تأخير (${livePayslipPreview.delay_hours}س × 1.5): ${formatCurrency(livePayslipPreview.delay_deduction)}` : null,
+                          livePayslipPreview.delay_deduction > 0 ? `تأخير (${formatHoursHHMM(livePayslipPreview.delay_hours)} × 1.5): ${formatCurrency(livePayslipPreview.delay_deduction)}` : null,
                         ].filter(Boolean).join(' | ')}
                       </div>
                     )}

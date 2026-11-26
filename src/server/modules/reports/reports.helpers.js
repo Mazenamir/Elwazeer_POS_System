@@ -2,6 +2,11 @@ const config = require('../../config/env');
 const db = require('../../database/connection');
 const { hasInventoryAdminAccess } = require('../../../shared/constants/permissions');
 const { getCairoDateTimeParts, addDays, getMonthRange } = require('../../../shared/utils/date');
+const {
+  computeWorkedMinutes,
+  formatHoursAsHHMM,
+  formatTime12HourAmPm,
+} = require('../hr/payroll.calculator');
 
 function getReportBranchId(user, query = {}) {
   // 1. Privileged all-branch users (Admin, Accountant, or any account with branch_scope === 'all')
@@ -684,13 +689,38 @@ function buildDaily20ColumnRows(d, options = {}) {
       if (adv && adv.amount > 0) advAmount = adv.amount;
     }
 
+    let qIn = '';
+    let rOut = '';
+    let sHours = '';
+    if (staff) {
+      qIn = formatTime12HourAmPm(staff.check_in_24 || staff.check_in) || '';
+      rOut = formatTime12HourAmPm(staff.check_out_24 || staff.check_out) || '';
+      const notesStr = String(staff.notes || '');
+      const statusStr = String(staff.status || '');
+      const isAbsLeave = statusStr === 'absent' || statusStr === 'leave' || notesStr.includes('غياب') || notesStr.includes('إجازة') || notesStr.includes('جاز');
+      if (!isAbsLeave) {
+        if (staff.hours_formatted) {
+          sHours = staff.hours_formatted;
+        } else if ((staff.check_in_24 || staff.check_in) && (staff.check_out_24 || staff.check_out)) {
+          const mins = computeWorkedMinutes(staff.check_in_24 || staff.check_in, staff.check_out_24 || staff.check_out);
+          sHours = mins > 0 ? formatHoursAsHHMM(mins, { isMinutes: true }) : '';
+        } else if (Number(staff.total_hours || 0) > 0) {
+          sHours = formatHoursAsHHMM(staff.total_hours);
+        }
+      }
+    }
+
     const rowObj = {
       col_a_date: inv?.invoice_date || options.date || (inv ? d?.date : '') || '',
       col_b_invoice_number: inv ? (inv.invoice_number || '') : '',
       col_c_description: inv ? (inv.description || '') : '',
       col_d_total: inv ? Number(inv.total_amount || 0) : null,
       col_e_paid: inv ? Number(inv.paid_amount || 0) : null,
-      col_f_remaining: inv ? Math.max(0, Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)) : null,
+      col_f_remaining: inv
+        ? (['order_payment', 'rental_payment'].includes(inv.transaction_type)
+            ? 0
+            : Math.max(0, Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)))
+        : null,
       col_g_seller: inv ? (inv.seller_name || '') : '',
       col_h_delivery_date: inv ? (inv.delivery_date || inv.invoice_date || '') : '',
       col_i_advance_emp: staff ? staff.employee_name : '',
@@ -701,9 +731,9 @@ function buildDaily20ColumnRows(d, options = {}) {
       col_n_electronic_ref: ep ? ep.ref : '',
       col_o_electronic_amount: ep ? ep.amount : null,
       col_p_attendance_emp: staff ? staff.employee_name : '',
-      col_q_check_in: staff ? (staff.check_in_24 || staff.check_in || '') : '',
-      col_r_check_out: staff ? (staff.check_out_24 || staff.check_out || '') : '',
-      col_s_hours: staff ? (staff.total_hours > 0 ? staff.total_hours : '') : '',
+      col_q_check_in: qIn,
+      col_r_check_out: rOut,
+      col_s_hours: sHours,
       col_t_notes: staff ? (staff.notes || (staff.status === 'absent' ? 'غياب' : '')) : '',
 
       // Legacy field aliases
@@ -712,7 +742,11 @@ function buildDaily20ColumnRows(d, options = {}) {
       c_deposit: inv ? Number(inv.paid_amount || 0) : null,
       d_total_order: inv ? Number(inv.total_amount || 0) : null,
       e_paid_cash: inv ? Number(inv.paid_amount || 0) : null,
-      f_remaining: inv ? Math.max(0, Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)) : null,
+      f_remaining: inv
+        ? (['order_payment', 'rental_payment'].includes(inv.transaction_type)
+            ? 0
+            : Math.max(0, Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)))
+        : null,
       g_seller_tracker: inv ? (inv.seller_name || '') : '',
       h_advance_collector: staff ? staff.employee_name : '',
       i_advance_emp_name: staff ? staff.employee_name : '',
@@ -723,9 +757,9 @@ function buildDaily20ColumnRows(d, options = {}) {
       n_expense_category: ep ? ep.type : '',
       o_tailor_amount: ep ? ep.amount : null,
       p_emp_name: staff ? staff.employee_name : '',
-      q_check_in: staff ? (staff.check_in_24 || staff.check_in || '') : '',
-      r_check_out: staff ? (staff.check_out_24 || staff.check_out || '') : '',
-      s_att_hours: staff ? (staff.total_hours > 0 ? staff.total_hours : '') : '',
+      q_check_in: qIn,
+      r_check_out: rOut,
+      s_att_hours: sHours,
       t_notes: staff ? (staff.notes || (staff.status === 'absent' ? 'غياب' : '')) : '',
     };
     rows.push(rowObj);

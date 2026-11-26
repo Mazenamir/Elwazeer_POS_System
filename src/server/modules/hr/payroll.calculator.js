@@ -118,11 +118,14 @@ function shouldIncludeEmployeeInMonth(employee, month, hasActivityInMonth = fals
 
 function parseTimeToMinutes(timeVal) {
   if (timeVal === null || timeVal === undefined) return null;
+  if (timeVal instanceof Date && !Number.isNaN(timeVal.getTime())) {
+    return timeVal.getHours() * 60 + timeVal.getMinutes() + timeVal.getSeconds() / 60;
+  }
   const raw = String(timeVal).trim();
   if (!raw) return null;
 
-  // Match HH:MM, H:MM, HH:MM:SS, optional fractional seconds, optional AM/PM or Arabic ص/م
-  const timeMatch = raw.match(/(?:^|T|\s)(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(AM|PM|ص|م)?$/i);
+  // Match HH:MM, H:MM, HH:MM:SS, optional fractional seconds, optional AM/PM or Arabic ص/م, or ISO timezone suffix
+  const timeMatch = raw.match(/(?:^|T|\s)(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:\s*(AM|PM|ص|م)|(?:Z|[+-]\d{2}:?\d{2}))?$/i);
   if (!timeMatch) return null;
 
   let hours = parseInt(timeMatch[1], 10);
@@ -156,13 +159,36 @@ function normalizeTimeString(timeVal) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
 
-function computeWorkedHours(checkIn, checkOut) {
+function computeWorkedMinutes(checkIn, checkOut) {
   const inMin = parseTimeToMinutes(checkIn);
   const outMin = parseTimeToMinutes(checkOut);
   if (inMin === null || outMin === null) return 0;
   let diffMin = outMin - inMin;
   if (diffMin < 0) diffMin += 24 * 60;
-  return round2(Math.max(0, Math.min(24, diffMin / 60)));
+  return Math.max(0, Math.min(24 * 60, diffMin));
+}
+
+function computeWorkedHours(checkIn, checkOut) {
+  return round2(computeWorkedMinutes(checkIn, checkOut) / 60);
+}
+
+function formatHoursAsHHMM(val, { isMinutes = false } = {}) {
+  const numericVal = Number(val);
+  if (!Number.isFinite(numericVal) || numericVal <= 0) return '0:00';
+  const totalMins = Math.round(Math.max(0, isMinutes ? numericVal : numericVal * 60));
+  if (!Number.isFinite(totalMins) || totalMins <= 0) return '0:00';
+  return `${Math.floor(totalMins / 60)}:${String(totalMins % 60).padStart(2, '0')}`;
+}
+
+function formatTime12HourAmPm(timeVal) {
+  const mins = parseTimeToMinutes(timeVal);
+  if (mins === null) return '';
+  const wholeMins = Math.floor(mins);
+  const h24 = Math.floor(wholeMins / 60) % 24;
+  const m = wholeMins % 60;
+  const meridiem = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = h24 % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${meridiem}`;
 }
 
 function computeAttendanceMetrics({ checkIn, checkOut, shiftStart, shiftEnd, status = 'present', notes = '' } = {}) {
@@ -228,7 +254,7 @@ function computeAttendanceMetrics({ checkIn, checkOut, shiftStart, shiftEnd, sta
 }
 
 function summarizeAttendanceRows(attendanceRows = []) {
-  let totalHours = 0;
+  let totalMinutes = 0;
   let absentCount = 0;
   let leaveCount = 0;
   let halfDayCount = 0;
@@ -241,26 +267,34 @@ function summarizeAttendanceRows(attendanceRows = []) {
     const isLeave = notes.includes('جاز') || notes.includes('إجازة') || status === 'leave';
     const isHalf = notes.includes('نص يوم') || status === 'half_day';
 
-    let rowHours = Number(r.total_hours || 0);
+    let rowMinutes = 0;
     if (isAbsent || isLeave) {
-      rowHours = 0;
-    } else if ((!Number.isFinite(rowHours) || rowHours <= 0) && r.check_in && r.check_out) {
-      rowHours = computeWorkedHours(r.check_in, r.check_out);
+      rowMinutes = 0;
+    } else if (r.check_in && r.check_out) {
+      // Always derive exact worked minutes from check_in/check_out when both exist
+      rowMinutes = computeWorkedMinutes(r.check_in, r.check_out);
+    } else {
+      const storedHours = Number(r.total_hours || 0);
+      if (Number.isFinite(storedHours) && storedHours > 0) {
+        rowMinutes = storedHours * 60;
+      }
     }
-    if (Number.isFinite(rowHours) && rowHours > 0) {
-      totalHours += rowHours;
+    if (Number.isFinite(rowMinutes) && rowMinutes > 0) {
+      totalMinutes += rowMinutes;
     }
 
     if (isAbsent) absentCount += 1;
     if (isLeave) leaveCount += 1;
     if (isHalf) halfDayCount += 1;
-    if (!isAbsent && !isLeave && (status === 'present' || status === 'completed' || status === 'late' || rowHours > 0 || r.check_in)) {
+    if (!isAbsent && !isLeave && (status === 'present' || status === 'completed' || status === 'late' || rowMinutes > 0 || r.check_in)) {
       presentCount += 1;
     }
   }
 
   return {
-    total_hours: round2(totalHours),
+    total_hours: round2(totalMinutes / 60),
+    total_minutes: Math.round(totalMinutes),
+    formatted_hours: formatHoursAsHHMM(totalMinutes, { isMinutes: true }),
     absent_count: absentCount,
     leave_count: leaveCount,
     half_day_count: halfDayCount,
@@ -421,12 +455,16 @@ function calculateEmployeeMonthlyPayroll({
     has_unused_leave_override: unusedLeaveOverride !== null,
 
     actual_hours: actualHours,
+    actual_minutes: att.total_minutes,
+    actual_hours_formatted: att.formatted_hours,
     required_hours: requiredHours,
     overtime_hours: overtimeHours,
+    overtime_hours_formatted: formatHoursAsHHMM(overtimeHours),
     overtime_amount: overtimeAmount,
     calc_overtime_amount: calcOvertimeAmount,
     has_overtime_override: overtimeOverride !== null,
     delay_hours: delayHours,
+    delay_hours_formatted: formatHoursAsHHMM(delayHours),
     delay_deduction: delayDeduction,
     calc_delay_deduction: calcDelayDeduction,
     has_delay_override: delayOverride !== null,
@@ -477,7 +515,10 @@ module.exports = {
   normalizeDateStr,
   parseTimeToMinutes,
   normalizeTimeString,
+  computeWorkedMinutes,
   computeWorkedHours,
+  formatHoursAsHHMM,
+  formatTime12HourAmPm,
   computeAttendanceMetrics,
   getPreviousMonthKey,
   getMonthLastDayStr,

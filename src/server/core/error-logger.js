@@ -16,6 +16,36 @@ const MAX_STACK_LEN = 4000;
 const MAX_SANITIZE_DEPTH = 4;
 
 const SENSITIVE_KEY_REGEX = /(password|passwd|secret|token|authorization|cookie|api[_-]?key|sync[_-]?key|base64)/i;
+const DEDUP_WINDOW_MS = 15000;
+const MAX_BURST_PER_WINDOW = 3;
+const MAX_DEDUP_KEYS = 200;
+const recentSignatureMap = new Map();
+
+function shouldSuppressBurstError(entry) {
+  const sig = `${entry.source || 'server'}|${entry.code || ''}|${entry.path || ''}|${String(entry.rawMessage || entry.message || '').slice(0, 120)}`;
+  const now = Date.now();
+  const prev = recentSignatureMap.get(sig);
+  if (prev && (now - prev.windowStart) < DEDUP_WINDOW_MS) {
+    prev.count += 1;
+    if (prev.count > MAX_BURST_PER_WINDOW) {
+      return true;
+    }
+    return false;
+  }
+  if (recentSignatureMap.size >= MAX_DEDUP_KEYS) {
+    for (const [k, v] of recentSignatureMap.entries()) {
+      if ((now - v.windowStart) >= DEDUP_WINDOW_MS) {
+        recentSignatureMap.delete(k);
+      }
+    }
+    if (recentSignatureMap.size >= MAX_DEDUP_KEYS) {
+      const oldestKey = recentSignatureMap.keys().next().value;
+      if (oldestKey !== undefined) recentSignatureMap.delete(oldestKey);
+    }
+  }
+  recentSignatureMap.set(sig, { windowStart: now, count: 1 });
+  return false;
+}
 
 function getLogsDir(customDir = null) {
   return customDir || path.join(config.dataDir, 'logs');
@@ -93,6 +123,9 @@ function rotateIfNeeded(filePath, maxBytes = MAX_LOG_FILE_BYTES) {
 
 function logError(entry = {}, options = {}) {
   const errorId = entry.errorId || generateErrorId();
+  if (!options.logsDir && options.dedupe !== false && shouldSuppressBurstError(entry)) {
+    return errorId;
+  }
   try {
     const dir = getLogsDir(options.logsDir);
     const filePath = getLogFilePath(options.logsDir);

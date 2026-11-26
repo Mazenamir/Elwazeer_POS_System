@@ -27,12 +27,25 @@ const defaultDataDir = isPackaged
 const dataDir = process.env.DATA_DIR || defaultDataDir;
 
 const dataEnvPath = path.join(dataDir, '.env');
+let dataEnvConfig = {};
 if (fs.existsSync(dataEnvPath)) {
+  try {
+    const dotenv = require('dotenv');
+    dataEnvConfig = dotenv.parse(fs.readFileSync(dataEnvPath, 'utf8'));
+  } catch {}
   require('dotenv').config({ path: dataEnvPath });
 } else if (fs.existsSync(appEnvPath)) {
   require('dotenv').config({ path: appEnvPath });
 } else {
   require('dotenv').config();
+}
+
+const fileEnvConfig = { ...appEnvConfig, ...dataEnvConfig };
+
+// Clear ambient PostgreSQL driver variables when app .env supplies DB credentials so OS vars cannot cause 28P01
+if (process.env.NODE_ENV !== 'test') {
+  if (fileEnvConfig.DB_PASSWORD !== undefined) delete process.env.PGPASSWORD;
+  if (fileEnvConfig.DB_USER !== undefined) delete process.env.PGUSER;
 }
 
 // Fallback: If packaged branch app, ensure essential branch parameters take priority over any stale local defaults
@@ -84,12 +97,27 @@ const SYNC_QUEUE_RETENTION_DAYS = boundedEnvInt('SYNC_QUEUE_RETENTION_DAYS', 30,
 const SYNC_FETCH_TIMEOUT_MS = boundedEnvInt('SYNC_FETCH_TIMEOUT_MS', 15000, 1000, 120000);
 
 // Database Config (Postgres)
-const rawDbHost = process.env.DB_HOST || '127.0.0.1';
+const isTestEnv = process.env.NODE_ENV === 'test';
+const fileDbHost = String(fileEnvConfig.DB_HOST || '').trim();
+const envDbHost = String(process.env.DB_HOST || '').trim();
+const rawDbHost = (!isTestEnv && fileDbHost ? fileDbHost : envDbHost) || '127.0.0.1';
 const DB_HOST = rawDbHost === 'localhost' ? '127.0.0.1' : rawDbHost;
-const DB_USER = process.env.DB_USER || 'postgres';
-const DB_PASSWORD = process.env.DB_PASSWORD || (DB_HOST === '127.0.0.1' ? 'ahmed1@' : '');
-const DB_PORT = boundedEnvInt('DB_PORT', 5432, 1, 65535);
-const DB_NAME = process.env.DB_NAME || 'pos_db';
+const isLocalDbHost = DB_HOST === '127.0.0.1';
+const pickDbSetting = (key, fallback) => {
+  const fileVal = fileEnvConfig[key] !== undefined ? String(fileEnvConfig[key]).trim() : '';
+  const procVal = process.env[key] !== undefined ? String(process.env[key]).trim() : '';
+  if (!isTestEnv && isLocalDbHost && fileVal) return fileVal;
+  return procVal || fileVal || fallback;
+};
+const DB_USER = pickDbSetting('DB_USER', 'postgres');
+const DB_PASSWORD = pickDbSetting('DB_PASSWORD', isLocalDbHost ? 'ahmed1@' : '');
+const fileDbPort = (!isTestEnv && isLocalDbHost && fileEnvConfig.DB_PORT !== undefined)
+  ? Number.parseInt(String(fileEnvConfig.DB_PORT).trim(), 10)
+  : NaN;
+const DB_PORT = Number.isInteger(fileDbPort) && fileDbPort >= 1 && fileDbPort <= 65535
+  ? fileDbPort
+  : boundedEnvInt('DB_PORT', 5432, 1, 65535);
+const DB_NAME = pickDbSetting('DB_NAME', 'pos_db');
 const PG_DATA_DIR = process.env.PG_DATA_DIR || (
   dataDir === appRoot
     ? path.join(appRoot, 'programs', 'data')
