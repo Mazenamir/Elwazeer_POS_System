@@ -72,6 +72,14 @@ jobs:
           Copy-Item -Path ".ci-tools-cache/tmp-pg/pgsql/*" -Destination postgresql -Recurse -Force
           Remove-Item -Recurse -Force .ci-tools-cache/tmp-pg
 
+          foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            $dst = Join-Path "postgresql\bin" $dll
+            $src = Join-Path "$env:SystemRoot\System32" $dll
+            if (-not (Test-Path $dst) -and (Test-Path $src)) {
+              Copy-Item -Path $src -Destination $dst -Force
+            }
+          }
+
           Copy-Item -Path .ci-tools-cache/vc_redist.x64.exe -Destination build/vc_redist.x64.exe -Force
 
       - name: Restore .env and .env.branch from GitHub Secrets
