@@ -1,0 +1,179 @@
+name: Build and Publish Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (defaults to v<package.json version>)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish-release:
+    name: Build Master & Branch Installers and Publish Release
+    runs-on: windows-latest
+    env:
+      CI: 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Resolve release version and tag
+        id: meta
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $ver = $pkg.version
+          $tag = if ("${{ inputs.tag }}" -ne "") { "${{ inputs.tag }}" } elseif ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "v$ver" }
+          if ($tag -ne "v$ver") {
+            Write-Warning "Tag ($tag) differs from package.json version (v$ver)."
+          }
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Cache portable build tools (Node 24.15.0, PostgreSQL 18.4, VC++ Redist)
+        id: cache-tools
+        uses: actions/cache@v4
+        with:
+          path: .ci-tools-cache
+          key: win-pos-tools-node24.15.0-pg18.4-1-vcredist17
+
+      - name: Download portable build tools if cache missed
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .ci-tools-cache | Out-Null
+          curl.exe -L --fail --retry 3 -o .ci-tools-cache/node-v24.15.0-win-x64.zip "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip"
+          curl.exe -L --fail --retry 3 -o .ci-tools-cache/postgresql-18.4-1-windows-x64-binaries.zip "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-windows-x64-binaries.zip"
+          curl.exe -L --fail --retry 3 -o .ci-tools-cache/vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+      - name: Prepare programs/node, postgresql, and build/vc_redist.x64.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path programs/node, postgresql, build | Out-Null
+          Expand-Archive -Path .ci-tools-cache/node-v24.15.0-win-x64.zip -DestinationPath .ci-tools-cache/tmp-node -Force
+          Copy-Item -Path ".ci-tools-cache/tmp-node/node-v24.15.0-win-x64/*" -Destination programs/node -Recurse -Force
+          Remove-Item -Recurse -Force .ci-tools-cache/tmp-node
+
+          Expand-Archive -Path .ci-tools-cache/postgresql-18.4-1-windows-x64-binaries.zip -DestinationPath .ci-tools-cache/tmp-pg -Force
+          Copy-Item -Path ".ci-tools-cache/tmp-pg/pgsql/*" -Destination postgresql -Recurse -Force
+          Remove-Item -Recurse -Force .ci-tools-cache/tmp-pg
+
+          Copy-Item -Path .ci-tools-cache/vc_redist.x64.exe -Destination build/vc_redist.x64.exe -Force
+
+      - name: Restore .env and .env.branch from GitHub Secrets
+        shell: pwsh
+        env:
+          ENV_MASTER: ${{ secrets.ENV_MASTER }}
+          ENV_BRANCH: ${{ secrets.ENV_BRANCH }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ENV_MASTER) -or [string]::IsNullOrWhiteSpace($env:ENV_BRANCH)) {
+            Write-Error "Missing ENV_MASTER or ENV_BRANCH repository secrets."
+            exit 1
+          }
+          [IO.File]::WriteAllText("$PWD\.env", $env:ENV_MASTER, [Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText("$PWD\.env.branch", $env:ENV_BRANCH, [Text.UTF8Encoding]::new($false))
+
+      - name: Initialize portable PostgreSQL data template (programs/data)
+        shell: pwsh
+        run: |
+          $envMap = @{}
+          foreach ($line in (Get-Content .env)) {
+            if ($line -match '^\s*([^#=]+?)\s*=\s*(.*)\s*$') {
+              $envMap[$Matches[1].Trim()] = $Matches[2].Trim()
+            }
+          }
+          $dbUser = if ($envMap['DB_USER']) { $envMap['DB_USER'] } else { 'postgres' }
+          $dbPass = if ($envMap['DB_PASSWORD']) { $envMap['DB_PASSWORD'] } else { 'postgres' }
+          $dbPort = if ($envMap['DB_PORT']) { $envMap['DB_PORT'] } else { '5432' }
+          $dbName = if ($envMap['DB_NAME']) { $envMap['DB_NAME'] } else { 'pos_db' }
+
+          $pwFile = Join-Path $env:RUNNER_TEMP "pgpass.txt"
+          [IO.File]::WriteAllText($pwFile, $dbPass, [Text.UTF8Encoding]::new($false))
+          try {
+            & "$PWD\postgresql\bin\initdb.exe" -D "$PWD\programs\data" -U $dbUser --pwfile="$pwFile" -E UTF8 --locale=C -A scram-sha-256
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $pwFile
+          }
+
+          Add-Content -Path "$PWD\programs\data\postgresql.conf" -Value "`nlisten_addresses = '*'`nport = $dbPort"
+          if ($dbName -ne 'postgres') {
+            $pgLog = Join-Path $env:RUNNER_TEMP "pg_init.log"
+            & "$PWD\postgresql\bin\pg_ctl.exe" -D "$PWD\programs\data" -l $pgLog -o "-p $dbPort" start
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            try {
+              $env:PGPASSWORD = $dbPass
+              & "$PWD\postgresql\bin\createdb.exe" -h 127.0.0.1 -p $dbPort -U $dbUser $dbName
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } finally {
+              $env:PGPASSWORD = $null
+              & "$PWD\postgresql\bin\pg_ctl.exe" -D "$PWD\programs\data" stop -m fast
+            }
+          }
+          Remove-Item -Force -ErrorAction SilentlyContinue "$PWD\programs\data\postmaster.pid", "$PWD\programs\data\current_logfiles"
+
+      - name: Install npm dependencies and run static checks
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build:client
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scratch/audit_contracts_and_sql.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scratch/verify_all_pages_and_routes.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Master and Branch Windows installers
+        shell: pwsh
+        run: |
+          npx electron-builder --win --publish never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx electron-builder --config electron-builder.branch.json --win --publish never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify packaged artifacts
+        run: npm run verify:package
+
+      - name: Stage release assets and publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_PRIVATE_KEY_PEM: ${{ secrets.UPDATE_PRIVATE_KEY_PEM }}
+        run: |
+          $ver = "${{ steps.meta.outputs.version }}"
+          $tag = "${{ steps.meta.outputs.tag }}"
+
+          New-Item -ItemType Directory -Force -Path release_assets | Out-Null
+          Copy-Item "dist\Bebyoon System Setup $ver.exe" "release_assets\Bebyoon-System-Setup-$ver.exe"
+          Copy-Item "dist\Bebyoon System Setup $ver.exe.blockmap" "release_assets\Bebyoon-System-Setup-$ver.exe.blockmap"
+          Copy-Item "dist\latest.yml" "release_assets\latest.yml"
+          Copy-Item "dist-branch\Bebyoon Branch Setup $ver.exe" "release_assets\Bebyoon-Branch-Setup-$ver.exe"
+          Copy-Item "dist-branch\Bebyoon Branch Setup $ver.exe.blockmap" "release_assets\Bebyoon-Branch-Setup-$ver.exe.blockmap"
+          Copy-Item "dist-branch\branch.yml" "release_assets\branch.yml"
+
+          if (-not [string]::IsNullOrWhiteSpace($env:UPDATE_PRIVATE_KEY_PEM)) {
+            node scripts/sign-release-policy.js --edition master --version $ver --artifact "release_assets/Bebyoon-System-Setup-$ver.exe" --out "release_assets/update-policy-master.json"
+            node scripts/sign-release-policy.js --edition branch --version $ver --artifact "release_assets/Bebyoon-Branch-Setup-$ver.exe" --out "release_assets/update-policy-branch.json"
+          }
+
+          $exists = gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag release_assets/* --clobber
+          } else {
+            gh release create $tag release_assets/* --title "Bebyoon System v$ver" --generate-notes
+          }
