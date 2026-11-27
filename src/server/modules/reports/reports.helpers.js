@@ -8,6 +8,11 @@ const {
   formatTime12HourAmPm,
 } = require('../hr/payroll.calculator');
 
+function toPositiveBranchInt(val) {
+  const n = Number(val);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 function getReportBranchId(user, query = {}) {
   // 1. Privileged all-branch users (Admin, Accountant, or any account with branch_scope === 'all')
   const hasAllBranchAccess = Boolean(
@@ -21,7 +26,7 @@ function getReportBranchId(user, query = {}) {
 
   if (hasAllBranchAccess) {
     if (query.branch_id && query.branch_id !== 'all') {
-      return String(query.branch_id);
+      return toPositiveBranchInt(query.branch_id);
     }
     // Consolidate across all branches
     return null;
@@ -31,27 +36,31 @@ function getReportBranchId(user, query = {}) {
   if (user) {
     if (user.branch_scope === 'selected') {
       const { getUserAuthorizedBranchIds } = require('../../middleware/branchScope.middleware');
-      const authBranchIds = (getUserAuthorizedBranchIds(user) || []).map(String);
+      const authBranchIds = (getUserAuthorizedBranchIds(user) || []).map(toPositiveBranchInt).filter(Boolean);
       if (query.branch_id && query.branch_id !== 'all') {
-        if (!authBranchIds.includes(String(query.branch_id))) {
+        const requestedBranchId = toPositiveBranchInt(query.branch_id);
+        if (!requestedBranchId || !authBranchIds.includes(requestedBranchId)) {
           // Gracefully fallback to user's first authorized branch instead of throwing 403
-          return String(authBranchIds[0] || user.branch_id || 1);
+          return toPositiveBranchInt(authBranchIds[0] || user.branch_id || 1);
         }
-        return String(query.branch_id);
+        return requestedBranchId;
       }
       if (query.branch_id === 'all') {
         return null;
       }
-      return String(user.branch_id || authBranchIds[0] || 1);
+      return toPositiveBranchInt(user.branch_id) || authBranchIds[0] || 1;
     }
 
     // Default 'single' branch scope
-    const assignedBranchId = user.branch_id
-      ? String(user.branch_id)
-      : (config.BRANCH_ID ? String(config.BRANCH_ID) : (query.branch_id && query.branch_id !== 'all' ? String(query.branch_id) : '1'));
+    const assignedBranchId =
+      toPositiveBranchInt(user.branch_id) ||
+      toPositiveBranchInt(config.BRANCH_ID) ||
+      (query.branch_id && query.branch_id !== 'all' ? toPositiveBranchInt(query.branch_id) : null) ||
+      1;
 
     if (query.branch_id && query.branch_id !== 'all') {
-      if (String(query.branch_id) === assignedBranchId) {
+      const requestedBranchId = toPositiveBranchInt(query.branch_id);
+      if (requestedBranchId && requestedBranchId === assignedBranchId) {
         return assignedBranchId;
       }
     }
@@ -66,14 +75,14 @@ function getReportBranchId(user, query = {}) {
   );
   if (isDedicatedBranchNode) {
     if (query.branch_id && query.branch_id !== 'all') {
-      return String(query.branch_id);
+      return toPositiveBranchInt(query.branch_id) || toPositiveBranchInt(config.BRANCH_ID) || 1;
     }
-    return String(config.BRANCH_ID || 1);
+    return toPositiveBranchInt(config.BRANCH_ID) || 1;
   }
 
   // Fallback for unauthenticated requests
   if (query.branch_id && query.branch_id !== 'all') {
-    return String(query.branch_id);
+    return toPositiveBranchInt(query.branch_id);
   }
   return null;
 }

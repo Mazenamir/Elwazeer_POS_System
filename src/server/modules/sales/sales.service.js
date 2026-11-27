@@ -1808,11 +1808,17 @@ async function listReturns(query = {}, user = null, req = null) {
   const where = [];
 
   if (user && isBranchScopedUser(user)) {
-    params.push(user.branch_id);
-    where.push(`COALESCE(r.branch_id, o.branch_id) = $${params.length}`);
+    const userBranchId = Number(user.branch_id);
+    if (Number.isFinite(userBranchId)) {
+      params.push(userBranchId);
+      where.push(`COALESCE(r.branch_id, o.branch_id) = $${params.length}`);
+    }
   } else if (query.branch_id && query.branch_id !== 'all') {
-    params.push(query.branch_id);
-    where.push(`COALESCE(r.branch_id, o.branch_id) = $${params.length}`);
+    const requestedBranchId = Number(query.branch_id);
+    if (Number.isFinite(requestedBranchId)) {
+      params.push(requestedBranchId);
+      where.push(`COALESCE(r.branch_id, o.branch_id) = $${params.length}`);
+    }
   }
 
   if (query.search) {
