@@ -1080,7 +1080,19 @@ async function runBranchSqliteMigrations(targetSqlite = null) {
     sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN barcode TEXT');
   } catch {}
   try {
+    sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN branch_id INTEGER DEFAULT 1');
+  } catch {}
+  try {
+    sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP');
+  } catch {}
+  try {
+    sqlite.exec('ALTER TABLE inventory_sizes ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP');
+  } catch {}
+  try {
     sqlite.exec('CREATE INDEX IF NOT EXISTS idx_inventory_sizes_barcode ON inventory_sizes(barcode)');
+    sqlite.exec('CREATE INDEX IF NOT EXISTS idx_inventory_barcode ON inventory(barcode)');
+    sqlite.exec('CREATE INDEX IF NOT EXISTS idx_inventory_sizes_inv_branch ON inventory_sizes(inventory_id, branch_id)');
+    sqlite.exec('CREATE INDEX IF NOT EXISTS idx_inventory_branches_branch_inv ON inventory_branches(branch_id, inventory_id)');
   } catch {}
   try {
     sqlite.exec(`

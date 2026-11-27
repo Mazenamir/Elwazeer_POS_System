@@ -11,6 +11,7 @@ import { useToast } from '../../context/ToastContext';
 import client from '../../services/api/client';
 import expensesService from '../../services/api/expenses.service';
 import reportsService from '../../services/api/reports.service';
+import { getTodayDateString, toLocalDateInput } from '../../utils/date';
 import {
   Receipt,
   Plus,
@@ -116,7 +117,7 @@ export function ExpensesManager({ isCashierTab = false }) {
   }, [isCashierTab, accessibleTabs, activeTab]);
 
   // Drawer Settlement State
-  const [drawerDate, setDrawerDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [drawerDate, setDrawerDate] = useState(() => getTodayDateString());
   const [drawerBranch, setDrawerBranch] = useState(() => (activeBranchId && activeBranchId !== 'all' ? activeBranchId : (user?.branch_id && !isAdmin && user?.branch_scope !== 'all' && user?.role !== 'accountant' ? user.branch_id.toString() : 'all')));
   const [drawerData, setDrawerData] = useState(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
@@ -180,7 +181,7 @@ export function ExpensesManager({ isCashierTab = false }) {
     category: 'labor',
     amount: '',
     payment_method: 'cash',
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: getTodayDateString(),
     notes: '',
     employee_id: '',
   });
@@ -446,7 +447,7 @@ export function ExpensesManager({ isCashierTab = false }) {
       category: 'labor',
       amount: '',
       payment_method: 'cash',
-      expense_date: new Date().toISOString().split('T')[0],
+      expense_date: getTodayDateString(),
       notes: '',
       employee_id: '',
     });
@@ -515,7 +516,7 @@ export function ExpensesManager({ isCashierTab = false }) {
       category: exp.category || 'other',
       amount: String(exp.amount),
       payment_method: exp.payment_method || 'cash',
-      expense_date: exp.expense_date ? exp.expense_date.split('T')[0] : '',
+      expense_date: toLocalDateInput(exp.expense_date),
       notes: cleanNotes(exp.notes),
     });
     setShowEditModal(true);

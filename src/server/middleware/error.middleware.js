@@ -179,7 +179,7 @@ function normalizeServerError(err) {
     };
   }
 
-  if (code === '42P01' || code === '42703') {
+  if (code === '42P01' || code === '42703' || /no such column|no such table/i.test(rawMessage)) {
     return {
       statusCode: 500,
       code: 'DB_SCHEMA_MISMATCH',

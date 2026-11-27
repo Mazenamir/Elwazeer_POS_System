@@ -125,12 +125,40 @@ function ensureSqliteCoreColumns(sqlite) {
   ensureSqliteColumn(sqlite, 'suppliers', 'total_paid', 'REAL DEFAULT 0');
   ensureSqliteColumn(sqlite, 'suppliers', 'purchase_count', 'INTEGER DEFAULT 0');
   ensureSqliteColumn(sqlite, 'suppliers', 'last_supply_date', 'TEXT');
+  ensureSqliteColumn(sqlite, 'inventory_sizes', 'color_name', "TEXT DEFAULT ''");
+  ensureSqliteColumn(sqlite, 'inventory_sizes', 'barcode', 'TEXT');
+  ensureSqliteColumn(sqlite, 'inventory_sizes', 'branch_id', 'INTEGER DEFAULT 1');
+  ensureSqliteColumn(sqlite, 'inventory_sizes', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  ensureSqliteColumn(sqlite, 'inventory_sizes', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'updated_at', 'TEXT');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'sizes_data', 'TEXT');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'created_by', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'sender_id', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'received_by', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'sender_name', 'TEXT');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'received_by_name', 'TEXT');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'created_by_name', 'TEXT');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'notes', 'TEXT');
+  ensureSqliteColumn(sqlite, 'stock_transfers', 'priority', "TEXT DEFAULT 'normal'");
+  ensureSqliteColumn(sqlite, 'expenses', 'payment_method', "TEXT DEFAULT 'cash'");
+  ensureSqliteColumn(sqlite, 'expenses', 'created_by', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'expenses', 'updated_by', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'expenses', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  ensureSqliteColumn(sqlite, 'expenses', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  ensureSqliteColumn(sqlite, 'expenses', 'is_deleted', 'INTEGER DEFAULT 0');
+  ensureSqliteColumn(sqlite, 'expenses', 'deleted_by', 'INTEGER');
+  ensureSqliteColumn(sqlite, 'expenses', 'deleted_at', 'TEXT');
+  ensureSqliteColumn(sqlite, 'expenses', 'pending_sync', 'INTEGER DEFAULT 1');
   try {
     sqlite.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_sizes_unique_branch
       ON inventory_sizes (inventory_id, LOWER(TRIM(size_name)), LOWER(TRIM(COALESCE(color_name, ''))), COALESCE(branch_id, 1));
       CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_offline_uuid
       ON employees (offline_uuid) WHERE offline_uuid IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_inventory_barcode ON inventory(barcode);
+      CREATE INDEX IF NOT EXISTS idx_inventory_sizes_barcode ON inventory_sizes(barcode);
+      CREATE INDEX IF NOT EXISTS idx_inventory_sizes_inv_branch ON inventory_sizes(inventory_id, branch_id);
+      CREATE INDEX IF NOT EXISTS idx_inventory_branches_branch_inv ON inventory_branches(branch_id, inventory_id);
     `);
   } catch {}
 }
@@ -357,6 +385,12 @@ function translatePgToSqlite(sql) {
   s = s.replace(/date\('now',\s*'localtime'\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date('now', 'localtime', '+$1 $2')");
   s = s.replace(/datetime\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime('now', 'localtime', '-$1 $2')");
   s = s.replace(/date\('now',\s*'localtime'\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date('now', 'localtime', '-$1 $2')");
+
+  // Handle date(...) / datetime(...) +/- INTERVAL 'X unit'
+  s = s.replace(/\bdate\(([^()]+)\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date($1, '+$2 $3')");
+  s = s.replace(/\bdate\(([^()]+)\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date($1, '-$2 $3')");
+  s = s.replace(/\bdatetime\(([^()]+)\)\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime($1, '+$2 $3')");
+  s = s.replace(/\bdatetime\(([^()]+)\)\s*-\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "datetime($1, '-$2 $3')");
 
   // Handle DATE_TRUNC(...) +/- INTERVAL 'X unit'
   s = s.replace(/(DATE_TRUNC\s*\([^)]*(?:\([^)]*\)[^)]*)*\))\s*\+\s*INTERVAL\s+'(\d+)\s*(day|month|year|hour|minute|second)s?'/gi, "date($1, '+$2 $3')");

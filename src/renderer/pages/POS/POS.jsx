@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useTransition } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ShoppingCart,
-  Barcode,
   Search,
   Plus,
   Minus,
@@ -38,7 +37,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Eye,
 } from 'lucide-react';
 import ExpensesManager from '../../components/expenses/ExpensesManager';
 import { useAuth } from '../../context/AuthContext';
@@ -56,11 +54,47 @@ import { ThermalReceipt } from '../../components/receipts';
 import { getPaymentMethodArabic } from '../../utils/receiptHelpers';
 import SmartStockRequestModal from '../../components/inventory/SmartStockRequestModal';
 import ImageLightboxModal from '../../components/modals/ImageLightboxModal';
+import POSBarcodeSearchBar from './POSBarcodeSearchBar';
+import POSProductGrid from './POSProductGrid';
 
+const AR_COLLATOR = new Intl.Collator('ar');
+
+let sharedAudioCtx = null;
+function getSharedAudioContext() {
+  if (typeof window === 'undefined') return null;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+    sharedAudioCtx = new AudioCtx();
+  }
+  if (sharedAudioCtx.state === 'suspended') {
+    sharedAudioCtx.resume().catch(() => {});
+  }
+  return sharedAudioCtx;
+}
+
+function yieldToMain() {
+  if (typeof window !== 'undefined' && window.scheduler && typeof window.scheduler.yield === 'function') {
+    return window.scheduler.yield();
+  }
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function readPosCatalogCache(branchKey) {
+  try {
+    const cached = sessionStorage.getItem(`pos_catalog_${branchKey || 'all'}`);
+    if (!cached) return [];
+    const parsed = JSON.parse(cached);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function playBeep() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
@@ -76,7 +110,8 @@ function playBeep() {
 
 function playErrorSound() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sawtooth';
@@ -186,6 +221,10 @@ export function POS() {
     }
   });
   const [activeCartId, setActiveCartId] = useState(1);
+  const activeCartIdRef = useRef(activeCartId);
+  useEffect(() => {
+    activeCartIdRef.current = activeCartId;
+  }, [activeCartId]);
 
   // Cart items per cartId: { [cartId]: items[] }
   const [carts, setCarts] = useState(() => {
@@ -205,16 +244,10 @@ export function POS() {
   const [activeDiscountItemId, setActiveDiscountItemId] = useState(null);
 
   // Data & State (Cached for instant load over WAN/Network)
-  const [inventory, setInventory] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem(`pos_catalog_${activeBranchId || 'all'}`);
-      return cached ? JSON.parse(cached) : [];
-    } catch {
-      return [];
-    }
-  });
+  const mountedBranchCacheRef = useRef(activeBranchId || 'all');
+  const [inventory, setInventory] = useState(() => readPosCatalogCache(activeBranchId || 'all'));
   const [employees, setEmployees] = useState([]);
-  const hasInventoryRef = useRef(false);
+  const hasInventoryRef = useRef(inventory.length > 0);
 
   // Load Metadata categories, colors, sizes
   const [metadataColors, setMetadataColors] = useState([]);
@@ -252,14 +285,7 @@ export function POS() {
     cashier_footer: 'شكراً لزيارتكم',
   });
   const [nextOrderId, setNextOrderId] = useState('...');
-  const [loadingInventory, setLoadingInventory] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem(`pos_catalog_${activeBranchId || 'all'}`);
-      return cached ? JSON.parse(cached).length === 0 : false;
-    } catch {
-      return false;
-    }
-  });
+  const [loadingInventory, setLoadingInventory] = useState(false);
 
   // Determine the effective branch for cashier checkout & invoice generation
   const effectiveBranchId = useMemo(() => {
@@ -272,7 +298,20 @@ export function POS() {
     const defaultRetailBranch = branches.find((b) => !b.is_main_warehouse) || branches[0];
     return defaultRetailBranch ? defaultRetailBranch.id.toString() : '1';
   }, [activeBranchId, user?.branch_id, branches]);
+  const isAllBranches = !activeBranchId || activeBranchId === 'all';
+  const activeBranchIdStr = activeBranchId != null ? activeBranchId.toString() : '';
+  const activeBranchName = useMemo(() => {
+    if (activeBranch?.name) return activeBranch.name;
+    if (isAllBranches) return 'فرعك';
+    return branches.find((b) => String(b.id) === activeBranchIdStr)?.name || 'فرعك';
+  }, [activeBranch?.name, isAllBranches, branches, activeBranchIdStr]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [, startTransition] = useTransition();
+  const handleSearchDebouncedChange = useCallback((val) => {
+    startTransition(() => {
+      setSearchQuery(val);
+    });
+  }, []);
   const [selectedCategory, setSelectedCategory] = useState('الكل');
   const defaultStockFilter = activeBranchId && activeBranchId !== 'all' ? 'in_branch' : 'all';
   const [stockFilter, setStockFilter] = useState(() => (activeBranchId && activeBranchId !== 'all' ? 'in_branch' : 'all'));
@@ -544,9 +583,13 @@ export function POS() {
       const items = Array.isArray(data) ? data : (data?.items || []);
       if (Array.isArray(items)) {
         setInventory(items);
-        try {
-          sessionStorage.setItem(`pos_catalog_${activeBranchId || 'all'}`, JSON.stringify(items));
-        } catch {}
+        const cacheKey = `pos_catalog_${activeBranchId || 'all'}`;
+        (async () => {
+          await yieldToMain();
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify(items));
+          } catch {}
+        })();
       }
     } catch (err) {
       console.error('Failed to load inventory:', err);
@@ -556,18 +599,18 @@ export function POS() {
   }, [activeBranchId]);
 
   useEffect(() => {
-    try {
-      const cached = sessionStorage.getItem(`pos_catalog_${activeBranchId || 'all'}`);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setInventory(parsed);
-          setLoadingInventory(false);
-          return;
-        }
-      }
-    } catch {}
-    setInventory([]);
+    const branchKey = activeBranchId || 'all';
+    if (mountedBranchCacheRef.current === branchKey) {
+      return;
+    }
+    mountedBranchCacheRef.current = branchKey;
+    const parsed = readPosCatalogCache(branchKey);
+    if (parsed.length > 0) {
+      setInventory(parsed);
+      setLoadingInventory(false);
+    } else {
+      setInventory([]);
+    }
   }, [activeBranchId]);
 
   useEffect(() => {
@@ -641,7 +684,7 @@ export function POS() {
       if (isNumA && isNumB) return numA - numB;
       if (isNumA && !isNumB) return -1;
       if (!isNumA && isNumB) return 1;
-      return a.localeCompare(b, 'ar');
+      return AR_COLLATOR.compare(a, b);
     });
   }, [inventory, metadataSizes]);
 
@@ -664,63 +707,75 @@ export function POS() {
     const cleanList = Array.from(colorSet).filter(
       (c) => c && c !== '-' && c !== 'null' && c !== 'undefined'
     );
-    return cleanList.sort((a, b) => a.localeCompare(b, 'ar'));
+    return cleanList.sort((a, b) => AR_COLLATOR.compare(a, b));
   }, [inventory, metadataColors]);
 
-  // Filter products by category, search query, color, size, stock status, and sorting
-  const filteredProducts = useMemo(() => {
-    const queryTerm = (searchQuery || '').trim().toLowerCase();
-    const selCategory = (selectedCategory || 'الكل').trim().toLowerCase();
+  // O(1) lookup index for barcodes, product IDs, size row IDs, and exact names
+  const inventoryIndex = useMemo(() => {
+    const byId = new Map();
+    const bySizeRowId = new Map();
+    const byExactBarcode = new Map();
+    const byExactName = new Map();
 
-    const list = inventory.filter((item) => {
-      // 1. Category Filter
-      if (selCategory !== 'الكل' && selCategory !== 'all') {
-        const cat = (item.category || '').trim().toLowerCase();
-        if (selCategory === 'بدل') {
-          if (!cat.includes('suit') && !cat.includes('بدل')) return false;
-        } else if (selCategory === 'formal suit' || selCategory === 'بدل رسمية') {
-          if (cat !== 'formal suit' && !cat.includes('بدل رسمية')) return false;
-        } else if (selCategory === 'tuxedo suit' || selCategory === 'بدل سموكن') {
-          if (cat !== 'tuxedo suit' && !cat.includes('بدل سموكن')) return false;
-        } else if (selCategory === 'casual suit' || selCategory === 'بدل كاجوال') {
-          if (cat !== 'casual suit' && !cat.includes('بدل كاجوال')) return false;
-        } else if (selCategory === 'suit' || selCategory === 'بدل عادية') {
-          if (cat !== 'suit' && !cat.includes('بدل عادية')) return false;
-        } else if (selCategory === 'kids' || selCategory === 'أطفال' || selCategory === 'اطفال') {
-          if (cat !== 'kids' && !cat.includes('أطفال') && !cat.includes('اطفال')) return false;
-        } else if (selCategory === 'wallet' || selCategory === 'محافظ') {
-          if (cat !== 'wallet' && !cat.includes('محافظ') && !cat.includes('محفظ')) return false;
-        } else if (selCategory === 'أخرى' || selCategory === 'اخري') {
-          if (cat && !['أخرى', 'اخري', 'other', 'uncategorized'].includes(cat)) return false;
-        } else {
-          if (cat !== selCategory) return false;
+    for (const item of inventory) {
+      if (!item) continue;
+      const itemIdNum = Number(item.id);
+      if (!Number.isNaN(itemIdNum) && !byId.has(itemIdNum)) {
+        byId.set(itemIdNum, item);
+      }
+      const itemStock = Number(item.stock_level ?? item.total_stock ?? 0);
+
+      if (item.name) {
+        const nameKey = String(item.name).trim().toLowerCase();
+        if (nameKey) {
+          const existingByName = byExactName.get(nameKey);
+          if (
+            !existingByName ||
+            (Number(existingByName.stock_level ?? existingByName.total_stock ?? 0) <= 0 && itemStock > 0)
+          ) {
+            byExactName.set(nameKey, item);
+          }
         }
       }
 
-      // 2. Search Query Filter (in-memory fast search)
-      if (queryTerm) {
-        const nameMatch = (item.name || '').toLowerCase().includes(queryTerm);
-        const barcodeMatch = (item.barcode || '').toLowerCase().includes(queryTerm);
-        const idMatch = String(item.id || '').toLowerCase().includes(queryTerm);
-        const colorMatch = (item.color || '').toLowerCase().includes(queryTerm);
-        const catMatch = (item.category || '').toLowerCase().includes(queryTerm);
-        const sizeMatch = (item.size_cut || item.size || '').toLowerCase().includes(queryTerm);
-        const sizesMatch = Array.isArray(item.sizes) && item.sizes.some((s) =>
-          (s.size_name || '').toLowerCase().includes(queryTerm) ||
-          (s.color_name || '').toLowerCase().includes(queryTerm) ||
-          (s.barcode || '').toLowerCase().includes(queryTerm)
-        );
-
-        if (!nameMatch && !barcodeMatch && !idMatch && !colorMatch && !catMatch && !sizeMatch && !sizesMatch) {
-          return false;
+      const sizes = Array.isArray(item.sizes) ? item.sizes : [];
+      for (const s of sizes) {
+        if (!s) continue;
+        const sizeRowIdNum = Number(s.id);
+        if (!Number.isNaN(sizeRowIdNum) && !bySizeRowId.has(sizeRowIdNum)) {
+          bySizeRowId.set(sizeRowIdNum, item);
+        }
+        if (s.barcode) {
+          const bKey = String(s.barcode).trim().toLowerCase();
+          if (bKey) {
+            const existing = byExactBarcode.get(bKey);
+            if (!existing || (Number(existing.specificSize?.stock_level ?? 0) <= 0 && Number(s.stock_level ?? 0) > 0)) {
+              byExactBarcode.set(bKey, { product: item, specificSize: s });
+            }
+          }
         }
       }
 
-      return true;
-    });
+      const directCodes = [item.barcode, item.code];
+      for (const rawCode of directCodes) {
+        if (!rawCode) continue;
+        const bKey = String(rawCode).trim().toLowerCase();
+        if (!bKey) continue;
+        const matchingSize = sizes.find((s) => s?.barcode && String(s.barcode).trim().toLowerCase() === bKey) || null;
+        const existing = byExactBarcode.get(bKey);
+        if (!existing || (!existing.specificSize && Number(existing.product.stock_level ?? 0) <= 0 && itemStock > 0)) {
+          byExactBarcode.set(bKey, { product: item, specificSize: matchingSize });
+        }
+      }
+    }
 
+    return { byId, bySizeRowId, byExactBarcode, byExactName };
+  }, [inventory]);
+
+  // Pre-group models and precompute normalized search/filter metadata (runs ONLY on inventory/branch change)
+  const groupedCatalog = useMemo(() => {
     const map = new Map();
-    for (const item of list) {
+    for (const item of inventory) {
       const nameKey = (item.name || '').trim().toLowerCase();
       const colorKey = (item.color || '').trim().toLowerCase();
       const catKey = (item.category || '').trim().toLowerCase();
@@ -731,11 +786,11 @@ export function POS() {
       const baseSizeName = itemSizes[0]?.size_name || item.size_cut || item.size || null;
 
       const itemBranchStock = (() => {
-        if (!activeBranchId || activeBranchId === 'all') {
+        if (isAllBranches) {
           return Number(item.total_stock ?? item.stock_level ?? 0);
         }
         if (Array.isArray(item.available_branches)) {
-          const match = item.available_branches.find((b) => b.branch_id.toString() === activeBranchId.toString());
+          const match = item.available_branches.find((b) => String(b.branch_id) === activeBranchIdStr);
           if (match) return Number(match.stock_level || 0);
           return 0;
         }
@@ -747,23 +802,35 @@ export function POS() {
           ...item,
           isGrouped: true,
           originalItems: [item],
-          sizes: itemSizes.length > 1
-            ? itemSizes.map((s) => ({
-                id: s.id || item.id,
-                inventory_id: item.id,
-                size_name: s.size_name,
-                stock_level: (!activeBranchId || activeBranchId === 'all') ? Number(s.stock_level ?? 0) : (s.branch_id && s.branch_id.toString() !== activeBranchId.toString() ? 0 : Number(s.stock_level ?? 0)),
-                barcode: s.barcode || item.barcode,
-                color_name: s.color_name || item.color || '',
-              }))
-            : (baseSizeName ? [{
-                id: itemSizes[0]?.id || item.id,
-                inventory_id: item.id,
-                size_name: baseSizeName,
-                stock_level: itemSizes[0] && itemSizes[0].stock_level !== undefined ? Number(itemSizes[0].stock_level) : itemBranchStock,
-                barcode: itemSizes[0]?.barcode || item.barcode,
-                color_name: itemSizes[0]?.color_name || item.color || '',
-              }] : []),
+          sizes:
+            itemSizes.length > 1
+              ? itemSizes.map((s) => ({
+                  id: s.id || item.id,
+                  inventory_id: item.id,
+                  size_name: s.size_name,
+                  stock_level: isAllBranches
+                    ? Number(s.stock_level ?? 0)
+                    : s.branch_id && String(s.branch_id) !== activeBranchIdStr
+                    ? 0
+                    : Number(s.stock_level ?? 0),
+                  barcode: s.barcode || item.barcode,
+                  color_name: s.color_name || item.color || '',
+                }))
+              : baseSizeName
+              ? [
+                  {
+                    id: itemSizes[0]?.id || item.id,
+                    inventory_id: item.id,
+                    size_name: baseSizeName,
+                    stock_level:
+                      itemSizes[0] && itemSizes[0].stock_level !== undefined
+                        ? Number(itemSizes[0].stock_level)
+                        : itemBranchStock,
+                    barcode: itemSizes[0]?.barcode || item.barcode,
+                    color_name: itemSizes[0]?.color_name || item.color || '',
+                  },
+                ]
+              : [],
           total_stock: Number(item.total_stock ?? item.stock_level ?? 0),
           stock_level: itemBranchStock,
           available_branches: Array.isArray(item.available_branches)
@@ -789,32 +856,41 @@ export function POS() {
         }
 
         // Add sizes from merged item while preserving exact inventory_id
-        const sizesToMerge = itemSizes.length > 0
-          ? itemSizes.map((s) => ({
-              id: s.id || item.id,
-              inventory_id: item.id,
-              size_name: s.size_name,
-              stock_level: (!activeBranchId || activeBranchId === 'all')
-                ? Number(s.stock_level ?? 0)
-                : (s.branch_id && s.branch_id.toString() !== activeBranchId.toString() ? 0 : Number(s.stock_level ?? 0)),
-              barcode: s.barcode || item.barcode,
-              color_name: s.color_name || item.color || '',
-            }))
-          : (baseSizeName ? [{
-              id: item.id,
-              inventory_id: item.id,
-              size_name: baseSizeName,
-              stock_level: itemBranchStock,
-              barcode: item.barcode,
-              color_name: item.color || '',
-            }] : []);
+        const sizesToMerge =
+          itemSizes.length > 0
+            ? itemSizes.map((s) => ({
+                id: s.id || item.id,
+                inventory_id: item.id,
+                size_name: s.size_name,
+                stock_level: isAllBranches
+                  ? Number(s.stock_level ?? 0)
+                  : s.branch_id && String(s.branch_id) !== activeBranchIdStr
+                  ? 0
+                  : Number(s.stock_level ?? 0),
+                barcode: s.barcode || item.barcode,
+                color_name: s.color_name || item.color || '',
+              }))
+            : baseSizeName
+            ? [
+                {
+                  id: item.id,
+                  inventory_id: item.id,
+                  size_name: baseSizeName,
+                  stock_level: itemBranchStock,
+                  barcode: item.barcode,
+                  color_name: item.color || '',
+                },
+              ]
+            : [];
 
         for (const sz of sizesToMerge) {
           if (!sz.size_name) continue;
+          const szNameLower = String(sz.size_name || '').trim().toLowerCase();
+          const szColorLower = String(sz.color_name || '').trim().toLowerCase();
           const existingSize = grouped.sizes.find(
             (s) =>
-              String(s.size_name || '').trim().toLowerCase() === String(sz.size_name || '').trim().toLowerCase() &&
-              String(s.color_name || '').trim().toLowerCase() === String(sz.color_name || '').trim().toLowerCase()
+              String(s.size_name || '').trim().toLowerCase() === szNameLower &&
+              String(s.color_name || '').trim().toLowerCase() === szColorLower
           );
           if (!existingSize) {
             grouped.sizes.push(sz);
@@ -830,7 +906,6 @@ export function POS() {
       }
     }
 
-    // Sort sizes numerically or alphabetically
     const result = Array.from(map.values());
     for (const prod of result) {
       if (Array.isArray(prod.sizes) && prod.sizes.length > 1) {
@@ -838,48 +913,123 @@ export function POS() {
           const numA = parseFloat(a.size_name);
           const numB = parseFloat(b.size_name);
           if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-          return String(a.size_name).localeCompare(String(b.size_name), 'ar');
+          return AR_COLLATOR.compare(String(a.size_name), String(b.size_name));
         });
-      }
-    }
-
-    // Apply color, size, and stock filters on the grouped products
-    const isAllBranches = !activeBranchId || activeBranchId === 'all';
-    let filteredList = result.filter((prod) => {
-      // 1. Color filter
-      if (selectedColor && selectedColor !== 'all') {
-        const targetColor = selectedColor.trim().toLowerCase();
-        const prodColor = (prod.color || '').trim().toLowerCase();
-        const hasColorVariant = Array.isArray(prod.sizes) && prod.sizes.some((s) => (s.color_name || '').trim().toLowerCase() === targetColor);
-        if (prodColor !== targetColor && !hasColorVariant) {
-          return false;
-        }
+        prod._displaySizes = [...prod.sizes].sort((a, b) => {
+          const aStock = Number(a.stock_level || 0) > 0 ? 1 : 0;
+          const bStock = Number(b.stock_level || 0) > 0 ? 1 : 0;
+          return bStock - aStock;
+        });
+      } else {
+        prod._displaySizes = prod.sizes;
       }
 
-      // 2. Size filter
-      if (selectedSize && selectedSize !== 'all') {
-        const targetSize = selectedSize.trim().toLowerCase();
-        const prodSize = (prod.size_cut || prod.size || '').trim().toLowerCase();
-        const hasSizeVariant = Array.isArray(prod.sizes) && prod.sizes.some((s) => String(s.size_name || '').trim().toLowerCase() === targetSize);
-        if (prodSize !== targetSize && !hasSizeVariant) {
-          return false;
-        }
-      }
-
-      // 3. Stock filter
-      const branchStock = isAllBranches
+      prod._catLower = (prod.category || '').trim().toLowerCase();
+      prod._colorLower = (prod.color || '').trim().toLowerCase();
+      prod._sizeLower = (prod.size_cut || prod.size || '').trim().toLowerCase();
+      prod._branchStock = isAllBranches
         ? Number(prod.total_stock ?? prod.stock_level ?? 0)
         : Number(prod.stock_level ?? 0);
 
-      if (stockFilter === 'in_branch') {
-        if (selectedSize && selectedSize !== 'all') {
-          const targetSize = selectedSize.trim().toLowerCase();
-          const targetSizeObj = prod.sizes?.find((s) => String(s.size_name || '').trim().toLowerCase() === targetSize);
-          if (targetSizeObj) {
-            if (Number(targetSizeObj.stock_level ?? 0) > 0) return true;
-            if (queryTerm && Number(prod.total_stock ?? 0) > 0) return true;
-            return false;
+      const colorNamesSet = new Set();
+      if (prod._colorLower) colorNamesSet.add(prod._colorLower);
+      const sizeNamesSet = new Set();
+      if (prod._sizeLower) sizeNamesSet.add(prod._sizeLower);
+      const sizeStockMap = new Map();
+      const searchTokens = new Set();
+
+      if (prod.name) searchTokens.add(String(prod.name).toLowerCase());
+      if (prod.category) searchTokens.add(String(prod.category).toLowerCase());
+      if (prod.color) searchTokens.add(String(prod.color).toLowerCase());
+      if (prod.size_cut) searchTokens.add(String(prod.size_cut).toLowerCase());
+      if (prod.size) searchTokens.add(String(prod.size).toLowerCase());
+
+      for (const orig of prod.originalItems) {
+        if (orig.id != null) searchTokens.add(String(orig.id).toLowerCase());
+        if (orig.barcode) searchTokens.add(String(orig.barcode).toLowerCase());
+        if (orig.code) searchTokens.add(String(orig.code).toLowerCase());
+      }
+
+      if (Array.isArray(prod.sizes)) {
+        for (const s of prod.sizes) {
+          const sn = String(s.size_name || '').trim().toLowerCase();
+          if (sn) {
+            sizeNamesSet.add(sn);
+            sizeStockMap.set(sn, (sizeStockMap.get(sn) || 0) + Number(s.stock_level ?? 0));
           }
+          const cn = String(s.color_name || '').trim().toLowerCase();
+          if (cn) colorNamesSet.add(cn);
+
+          if (s.size_name) searchTokens.add(String(s.size_name).toLowerCase());
+          if (s.color_name) searchTokens.add(String(s.color_name).toLowerCase());
+          if (s.barcode) searchTokens.add(String(s.barcode).toLowerCase());
+        }
+      }
+
+      prod._colorNamesSet = colorNamesSet;
+      prod._sizeNamesSet = sizeNamesSet;
+      prod._sizeStockMap = sizeStockMap;
+      prod._searchBlob = Array.from(searchTokens).join('\n');
+    }
+
+    return result;
+  }, [inventory, isAllBranches, activeBranchIdStr]);
+
+  // Filter & sort pre-grouped catalog cleanly in O(N)
+  const filteredProducts = useMemo(() => {
+    const queryTerm = (searchQuery || '').trim().toLowerCase();
+    const selCategory = (selectedCategory || 'الكل').trim().toLowerCase();
+    const hasCategoryFilter = selCategory !== 'الكل' && selCategory !== 'all';
+    const targetColor = selectedColor && selectedColor !== 'all' ? selectedColor.trim().toLowerCase() : '';
+    const targetSize = selectedSize && selectedSize !== 'all' ? selectedSize.trim().toLowerCase() : '';
+
+    const filteredList = groupedCatalog.filter((prod) => {
+      // 1. Category Filter
+      if (hasCategoryFilter) {
+        const cat = prod._catLower;
+        if (selCategory === 'بدل') {
+          if (!cat.includes('suit') && !cat.includes('بدل')) return false;
+        } else if (selCategory === 'formal suit' || selCategory === 'بدل رسمية') {
+          if (cat !== 'formal suit' && !cat.includes('بدل رسمية')) return false;
+        } else if (selCategory === 'tuxedo suit' || selCategory === 'بدل سموكن') {
+          if (cat !== 'tuxedo suit' && !cat.includes('بدل سموكن')) return false;
+        } else if (selCategory === 'casual suit' || selCategory === 'بدل كاجوال') {
+          if (cat !== 'casual suit' && !cat.includes('بدل كاجوال')) return false;
+        } else if (selCategory === 'suit' || selCategory === 'بدل عادية') {
+          if (cat !== 'suit' && !cat.includes('بدل عادية')) return false;
+        } else if (selCategory === 'kids' || selCategory === 'أطفال' || selCategory === 'اطفال') {
+          if (cat !== 'kids' && !cat.includes('أطفال') && !cat.includes('اطفال')) return false;
+        } else if (selCategory === 'wallet' || selCategory === 'محافظ') {
+          if (cat !== 'wallet' && !cat.includes('محافظ') && !cat.includes('محفظ')) return false;
+        } else if (selCategory === 'أخرى' || selCategory === 'اخري') {
+          if (cat && !['أخرى', 'اخري', 'other', 'uncategorized'].includes(cat)) return false;
+        } else if (cat !== selCategory) {
+          return false;
+        }
+      }
+
+      // 2. Search Query Filter
+      if (queryTerm && !prod._searchBlob.includes(queryTerm)) {
+        return false;
+      }
+
+      // 3. Color Filter
+      if (targetColor && prod._colorLower !== targetColor && !prod._colorNamesSet.has(targetColor)) {
+        return false;
+      }
+
+      // 4. Size Filter
+      if (targetSize && prod._sizeLower !== targetSize && !prod._sizeNamesSet.has(targetSize)) {
+        return false;
+      }
+
+      // 5. Stock Filter
+      const branchStock = prod._branchStock;
+      if (stockFilter === 'in_branch') {
+        if (targetSize && prod._sizeStockMap.has(targetSize)) {
+          if (prod._sizeStockMap.get(targetSize) > 0) return true;
+          if (queryTerm && Number(prod.total_stock ?? 0) > 0) return true;
+          return false;
         }
         if (branchStock > 0) return true;
         if (queryTerm && Number(prod.total_stock ?? 0) > 0) return true;
@@ -887,17 +1037,12 @@ export function POS() {
       }
 
       if (stockFilter === 'in_any_branch') {
-        const total = Number(prod.total_stock ?? prod.stock_level ?? 0);
-        return total > 0;
+        return Number(prod.total_stock ?? prod.stock_level ?? 0) > 0;
       }
 
       if (stockFilter === 'out_of_stock') {
-        if (selectedSize && selectedSize !== 'all') {
-          const targetSize = selectedSize.trim().toLowerCase();
-          const targetSizeObj = prod.sizes?.find((s) => String(s.size_name || '').trim().toLowerCase() === targetSize);
-          if (targetSizeObj) {
-            return Number(targetSizeObj.stock_level ?? 0) <= 0;
-          }
+        if (targetSize && prod._sizeStockMap.has(targetSize)) {
+          return prod._sizeStockMap.get(targetSize) <= 0;
         }
         return branchStock <= 0;
       }
@@ -910,29 +1055,29 @@ export function POS() {
       return true;
     });
 
-    // 4. Sorting
+    // 6. Sorting (copy only when sorting so groupedCatalog isn't mutated)
+    if (sortBy === 'default') return filteredList;
+
+    const sorted = [...filteredList];
     if (sortBy === 'stock_desc') {
-      filteredList.sort((a, b) => {
-        const stockA = isAllBranches ? (a.total_stock ?? a.stock_level ?? 0) : (a.stock_level ?? 0);
-        const stockB = isAllBranches ? (b.total_stock ?? b.stock_level ?? 0) : (b.stock_level ?? 0);
-        return stockB - stockA;
-      });
+      sorted.sort((a, b) => b._branchStock - a._branchStock);
     } else if (sortBy === 'stock_asc') {
-      filteredList.sort((a, b) => {
-        const stockA = isAllBranches ? (a.total_stock ?? a.stock_level ?? 0) : (a.stock_level ?? 0);
-        const stockB = isAllBranches ? (b.total_stock ?? b.stock_level ?? 0) : (b.stock_level ?? 0);
-        return stockA - stockB;
-      });
+      sorted.sort((a, b) => a._branchStock - b._branchStock);
     } else if (sortBy === 'price_asc') {
-      filteredList.sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
+      sorted.sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
     } else if (sortBy === 'price_desc') {
-      filteredList.sort((a, b) => Number(b.price || 0) - Number(a.price || 0));
+      sorted.sort((a, b) => Number(b.price || 0) - Number(a.price || 0));
     } else if (sortBy === 'name_asc') {
-      filteredList.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
+      sorted.sort((a, b) => AR_COLLATOR.compare(String(a.name || ''), String(b.name || '')));
     }
 
-    return filteredList;
-  }, [inventory, selectedCategory, searchQuery, selectedColor, selectedSize, stockFilter, sortBy, activeBranchId]);
+    return sorted;
+  }, [groupedCatalog, selectedCategory, searchQuery, selectedColor, selectedSize, stockFilter, sortBy]);
+
+  const gridResetKey = useMemo(
+    () => `${searchQuery}\0${selectedCategory}\0${stockFilter}\0${selectedSize}\0${selectedColor}\0${sortBy}\0${activeBranchId || 'all'}`,
+    [searchQuery, selectedCategory, stockFilter, selectedSize, selectedColor, sortBy, activeBranchId]
+  );
 
   const hasActiveFilters = useMemo(() => {
     return (
@@ -952,40 +1097,35 @@ export function POS() {
     setSelectedColor('all');
     setSortBy('default');
     setSearchQuery('');
-  }, []);
+  }, [defaultStockFilter]);
 
   const totalMatchingPieces = useMemo(() => {
-    const isAll = !activeBranchId || activeBranchId === 'all';
     return filteredProducts.reduce((sum, p) => {
-      const stock = isAll ? Number(p.total_stock ?? p.stock_level ?? 0) : Number(p.stock_level ?? 0);
+      const stock = isAllBranches ? Number(p.total_stock ?? p.stock_level ?? 0) : Number(p.stock_level ?? 0);
       return sum + Math.max(0, stock);
     }, 0);
-  }, [filteredProducts, activeBranchId]);
+  }, [filteredProducts, isAllBranches]);
 
-  // Helper to resolve inventory product for any cart item (handling backward compatibility for stored carts)
+  // Helper to resolve inventory product for any cart item (O(1) via inventoryIndex)
   const findProductForCartItem = useCallback(
     (item) => {
       if (!item) return null;
       const targetId = Number(item.productId || item.id);
-      const direct = inventory.find((p) => Number(p.id) === targetId);
+      const direct = inventoryIndex.byId.get(targetId);
       if (direct) return direct;
-      const bySize = inventory.find(
-        (p) => Array.isArray(p.sizes) && p.sizes.some((s) => Number(s.id) === Number(item.id))
-      );
+      const bySize = inventoryIndex.bySizeRowId.get(Number(item.id));
       if (bySize) return bySize;
-      return (
-        inventory.find(
-          (p) =>
-            (p.barcode && item.barcode && p.barcode.toLowerCase() === item.barcode.toLowerCase()) ||
-            (p.name && item.name && p.name.trim().toLowerCase() === item.name.trim().toLowerCase()) ||
-            (Array.isArray(p.sizes) &&
-              p.sizes.some(
-                (s) => s.barcode && item.barcode && s.barcode.toLowerCase() === item.barcode.toLowerCase()
-              ))
-        ) || null
-      );
+      if (item.barcode) {
+        const byBarcode = inventoryIndex.byExactBarcode.get(String(item.barcode).trim().toLowerCase());
+        if (byBarcode?.product) return byBarcode.product;
+      }
+      if (item.name) {
+        const byName = inventoryIndex.byExactName.get(String(item.name).trim().toLowerCase());
+        if (byName) return byName;
+      }
+      return null;
     },
-    [inventory]
+    [inventoryIndex]
   );
 
   // Helper to get available stock for current branch or globally with color awareness
@@ -1046,135 +1186,149 @@ export function POS() {
     [activeBranchId]
   );
 
+  // Stock Transfer Request
+  const openStockRequestModal = useCallback((product, preselectedSize = null) => {
+    setRequestProduct(product);
+    setRequestPreselectedSize(preselectedSize);
+    setShowStockRequestModal(true);
+  }, []);
+
   // Add Item to Current Cart with optional selectedSize
-  const addToCart = (product, selectedSize = null, selectedSizeObj = null) => {
-    let itemSize = selectedSize;
-    let chosenBarcode = product.barcode;
+  const addToCart = useCallback(
+    (product, selectedSize = null, selectedSizeObj = null) => {
+      let itemSize = selectedSize;
+      let chosenBarcode = product.barcode;
 
-    if (selectedSizeObj) {
-      itemSize = selectedSizeObj.size_name;
-      if (selectedSizeObj.barcode) chosenBarcode = selectedSizeObj.barcode;
-    } else if (itemSize && Array.isArray(product.sizes)) {
-      const foundSize = product.sizes.find(
-        (s) => String(s.size_name || '').trim().toLowerCase() === String(itemSize).trim().toLowerCase()
-      );
-      if (foundSize && foundSize.barcode) {
-        chosenBarcode = foundSize.barcode;
-      }
-    }
-
-    if (!itemSize) {
-      if (product.sizes && Array.isArray(product.sizes) && product.sizes.length === 1) {
-        itemSize = product.sizes[0].size_name;
-        if (product.sizes[0].barcode) chosenBarcode = product.sizes[0].barcode;
-      } else {
-        itemSize = product.size_cut || product.size || '';
-      }
-    }
-
-    const itemColor = selectedSizeObj?.color_name || product.color || '';
-    let targetInventoryId = Number(selectedSizeObj?.inventory_id || product.id);
-    if (Array.isArray(product.originalItems) && product.originalItems.length > 1 && !selectedSizeObj?.inventory_id) {
-      const firstInStock = product.originalItems.find((orig) => Number(orig.stock_level || 0) > 0);
-      if (firstInStock) targetInventoryId = Number(firstInStock.id);
-    }
-    const availableStock = getProductAvailableStock(product, itemSize, itemColor);
-    if (availableStock <= 0) {
-      playErrorSound();
-      const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
-      toast.error(`عفواً، الصنف "${product.name}"${itemSize ? ` مقاس (${itemSize})` : ''} غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
-      return;
-    }
-
-    const cartItemId = `${targetInventoryId}_${itemSize || 'default'}_${itemColor}`;
-
-    setCarts((prev) => {
-      const items = prev[activeCartId] || [];
-      const existingIndex = items.findIndex((i) =>
-        i.cartItemId
-          ? i.cartItemId === cartItemId
-          : (Number(i.productId || i.id) === Number(product.id) && (i.size || '') === (itemSize || '') && (i.color || '') === itemColor)
-      );
-
-      if (existingIndex > -1) {
-        const currentQty = items[existingIndex].quantity;
-        if (currentQty + 1 > availableStock) {
-          playErrorSound();
-          toast.warning(`الكمية المتاحة في المخزون لهذا الصنف هي ${availableStock} قطعة فقط.`);
-          return prev;
+      if (selectedSizeObj) {
+        itemSize = selectedSizeObj.size_name;
+        if (selectedSizeObj.barcode) chosenBarcode = selectedSizeObj.barcode;
+      } else if (itemSize && Array.isArray(product.sizes)) {
+        const foundSize = product.sizes.find(
+          (s) => String(s.size_name || '').trim().toLowerCase() === String(itemSize).trim().toLowerCase()
+        );
+        if (foundSize && foundSize.barcode) {
+          chosenBarcode = foundSize.barcode;
         }
-        const updated = [...items];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          quantity: currentQty + 1,
-        };
-        playBeep();
-        return { ...prev, [activeCartId]: updated };
-      } else {
-        const newItem = {
-          cartItemId,
-          id: targetInventoryId,
-          productId: targetInventoryId,
-          size_row_id: selectedSizeObj?.id || null,
-          name: product.name,
-          barcode: chosenBarcode || product.barcode,
-          price: Number(product.price || 0),
-          color: itemColor,
-          size: itemSize,
-          image_url: product.image_url || '',
-          quantity: 1,
-          discount: 0,
-          discount_type: 'amount',
-          maxStock: availableStock,
-        };
-        playBeep();
-        return { ...prev, [activeCartId]: [...items, newItem] };
       }
-    });
-  };
 
+      if (!itemSize) {
+        if (product.sizes && Array.isArray(product.sizes) && product.sizes.length === 1) {
+          itemSize = product.sizes[0].size_name;
+          if (product.sizes[0].barcode) chosenBarcode = product.sizes[0].barcode;
+        } else {
+          itemSize = product.size_cut || product.size || '';
+        }
+      }
 
-  // Barcode Scan / Exact Match on Enter
-  const handleBarcodeSubmit = async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const code = searchQuery.trim();
-      if (!code) return;
+      const itemColor = selectedSizeObj?.color_name || product.color || '';
+      let targetInventoryId = Number(selectedSizeObj?.inventory_id || product.id);
+      if (Array.isArray(product.originalItems) && product.originalItems.length > 1 && !selectedSizeObj?.inventory_id) {
+        const firstInStock = product.originalItems.find((orig) => Number(orig.stock_level || 0) > 0);
+        if (firstInStock) targetInventoryId = Number(firstInStock.id);
+      }
+      const availableStock = getProductAvailableStock(product, itemSize, itemColor);
+      if (availableStock <= 0) {
+        playErrorSound();
+        const branchName = activeBranchName || 'فرعك';
+        toast.error(
+          `عفواً، الصنف "${product.name}"${itemSize ? ` مقاس (${itemSize})` : ''} غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`
+        );
+        return;
+      }
 
-      let matched = inventory.find(
-        (i) =>
-          (i.barcode && i.barcode.toLowerCase() === code.toLowerCase()) ||
-          (i.code && i.code.toLowerCase() === code.toLowerCase()) ||
-          (i.name && i.name.toLowerCase() === code.toLowerCase()) ||
-          (Array.isArray(i.sizes) && i.sizes.some((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase()))
-      );
+      const cartItemId = `${targetInventoryId}_${itemSize || 'default'}_${itemColor}`;
+      const targetCartId = activeCartIdRef.current;
+
+      setCarts((prev) => {
+        const items = prev[targetCartId] || [];
+        const existingIndex = items.findIndex((i) =>
+          i.cartItemId
+            ? i.cartItemId === cartItemId
+            : Number(i.productId || i.id) === Number(product.id) &&
+              (i.size || '') === (itemSize || '') &&
+              (i.color || '') === itemColor
+        );
+
+        if (existingIndex > -1) {
+          const currentQty = items[existingIndex].quantity;
+          if (currentQty + 1 > availableStock) {
+            playErrorSound();
+            toast.warning(`الكمية المتاحة في المخزون لهذا الصنف هي ${availableStock} قطعة فقط.`);
+            return prev;
+          }
+          const updated = [...items];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            quantity: currentQty + 1,
+          };
+          playBeep();
+          return { ...prev, [targetCartId]: updated };
+        } else {
+          const newItem = {
+            cartItemId,
+            id: targetInventoryId,
+            productId: targetInventoryId,
+            size_row_id: selectedSizeObj?.id || null,
+            name: product.name,
+            barcode: chosenBarcode || product.barcode,
+            price: Number(product.price || 0),
+            color: itemColor,
+            size: itemSize,
+            image_url: product.image_url || '',
+            quantity: 1,
+            discount: 0,
+            discount_type: 'amount',
+            maxStock: availableStock,
+          };
+          playBeep();
+          return { ...prev, [targetCartId]: [...items, newItem] };
+        }
+      });
+    },
+    [activeBranchName, getProductAvailableStock, toast]
+  );
+
+  // Barcode Scan / Exact Match on Enter (O(1) local index + fast server fallback)
+  const handleBarcodeSubmit = useCallback(
+    async (rawCode) => {
+      const code = String(rawCode || '').trim();
+      if (!code) return false;
+      const codeLower = code.toLowerCase();
+
+      const indexedHit = inventoryIndex.byExactBarcode.get(codeLower);
+      let matched = indexedHit?.product || inventoryIndex.byExactName.get(codeLower) || null;
+      let specificSize = indexedHit?.specificSize || null;
 
       if (!matched) {
         try {
-          const directRes = await api.get(`/inventory?barcode=${encodeURIComponent(code)}&branch_id=${activeBranchId || 'all'}&include_zero=true`);
+          const directRes = await api.get(
+            `/inventory?barcode=${encodeURIComponent(code)}&exact_barcode=true&limit=5&branch_id=${activeBranchId || 'all'}&include_zero=true`
+          );
           const found = Array.isArray(directRes) ? directRes[0] : directRes?.items?.[0];
-          if (found) matched = found;
+          if (found) {
+            matched = found;
+            specificSize = Array.isArray(found.sizes)
+              ? found.sizes.find((s) => s.barcode && String(s.barcode).trim().toLowerCase() === codeLower) || null
+              : null;
+          }
         } catch {}
+      } else if (!specificSize && Array.isArray(matched.sizes)) {
+        specificSize =
+          matched.sizes.find((s) => s.barcode && String(s.barcode).trim().toLowerCase() === codeLower) || null;
       }
 
       if (matched) {
-        // Check if barcode specifically matched an individual size/variant
-        const specificSize = Array.isArray(matched.sizes)
-          ? matched.sizes.find((s) => s.barcode && s.barcode.toLowerCase() === code.toLowerCase())
-          : null;
-
         const availableStock = getProductAvailableStock(matched);
         if (availableStock <= 0) {
           playErrorSound();
-          const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
+          const branchName = activeBranchName || 'فرعك';
           if (transferBranches.length > 1 && canRequestBranchStock) {
             toast.info(`غير متوفر في ${branchName} (0) — تم فتح نافذة طلبه من الفروع الأخرى 🚚`);
             openStockRequestModal(matched, specificSize || null);
-            setSearchQuery('');
-            return;
+            return true;
           }
           toast.error(`عفواً، الصنف "${matched.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
-          return;
+          return false;
         }
 
         if (specificSize) {
@@ -1184,15 +1338,13 @@ export function POS() {
             if (transferBranches.length > 1 && canRequestBranchStock) {
               toast.info(`المقاس "${specificSize.size_name}" غير متوفر بفرعك — تم فتح نافذة طلبه من الفروع الأخرى 🚚`);
               openStockRequestModal(matched, specificSize);
-              setSearchQuery('');
-              return;
+              return true;
             }
             toast.error(`عفواً، المقاس "${specificSize.size_name}" (${specificSize.color_name || ''}) نفد من المخزون.`);
-            return;
+            return false;
           }
           addToCart(matched, specificSize.size_name, specificSize);
-          setSearchQuery('');
-          return;
+          return true;
         }
 
         if (matched.sizes && Array.isArray(matched.sizes) && matched.sizes.length > 1) {
@@ -1202,60 +1354,102 @@ export function POS() {
             if (transferBranches.length > 1 && canRequestBranchStock) {
               toast.info(`جميع مقاسات "${matched.name}" نفدت بفرعك — تم فتح نافذة طلبها من الفروع الأخرى 🚚`);
               openStockRequestModal(matched, null);
-              setSearchQuery('');
-              return;
+              return true;
             }
             toast.error(`عفواً، جميع مقاسات الصنف "${matched.name}" نفدت من المخزون.`);
-            return;
+            return false;
           }
           setPendingProduct(matched);
           setShowSizeModal(true);
-          setSearchQuery('');
+          return true;
         } else {
           addToCart(matched);
-          setSearchQuery('');
+          return true;
         }
       } else {
         playErrorSound();
         toast.warning(`لم يتم العثور على منتج بهذا الباركود: ${code}`);
+        return false;
       }
-    }
-  };
+    },
+    [
+      inventoryIndex,
+      activeBranchId,
+      activeBranchName,
+      transferBranches.length,
+      canRequestBranchStock,
+      getProductAvailableStock,
+      openStockRequestModal,
+      addToCart,
+      toast,
+    ]
+  );
 
   // Handler when clicking a product card in POS
-  const handleProductCardClick = (product) => {
-    const availableStock = getProductAvailableStock(product);
-    const hasInOtherBranch = Array.isArray(product.available_branches) && product.available_branches.some(
-      (b) => b.branch_id.toString() !== activeBranchId?.toString() && Number(b.stock_level || 0) > 0
-    );
-    if (availableStock <= 0) {
-      if (transferBranches.length > 1 && canRequestBranchStock && hasInOtherBranch) {
-        openStockRequestModal(product);
-        return;
-      }
-      playErrorSound();
-      const branchName = branches.find((b) => b.id.toString() === activeBranchId?.toString())?.name || 'فرعك';
-      toast.error(`عفواً، الصنف "${product.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
-      return;
-    }
-
-    if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 1) {
-      const hasAnyInStock = product.sizes.some((s) => Number(s.stock_level || 0) > 0);
-      if (!hasAnyInStock) {
+  const handleProductCardClick = useCallback(
+    (product) => {
+      const availableStock = getProductAvailableStock(product);
+      const hasInOtherBranch =
+        Array.isArray(product.available_branches) &&
+        product.available_branches.some(
+          (b) => String(b.branch_id) !== activeBranchIdStr && Number(b.stock_level || 0) > 0
+        );
+      if (availableStock <= 0) {
         if (transferBranches.length > 1 && canRequestBranchStock && hasInOtherBranch) {
           openStockRequestModal(product);
           return;
         }
         playErrorSound();
-        toast.error(`عفواً، جميع مقاسات الصنف "${product.name}" نفدت من المخزون ولا يمكن ضربه بالفاتورة.`);
+        const branchName = activeBranchName || 'فرعك';
+        toast.error(`عفواً، الصنف "${product.name}" غير متوفر في ${branchName} (0) ولا يمكن ضربه بالفاتورة.`);
         return;
       }
-      setPendingProduct(product);
-      setShowSizeModal(true);
-    } else {
-      addToCart(product);
-    }
-  };
+
+      if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 1) {
+        const hasAnyInStock = product.sizes.some((s) => Number(s.stock_level || 0) > 0);
+        if (!hasAnyInStock) {
+          if (transferBranches.length > 1 && canRequestBranchStock && hasInOtherBranch) {
+            openStockRequestModal(product);
+            return;
+          }
+          playErrorSound();
+          toast.error(`عفواً، جميع مقاسات الصنف "${product.name}" نفدت من المخزون ولا يمكن ضربه بالفاتورة.`);
+          return;
+        }
+        setPendingProduct(product);
+        setShowSizeModal(true);
+      } else {
+        addToCart(product);
+      }
+    },
+    [
+      activeBranchIdStr,
+      activeBranchName,
+      transferBranches.length,
+      canRequestBranchStock,
+      getProductAvailableStock,
+      openStockRequestModal,
+      addToCart,
+      toast,
+    ]
+  );
+
+  const handleProductSizeClick = useCallback(
+    (product, sizeObj) => {
+      if (Number(sizeObj?.stock_level || 0) > 0) {
+        addToCart(product, sizeObj.size_name, sizeObj);
+      } else {
+        playErrorSound();
+        toast.warning(`المقاس ${sizeObj?.size_name || ''} غير متوفر بالفرع حالياً`);
+      }
+    },
+    [addToCart, toast]
+  );
+
+  const handleShowAllSizes = useCallback((product) => {
+    setPendingProduct(product);
+    setShowSizeModal(true);
+  }, []);
 
   const updateQuantity = (cartKey, delta) => {
     setCarts((prev) => {
@@ -2380,13 +2574,6 @@ export function POS() {
     }
   };
 
-  // Stock Transfer Request
-  const openStockRequestModal = (product, preselectedSize = null) => {
-    setRequestProduct(product);
-    setRequestPreselectedSize(preselectedSize);
-    setShowStockRequestModal(true);
-  };
-
   return (
     <div className="space-y-4 max-w-[1700px] mx-auto select-none" style={{ direction: 'rtl' }}>
       {/* Top Bar: Tabs & Active Branch Info */}
@@ -2487,29 +2674,12 @@ export function POS() {
           {/* RIGHT COLUMN (7/8 Cols): Product Catalog & Barcode Scanner */}
           <div className="lg:col-span-7 xl:col-span-8 flex flex-col gap-4">
             {/* Search and Barcode Input */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-3">
-              <div className="relative flex-1">
-                <Barcode className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={handleBarcodeSubmit}
-                  placeholder="امسح الباركود، أو ابحث بالاسم، الكود..."
-                  className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl pr-11 pl-4 py-2.5 text-sm font-bold text-slate-900 placeholder:text-slate-400 outline-none focus:border-indigo-600 focus:bg-white transition-all"
-                  autoFocus
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
+            <POSBarcodeSearchBar
+              inputRef={searchInputRef}
+              externalQuery={searchQuery}
+              onDebouncedChange={handleSearchDebouncedChange}
+              onBarcodeSubmit={handleBarcodeSubmit}
+            />
 
             {/* Comprehensive Dropdown Filter Bar */}
             <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm space-y-3">
@@ -2731,298 +2901,21 @@ export function POS() {
             </div>
 
             {/* Product Cards Grid */}
-            <div className="min-h-[500px] max-h-[calc(100vh-270px)] overflow-y-auto pr-1">
-              {loadingInventory ? (
-                <div className="py-24 text-center text-slate-400 font-bold text-sm">
-                  جاري تحميل المنتجات...
-                </div>
-              ) : filteredProducts.length === 0 ? (
-                <div className="py-24 text-center text-slate-400 font-bold text-sm bg-white rounded-3xl border border-dashed border-slate-300">
-                  لا توجد منتجات مطابقة للبحث
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
-                  {filteredProducts.map((product) => {
-                    const isAll = !activeBranchId || activeBranchId === 'all';
-                    const activeBranchObj = branches.find((b) => b.id.toString() === activeBranchId?.toString());
-                    const activeBranchName = activeBranchObj?.name || 'فرعك';
-
-                    const currentBranchStock = isAll
-                      ? Number(product.total_stock ?? product.stock_level ?? 0)
-                      : (() => {
-                          if (Array.isArray(product.available_branches)) {
-                            const match = product.available_branches.find((b) => b.branch_id.toString() === activeBranchId?.toString());
-                            if (match) return Number(match.stock_level || 0);
-                            return 0;
-                          }
-                          return Number(product.stock_level ?? 0);
-                        })();
-
-                    const isOutOfStock = currentBranchStock <= 0;
-                    const isLow = !isOutOfStock && currentBranchStock <= (product.min_stock_level ?? 5);
-
-                    const availableBranches = Array.isArray(product.available_branches) ? product.available_branches : [];
-
-                    return (
-                      <div
-                        key={product.id}
-                        onClick={() => handleProductCardClick(product)}
-                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer group flex flex-col justify-between relative ${
-                          isOutOfStock
-                            ? 'bg-slate-50/80 border-slate-200 hover:border-rose-300'
-                            : 'bg-white border-slate-200/80 shadow-sm hover:shadow-md hover:border-indigo-400'
-                        }`}
-                      >
-                        {/* Thumbnail */}
-                        <div className="aspect-square bg-slate-100 rounded-xl mb-3 overflow-hidden relative flex items-center justify-center">
-                          {product.image_url ? (
-                            <img
-                              src={product.image_url}
-                              alt={product.name}
-                              className={`w-full h-full object-cover transition-transform group-hover:scale-105 ${
-                                isOutOfStock ? 'grayscale opacity-70' : ''
-                              }`}
-                            />
-                          ) : (
-                            <Tag className="w-8 h-8 text-slate-300 group-hover:text-indigo-400 transition-colors" />
-                          )}
-                          <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md backdrop-blur-sm">
-                            {product.category || 'ملابس'}
-                          </span>
-                          {product.image_url && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openPosProductLightbox(product);
-                              }}
-                              title="تكبير الصورة"
-                              className="absolute top-2 left-2 z-10 w-7 h-7 rounded-lg bg-slate-900/75 hover:bg-indigo-600 text-white flex items-center justify-center shadow-sm backdrop-blur-sm transition-colors cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {isOutOfStock && (
-                            <div className="absolute inset-0 bg-slate-900/30 flex items-center justify-center backdrop-blur-[1px]">
-                              <span className="bg-rose-600 text-white text-[11px] font-black px-2.5 py-1 rounded-lg shadow-md border border-rose-400">
-                                {isAll ? 'نفد من المخزون' : 'غير متوفر بفرعك'}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Title & Attributes */}
-                        <div>
-                          <div className="flex items-center justify-between gap-1">
-                            <h4 className="font-black text-slate-900 text-xs sm:text-sm line-clamp-1 group-hover:text-indigo-600 transition-colors">
-                              {product.name}
-                            </h4>
-                            <span className="text-[10px] font-mono text-slate-400 font-bold shrink-0">
-                              #{product.id}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px] font-bold">
-                            {product.color && (
-                              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                                {product.color}
-                              </span>
-                            )}
-                            {Array.isArray(product.sizes) && product.sizes.length > 1 ? (
-                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-black flex items-center gap-1">
-                                <Layers className="w-3 h-3 text-indigo-500" />
-                                {product.sizes.length} مقاسات
-                              </span>
-                            ) : Array.isArray(product.sizes) && product.sizes.length === 1 ? (
-                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-black">
-                                مقاس: {product.sizes[0].size_name}
-                              </span>
-                            ) : (
-                              (product.size_cut || product.size) && (
-                                <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-black">
-                                  مقاس: {product.size_cut || product.size}
-                                </span>
-                              )
-                            )}
-                          </div>
-
-                          {/* Multi-Sizes Pills Shown Directly on Outside of Card */}
-                          {Array.isArray(product.sizes) && product.sizes.length > 1 && (
-                            <div className="mt-2 bg-indigo-50/50 rounded-xl p-1.5 border border-indigo-100 flex flex-col gap-1">
-                              <div className="text-[10px] font-black text-indigo-900 flex items-center justify-between">
-                                <span className="flex items-center gap-1">
-                                  <Layers className="w-3 h-3 text-indigo-600" />
-                                  المقاسات:
-                                </span>
-                                {product.sizes.length > 4 && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setPendingProduct(product);
-                                      setShowSizeModal(true);
-                                    }}
-                                    className="text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
-                                  >
-                                    عرض الكل ({product.sizes.length})
-                                  </button>
-                                )}
-                              </div>
-                              <div className="flex flex-wrap items-center gap-1">
-                                {(() => {
-                                  // Show in-stock first, capped at 4
-                                  const sortedSizes = [...product.sizes].sort((a, b) => {
-                                    const aStock = Number(a.stock_level || 0) > 0 ? 1 : 0;
-                                    const bStock = Number(b.stock_level || 0) > 0 ? 1 : 0;
-                                    return bStock - aStock;
-                                  });
-                                  const visibleSizes = sortedSizes.slice(0, 4);
-                                  const remainingCount = sortedSizes.length - 4;
-
-                                  return (
-                                    <>
-                                      {visibleSizes.map((s) => {
-                                        const hasStock = Number(s.stock_level || 0) > 0;
-                                        return (
-                                          <span
-                                            key={s.size_name}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              if (hasStock) {
-                                                addToCart(product, s.size_name, s);
-                                              } else {
-                                                playErrorSound();
-                                                toast.warning(`المقاس ${s.size_name} غير متوفر بالفرع حالياً`);
-                                              }
-                                            }}
-                                            className={`text-[10px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 transition-all ${
-                                              hasStock
-                                                ? 'bg-white text-indigo-700 border border-indigo-200 shadow-xs hover:bg-indigo-600 hover:text-white cursor-pointer'
-                                                : 'bg-slate-100 text-slate-400 border border-slate-200 line-through opacity-60 cursor-not-allowed'
-                                            }`}
-                                            title={`مقاس ${s.size_name}: ${hasStock ? `متوفر ${s.stock_level} قطعة (اضغط للإضافة مباشرة)` : 'نفذت الكمية'}`}
-                                          >
-                                            <span>{s.size_name}</span>
-                                            {hasStock && (
-                                              <span className="text-[9px] font-mono opacity-75">
-                                                ({s.stock_level})
-                                              </span>
-                                            )}
-                                          </span>
-                                        );
-                                      })}
-                                      {remainingCount > 0 && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setPendingProduct(product);
-                                            setShowSizeModal(true);
-                                          }}
-                                          className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-indigo-100/80 hover:bg-indigo-200 text-indigo-700 border border-indigo-200 transition-colors cursor-pointer"
-                                          title="عرض باقي المقاسات"
-                                        >
-                                          +{remainingCount} أخرى
-                                        </button>
-                                      )}
-                                    </>
-                                  );
-                                })()}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Stock & Inter-Branch Request */}
-                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold">
-                          {isOutOfStock ? (
-                            <span className="text-rose-600 font-black flex items-center gap-1 text-[11px]">
-                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                              {isAll ? 'غير متوفر (0)' : `غير متوفر بـ ${activeBranchName} (0)`}
-                            </span>
-                          ) : (
-                            <span className={isLow ? 'text-amber-600 font-black' : 'text-emerald-600 font-black'}>
-                              {isAll ? `المتوفر: ${currentBranchStock}` : `متوفر بـ ${activeBranchName}: ${currentBranchStock}`}
-                            </span>
-                          )}
-                          {transferBranches.length > 1 && canRequestBranchStock && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openStockRequestModal(product);
-                              }}
-                              className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-100 transition-colors cursor-pointer shrink-0"
-                              title="طلب بضاعة من الفروع الأخرى"
-                            >
-                              طلب من فرع 🚚
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Available Branches Outside Pill - توضيح الفروع المتاح بها من برا */}
-                        {availableBranches.length > 0 ? (
-                          <div className="mt-2 bg-slate-50/90 rounded-xl p-2 border border-slate-200/80 flex flex-col gap-1">
-                            <span className="text-[10px] font-bold text-slate-500 flex items-center gap-1">
-                              <Building2 className="w-3 h-3 text-indigo-600 shrink-0" />
-                              متاح في:
-                            </span>
-                            <div className="flex flex-wrap items-center gap-1">
-                              {availableBranches.map((b) => {
-                                const isCurrent = !isAll && b.branch_id.toString() === activeBranchId?.toString();
-                                return (
-                                  <span
-                                    key={b.branch_id}
-                                    className={`text-[10px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-1 ${
-                                      isCurrent
-                                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                        : 'bg-indigo-50 text-indigo-700 border border-indigo-200/70'
-                                    }`}
-                                    title={`فرع ${b.branch_name}: متوفر ${b.stock_level} قطعة`}
-                                  >
-                                    <span>{b.branch_name}</span>
-                                    <span className="font-mono bg-white/80 px-1 rounded text-[9px]">
-                                      ({b.stock_level})
-                                    </span>
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="mt-2 bg-rose-50/60 rounded-xl p-1.5 border border-rose-100 text-[10px] text-rose-600 font-bold flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3 shrink-0" />
-                            غير متاح في أي فرع
-                          </div>
-                        )}
-
-                        {/* Price & Add Button */}
-                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
-                          <span className="text-sm font-black text-indigo-600">
-                            {Number(product.price || 0).toLocaleString()} ج.م
-                          </span>
-                          <button
-                            type="button"
-                            disabled={isOutOfStock}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleProductCardClick(product);
-                            }}
-                            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all shadow-sm ${
-                              isOutOfStock
-                                ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed'
-                                : 'bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white cursor-pointer'
-                            }`}
-                            title={isOutOfStock ? 'الصنف غير متوفر بالمخزون ولا يمكن ضربه بالفاتورة' : 'إضافة للفاتورة'}
-                          >
-                            <Plus className={`w-4 h-4 ${isOutOfStock ? 'opacity-40' : ''}`} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            <POSProductGrid
+              loadingInventory={loadingInventory}
+              filteredProducts={filteredProducts}
+              resetKey={gridResetKey}
+              isAllBranches={isAllBranches}
+              activeBranchIdStr={activeBranchIdStr}
+              activeBranchName={activeBranchName}
+              canRequestBranchStock={canRequestBranchStock}
+              hasTransferBranches={transferBranches.length > 1}
+              onCardClick={handleProductCardClick}
+              onSizeClick={handleProductSizeClick}
+              onShowAllSizes={handleShowAllSizes}
+              onOpenLightbox={openPosProductLightbox}
+              onRequestStock={openStockRequestModal}
+            />
           </div>
 
           {/* LEFT COLUMN (4/5 Cols): Sticky Cart & Multi-Tab Summary */}

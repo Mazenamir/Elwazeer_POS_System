@@ -17,6 +17,12 @@ const { adjustInventoryStock, generateUniqueBarcode, normalizeBarcodeInput } = r
 const MAX_SYNC_ATTEMPTS = 5;
 let lastServerMutationAt = null;
 
+function parseSyncBool(val) {
+  if (val === true || val === 1 || val === '1') return true;
+  if (typeof val === 'string') return val.trim().toLowerCase() === 'true';
+  return false;
+}
+
 // Safe SSL configuration: process.env.NODE_TLS_REJECT_UNAUTHORIZED is not disabled globally
 
 function timeoutError(timeoutMs) {
@@ -635,6 +641,7 @@ async function applyOperation(operation) {
       const createdBy = await resolveUserId(tx, payload.created_by);
       const updatedBy = await resolveUserId(tx, payload.updated_by);
       const deletedBy = await resolveUserId(tx, payload.deleted_by);
+      const isDeletedBool = parseSyncBool(payload.is_deleted);
 
       await tx.query(
         `INSERT INTO expenses (branch_id, category, amount, expense_date, notes, offline_uuid, payment_method, created_by, updated_by, is_deleted, deleted_by)
@@ -661,12 +668,12 @@ async function applyOperation(operation) {
           normExpenseMethod,
           createdBy,
           updatedBy,
-          Boolean(payload.is_deleted),
+          isDeletedBool,
           deletedBy,
         ]
       );
       const marker = `[EXP-${payload.offline_uuid}]`;
-      if (Boolean(payload.is_deleted)) {
+      if (isDeletedBool) {
         await tx.query(
           "DELETE FROM employee_transactions WHERE (offline_uuid = $1 OR notes LIKE $2) AND type = 'bonus'",
           [payload.offline_uuid, `%${marker}%`]
@@ -3360,7 +3367,7 @@ async function applyOperation(operation) {
                 await tx.query(
                   `UPDATE inventory_sizes
                    SET stock_level = GREATEST(0, stock_level - $1), updated_at = CURRENT_TIMESTAMP
-                   WHERE inventory_id = $2 AND branch_id = $3
+                   WHERE inventory_id = $2 AND COALESCE(branch_id, 1) = COALESCE($3, 1)
                      AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))
                      AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($5, '')))`,
                   [sqty, effInvId, effFromBranch, sName, sColor]
@@ -3403,7 +3410,7 @@ async function applyOperation(operation) {
                 await tx.query(
                   `UPDATE inventory_sizes
                    SET stock_level = GREATEST(0, stock_level - $1), updated_at = CURRENT_TIMESTAMP
-                   WHERE inventory_id = $2 AND branch_id = $3
+                   WHERE inventory_id = $2 AND COALESCE(branch_id, 1) = COALESCE($3, 1)
                      AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))
                      AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($5, '')))`,
                   [sqty, invId, fromBranch, sName, sColor]
@@ -4173,11 +4180,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     const getPendingSyncTracker = (entityTypes) => {
       const ids = new Set();
       const uuids = new Set();
+      const typesList = Array.isArray(entityTypes) ? entityTypes : [entityTypes];
       try {
-        const typesList = Array.isArray(entityTypes) ? entityTypes : [entityTypes];
         const placeholders = typesList.map(() => '?').join(', ');
         const rows = sqlite.prepare(
-          `SELECT entity_id, payload FROM sync_queue WHERE entity_type IN (${placeholders}) AND status IN ('pending', 'processing', 'retry', 'failed')`
+          `SELECT entity_id, payload FROM sync_queue WHERE entity_type IN (${placeholders}) AND status IN ('pending', 'processing', 'retry', 'failed', 'dead_letter')`
         ).all(...typesList);
         for (const r of rows) {
           if (r.entity_id) ids.add(Number(r.entity_id));
@@ -4189,6 +4196,16 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
             if (p?.rental?.offline_uuid) uuids.add(String(p.rental.offline_uuid));
             if (p?.operation_uuid) uuids.add(String(p.operation_uuid));
           } catch {}
+        }
+      } catch {}
+      try {
+        const localOps = offlineStore.pending(1000) || [];
+        for (const op of localOps) {
+          if (!typesList.includes(op.entity_type)) continue;
+          const p = op.payload || {};
+          if (p?.id) ids.add(Number(p.id));
+          if (p?.offline_uuid) uuids.add(String(p.offline_uuid));
+          if (op.operation_uuid) uuids.add(String(op.operation_uuid));
         }
       } catch {}
       return { ids, uuids };
@@ -4666,8 +4683,29 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
     // Helper to safely format dates and primitives for SQLite
     const toSqliteDate = (val) => {
       if (!val) return null;
-      if (val instanceof Date) return val.toISOString().slice(0, 10);
-      return String(val);
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+        const parsed = new Date(trimmed);
+        if (!Number.isNaN(parsed.getTime())) {
+          return new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Africa/Cairo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(parsed);
+        }
+        return trimmed.slice(0, 10);
+      }
+      if (val instanceof Date && !Number.isNaN(val.getTime())) {
+        return new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Africa/Cairo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(val);
+      }
+      return String(val).slice(0, 10);
     };
     const toSqliteTimestamp = (val) => {
       if (val === null || val === undefined || val === '') return null;
@@ -4945,6 +4983,13 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       ensureCol('expenses', 'pending_sync', 'INTEGER DEFAULT 1');
 
       const pendingExp = getPendingSyncTracker('expense');
+      try {
+        const unsyncedExpRows = sqlite.prepare('SELECT id, offline_uuid FROM expenses WHERE pending_sync = 1').all();
+        for (const r of unsyncedExpRows) {
+          if (r.id) pendingExp.ids.add(Number(r.id));
+          if (r.offline_uuid) pendingExp.uuids.add(String(r.offline_uuid));
+        }
+      } catch {}
       const cleanStaleExpStmt = sqlite.prepare('DELETE FROM expenses WHERE offline_uuid = ? AND id != ?');
       const expStmt = sqlite.prepare(`
         INSERT INTO expenses (
@@ -4989,17 +5034,17 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
           exp.updated_by || null,
           toSqliteTimestamp(exp.created_at),
           toSqliteTimestamp(exp.updated_at),
-          exp.is_deleted ? 1 : 0,
+          parseSyncBool(exp.is_deleted) ? 1 : 0,
           exp.deleted_by || null,
           toSqliteTimestamp(exp.deleted_at)
         );
       }
 
       try {
-        const localExps = sqlite.prepare('SELECT id, offline_uuid FROM expenses').all();
+        const localExps = sqlite.prepare('SELECT id, offline_uuid, pending_sync FROM expenses').all();
         const delExpStmt = sqlite.prepare('DELETE FROM expenses WHERE id = ?');
         for (const le of localExps) {
-          const isPending = pendingExp.ids.has(Number(le.id)) || (le.offline_uuid && pendingExp.uuids.has(String(le.offline_uuid)));
+          const isPending = Number(le.pending_sync) === 1 || pendingExp.ids.has(Number(le.id)) || (le.offline_uuid && pendingExp.uuids.has(String(le.offline_uuid)));
           if (!isPending && !incomingExpIds.has(Number(le.id))) {
             delExpStmt.run(le.id);
           }
@@ -5068,6 +5113,13 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       ensureCol('employee_transactions', 'paid_from_drawer', 'INTEGER DEFAULT 0');
       ensureCol('employee_transactions', 'branch_id', 'INTEGER');
       const pendingEmpTx = getPendingSyncTracker('employee_transaction');
+      try {
+        const unsyncedEtRows = sqlite.prepare('SELECT id, offline_uuid FROM employee_transactions WHERE pending_sync = 1').all();
+        for (const r of unsyncedEtRows) {
+          if (r.id) pendingEmpTx.ids.add(Number(r.id));
+          if (r.offline_uuid) pendingEmpTx.uuids.add(String(r.offline_uuid));
+        }
+      } catch {}
       const pendingBonusExps = getPendingSyncTracker('expense');
       const cleanStaleEtStmt = sqlite.prepare('DELETE FROM employee_transactions WHERE offline_uuid = ? AND id != ?');
       const etStmt = sqlite.prepare(`
@@ -5110,10 +5162,11 @@ async function importCatalogIntoBranch(catalog, targetSqlite = null) {
       }
 
       try {
-        const localEts = sqlite.prepare('SELECT id, offline_uuid FROM employee_transactions').all();
+        const localEts = sqlite.prepare('SELECT id, offline_uuid, pending_sync FROM employee_transactions').all();
         const delEtStmt = sqlite.prepare('DELETE FROM employee_transactions WHERE id = ?');
         for (const letRow of localEts) {
-          const isPending = pendingEmpTx.ids.has(Number(letRow.id))
+          const isPending = Number(letRow.pending_sync) === 1
+            || pendingEmpTx.ids.has(Number(letRow.id))
             || (letRow.offline_uuid && (pendingEmpTx.uuids.has(String(letRow.offline_uuid)) || pendingBonusExps.uuids.has(String(letRow.offline_uuid))));
           if (!isPending && !incomingEtIds.has(Number(letRow.id))) {
             delEtStmt.run(letRow.id);

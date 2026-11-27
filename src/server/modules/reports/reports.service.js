@@ -107,7 +107,7 @@ async function getDashboard(query = {}, user = null) {
     db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM tailoring_payments ${whereAnd} payment_date >= ${startSql} AND payment_date < ${endSql}`, params),
     db.query(`SELECT COALESCE(SUM(oi.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM order_items oi JOIN orders o ON oi.order_id = o.id LEFT JOIN inventory i ON oi.inventory_id = i.id WHERE o.status <> 'cancelled' ${branchId ? 'AND o.branch_id = $1' : ''} AND o.order_date >= ${startSql} AND o.order_date < ${endSql}`, params),
     db.query(`SELECT COALESCE(SUM(ri.quantity * COALESCE(i.cost_price, 0)), 0) as total FROM return_items ri JOIN returns r ON ri.return_id = r.id LEFT JOIN inventory i ON ri.inventory_id = i.id ${branchId ? 'WHERE r.branch_id = $1 AND' : 'WHERE'} r.return_date >= ${startSql} AND r.return_date < ${endSql}`, params),
-    db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM expenses ${whereAnd} category <> 'bonus' AND expense_date >= ${dateOnlyStartSql} AND expense_date <= ${dateOnlyEndSql} AND is_deleted IS NOT TRUE`, params),
+    db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM expenses ${whereAnd} COALESCE(category, '') <> 'bonus' AND expense_date >= ${dateOnlyStartSql} AND expense_date <= ${dateOnlyEndSql} AND is_deleted IS NOT TRUE`, params),
     db.query(`SELECT COALESCE(SUM(${employeeTransactionReportAmountSql('et')}), 0) as total FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance', 'deduction', 'bonus') AND et.transaction_date >= ${dateOnlyStartSql} AND et.transaction_date <= ${dateOnlyEndSql} ${branchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $1' : ''}`, params),
     db.query(`SELECT COUNT(*) as count FROM orders ${whereAnd} status <> 'cancelled' AND order_date >= ${startSql} AND order_date < ${endSql}`, params),
     db.query(`SELECT COUNT(*) as count FROM customers ${whereAnd} join_date >= ${dateOnlyStartSql} AND join_date <= ${dateOnlyEndSql}`, params),
@@ -540,9 +540,9 @@ async function getProfitReport(query = {}, user = null) {
     db.query(
       `SELECT branch_id,
               COALESCE(SUM(amount), 0) as total,
-              COALESCE(SUM(CASE WHEN COALESCE(payment_method, 'cash') = 'cash' THEN amount ELSE 0 END), 0) as cash_total
+              COALESCE(SUM(CASE WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN amount ELSE 0 END), 0) as cash_total
        FROM expenses
-       WHERE branch_id = ANY($1::int[]) AND category <> 'bonus' AND expense_date >= $2::date AND expense_date < $3::date AND is_deleted IS NOT TRUE
+       WHERE branch_id = ANY($1::int[]) AND COALESCE(category, '') <> 'bonus' AND expense_date >= $2::date AND expense_date < $3::date AND is_deleted IS NOT TRUE
        GROUP BY branch_id`,
       reportParams
     ),
@@ -945,7 +945,7 @@ async function getProfitReport(query = {}, user = null) {
               COALESCE(e.payment_method, 'cash') as payment_method
        FROM expenses e
        LEFT JOIN branches b ON e.branch_id = b.id
-       WHERE e.branch_id = ANY($1::int[]) AND e.category <> 'bonus' AND e.expense_date >= $2::date AND e.expense_date < $3::date
+       WHERE e.branch_id = ANY($1::int[]) AND COALESCE(e.category, '') <> 'bonus' AND e.expense_date >= $2::date AND e.expense_date < $3::date AND e.is_deleted IS NOT TRUE
        ORDER BY e.expense_date DESC, e.id DESC
        LIMIT 200`,
       reportParams
@@ -1091,10 +1091,10 @@ async function getProfitReport(query = {}, user = null) {
 
   const [tOrders, tExpenses, tSalaries, mOrders, mExpenses, mSalaries] = await Promise.all([
     db.query(`SELECT COALESCE(SUM(total_amount), 0) as rev, COALESCE(SUM(total_cost_price), 0) as cogs FROM orders WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ rev: 0, cogs: 0 }] })),
-    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM expenses WHERE is_deleted IS NOT TRUE AND category <> 'bonus' AND expense_date >= $1::date AND expense_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
+    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM expenses WHERE is_deleted IS NOT TRUE AND COALESCE(category, '') <> 'bonus' AND expense_date >= $1::date AND expense_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
     db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance') AND et.transaction_date >= $1::date AND et.transaction_date < $2::date ${reportBranchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $3' : ''}`, [todayStart, todayEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
     db.query(`SELECT COALESCE(SUM(total_amount), 0) as rev, COALESCE(SUM(total_cost_price), 0) as cogs FROM orders WHERE status <> 'cancelled' AND order_date >= $1::date AND order_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ rev: 0, cogs: 0 }] })),
-    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM expenses WHERE is_deleted IS NOT TRUE AND category <> 'bonus' AND expense_date >= $1::date AND expense_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
+    db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM expenses WHERE is_deleted IS NOT TRUE AND COALESCE(category, '') <> 'bonus' AND expense_date >= $1::date AND expense_date < $2::date ${reportBranchId ? 'AND branch_id = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
     db.query(`SELECT COALESCE(SUM(amount), 0) as t FROM employee_transactions et JOIN employees e ON e.id = et.employee_id WHERE et.type IN ('salary_payment', 'advance') AND et.transaction_date >= $1::date AND et.transaction_date < $2::date ${reportBranchId ? 'AND COALESCE(et.branch_id, e.branch_id) = $3' : ''}`, [mStart, mEnd, ...(reportBranchId ? [reportBranchId] : [])]).catch(() => ({ rows: [{ t: 0 }] })),
   ]);
 
@@ -1310,7 +1310,7 @@ async function getMonthlyHistory(query = {}, user = null) {
     expenses_m AS (
       SELECT DATE_TRUNC('month', expense_date)::date as month_start, SUM(amount) as total
       FROM expenses, bounds
-      WHERE category <> 'bonus' AND expense_date >= bounds.start_month AND expense_date < bounds.end_month AND is_deleted IS NOT TRUE ${branchFilter}
+      WHERE COALESCE(category, '') <> 'bonus' AND expense_date >= bounds.start_month AND expense_date < bounds.end_month AND is_deleted IS NOT TRUE ${branchFilter}
       GROUP BY 1
     ),
     salaries_m AS (
@@ -1499,7 +1499,7 @@ async function getDailyHistory(query = {}, user = null) {
     expenses_d AS (
       SELECT expense_date::date as report_date, SUM(amount) as total
       FROM expenses, bounds
-      WHERE category <> 'bonus' AND expense_date >= bounds.start_day AND expense_date < bounds.end_day AND is_deleted IS NOT TRUE ${branchFilter}
+      WHERE COALESCE(category, '') <> 'bonus' AND expense_date >= bounds.start_day AND expense_date < bounds.end_day AND is_deleted IS NOT TRUE ${branchFilter}
       GROUP BY 1
     ),
     salaries_d AS (
@@ -1810,9 +1810,9 @@ async function getDailyReport(query = {}, user = null) {
       db.query(
         `SELECT branch_id,
                 COALESCE(SUM(amount), 0) as total,
-                COALESCE(SUM(CASE WHEN COALESCE(payment_method, 'cash') = 'cash' THEN amount ELSE 0 END), 0) as cash_total
+                COALESCE(SUM(CASE WHEN ${normalizedPaymentMethodSql('payment_method')} = 'cash' THEN amount ELSE 0 END), 0) as cash_total
          FROM expenses
-         WHERE branch_id = ANY($1::int[]) AND category <> 'bonus' AND expense_date >= $2::date AND expense_date < $3::date AND is_deleted IS NOT TRUE
+         WHERE branch_id = ANY($1::int[]) AND COALESCE(category, '') <> 'bonus' AND expense_date >= $2::date AND expense_date < $3::date AND is_deleted IS NOT TRUE
          GROUP BY branch_id`,
         reportParams
       ),
@@ -2178,7 +2178,7 @@ async function getDailyReport(query = {}, user = null) {
               COALESCE(e.payment_method, 'cash') as payment_method
        FROM expenses e
        LEFT JOIN branches b ON e.branch_id = b.id
-       WHERE e.branch_id = ANY($1::int[]) AND e.category <> 'bonus' AND e.expense_date >= $2::date AND e.expense_date < $3::date
+       WHERE e.branch_id = ANY($1::int[]) AND COALESCE(e.category, '') <> 'bonus' AND e.expense_date >= $2::date AND e.expense_date < $3::date AND e.is_deleted IS NOT TRUE
        ORDER BY e.expense_date DESC, e.id DESC
        LIMIT 200`,
       expenseReportParams
@@ -2832,7 +2832,7 @@ async function getExpensesReport(query = {}, user = null) {
              COALESCE(e.payment_method, 'cash') as payment_method
       FROM expenses e
       LEFT JOIN branches b ON e.branch_id = b.id
-      WHERE e.category <> 'bonus' AND e.expense_date >= $1::date AND e.expense_date < $2::date AND e.is_deleted IS NOT TRUE ${branchFilter}
+      WHERE COALESCE(e.category, '') <> 'bonus' AND e.expense_date >= $1::date AND e.expense_date < $2::date AND e.is_deleted IS NOT TRUE ${branchFilter}
       ORDER BY e.expense_date DESC, e.id DESC
       LIMIT ${limitParam}
     `, params),
@@ -2840,14 +2840,14 @@ async function getExpensesReport(query = {}, user = null) {
       SELECT COUNT(*)::int as count,
              COALESCE(SUM(amount), 0) as total_amount
       FROM expenses e
-      WHERE e.category <> 'bonus' AND e.expense_date >= $1::date AND e.expense_date < $2::date AND e.is_deleted IS NOT TRUE ${branchFilter}
+      WHERE COALESCE(e.category, '') <> 'bonus' AND e.expense_date >= $1::date AND e.expense_date < $2::date AND e.is_deleted IS NOT TRUE ${branchFilter}
     `, params.slice(0, reportBranchId ? 3 : 2)),
     db.query(`
       SELECT COALESCE(NULLIF(e.category, ''), 'غير محدد') as category,
              COUNT(*)::int as count,
              COALESCE(SUM(amount), 0) as total_amount
       FROM expenses e
-      WHERE e.category <> 'bonus' AND e.expense_date >= $1::date AND e.expense_date < $2::date AND e.is_deleted IS NOT TRUE ${branchFilter}
+      WHERE COALESCE(e.category, '') <> 'bonus' AND e.expense_date >= $1::date AND e.expense_date < $2::date AND e.is_deleted IS NOT TRUE ${branchFilter}
       GROUP BY 1
       ORDER BY total_amount DESC
     `, params.slice(0, reportBranchId ? 3 : 2)),
@@ -3277,7 +3277,7 @@ async function getExtendedDailyReport(query = {}, user = null) {
         TO_CHAR(e.expense_date, 'YYYY-MM-DD') as expense_date
       FROM expenses e
       WHERE e.is_deleted IS NOT TRUE
-        AND e.category <> 'bonus'
+        AND COALESCE(e.category, '') <> 'bonus'
         AND e.expense_date >= $1::date AND e.expense_date < $2::date
         ${branchFilterExp}
       ORDER BY e.id ASC

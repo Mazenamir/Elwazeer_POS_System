@@ -104,6 +104,125 @@ function recalcStockFromSizesSqlite(inventoryId, branchId) {
   return branchTotal;
 }
 
+function createHttpError(message, statusCode = 400) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+async function resolveExistingUserId(tx, candidateUserId) {
+  const uid = Number(candidateUserId);
+  if (!Number.isInteger(uid) || uid <= 0) return null;
+  try {
+    const res = await tx.query('SELECT id FROM users WHERE id = $1 LIMIT 1', [uid]);
+    return res.rows.length > 0 ? Number(res.rows[0].id) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSafeSizeId(tx, candidateSizeId, sizeName) {
+  const sid = Number(candidateSizeId);
+  if (Number.isInteger(sid) && sid > 0) {
+    try {
+      const check = await tx.query('SELECT id FROM sizes WHERE id = $1 LIMIT 1', [sid]);
+      if (check.rows.length > 0) return Number(check.rows[0].id);
+    } catch {}
+  }
+  try {
+    const created = await createOrGetSize(sizeName, tx);
+    return created?.id ? Number(created.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function findSourceSizeRows(tx, inventoryId, branchId, sizeSpec) {
+  const sizeName = String(sizeSpec?.size_name || sizeSpec?.size || '').trim();
+  const colorName = String(sizeSpec?.color_name || sizeSpec?.color || '').trim();
+  const sizeRowId = Number(sizeSpec?.id);
+  const forUpdateClause = config.IS_BRANCH_MODE ? '' : ' FOR UPDATE';
+
+  if (Number.isInteger(sizeRowId) && sizeRowId > 0) {
+    const byId = await tx.query(
+      `SELECT id, COALESCE(stock_level, 0)::int AS stock_level, size_name, color_name, barcode, size_id
+       FROM inventory_sizes
+       WHERE id = $1 AND inventory_id = $2 AND COALESCE(branch_id, 1) = COALESCE($3, 1)${forUpdateClause}`,
+      [sizeRowId, inventoryId, branchId]
+    );
+    if (byId.rows.length > 0) return byId.rows;
+  }
+
+  const byVariant = await tx.query(
+    `SELECT id, COALESCE(stock_level, 0)::int AS stock_level, size_name, color_name, barcode, size_id
+     FROM inventory_sizes
+     WHERE inventory_id = $1
+       AND COALESCE(branch_id, 1) = COALESCE($2, 1)
+       AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
+       AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($4, '')))
+     ORDER BY stock_level DESC, id ASC${forUpdateClause}`,
+    [inventoryId, branchId, sizeName, colorName]
+  );
+  return byVariant.rows;
+}
+
+async function syncBranchStockFromSizesIfPresent(tx, inventoryId, branchId) {
+  const aggRes = await tx.query(
+    `SELECT COUNT(*)::int AS row_count, COALESCE(SUM(stock_level), 0)::int AS sizes_total
+     FROM inventory_sizes
+     WHERE inventory_id = $1 AND COALESCE(branch_id, 1) = COALESCE($2, 1)`,
+    [inventoryId, branchId]
+  );
+  const rowCount = Number(aggRes.rows[0]?.row_count || 0);
+  if (rowCount <= 0) return null;
+
+  const sizesTotal = Math.max(0, Number(aggRes.rows[0]?.sizes_total || 0));
+  await tx.query(
+    `INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = EXCLUDED.stock_level`,
+    [inventoryId, branchId, sizesTotal]
+  );
+  return sizesTotal;
+}
+
+async function upsertDestinationSizeStock(tx, { inventoryId, branchId, sizeName, colorName, barcode, sizeId, quantity }) {
+  const cleanSize = String(sizeName || '').trim();
+  const cleanColor = String(colorName || '').trim();
+  const safeSizeId = await resolveSafeSizeId(tx, sizeId, cleanSize);
+  const existingSizeRes = await tx.query(
+    `SELECT id FROM inventory_sizes
+     WHERE inventory_id = $1
+       AND COALESCE(branch_id, 1) = COALESCE($2, 1)
+       AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
+       AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($4, '')))
+     LIMIT 1`,
+    [inventoryId, branchId, cleanSize, cleanColor]
+  );
+  if (existingSizeRes.rows.length > 0) {
+    await tx.query(
+      `UPDATE inventory_sizes
+       SET stock_level = COALESCE(stock_level, 0) + $1,
+           barcode = COALESCE($2, barcode),
+           size_id = COALESCE($3, size_id),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4`,
+      [quantity, barcode || null, safeSizeId, existingSizeRes.rows[0].id]
+    );
+  } else {
+    await tx.query(
+      `INSERT INTO inventory_sizes (inventory_id, size_id, size_name, color_name, barcode, stock_level, branch_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (inventory_id, LOWER(TRIM(size_name)), LOWER(TRIM(COALESCE(color_name, ''))), COALESCE(branch_id, 1))
+       DO UPDATE SET stock_level = COALESCE(inventory_sizes.stock_level, 0) + EXCLUDED.stock_level,
+                     barcode = COALESCE(EXCLUDED.barcode, inventory_sizes.barcode),
+                     size_id = COALESCE(EXCLUDED.size_id, inventory_sizes.size_id),
+                     updated_at = CURRENT_TIMESTAMP`,
+      [inventoryId, safeSizeId, cleanSize, cleanColor, barcode || null, quantity, branchId]
+    );
+  }
+}
+
 async function listColors() {
   if (config.IS_BRANCH_MODE) {
     return db.sqlite.prepare('SELECT id, name FROM colors ORDER BY name COLLATE NOCASE ASC').all();
@@ -542,6 +661,115 @@ async function getVariants(name, requestedBranchId, user) {
   return rows;
 }
 
+function hydrateSqliteInventoryRows(sqliteDb, rows, bId) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const useInClause = ids.length <= 500;
+  const inPlaceholders = useInClause ? ids.map(() => '?').join(',') : '';
+
+  const branchSql = `
+    SELECT b.id as joined_branch_id, ib.inventory_id, ib.branch_id, b.name as branch_name, ib.stock_level
+    FROM inventory_branches ib
+    LEFT JOIN branches b ON b.id = ib.branch_id
+    ${useInClause ? `WHERE ib.inventory_id IN (${inPlaceholders})` : ''}
+  `;
+  const allBranchRows = useInClause
+    ? sqliteDb.prepare(branchSql).all(...ids)
+    : sqliteDb.prepare(branchSql).all();
+
+  const availBranchesMap = new Map();
+  const totalStockMap = new Map();
+  const bIdStockMap = new Map();
+
+  for (const bs of allBranchRows) {
+    const stockNum = Number(bs.stock_level || 0);
+    if (bId && Number(bs.branch_id) === Number(bId)) {
+      bIdStockMap.set(bs.inventory_id, stockNum);
+    }
+    if (bs.joined_branch_id !== null && bs.joined_branch_id !== undefined && stockNum > 0) {
+      let arr = availBranchesMap.get(bs.inventory_id);
+      if (!arr) {
+        arr = [];
+        availBranchesMap.set(bs.inventory_id, arr);
+      }
+      arr.push({
+        branch_id: bs.branch_id,
+        branch_name: bs.branch_name,
+        stock_level: stockNum,
+      });
+      totalStockMap.set(bs.inventory_id, (totalStockMap.get(bs.inventory_id) || 0) + stockNum);
+    }
+  }
+
+  let allSizeRows;
+  if (bId) {
+    const sizeSql = `
+      SELECT id, inventory_id, size_name, color_name, barcode, stock_level, size_id
+      FROM inventory_sizes
+      WHERE (branch_id = ? OR branch_id IS NULL)
+      ${useInClause ? `AND inventory_id IN (${inPlaceholders})` : ''}
+      ORDER BY id ASC
+    `;
+    allSizeRows = useInClause
+      ? sqliteDb.prepare(sizeSql).all(bId, ...ids)
+      : sqliteDb.prepare(sizeSql).all(bId);
+  } else {
+    const sizeSql = `
+      SELECT inventory_id, MIN(id) as id, size_name, color_name, MAX(barcode) as barcode, SUM(COALESCE(stock_level, 0)) as stock_level, MIN(size_id) as size_id
+      FROM inventory_sizes
+      ${useInClause ? `WHERE inventory_id IN (${inPlaceholders})` : ''}
+      GROUP BY inventory_id, size_name, color_name
+      ORDER BY MIN(id) ASC
+    `;
+    allSizeRows = useInClause
+      ? sqliteDb.prepare(sizeSql).all(...ids)
+      : sqliteDb.prepare(sizeSql).all();
+  }
+
+  const sizesMap = new Map();
+  for (const sz of allSizeRows) {
+    let arr = sizesMap.get(sz.inventory_id);
+    if (!arr) {
+      arr = [];
+      sizesMap.set(sz.inventory_id, arr);
+    }
+    arr.push({
+      id: sz.id,
+      size_name: sz.size_name,
+      color_name: sz.color_name,
+      barcode: sz.barcode,
+      stock_level: sz.stock_level,
+      size_id: sz.size_id,
+    });
+  }
+
+  return rows.map((r) => {
+    const available_branches = availBranchesMap.get(r.id) || [];
+    const totalStock = totalStockMap.get(r.id) || 0;
+    const sizes = sizesMap.get(r.id) || [];
+    let stock;
+
+    if (bId) {
+      stock = bIdStockMap.has(r.id) ? bIdStockMap.get(r.id) : 0;
+      if (stock === 0 && sizes.length > 0) {
+        const szTotal = sizes.reduce((acc, s) => acc + Number(s.stock_level || 0), 0);
+        if (szTotal > 0) stock = szTotal;
+      }
+    } else {
+      stock = available_branches.length > 0 ? totalStock : Number(r.stock_level || 0);
+    }
+
+    return {
+      ...r,
+      stock_level: stock,
+      total_stock: totalStock || Number(r.stock_level || 0),
+      sizes,
+      available_branches,
+    };
+  });
+}
+
 async function listInventory(req, user) {
   if (!req || !req.query) {
     req = { query: req || {} };
@@ -549,6 +777,7 @@ async function listInventory(req, user) {
   const isInventoryAdmin = hasInventoryAdminAccess(user);
   const canViewAllBranches = hasInventoryAllBranchesAccess(user);
   const pagination = parsePagination(req, 60, 10000, true);
+  const exactBarcodeMode = req.query.exact_barcode === 'true' && Boolean(req.query.barcode);
 
   if (config.IS_BRANCH_MODE) {
     const where = ['i.is_deleted = 0'];
@@ -585,16 +814,6 @@ async function listInventory(req, user) {
         OR CAST(i.id AS TEXT) LIKE ?
         OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.size_name LIKE ?)
         OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.barcode LIKE ?)
-      )`);
-    }
-    if (req.query.barcode) {
-      const rawBarcode = String(req.query.barcode).trim();
-      const bPat = likePattern(rawBarcode);
-      params.push(bPat, rawBarcode, bPat, rawBarcode);
-      where.push(`(
-        i.barcode LIKE ?
-        OR LOWER(TRIM(i.barcode)) = LOWER(?)
-        OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND (sz.barcode LIKE ? OR LOWER(TRIM(sz.barcode)) = LOWER(?)))
       )`);
     }
     if (req.query.gender && req.query.gender !== 'all') {
@@ -672,74 +891,71 @@ async function listInventory(req, user) {
       else if (req.query.sort === 'latest') sqliteOrder = 'ORDER BY i.id DESC';
     }
 
-    const whereClause = `WHERE ${where.join(' AND ')}`;
-    const total = db.sqlite.prepare(`SELECT COUNT(*) as count FROM inventory i ${whereClause}`).get(...params).count;
-
-    const mapSqliteRow = (r) => {
-      const branchStockRows = db.sqlite.prepare(`
-        SELECT ib.branch_id, b.name as branch_name, ib.stock_level
-        FROM inventory_branches ib
-        JOIN branches b ON b.id = ib.branch_id
-        WHERE ib.inventory_id = ? AND ib.stock_level > 0
-      `).all(r.id);
-      const available_branches = branchStockRows.map((bs) => ({
-        branch_id: bs.branch_id,
-        branch_name: bs.branch_name,
-        stock_level: Number(bs.stock_level || 0),
-      }));
-      const totalStock = branchStockRows.reduce((acc, curr) => acc + Number(curr.stock_level || 0), 0);
-
-      let sizes;
-      let stock;
-      if (bId) {
-        sizes = db.sqlite.prepare(
-          'SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND (branch_id = ? OR branch_id IS NULL) ORDER BY id ASC'
-        ).all(r.id, bId);
-        const branchStockRow = db.sqlite.prepare('SELECT stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?').get(r.id, bId);
-        stock = branchStockRow !== undefined && branchStockRow !== null ? Number(branchStockRow.stock_level || 0) : 0;
-        if (stock === 0 && sizes.length > 0) {
-          const szTotal = sizes.reduce((acc, s) => acc + Number(s.stock_level || 0), 0);
-          if (szTotal > 0) stock = szTotal;
-        }
-      } else {
-        sizes = db.sqlite.prepare(`
-          SELECT MIN(id) as id, size_name, color_name, MAX(barcode) as barcode, SUM(COALESCE(stock_level, 0)) as stock_level, MIN(size_id) as size_id
-          FROM inventory_sizes
-          WHERE inventory_id = ?
-          GROUP BY size_name, color_name
-          ORDER BY MIN(id) ASC
-        `).all(r.id);
-        stock = branchStockRows.length > 0 ? totalStock : Number(r.stock_level || 0);
+    const runSqliteQuery = (extraWhere = [], extraParams = []) => {
+      const fullWhere = extraWhere.length ? [...where, ...extraWhere] : where;
+      const fullParams = extraParams.length ? [...params, ...extraParams] : params;
+      const whereClause = `WHERE ${fullWhere.join(' AND ')}`;
+      const total = db.sqlite.prepare(`SELECT COUNT(*) as count FROM inventory i ${whereClause}`).get(...fullParams).count;
+      if (total === 0) {
+        return pagination.enabled
+          ? paginatedPayload([], 0, pagination)
+          : paginatedPayload([], 0, { page: 1, limit: 0, total: 0 });
       }
 
-      return { ...r, stock_level: stock, total_stock: totalStock || Number(r.stock_level || 0), sizes, available_branches };
-    };
+      if (pagination.enabled) {
+        const rows = db.sqlite.prepare(`
+          SELECT i.*, i.stock_level, s.name as supplier_name
+          FROM inventory i
+          LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
+          ${whereClause}
+          ${sqliteOrder}
+          LIMIT ? OFFSET ?
+        `).all(...fullParams, pagination.limit, pagination.offset);
 
-    if (pagination.enabled) {
+        const rowsWithSizes = hydrateSqliteInventoryRows(db.sqlite, rows, bId);
+        return paginatedPayload(rowsWithSizes, total, pagination);
+      }
+
       const rows = db.sqlite.prepare(`
         SELECT i.*, i.stock_level, s.name as supplier_name
         FROM inventory i
         LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
         ${whereClause}
         ${sqliteOrder}
-        LIMIT ? OFFSET ?
-      `).all(...params, pagination.limit, pagination.offset);
+      `).all(...fullParams);
 
-      const rowsWithSizes = rows.map(mapSqliteRow);
-      return paginatedPayload(rowsWithSizes, total, pagination);
+      const rowsWithSizes = hydrateSqliteInventoryRows(db.sqlite, rows, bId);
+      return paginatedPayload(rowsWithSizes, total, { page: 1, limit: total, total });
+    };
+
+    if (req.query.barcode) {
+      const rawBarcode = String(req.query.barcode).trim();
+      if (exactBarcodeMode) {
+        const exactResult = runSqliteQuery(
+          [`(i.barcode = ? OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.barcode = ?))`],
+          [rawBarcode, rawBarcode]
+        );
+        if ((exactResult?.items?.length || 0) > 0) {
+          return exactResult;
+        }
+        return runSqliteQuery(
+          [`(LOWER(TRIM(i.barcode)) = LOWER(?) OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND LOWER(TRIM(sz.barcode)) = LOWER(?)))`],
+          [rawBarcode, rawBarcode]
+        );
+      }
+
+      const bPat = likePattern(rawBarcode);
+      return runSqliteQuery(
+        [`(
+          i.barcode LIKE ?
+          OR LOWER(TRIM(i.barcode)) = LOWER(?)
+          OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND (sz.barcode LIKE ? OR LOWER(TRIM(sz.barcode)) = LOWER(?)))
+        )`],
+        [bPat, rawBarcode, bPat, rawBarcode]
+      );
     }
 
-    const rows = db.sqlite.prepare(`
-      SELECT i.*, i.stock_level, s.name as supplier_name
-      FROM inventory i
-      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
-      ${whereClause}
-      ${sqliteOrder}
-    `).all(...params);
-
-    const rowsWithSizes = rows.map(mapSqliteRow);
-
-    return paginatedPayload(rowsWithSizes, total, { page: 1, limit: total, total });
+    return runSqliteQuery();
   }
 
   let columns = 'i.id, i.name, i.category, i.size_cut, i.color, i.barcode, i.min_stock_level, i.price, i.image_url, i.gender';
@@ -845,7 +1061,7 @@ async function listInventory(req, user) {
     params.push(likePattern(req.query.name));
     where.push(`i.name ILIKE $${params.length}`);
   }
-  if (req.query.barcode) {
+  if (req.query.barcode && !exactBarcodeMode) {
     const rawBarcode = String(req.query.barcode).trim();
     params.push(likePattern(rawBarcode));
     const pIdx = params.length;
@@ -934,38 +1150,60 @@ async function listInventory(req, user) {
     else if (req.query.sort === 'latest') orderBySql = 'ORDER BY i.id DESC';
   }
 
-  const whereClause = `WHERE ${where.join(' AND ')}`;
-  let query = `
-    SELECT ${columns},
-           ${totalStockSql} as total_stock,
-           ${stockLevelSql} as stock_level,
-           ${branchStocksSql} as branch_stocks,
-           ${availableBranchesSql} as available_branches,
-           ${sizesSql} as sizes
-    FROM inventory i 
-    LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id 
-    ${whereClause}
-    ${orderBySql}
-  `;
-  const countQuery = `
-    SELECT COUNT(*)::int as total
-    FROM inventory i
-    LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
-    ${whereClause}
-  `;
+  const runPgList = async (extraWhere = [], extraParams = []) => {
+    const fullWhere = extraWhere.length ? [...where, ...extraWhere] : where;
+    const fullParams = extraParams.length ? [...params, ...extraParams] : params;
+    const whereClause = `WHERE ${fullWhere.join(' AND ')}`;
+    let query = `
+      SELECT ${columns},
+             ${totalStockSql} as total_stock,
+             ${stockLevelSql} as stock_level,
+             ${branchStocksSql} as branch_stocks,
+             ${availableBranchesSql} as available_branches,
+             ${sizesSql} as sizes
+      FROM inventory i 
+      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id 
+      ${whereClause}
+      ${orderBySql}
+    `;
+    const countQuery = `
+      SELECT COUNT(*)::int as total
+      FROM inventory i
+      LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
+      ${whereClause}
+    `;
 
-  const queryParams = [...params];
-  if (pagination.enabled) {
-    query = appendPagination(query, queryParams, pagination);
-    const [dataRes, countRes] = await Promise.all([
-      db.query(query, queryParams),
-      db.query(countQuery, params),
-    ]);
-    return paginatedPayload(dataRes.rows, countRes.rows[0].total, pagination, 'items');
+    const queryParams = [...fullParams];
+    if (pagination.enabled) {
+      query = appendPagination(query, queryParams, pagination);
+      const [dataRes, countRes] = await Promise.all([
+        db.query(query, queryParams),
+        db.query(countQuery, fullParams),
+      ]);
+      return paginatedPayload(dataRes.rows, countRes.rows[0].total, pagination, 'items');
+    }
+
+    const { rows } = await db.query(query, queryParams);
+    return paginatedPayload(rows, rows.length, { page: 1, limit: rows.length, total: rows.length }, 'items');
+  };
+
+  if (exactBarcodeMode) {
+    const rawBarcode = String(req.query.barcode).trim();
+    const bIdx = params.length + 1;
+    const exactRes = await runPgList(
+      [`(i.barcode = $${bIdx} OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND sz.barcode = $${bIdx}))`],
+      [rawBarcode]
+    );
+    if ((exactRes?.items?.length || 0) > 0) {
+      return exactRes;
+    }
+    return runPgList(
+      [`(LOWER(TRIM(i.barcode)) = LOWER($${bIdx}) OR EXISTS (SELECT 1 FROM inventory_sizes sz WHERE sz.inventory_id = i.id AND LOWER(TRIM(sz.barcode)) = LOWER($${bIdx})))`],
+      [rawBarcode]
+    );
   }
 
-  const { rows } = await db.query(query, queryParams);
-  return paginatedPayload(rows, rows.length, { page: 1, limit: rows.length, total: rows.length }, 'items');
+  return runPgList();
 }
 
 async function createProduct(body, user, file = null) {
@@ -1688,7 +1926,7 @@ async function updateProduct(id, body, user, file = null) {
         await recalcStockFromSizes(tx, id, targetBranchId);
       } else if (user && branch_id && stock_level !== undefined) {
         if (!hasInventoryAllBranchesAccess(user) && Number(branch_id) !== Number(user.branch_id)) {
-          throw new Error('Unauthorized branch stock update');
+          throw createHttpError('Unauthorized branch stock update', 403);
         }
 
         await tx.query(
@@ -1794,8 +2032,16 @@ async function getInventoryById(id, requestedBranchId, user) {
       err.statusCode = 404;
       throw err;
     }
-    const sizes = db.sqlite.prepare('SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? ORDER BY id ASC').all(itemId);
-    return { ...row, sizes };
+    const branchRow = db.sqlite.prepare(
+      'SELECT COALESCE(SUM(stock_level), 0) AS branch_stock_level FROM inventory_branches WHERE inventory_id = ? AND branch_id = ?'
+    ).get(itemId, branchId);
+    const sizes = db.sqlite.prepare(
+      'SELECT id, size_name, color_name, barcode, stock_level, size_id FROM inventory_sizes WHERE inventory_id = ? AND COALESCE(branch_id, 1) = ? ORDER BY id ASC'
+    ).all(itemId, branchId);
+    const branchStockLevel = Number(branchRow?.branch_stock_level || 0);
+    const sizesSum = sizes.reduce((sum, sz) => sum + Number(sz.stock_level || 0), 0);
+    const effectiveBranchStock = (branchStockLevel === 0 && sizesSum > 0) ? sizesSum : branchStockLevel;
+    return { ...row, branch_stock_level: effectiveBranchStock, sizes };
   }
 
   const { rows } = await db.query(`
@@ -1811,7 +2057,7 @@ async function getInventoryById(id, requestedBranchId, user) {
           'barcode', s.barcode
         ) ORDER BY s.id)
         FROM inventory_sizes s
-        WHERE s.inventory_id = i.id AND s.branch_id = $2
+        WHERE s.inventory_id = i.id AND COALESCE(s.branch_id, 1) = $2
       ), '[]'::json) as sizes
     FROM inventory i
     LEFT JOIN suppliers s ON i.preferred_supplier_id = s.id
@@ -1824,7 +2070,13 @@ async function getInventoryById(id, requestedBranchId, user) {
     throw err;
   }
 
-  return rows[0];
+  const item = rows[0];
+  const pgSizes = Array.isArray(item.sizes) ? item.sizes : [];
+  const pgSizesSum = pgSizes.reduce((sum, sz) => sum + Number(sz.stock_level || 0), 0);
+  if (Number(item.branch_stock_level || 0) === 0 && pgSizesSum > 0) {
+    item.branch_stock_level = pgSizesSum;
+  }
+  return item;
 }
 
 async function deleteProduct(id, user) {
@@ -1906,76 +2158,83 @@ async function duplicateProduct(id, body = {}, user) {
 }
 
 async function transferStock(body, user) {
-  let { inventory_id, from_branch_id, to_branch_id, from_branch, to_branch, quantity, is_request, sizes, direct_transfer, notes, priority } = body;
+  let { inventory_id, from_branch_id, to_branch_id, from_branch, to_branch, quantity, is_request, sizes, direct_transfer, notes, priority } = body || {};
   if (!from_branch_id && from_branch) from_branch_id = from_branch;
   if (!to_branch_id && to_branch) to_branch_id = to_branch;
 
+  inventory_id = Number(inventory_id);
+  from_branch_id = Number(from_branch_id);
+  to_branch_id = Number(to_branch_id);
+
   if (user) {
     const hasAdmin = user.role === 'admin' || hasInventoryAdminAccess(user);
+    const hasAllBranches = hasAdmin || hasInventoryAllBranchesAccess(user);
     const hasRequestPerm = hasAdmin || hasPermission(user, 'inventory.transfers.request');
     const canDirectTransfer = hasAdmin || hasPermission(user, 'inventory.transfers.approve');
 
     if (!hasRequestPerm && !is_request) {
-      const err = new Error('غير مصرح لك بتنفيذ تحويل مخزون؛ يمكنك فقط إرسال طلب بضاعة لفرعك');
-      err.statusCode = 403;
-      throw err;
+      throw createHttpError('غير مصرح لك بتنفيذ تحويل مخزون؛ يمكنك فقط إرسال طلب بضاعة لفرعك', 403);
     }
     if (!is_request && direct_transfer !== false && !canDirectTransfer) {
-      const err = new Error('غير مصرح لك بالتحويل المباشر الفوري؛ يمكنك إرسال شحنة بانتظار استلام الفرع');
-      err.statusCode = 403;
-      throw err;
+      throw createHttpError('غير مصرح لك بالتحويل المباشر الفوري؛ يمكنك إرسال شحنة بانتظار استلام الفرع', 403);
     }
 
-    if (!hasAdmin || (is_request && !hasInventoryAllBranchesAccess(user))) {
-      if (is_request) to_branch_id = user.branch_id;
-      else from_branch_id = user.branch_id;
+    if (is_request) {
+      if (!hasAllBranches && !hasBranchAccess(user, to_branch_id)) {
+        to_branch_id = Number(user.branch_id);
+      }
+    } else if (!hasAllBranches && !hasBranchAccess(user, from_branch_id)) {
+      from_branch_id = Number(user.branch_id);
     }
   }
 
-  if (!inventory_id || !from_branch_id || !to_branch_id || !quantity) {
-    const err = new Error('الرجاء تحديد المنتج، الفرع المصدر، الفرع الوجهة، والكمية');
-    err.statusCode = 400;
-    throw err;
+  if (!Number.isInteger(inventory_id) || inventory_id <= 0 || !Number.isInteger(from_branch_id) || from_branch_id <= 0 || !Number.isInteger(to_branch_id) || to_branch_id <= 0 || !quantity) {
+    throw createHttpError('الرجاء تحديد المنتج، الفرع المصدر، الفرع الوجهة، والكمية', 400);
   }
 
-  if (Number(from_branch_id) === Number(to_branch_id)) {
-    const err = new Error('لا يمكن التحويل لنفس الفرع');
-    err.statusCode = 400;
-    throw err;
+  if (from_branch_id === to_branch_id) {
+    throw createHttpError('لا يمكن التحويل لنفس الفرع', 400);
   }
 
   const transferQty = parsePositiveInt(quantity, 'quantity');
-  const sizesDataJson = Array.isArray(sizes) && sizes.length > 0 ? JSON.stringify(sizes) : null;
+  const normalizedSizes = Array.isArray(sizes)
+    ? sizes
+        .map((s) => ({
+          id: s?.id ? Number(s.id) : null,
+          size_name: String(s?.size_name || s?.size || '').trim(),
+          color_name: String(s?.color_name || s?.color || '').trim(),
+          barcode: s?.barcode ? String(s.barcode).trim() : null,
+          size_id: s?.size_id ? Number(s.size_id) : null,
+          quantity: Number(s?.quantity || 0),
+        }))
+        .filter((s) => s.quantity > 0 && s.size_name)
+    : [];
+  const sizesDataJson = normalizedSizes.length > 0 ? JSON.stringify(normalizedSizes) : null;
 
   if (is_request) {
     const sourceStock = await db.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2', [inventory_id, from_branch_id]);
-    const available = sourceStock.rows.length ? Number(sourceStock.rows[0].stock_level) : 0;
-    if (transferQty > available) {
-      const err = new Error(`عفواً، الكمية المطلوبة غير متوفرة في الفرع المصدر. المتاح حالياً: ${available} قطعة`);
-      err.statusCode = 400;
-      throw err;
-    }
+    let available = sourceStock.rows.length ? Number(sourceStock.rows[0].stock_level) : 0;
 
-    if (Array.isArray(sizes) && sizes.length > 0) {
-      for (const s of sizes) {
-        const sqty = Number(s.quantity || 0);
-        if (sqty <= 0) continue;
-        const szCheck = await db.query(`
-          SELECT stock_level FROM inventory_sizes
-          WHERE inventory_id = $1 AND branch_id = $2
-            AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
-            AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($4, '')))
-        `, [inventory_id, from_branch_id, s.size_name, s.color_name || '']);
-        const availSz = szCheck.rows.length ? Number(szCheck.rows[0].stock_level) : 0;
-        if (sqty > availSz) {
-          const err = new Error(`عفواً، الكمية المطلوبة للمقاس "${s.size_name}" غير متوفرة في الفرع المصدر (المتاح: ${availSz} قطعة)`);
-          err.statusCode = 400;
-          throw err;
+    if (normalizedSizes.length > 0) {
+      let allMatchedSizesTotal = 0;
+      for (const s of normalizedSizes) {
+        const matchedRows = await findSourceSizeRows(db, inventory_id, from_branch_id, s);
+        const availSz = matchedRows.reduce((sum, r) => sum + Number(r.stock_level || 0), 0);
+        if (s.quantity > availSz) {
+          throw createHttpError(`عفواً، الكمية المطلوبة للمقاس "${s.size_name}" غير متوفرة في الفرع المصدر (المتاح: ${availSz} قطعة)`, 400);
         }
+        allMatchedSizesTotal += availSz;
+      }
+      if (available < transferQty && allMatchedSizesTotal >= transferQty) {
+        available = allMatchedSizesTotal;
       }
     }
 
-    const creatorId = user?.id ? Number(user.id) : null;
+    if (transferQty > available) {
+      throw createHttpError(`عفواً، الكمية المطلوبة غير متوفرة في الفرع المصدر. المتاح حالياً: ${available} قطعة`, 400);
+    }
+
+    const creatorId = await resolveExistingUserId(db, user?.id);
     const creatorName = user?.full_name || user?.name || user?.username || null;
     const reqPriority = priority === 'urgent' ? 'urgent' : 'normal';
     const reqNotes = notes && String(notes).trim() ? String(notes).trim() : null;
@@ -1993,7 +2252,7 @@ async function transferStock(body, user) {
           to_branch_id,
           quantity: transferQty,
           status: 'requested',
-          sizes: sizes || null,
+          sizes: normalizedSizes.length > 0 ? normalizedSizes : null,
           created_by: creatorId,
           created_by_name: creatorName,
           notes: reqNotes,
@@ -2009,45 +2268,48 @@ async function transferStock(body, user) {
   const isDirect = direct_transfer !== false;
 
   await db.transaction(async (tx) => {
-    const stockCheck = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE', [inventory_id, from_branch_id]);
-    if (!stockCheck.rows.length || Number(stockCheck.rows[0].stock_level) < transferQty) {
-      throw new Error('عفواً، المخزون في الفرع المصدر غير كافٍ لإتمام عملية التحويل');
+    let matchedSourceSizes = [];
+    if (normalizedSizes.length > 0) {
+      for (const s of normalizedSizes) {
+        const matchedRows = await findSourceSizeRows(tx, inventory_id, from_branch_id, s);
+        const availSize = matchedRows.reduce((sum, r) => sum + Number(r.stock_level || 0), 0);
+        if (s.quantity > availSize) {
+          throw createHttpError(`عفواً، الكمية المطلوبة للمقاس "${s.size_name}" غير متوفرة في الفرع المصدر (المتاح: ${availSize} قطعة)`, 400);
+        }
+        matchedSourceSizes.push({ spec: s, rows: matchedRows });
+      }
     }
 
-    // Validate size stock in from_branch if sizes are specified
-    if (Array.isArray(sizes) && sizes.length > 0) {
-      for (const s of sizes) {
-        const sqty = Number(s.quantity || 0);
-        if (sqty <= 0) continue;
-        const sizeCheck = await tx.query(`
-          SELECT stock_level FROM inventory_sizes
-          WHERE inventory_id = $1 AND branch_id = $2
-            AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
-            AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($4, '')))
-        `, [inventory_id, from_branch_id, s.size_name, s.color_name || '']);
-        const availSize = sizeCheck.rows.length ? Number(sizeCheck.rows[0].stock_level) : 0;
-        if (sqty > availSize) {
-          throw new Error(`عفواً، الكمية المطلوبة للمقاس "${s.size_name}" غير متوفرة في الفرع المصدر (المتاح: ${availSize} قطعة)`);
+    const stockCheck = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE', [inventory_id, from_branch_id]);
+    let sourceBranchStock = stockCheck.rows.length ? Number(stockCheck.rows[0].stock_level) : 0;
+
+    if (sourceBranchStock < transferQty && normalizedSizes.length > 0) {
+      const reconciled = await syncBranchStockFromSizesIfPresent(tx, inventory_id, from_branch_id);
+      if (reconciled !== null) {
+        sourceBranchStock = reconciled;
+      }
+    }
+
+    if (sourceBranchStock < transferQty) {
+      throw createHttpError('عفواً، المخزون في الفرع المصدر غير كافٍ لإتمام عملية التحويل', 400);
+    }
+
+    if (normalizedSizes.length > 0) {
+      for (const { spec, rows } of matchedSourceSizes) {
+        let remainingToDeduct = spec.quantity;
+        for (const row of rows) {
+          if (remainingToDeduct <= 0) break;
+          const take = Math.min(Number(row.stock_level || 0), remainingToDeduct);
+          if (take > 0) {
+            await tx.query(
+              'UPDATE inventory_sizes SET stock_level = GREATEST(0, stock_level - $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+              [take, row.id]
+            );
+            remainingToDeduct -= take;
+          }
         }
       }
-    }
-
-    if (Array.isArray(sizes) && sizes.length > 0) {
-      // Deduct total from source branch
-      await tx.query('UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3', [transferQty, inventory_id, from_branch_id]);
-
-      // Deduct sizes from source branch
-      for (const s of sizes) {
-        const sqty = Number(s.quantity || 0);
-        if (sqty <= 0) continue;
-        await tx.query(`
-          UPDATE inventory_sizes
-          SET stock_level = GREATEST(0, stock_level - $1), updated_at = CURRENT_TIMESTAMP
-          WHERE inventory_id = $2 AND branch_id = $3
-            AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))
-            AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($5, '')))
-        `, [sqty, inventory_id, from_branch_id, s.size_name, s.color_name || '']);
-      }
+      await syncBranchStockFromSizesIfPresent(tx, inventory_id, from_branch_id);
     } else {
       await adjustInventoryStock(tx, {
         inventoryId: inventory_id,
@@ -2056,44 +2318,24 @@ async function transferStock(body, user) {
       });
     }
 
-    const senderId = user?.id ? Number(user.id) : null;
+    const senderId = await resolveExistingUserId(tx, user?.id);
     const senderName = user?.full_name || user?.name || user?.username || null;
     let transferRecordId = null;
 
     if (isDirect) {
-      if (Array.isArray(sizes) && sizes.length > 0) {
-        // Add total to destination branch
-        await tx.query(`
-          INSERT INTO inventory_branches (inventory_id, branch_id, stock_level)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = inventory_branches.stock_level + $3
-        `, [inventory_id, to_branch_id, transferQty]);
-
-        // Add sizes to destination branch
-        for (const s of sizes) {
-          const sqty = Number(s.quantity || 0);
-          if (sqty <= 0) continue;
-          const existingSizeRes = await tx.query(`
-            SELECT id FROM inventory_sizes
-            WHERE inventory_id = $1
-              AND COALESCE(branch_id, 1) = COALESCE($2, 1)
-              AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
-              AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($4, '')))
-            LIMIT 1
-          `, [inventory_id, to_branch_id, s.size_name, s.color_name || '']);
-          if (existingSizeRes.rows.length > 0) {
-            await tx.query(`
-              UPDATE inventory_sizes
-              SET stock_level = stock_level + $1, updated_at = CURRENT_TIMESTAMP
-              WHERE id = $2
-            `, [sqty, existingSizeRes.rows[0].id]);
-          } else {
-            await tx.query(`
-              INSERT INTO inventory_sizes (inventory_id, size_name, color_name, stock_level, branch_id, barcode, size_id)
-              VALUES ($1, $2, $3, $4, $5, $6, $7)
-            `, [inventory_id, s.size_name, s.color_name || '', sqty, to_branch_id, s.barcode || null, s.size_id || null]);
-          }
+      if (normalizedSizes.length > 0) {
+        for (const s of normalizedSizes) {
+          await upsertDestinationSizeStock(tx, {
+            inventoryId: inventory_id,
+            branchId: to_branch_id,
+            sizeName: s.size_name,
+            colorName: s.color_name,
+            barcode: s.barcode,
+            sizeId: s.size_id,
+            quantity: s.quantity,
+          });
         }
+        await syncBranchStockFromSizesIfPresent(tx, inventory_id, to_branch_id);
       } else {
         await adjustInventoryStock(tx, {
           inventoryId: inventory_id,
@@ -2106,42 +2348,37 @@ async function transferStock(body, user) {
         'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, sender_id, sender_name, received_by, received_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
         [inventory_id, from_branch_id, to_branch_id, transferQty, 'completed', sizesDataJson, senderId, senderName, senderId, senderName, senderId, senderName]
       );
-      transferRecordId = stRes.rows?.[0]?.id || null;
-
-      await tx.query(
-        'UPDATE inventory SET stock_level = (SELECT COALESCE(SUM(stock_level), 0) FROM inventory_branches WHERE inventory_id = $1) WHERE id = $1',
-        [inventory_id]
-      );
+      transferRecordId = stRes.rows?.[0]?.id || stRes.lastInsertRowid || null;
     } else {
       const stRes = await tx.query(
         'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, sender_id, sender_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
         [inventory_id, from_branch_id, to_branch_id, transferQty, 'pending', sizesDataJson, senderId, senderName, senderId, senderName]
       );
-      transferRecordId = stRes.rows?.[0]?.id || null;
+      transferRecordId = stRes.rows?.[0]?.id || stRes.lastInsertRowid || null;
     }
 
     if (config.IS_BRANCH_MODE) {
-        try {
-          await queueSyncOperation(tx, null, 'stock_transfer', 'transfer', transferRecordId, from_branch_id, {
-            id: transferRecordId,
-            inventory_id,
-            from_branch_id,
-            to_branch_id,
-            quantity: transferQty,
-            is_direct: isDirect,
-            status: isDirect ? 'completed' : 'pending',
-            sizes: sizes || null,
-            created_by: senderId,
-            created_by_name: senderName,
-            sender_id: senderId,
-            sender_name: senderName,
-            received_by: isDirect ? senderId : null,
-            received_by_name: isDirect ? senderName : null,
-          });
-        } catch (e) {
-          console.warn('Failed to queue stock_transfer sync:', e.message);
-        }
+      try {
+        await queueSyncOperation(tx, null, 'stock_transfer', 'transfer', transferRecordId, from_branch_id, {
+          id: transferRecordId,
+          inventory_id,
+          from_branch_id,
+          to_branch_id,
+          quantity: transferQty,
+          is_direct: isDirect,
+          status: isDirect ? 'completed' : 'pending',
+          sizes: normalizedSizes.length > 0 ? normalizedSizes : null,
+          created_by: senderId,
+          created_by_name: senderName,
+          sender_id: senderId,
+          sender_name: senderName,
+          received_by: isDirect ? senderId : null,
+          received_by_name: isDirect ? senderName : null,
+        });
+      } catch (e) {
+        console.warn('Failed to queue stock_transfer sync:', e.message);
       }
+    }
 
     // Refresh overall inventory stock_level
     await tx.query(`
@@ -2186,8 +2423,11 @@ async function listTransferRequests(user, branchIdParam) {
   const params = [];
 
   if (branch_id && branch_id !== 'all') {
-    query += ' AND st.from_branch_id = $1';
-    params.push(branch_id);
+    const numericBranchId = Number(branch_id);
+    if (Number.isInteger(numericBranchId) && numericBranchId > 0) {
+      query += ' AND st.from_branch_id = $1';
+      params.push(numericBranchId);
+    }
   } else if (user && !hasInventoryAdminAccess(user)) {
     return [];
   }
@@ -2200,68 +2440,66 @@ async function listTransferRequests(user, branchIdParam) {
 
 async function approveTransfer(transferId, user) {
   await db.transaction(async (tx) => {
-    const transferRes = await tx.query("SELECT * FROM stock_transfers WHERE id = $1 AND status = 'requested' FOR UPDATE", [transferId]);
-    if (transferRes.rows.length === 0) throw new Error('الطلب غير موجود أو تم التعامل معه بالفعل');
+    const transferRes = await tx.query("SELECT * FROM stock_transfers WHERE id = $1 AND status = 'requested' FOR UPDATE", [Number(transferId)]);
+    if (transferRes.rows.length === 0) throw createHttpError('الطلب غير موجود أو تم التعامل معه بالفعل', 404);
 
     const transfer = transferRes.rows[0];
     if (isBranchScopedUser(user) && !hasBranchAccess(user, transfer.from_branch_id)) {
-      const err = new Error('غير مصرح لك بالموافقة على طلب التحويل من هذا الفرع');
-      err.statusCode = 403;
-      throw err;
+      throw createHttpError('غير مصرح لك بالموافقة على طلب التحويل من هذا الفرع', 403);
     }
     const transferQty = transfer.quantity;
 
-    const stockCheck = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE', [transfer.inventory_id, transfer.from_branch_id]);
-    if (!stockCheck.rows.length || Number(stockCheck.rows[0].stock_level) < transferQty) {
-      throw new Error('المخزون في فرعك غير كافٍ للموافقة على هذا الطلب');
-    }
-
+    let parsedSizes = null;
     if (transfer.sizes_data) {
-      let parsedSizes = null;
       try {
         parsedSizes = typeof transfer.sizes_data === 'string' ? JSON.parse(transfer.sizes_data) : transfer.sizes_data;
       } catch (err) {
         console.warn('Failed to parse sizes_data in approveTransfer:', err.message);
       }
+    }
+    const normalizedSizes = Array.isArray(parsedSizes)
+      ? parsedSizes.filter((s) => Number(s?.quantity || 0) > 0 && (s?.size_name || s?.size))
+      : [];
 
-      if (Array.isArray(parsedSizes) && parsedSizes.length > 0) {
-        // Validate each size availability in from_branch_id
-        for (const s of parsedSizes) {
-          const sqty = Number(s.quantity || 0);
-          if (sqty <= 0) continue;
-          const szCheck = await tx.query(`
-            SELECT stock_level FROM inventory_sizes
-            WHERE inventory_id = $1 AND branch_id = $2
-              AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
-              AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($4, '')))
-            FOR UPDATE
-          `, [transfer.inventory_id, transfer.from_branch_id, s.size_name, s.color_name || '']);
-          const availSz = szCheck.rows.length ? Number(szCheck.rows[0].stock_level) : 0;
-          if (sqty > availSz) {
-            throw new Error(`المخزون غير كافٍ للمقاس "${s.size_name}" في الفرع المصدر (المتاح: ${availSz} قطعة)`);
+    const matchedSourceSizes = [];
+    if (normalizedSizes.length > 0) {
+      for (const s of normalizedSizes) {
+        const sqty = Number(s.quantity || 0);
+        const rows = await findSourceSizeRows(tx, transfer.inventory_id, transfer.from_branch_id, s);
+        const availSz = rows.reduce((sum, r) => sum + Number(r.stock_level || 0), 0);
+        if (sqty > availSz) {
+          throw createHttpError(`المخزون غير كافٍ للمقاس "${s.size_name || s.size}" في الفرع المصدر (المتاح: ${availSz} قطعة)`, 400);
+        }
+        matchedSourceSizes.push({ sqty, rows });
+      }
+    }
+
+    const stockCheck = await tx.query('SELECT stock_level FROM inventory_branches WHERE inventory_id = $1 AND branch_id = $2 FOR UPDATE', [transfer.inventory_id, transfer.from_branch_id]);
+    let availBranch = stockCheck.rows.length ? Number(stockCheck.rows[0].stock_level) : 0;
+    if (availBranch < transferQty && normalizedSizes.length > 0) {
+      const reconciled = await syncBranchStockFromSizesIfPresent(tx, transfer.inventory_id, transfer.from_branch_id);
+      if (reconciled !== null) availBranch = reconciled;
+    }
+    if (availBranch < transferQty) {
+      throw createHttpError('المخزون في فرعك غير كافٍ للموافقة على هذا الطلب', 400);
+    }
+
+    if (normalizedSizes.length > 0) {
+      for (const { sqty, rows } of matchedSourceSizes) {
+        let remainingToDeduct = sqty;
+        for (const row of rows) {
+          if (remainingToDeduct <= 0) break;
+          const take = Math.min(Number(row.stock_level || 0), remainingToDeduct);
+          if (take > 0) {
+            await tx.query(
+              'UPDATE inventory_sizes SET stock_level = GREATEST(0, stock_level - $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+              [take, row.id]
+            );
+            remainingToDeduct -= take;
           }
         }
-
-        await tx.query('UPDATE inventory_branches SET stock_level = stock_level - $1 WHERE inventory_id = $2 AND branch_id = $3', [transferQty, transfer.inventory_id, transfer.from_branch_id]);
-
-        for (const s of parsedSizes) {
-          const sqty = Number(s.quantity || 0);
-          if (sqty <= 0) continue;
-          await tx.query(`
-            UPDATE inventory_sizes
-            SET stock_level = GREATEST(0, stock_level - $1), updated_at = CURRENT_TIMESTAMP
-            WHERE inventory_id = $2 AND branch_id = $3
-              AND LOWER(TRIM(size_name)) = LOWER(TRIM($4))
-              AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($5, '')))
-          `, [sqty, transfer.inventory_id, transfer.from_branch_id, s.size_name, s.color_name || '']);
-        }
-      } else {
-        await adjustInventoryStock(tx, {
-          inventoryId: transfer.inventory_id,
-          branchId: transfer.from_branch_id,
-          quantityDelta: -transferQty,
-        });
       }
+      await syncBranchStockFromSizesIfPresent(tx, transfer.inventory_id, transfer.from_branch_id);
     } else {
       await adjustInventoryStock(tx, {
         inventoryId: transfer.inventory_id,
@@ -2277,13 +2515,13 @@ async function approveTransfer(transferId, user) {
       WHERE id = $1
     `, [transfer.inventory_id]);
 
-    const senderId = user?.id ? Number(user.id) : null;
+    const senderId = await resolveExistingUserId(tx, user?.id);
     const senderName = user?.full_name || user?.name || user?.username || null;
-    await tx.query("UPDATE stock_transfers SET status = 'pending', sender_id = $1, sender_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3", [senderId, senderName, transferId]);
+    await tx.query("UPDATE stock_transfers SET status = 'pending', sender_id = $1, sender_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3", [senderId, senderName, transfer.id]);
     if (config.IS_BRANCH_MODE) {
       try {
-        await queueSyncOperation(tx, null, 'stock_transfer', 'approve', transferId, transfer.from_branch_id, {
-          id: transferId,
+        await queueSyncOperation(tx, null, 'stock_transfer', 'approve', transfer.id, transfer.from_branch_id, {
+          id: transfer.id,
           inventory_id: transfer.inventory_id,
           from_branch_id: transfer.from_branch_id,
           to_branch_id: transfer.to_branch_id,
@@ -2304,10 +2542,10 @@ async function approveTransfer(transferId, user) {
 }
 
 async function rejectTransfer(transferId, user) {
-  const params = [transferId];
+  const params = [Number(transferId)];
   let branchFilter = '';
   if (isBranchScopedUser(user)) {
-    const authIds = getUserAuthorizedBranchIds(user);
+    const authIds = getUserAuthorizedBranchIds(user).map(Number).filter((n) => Number.isInteger(n) && n > 0);
     if (authIds && authIds.length > 0) {
       if (authIds.length === 1) {
         params.push(authIds[0]);
@@ -2316,20 +2554,18 @@ async function rejectTransfer(transferId, user) {
         params.push(authIds);
         branchFilter = ' AND from_branch_id = ANY($2)';
       }
-    } else {
-      params.push(user.branch_id);
+    } else if (Number(user.branch_id) > 0) {
+      params.push(Number(user.branch_id));
       branchFilter = ' AND from_branch_id = $2';
     }
   }
   const res = await db.query(`UPDATE stock_transfers SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'requested'${branchFilter}`, params);
   if (res.rowCount === 0) {
-    const err = new Error('الطلب غير موجود');
-    err.statusCode = 404;
-    throw err;
+    throw createHttpError('الطلب غير موجود', 404);
   }
   if (config.IS_BRANCH_MODE) {
     try {
-      await queueSyncOperation(db, null, 'stock_transfer', 'reject', Number(transferId), user?.branch_id || config.BRANCH_ID || 1, {
+      await queueSyncOperation(db, null, 'stock_transfer', 'reject', Number(transferId), Number(user?.branch_id || config.BRANCH_ID || 1), {
         id: Number(transferId),
         status: 'rejected',
       });
@@ -2368,8 +2604,11 @@ async function listIncomingTransfers(user, branchIdParam) {
   const params = [];
 
   if (branch_id && branch_id !== 'all') {
-    query += ' AND st.to_branch_id = $1';
-    params.push(branch_id);
+    const numericBranchId = Number(branch_id);
+    if (Number.isInteger(numericBranchId) && numericBranchId > 0) {
+      query += ' AND st.to_branch_id = $1';
+      params.push(numericBranchId);
+    }
   } else if (user && !hasInventoryAdminAccess(user)) {
     return [];
   }
@@ -2382,54 +2621,39 @@ async function listIncomingTransfers(user, branchIdParam) {
 
 async function receiveTransfer(transferId, user) {
   await db.transaction(async (tx) => {
-    const transferRes = await tx.query("SELECT * FROM stock_transfers WHERE id = $1 AND status = 'pending' FOR UPDATE", [transferId]);
-    if (transferRes.rows.length === 0) throw new Error('التحويل غير موجود أو تم استلامه بالفعل');
+    const transferRes = await tx.query("SELECT * FROM stock_transfers WHERE id = $1 AND status = 'pending' FOR UPDATE", [Number(transferId)]);
+    if (transferRes.rows.length === 0) throw createHttpError('التحويل غير موجود أو تم استلامه بالفعل', 404);
 
     const transfer = transferRes.rows[0];
     if (isBranchScopedUser(user) && !hasBranchAccess(user, transfer.to_branch_id)) {
-      const err = new Error('غير مصرح لك باستلام شحنة موجهة لفرع آخر');
-      err.statusCode = 403;
-      throw err;
+      throw createHttpError('غير مصرح لك باستلام شحنة موجهة لفرع آخر', 403);
     }
 
+    let parsedSizes = null;
     if (transfer.sizes_data) {
-      await tx.query(`
-        INSERT INTO inventory_branches (inventory_id, branch_id, stock_level) 
-        VALUES ($1, $2, $3) 
-        ON CONFLICT (inventory_id, branch_id) DO UPDATE SET stock_level = inventory_branches.stock_level + $3
-      `, [transfer.inventory_id, transfer.to_branch_id, transfer.quantity]);
-
       try {
-        const sizes = typeof transfer.sizes_data === 'string' ? JSON.parse(transfer.sizes_data) : transfer.sizes_data;
-        if (Array.isArray(sizes) && sizes.length > 0) {
-          for (const s of sizes) {
-            const sqty = Number(s.quantity || 0);
-            if (sqty <= 0) continue;
-            const existingSizeRes = await tx.query(`
-              SELECT id FROM inventory_sizes
-              WHERE inventory_id = $1
-                AND COALESCE(branch_id, 1) = COALESCE($2, 1)
-                AND LOWER(TRIM(size_name)) = LOWER(TRIM($3))
-                AND LOWER(TRIM(COALESCE(color_name, ''))) = LOWER(TRIM(COALESCE($4, '')))
-              LIMIT 1
-            `, [transfer.inventory_id, transfer.to_branch_id, s.size_name, s.color_name || '']);
-            if (existingSizeRes.rows.length > 0) {
-              await tx.query(`
-                UPDATE inventory_sizes
-                SET stock_level = stock_level + $1, updated_at = CURRENT_TIMESTAMP
-                WHERE id = $2
-              `, [sqty, existingSizeRes.rows[0].id]);
-            } else {
-              await tx.query(`
-                INSERT INTO inventory_sizes (inventory_id, size_name, color_name, stock_level, branch_id, barcode, size_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-              `, [transfer.inventory_id, s.size_name, s.color_name || '', sqty, transfer.to_branch_id, s.barcode || null, s.size_id || null]);
-            }
-          }
-        }
+        parsedSizes = typeof transfer.sizes_data === 'string' ? JSON.parse(transfer.sizes_data) : transfer.sizes_data;
       } catch (err) {
         console.warn('Failed to parse sizes_data in receiveTransfer:', err.message);
       }
+    }
+    const normalizedSizes = Array.isArray(parsedSizes)
+      ? parsedSizes.filter((s) => Number(s?.quantity || 0) > 0 && (s?.size_name || s?.size))
+      : [];
+
+    if (normalizedSizes.length > 0) {
+      for (const s of normalizedSizes) {
+        await upsertDestinationSizeStock(tx, {
+          inventoryId: transfer.inventory_id,
+          branchId: transfer.to_branch_id,
+          sizeName: s.size_name || s.size,
+          colorName: s.color_name || s.color || '',
+          barcode: s.barcode || null,
+          sizeId: s.size_id || null,
+          quantity: Number(s.quantity || 0),
+        });
+      }
+      await syncBranchStockFromSizesIfPresent(tx, transfer.inventory_id, transfer.to_branch_id);
     } else {
       await adjustInventoryStock(tx, {
         inventoryId: transfer.inventory_id,
@@ -2438,9 +2662,9 @@ async function receiveTransfer(transferId, user) {
       });
     }
 
-    const receiverId = user?.id ? Number(user.id) : null;
+    const receiverId = await resolveExistingUserId(tx, user?.id);
     const receiverName = user?.full_name || user?.name || user?.username || null;
-    await tx.query("UPDATE stock_transfers SET status = 'received', received_by = $1, received_by_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3", [receiverId, receiverName, transferId]);
+    await tx.query("UPDATE stock_transfers SET status = 'received', received_by = $1, received_by_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3", [receiverId, receiverName, transfer.id]);
 
     // Refresh overall inventory stock_level
     await tx.query(`
@@ -2451,8 +2675,8 @@ async function receiveTransfer(transferId, user) {
 
     if (config.IS_BRANCH_MODE) {
       try {
-        await queueSyncOperation(tx, null, 'stock_transfer', 'receive', transferId, transfer.to_branch_id, {
-          id: transferId,
+        await queueSyncOperation(tx, null, 'stock_transfer', 'receive', transfer.id, transfer.to_branch_id, {
+          id: transfer.id,
           inventory_id: transfer.inventory_id,
           from_branch_id: transfer.from_branch_id,
           to_branch_id: transfer.to_branch_id,

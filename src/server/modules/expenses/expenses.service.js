@@ -9,41 +9,77 @@ const { parsePagination, appendPagination, paginatedPayload } = require('../../.
 const { queueSyncOperation, logActivity } = require('../../database/sync.helpers');
 const { getUserAuthorizedBranchIds, hasBranchAccess, validateBranchAccess, resolveEffectiveBranchId } = require('../../middleware/branchScope.middleware');
 
+function toPositiveBranchInt(val) {
+  const n = Number(val);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function formatExpenseDateOnly(val) {
+  if (!val) return null;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Cairo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(parsed);
+    }
+    return trimmed.slice(0, 10);
+  }
+  if (val instanceof Date && !Number.isNaN(val.getTime())) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(val);
+  }
+  return String(val).slice(0, 10);
+}
+
 async function getExpensesSummary(query = {}, user = null) {
   const branchParams = [];
   let branchClause = '';
+  const requestedBranchInt = (query.branch_id && query.branch_id !== 'all') ? toPositiveBranchInt(query.branch_id) : null;
 
   if (user && user.role !== 'admin') {
     if (user.branch_scope === 'all' || user.role === 'accountant') {
-      if (query.branch_id && query.branch_id !== 'all') {
-        branchParams.push(query.branch_id);
+      if (requestedBranchInt) {
+        branchParams.push(requestedBranchInt);
         branchClause = `AND branch_id = $${branchParams.length}`;
       }
     } else if (user.branch_scope === 'selected') {
       const authIds = getUserAuthorizedBranchIds(user);
-      if (query.branch_id && query.branch_id !== 'all') {
-        if (!authIds.includes(Number(query.branch_id))) {
+      if (requestedBranchInt) {
+        if (!authIds.includes(requestedBranchInt)) {
           const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
           err.statusCode = 403;
           throw err;
         }
-        branchParams.push(query.branch_id);
+        branchParams.push(requestedBranchInt);
         branchClause = `AND branch_id = $${branchParams.length}`;
       } else {
         branchParams.push(authIds);
         branchClause = `AND branch_id = ANY($${branchParams.length})`;
       }
     } else {
-      if (query.branch_id && query.branch_id !== 'all' && Number(query.branch_id) !== Number(user.branch_id)) {
+      if (requestedBranchInt && requestedBranchInt !== Number(user.branch_id)) {
         const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
         err.statusCode = 403;
         throw err;
       }
-      branchParams.push(user.branch_id);
-      branchClause = `AND branch_id = $${branchParams.length}`;
+      const userBranchInt = toPositiveBranchInt(user.branch_id);
+      if (userBranchInt) {
+        branchParams.push(userBranchInt);
+        branchClause = `AND branch_id = $${branchParams.length}`;
+      }
     }
-  } else if (query.branch_id && query.branch_id !== 'all') {
-    branchParams.push(query.branch_id);
+  } else if (requestedBranchInt) {
+    branchParams.push(requestedBranchInt);
     branchClause = `AND branch_id = $${branchParams.length}`;
   }
 
@@ -65,35 +101,38 @@ async function getExpensesSummary(query = {}, user = null) {
 
   if (user && user.role !== 'admin') {
     if (user.branch_scope === 'all' || user.role === 'accountant') {
-      if (query.branch_id && query.branch_id !== 'all') {
-        filterParams.push(query.branch_id);
+      if (requestedBranchInt) {
+        filterParams.push(requestedBranchInt);
         filterWhere.push(`branch_id = $${filterParams.length}`);
       }
     } else if (user.branch_scope === 'selected') {
       const authIds = getUserAuthorizedBranchIds(user);
-      if (query.branch_id && query.branch_id !== 'all') {
-        if (!authIds.includes(Number(query.branch_id))) {
+      if (requestedBranchInt) {
+        if (!authIds.includes(requestedBranchInt)) {
           const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
           err.statusCode = 403;
           throw err;
         }
-        filterParams.push(query.branch_id);
+        filterParams.push(requestedBranchInt);
         filterWhere.push(`branch_id = $${filterParams.length}`);
       } else {
         filterParams.push(authIds);
         filterWhere.push(`branch_id = ANY($${filterParams.length})`);
       }
     } else {
-      if (query.branch_id && query.branch_id !== 'all' && Number(query.branch_id) !== Number(user.branch_id)) {
+      if (requestedBranchInt && requestedBranchInt !== Number(user.branch_id)) {
         const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
         err.statusCode = 403;
         throw err;
       }
-      filterParams.push(user.branch_id);
-      filterWhere.push(`branch_id = $${filterParams.length}`);
+      const userBranchInt = toPositiveBranchInt(user.branch_id);
+      if (userBranchInt) {
+        filterParams.push(userBranchInt);
+        filterWhere.push(`branch_id = $${filterParams.length}`);
+      }
     }
-  } else if (query.branch_id && query.branch_id !== 'all') {
-    filterParams.push(query.branch_id);
+  } else if (requestedBranchInt) {
+    filterParams.push(requestedBranchInt);
     filterWhere.push(`branch_id = $${filterParams.length}`);
   }
 
@@ -168,38 +207,42 @@ async function listExpenses(query = {}, user = null) {
   const pagination = parsePagination(query, 50, 200, true);
   const params = [];
   const where = ['e.is_deleted IS NOT TRUE'];
+  const requestedBranchInt = (query.branch_id && query.branch_id !== 'all') ? toPositiveBranchInt(query.branch_id) : null;
 
   if (user && user.role !== 'admin') {
     if (user.branch_scope === 'all' || user.role === 'accountant') {
-      if (query.branch_id && query.branch_id !== 'all') {
-        params.push(query.branch_id);
+      if (requestedBranchInt) {
+        params.push(requestedBranchInt);
         where.push(`e.branch_id = $${params.length}`);
       }
     } else if (user.branch_scope === 'selected') {
       const authIds = getUserAuthorizedBranchIds(user);
-      if (query.branch_id && query.branch_id !== 'all') {
-        if (!authIds.includes(Number(query.branch_id))) {
+      if (requestedBranchInt) {
+        if (!authIds.includes(requestedBranchInt)) {
           const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
           err.statusCode = 403;
           throw err;
         }
-        params.push(query.branch_id);
+        params.push(requestedBranchInt);
         where.push(`e.branch_id = $${params.length}`);
       } else {
         params.push(authIds);
         where.push(`e.branch_id = ANY($${params.length})`);
       }
     } else {
-      if (query.branch_id && query.branch_id !== 'all' && Number(query.branch_id) !== Number(user.branch_id)) {
+      if (requestedBranchInt && requestedBranchInt !== Number(user.branch_id)) {
         const err = new Error('غير مصرح لك بالوصول إلى هذا الفرع');
         err.statusCode = 403;
         throw err;
       }
-      params.push(user.branch_id);
-      where.push(`e.branch_id = $${params.length}`);
+      const userBranchInt = toPositiveBranchInt(user.branch_id);
+      if (userBranchInt) {
+        params.push(userBranchInt);
+        where.push(`e.branch_id = $${params.length}`);
+      }
     }
-  } else if (query.branch_id && query.branch_id !== 'all') {
-    params.push(query.branch_id);
+  } else if (requestedBranchInt) {
+    params.push(requestedBranchInt);
     where.push(`e.branch_id = $${params.length}`);
   }
 
@@ -262,6 +305,7 @@ async function listExpenses(query = {}, user = null) {
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   let selectQuery = `
     SELECT e.*,
+           TO_CHAR(e.expense_date, 'YYYY-MM-DD') as expense_date,
            b.name as branch_name,
            COALESCE(u.username, 'النظام') as cashier_name,
            COALESCE(u.username, 'النظام') as created_by_name,
@@ -334,9 +378,8 @@ async function createExpense(body, user, req) {
     branch_id = targetBranch;
   }
 
-  let final_branch_id = (branch_id === '' || branch_id === undefined || branch_id === null)
-    ? (config.IS_BRANCH_MODE ? resolveEffectiveBranchId(user) : null)
-    : Number(branch_id);
+  let final_branch_id = toPositiveBranchInt(branch_id)
+    || (config.IS_BRANCH_MODE ? toPositiveBranchInt(resolveEffectiveBranchId(user)) : null);
 
   const final_amount = Number((amount === '' || amount === undefined) ? 0 : amount);
   const final_payment_method = ['cash', 'card', 'bank_transfer', 'wallet'].includes(payment_method) ? payment_method : 'cash';
@@ -381,14 +424,23 @@ async function createExpense(body, user, req) {
     throw err;
   }
 
-  // Prevent duplicate submissions within 3 seconds
+  // Prevent duplicate submissions within 3 seconds (match exact notes too, and use unixepoch on SQLite so 'T' vs ' ' never false-positives)
   if (user?.id) {
-    const { rows: dupRows } = await db.query(`
-      SELECT id, offline_uuid FROM expenses
-      WHERE created_by = $1 AND branch_id = $2 AND amount = $3 AND category = $4 AND is_deleted IS NOT TRUE
-        AND created_at >= NOW() - INTERVAL '3 seconds'
-      ORDER BY id DESC LIMIT 1
-    `, [user.id, final_branch_id, final_amount, category]);
+    const cleanCheckNotes = (notes || '').trim() || null;
+    const dupSql = config.IS_BRANCH_MODE
+      ? `SELECT id, offline_uuid FROM expenses
+         WHERE created_by = $1 AND COALESCE(branch_id, 0) = COALESCE($2, 0) AND amount = $3 AND category = $4
+           AND COALESCE(notes, '') = COALESCE($5, '')
+           AND is_deleted IS NOT TRUE
+           AND ABS(unixepoch('now') - unixepoch(created_at)) <= 3
+         ORDER BY id DESC LIMIT 1`
+      : `SELECT id, offline_uuid FROM expenses
+         WHERE created_by = $1 AND branch_id IS NOT DISTINCT FROM $2 AND amount = $3 AND category = $4
+           AND COALESCE(notes, '') = COALESCE($5, '')
+           AND is_deleted IS NOT TRUE
+           AND created_at >= NOW() - INTERVAL '3 seconds'
+         ORDER BY id DESC LIMIT 1`;
+    const { rows: dupRows } = await db.query(dupSql, [user.id, final_branch_id, final_amount, category, cleanCheckNotes]);
     if (dupRows.length > 0) {
       return dupRows[0];
     }
@@ -461,6 +513,8 @@ async function createExpense(body, user, req) {
 
     await queueSyncOperation(tx, req, 'expense', 'upsert', result.rows[0].id, final_branch_id, {
       ...result.rows[0],
+      expense_date: formatExpenseDateOnly(result.rows[0].expense_date) || expense_date || cairoDate,
+      is_deleted: false,
       employee_id: bonusEmployeeId,
     });
 
@@ -527,7 +581,7 @@ async function updateExpense(id, body, user, req) {
   const finalPaymentMethod = payment_method && ['cash', 'card', 'bank_transfer', 'wallet'].includes(payment_method)
     ? payment_method
     : existing.payment_method || 'cash';
-  const finalExpenseDate = expense_date || existing.expense_date;
+  const finalExpenseDate = formatExpenseDateOnly(expense_date) || formatExpenseDateOnly(existing.expense_date);
   const finalNotes = notes !== undefined ? (notes || null) : existing.notes;
 
   const updated = await db.transaction(async (tx) => {
@@ -563,7 +617,11 @@ async function updateExpense(id, body, user, req) {
       `, [finalAmount, finalExpenseDate, cleanUpdateNotes, existing.offline_uuid, `%${marker}%`]);
     }
 
-    await queueSyncOperation(tx, req, 'expense', 'upsert', res.rows[0].id, res.rows[0].branch_id, res.rows[0]);
+    await queueSyncOperation(tx, req, 'expense', 'upsert', res.rows[0].id, res.rows[0].branch_id, {
+      ...res.rows[0],
+      expense_date: formatExpenseDateOnly(res.rows[0].expense_date) || finalExpenseDate,
+      is_deleted: false,
+    });
 
     await logActivity(
       user ? user.id : null,
@@ -635,6 +693,7 @@ async function deleteExpense(id, user, req) {
 
     await queueSyncOperation(tx, req, 'expense', 'upsert', res.rows[0].id, res.rows[0].branch_id, {
       ...res.rows[0],
+      expense_date: formatExpenseDateOnly(res.rows[0].expense_date),
       is_deleted: true,
     });
 

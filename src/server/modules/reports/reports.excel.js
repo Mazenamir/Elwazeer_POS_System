@@ -454,7 +454,8 @@ async function generateProfitReportExcel(profitReport, options = {}) {
   }
 
   // Sheet 3: Expenses Details
-  if (profitReport.expenses?.items?.length > 0) {
+  const profitExpenseItems = profitReport.expenses_details?.items || profitReport.expenses?.items || [];
+  if (profitExpenseItems.length > 0) {
     const wsExp = wb.addWorksheet('تفاصيل المصروفات');
     applyWorksheetStyles(wsExp, 'سجل المصروفات والنثريات التفصيلي', options);
 
@@ -462,7 +463,7 @@ async function generateProfitReportExcel(profitReport, options = {}) {
     expHeader.values = ['التاريخ', 'الفرع', 'البند / التصنيف', 'المبلغ (ج.م)', 'البيان / ملاحظات'];
     styleHeaderRow(expHeader);
 
-    profitReport.expenses.items.forEach((e, idx) => {
+    profitExpenseItems.forEach((e, idx) => {
       const row = wsExp.getRow(5 + idx);
       row.values = [
         e.expense_date || '-',
@@ -1222,7 +1223,7 @@ async function generateDailyReportExcel(dailyData, options = {}) {
   const staffAttendance = Array.isArray(dailyData.attendance) ? dailyData.attendance : [];
   const salaryAdvances = Array.isArray(dailyData.salaries_details?.items)
     ? dailyData.salaries_details.items.filter(s => s.transaction_type === 'advance')
-    : [];
+    : (Array.isArray(dailyData.advances) ? dailyData.advances : []);
 
   if (staffAttendance.length > 0 || salaryAdvances.length > 0) {
     const wsStaff = wb.addWorksheet('حضور وسلف الموظفين');
@@ -3026,6 +3027,12 @@ function buildMasterSheetWorksheet(masterWs, daysData, branding = {}) {
         amount: Number(sp.amount || 0),
       });
     });
+    (d?.salary_drawer_payments || []).forEach(sp => {
+      deductionItems.push({
+        description: `راتب من الدرج: ${sp.employee_name}${sp.notes ? ` - ${sp.notes}` : ''}`,
+        amount: Number(sp.amount || 0),
+      });
+    });
 
     // Electronic Payments Track
     const electronicPayments = [];
@@ -3152,7 +3159,9 @@ function buildMasterSheetWorksheet(masterWs, daysData, branding = {}) {
     rTot.getCell(4).value = { formula: `SUM(D${blockStart}:D${blockEnd})`, result: d?.summary?.total_sales || 0 };
     rTot.getCell(5).value = { formula: `SUM(E${blockStart}:E${blockEnd})`, result: d?.summary?.total_paid || 0 };
     rTot.getCell(10).value = { formula: `SUM(J${blockStart}:J${blockEnd})`, result: d?.summary?.total_advances || 0 };
-    const totalL = (d?.summary?.total_expenses || 0) + (d?.summary?.total_supplier_cash_payments || 0);
+    const totalL = (d?.summary?.total_expenses || 0)
+      + (d?.summary?.total_supplier_cash_payments || 0)
+      + (d?.summary?.total_salary_cash_payments || 0);
     rTot.getCell(12).value = { formula: `SUM(L${blockStart}:L${blockEnd})`, result: totalL };
     const totalElectronic = Number(d?.summary?.electronic_collections || 0);
     rTot.getCell(15).value = { formula: `SUM(O${blockStart}:O${blockEnd})`, result: totalElectronic };
