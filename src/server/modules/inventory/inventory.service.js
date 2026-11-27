@@ -2309,14 +2309,12 @@ async function transferStock(body, user) {
           }
         }
       }
-      await syncBranchStockFromSizesIfPresent(tx, inventory_id, from_branch_id);
-    } else {
-      await adjustInventoryStock(tx, {
-        inventoryId: inventory_id,
-        branchId: from_branch_id,
-        quantityDelta: -transferQty,
-      });
     }
+    await adjustInventoryStock(tx, {
+      inventoryId: inventory_id,
+      branchId: from_branch_id,
+      quantityDelta: -transferQty,
+    });
 
     const senderId = await resolveExistingUserId(tx, user?.id);
     const senderName = user?.full_name || user?.name || user?.username || null;
@@ -2335,14 +2333,12 @@ async function transferStock(body, user) {
             quantity: s.quantity,
           });
         }
-        await syncBranchStockFromSizesIfPresent(tx, inventory_id, to_branch_id);
-      } else {
-        await adjustInventoryStock(tx, {
-          inventoryId: inventory_id,
-          branchId: to_branch_id,
-          quantityDelta: transferQty,
-        });
       }
+      await adjustInventoryStock(tx, {
+        inventoryId: inventory_id,
+        branchId: to_branch_id,
+        quantityDelta: transferQty,
+      });
 
       const stRes = await tx.query(
         'INSERT INTO stock_transfers (inventory_id, from_branch_id, to_branch_id, quantity, status, sizes_data, created_by, created_by_name, sender_id, sender_name, received_by, received_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
@@ -2499,14 +2495,12 @@ async function approveTransfer(transferId, user) {
           }
         }
       }
-      await syncBranchStockFromSizesIfPresent(tx, transfer.inventory_id, transfer.from_branch_id);
-    } else {
-      await adjustInventoryStock(tx, {
-        inventoryId: transfer.inventory_id,
-        branchId: transfer.from_branch_id,
-        quantityDelta: -transferQty,
-      });
     }
+    await adjustInventoryStock(tx, {
+      inventoryId: transfer.inventory_id,
+      branchId: transfer.from_branch_id,
+      quantityDelta: -transferQty,
+    });
 
     // Refresh overall inventory stock_level
     await tx.query(`
@@ -2653,14 +2647,12 @@ async function receiveTransfer(transferId, user) {
           quantity: Number(s.quantity || 0),
         });
       }
-      await syncBranchStockFromSizesIfPresent(tx, transfer.inventory_id, transfer.to_branch_id);
-    } else {
-      await adjustInventoryStock(tx, {
-        inventoryId: transfer.inventory_id,
-        branchId: transfer.to_branch_id,
-        quantityDelta: transfer.quantity,
-      });
     }
+    await adjustInventoryStock(tx, {
+      inventoryId: transfer.inventory_id,
+      branchId: transfer.to_branch_id,
+      quantityDelta: transfer.quantity,
+    });
 
     const receiverId = await resolveExistingUserId(tx, user?.id);
     const receiverName = user?.full_name || user?.name || user?.username || null;
